@@ -395,6 +395,54 @@ internal static class MaxScoreMaintenanceSchema
         END
         $$;
 
+        CREATE OR REPLACE FUNCTION
+            fst_assert_max_score_cache_staging_mutation_allowed()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            maintenance_owner_token TEXT;
+            session_lease_token TEXT;
+        BEGIN
+            SELECT publication.max_score_mutation_gate_token
+            INTO maintenance_owner_token
+            FROM scrape_publication_state publication
+            JOIN max_score_maintenance_runs run
+              ON run.freeze_reason =
+                    publication.public_reads_frozen_reason
+             AND run.expected_publication_id =
+                    publication.current_publication_id
+             AND run.expected_published_scrape_id =
+                    publication.published_scrape_id
+            WHERE publication.id = TRUE
+              AND publication.working_publication_id IS NULL
+              AND publication.public_reads_frozen
+              AND run.phase <> 'completed'
+              AND run.status IN ('running', 'failed')
+              AND run.staged_cache_evidence IS NOT NULL
+            ORDER BY run.created_at DESC
+            LIMIT 1;
+
+            IF NOT FOUND THEN
+                RETURN NULL;
+            END IF;
+
+            session_lease_token := current_setting(
+                'fst.max_score_maintenance_lease_token',
+                TRUE);
+            IF maintenance_owner_token IS NOT NULL
+               AND session_lease_token =
+                    maintenance_owner_token
+            THEN
+                RETURN NULL;
+            END IF;
+
+            RAISE EXCEPTION
+                'Cache staging mutation rejected while max-score maintenance owns immutable cache evidence.'
+                USING ERRCODE = '55000';
+        END
+        $$;
+
         CREATE OR REPLACE FUNCTION reject_max_score_rollback_mutation()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -452,6 +500,42 @@ internal static class MaxScoreMaintenanceSchema
                 FOR EACH ROW
                 EXECUTE FUNCTION
                     enforce_max_score_cache_entry_evidence_immutability();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'api_response_cache_staging'::regclass
+                  AND tgname =
+                        'trg_max_score_cache_staging_mutation_guard'
+                  AND NOT tgisinternal
+            ) THEN
+                CREATE TRIGGER
+                    trg_max_score_cache_staging_mutation_guard
+                BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+                ON api_response_cache_staging
+                FOR EACH STATEMENT
+                EXECUTE FUNCTION
+                    fst_assert_max_score_cache_staging_mutation_allowed();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'publication_api_response_cache_staging'::regclass
+                  AND tgname =
+                        'trg_max_score_publication_cache_staging_mutation_guard'
+                  AND NOT tgisinternal
+            ) THEN
+                CREATE TRIGGER
+                    trg_max_score_publication_cache_staging_mutation_guard
+                BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+                ON publication_api_response_cache_staging
+                FOR EACH STATEMENT
+                EXECUTE FUNCTION
+                    fst_assert_max_score_cache_staging_mutation_allowed();
             END IF;
 
             IF NOT EXISTS (

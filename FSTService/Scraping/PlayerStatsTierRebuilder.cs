@@ -196,27 +196,31 @@ public static class PlayerStatsTierRebuilder
                 rebuiltAccounts++;
             }
 
-            if (rows.Count > 0)
+            if (maintenanceLease is null)
             {
-                if (maintenanceLease is null)
-                {
+                if (rows.Count > 0)
                     metaDb.UpsertPlayerStatsTiersBatch(rows);
-                }
-                else
-                {
-                    await maintenanceLease.ExecuteTransactionAsync(
-                        $"derived-player-stats:{accountChunk[0]}",
-                        requireSourceLocks: true,
-                        (connection, transaction, _) =>
-                        {
-                            metaDb.UpsertPlayerStatsTiersBatch(
+            }
+            else
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-player-stats:{accountChunk[0]}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        metaDb
+                            .ReplacePlayerStatsTiersForMaxScoreMaintenance(
+                                accountChunk,
+                                instrumentKeys,
                                 rows,
                                 connection,
                                 transaction);
-                            return Task.CompletedTask;
-                        },
-                        ct: ct);
-                }
+                        return Task.CompletedTask;
+                    },
+                    ct: ct);
+            }
+            if (rows.Count > 0)
+            {
                 writtenRows += rows.Count;
             }
         }

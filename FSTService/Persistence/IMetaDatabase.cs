@@ -275,6 +275,12 @@ public interface IMetaDatabase : IDisposable
         IReadOnlyList<PlayerStatsTiersRow> rows,
         NpgsqlConnection connection,
         NpgsqlTransaction transaction);
+    void ReplacePlayerStatsTiersForMaxScoreMaintenance(
+        IReadOnlyCollection<string> accountIds,
+        IReadOnlyCollection<string> publishedInstruments,
+        IReadOnlyList<PlayerStatsTiersRow> rows,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId);
 
     // ── First seen season ────────────────────────────────────────────

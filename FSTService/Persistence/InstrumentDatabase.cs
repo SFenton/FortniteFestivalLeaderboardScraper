@@ -2424,6 +2424,174 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return count;
     }
 
+    public int ReplaceCurrentStateSongStatsForMaxScoreMaintenance(
+        IReadOnlyDictionary<string, int?> maxScoresByInstrument,
+        IReadOnlyDictionary<string, long> publicationPopulation,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(maxScoresByInstrument);
+        ArgumentNullException.ThrowIfNull(publicationPopulation);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The maintenance song-stats transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        var scopeSongIds = publicationPopulation.Keys
+            .OrderBy(songId => songId, StringComparer.Ordinal)
+            .ToArray();
+        if (scopeSongIds.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Max-score maintenance has no frozen published scopes for {Instrument}.");
+        }
+        foreach (var (songId, population) in publicationPopulation)
+        {
+            if (string.IsNullOrWhiteSpace(songId)
+                || population is < 0 or > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"Max-score maintenance population is invalid for {songId}/{Instrument}.");
+            }
+        }
+
+        var previousCounts = new Dictionary<string, int>(
+            StringComparer.OrdinalIgnoreCase);
+        using (var previous = connection.CreateCommand())
+        {
+            previous.Transaction = transaction;
+            previous.CommandText = """
+                SELECT song_id, entry_count
+                FROM song_stats
+                WHERE instrument = @instrument
+                """;
+            previous.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            using var reader = previous.ExecuteReader();
+            while (reader.Read())
+                previousCounts[reader.GetString(0)] = reader.GetInt32(1);
+        }
+
+        var resolvedCounts = new Dictionary<string, int>(
+            StringComparer.OrdinalIgnoreCase);
+        using (var current = connection.CreateCommand())
+        {
+            current.Transaction = transaction;
+            current.CommandText = BuildCurrentStateAllSongCountsSql();
+            current.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            using var reader = current.ExecuteReader();
+            while (reader.Read())
+            {
+                var songId = reader.GetString(0);
+                if (!publicationPopulation.ContainsKey(songId))
+                {
+                    throw new InvalidOperationException(
+                        $"Resolved max-score ranking scope {songId}/{Instrument} is absent from the frozen publication population.");
+                }
+                resolvedCounts[songId] = reader.GetInt32(1);
+            }
+        }
+
+        using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText = """
+                DELETE FROM song_stats
+                WHERE instrument = @instrument
+                  AND NOT (song_id = ANY(@songIds))
+                """;
+            delete.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            delete.Parameters.Add(
+                "songIds",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                scopeSongIds;
+            delete.ExecuteNonQuery();
+        }
+
+        using var upsert = connection.CreateCommand();
+        upsert.Transaction = transaction;
+        upsert.CommandText = """
+            INSERT INTO song_stats (
+                song_id,
+                instrument,
+                entry_count,
+                previous_entry_count,
+                log_weight,
+                max_score,
+                computed_at)
+            VALUES (
+                @songId,
+                @instrument,
+                @entryCount,
+                @previousEntryCount,
+                @logWeight,
+                @maxScore,
+                @computedAt)
+            ON CONFLICT(song_id, instrument) DO UPDATE SET
+                previous_entry_count = song_stats.entry_count,
+                entry_count = EXCLUDED.entry_count,
+                log_weight = EXCLUDED.log_weight,
+                max_score = EXCLUDED.max_score,
+                computed_at = EXCLUDED.computed_at
+            """;
+        var songParameter = upsert.Parameters.Add(
+            "songId",
+            NpgsqlTypes.NpgsqlDbType.Text);
+        upsert.Parameters.AddWithValue(
+            "instrument",
+            Instrument);
+        var entryParameter = upsert.Parameters.Add(
+            "entryCount",
+            NpgsqlTypes.NpgsqlDbType.Integer);
+        var previousParameter = upsert.Parameters.Add(
+            "previousEntryCount",
+            NpgsqlTypes.NpgsqlDbType.Integer);
+        var weightParameter = upsert.Parameters.Add(
+            "logWeight",
+            NpgsqlTypes.NpgsqlDbType.Double);
+        var maxParameter = upsert.Parameters.Add(
+            "maxScore",
+            NpgsqlTypes.NpgsqlDbType.Integer);
+        var computedAtParameter = upsert.Parameters.Add(
+            "computedAt",
+            NpgsqlTypes.NpgsqlDbType.TimestampTz);
+        upsert.Prepare();
+
+        var computedAt = DateTime.UtcNow;
+        foreach (var songId in scopeSongIds)
+        {
+            resolvedCounts.TryGetValue(songId, out var resolvedCount);
+            previousCounts.TryGetValue(songId, out var previousCount);
+            var entryCount = Math.Max(
+                resolvedCount,
+                checked((int)publicationPopulation[songId]));
+            maxScoresByInstrument.TryGetValue(
+                songId,
+                out var maxScore);
+            songParameter.Value = songId;
+            entryParameter.Value = entryCount;
+            previousParameter.Value = previousCount;
+            weightParameter.Value =
+                entryCount > 0 ? Math.Log2(entryCount) : 0.0;
+            maxParameter.Value =
+                (object?)maxScore ?? DBNull.Value;
+            computedAtParameter.Value = computedAt;
+            upsert.ExecuteNonQuery();
+        }
+
+        return scopeSongIds.Length;
+    }
+
     public List<(string AccountId, string SongId)> GetOverThresholdEntries()
     {
         if (UseSnapshotOverlayWorkerReaders)

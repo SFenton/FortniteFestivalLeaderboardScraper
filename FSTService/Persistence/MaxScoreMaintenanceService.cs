@@ -2108,10 +2108,18 @@ public sealed class MaxScoreMaintenanceService
                 "Score history changed during max-score maintenance.");
         }
 
-        var missingPlayerStatsAccountCount =
+        var publishedInstruments = readSnapshot.PublishedScopes
+            .Select(scope => scope.Instrument)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(
+                instrument => instrument,
+                StringComparer.Ordinal)
+            .ToArray();
+        var invalidPlayerStatsAccountCount =
             await MaxScoreMaintenanceDerivedStateService
-                .CountMissingPlayerStatsAccountsAsync(
+                .CountInvalidPlayerStatsAccountsAsync(
                     readSnapshot.AffectedPlayerStatsAccounts,
+                    publishedInstruments,
                     NormalizeDatabaseTimestamp(
                         run.CreatedAtUtc),
                     conn,
@@ -2120,8 +2128,9 @@ public sealed class MaxScoreMaintenanceService
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandTimeout = 600;
-        cmd.CommandText = """
-            WITH expected(
+        cmd.CommandText = $"""
+            WITH {PublishedSoloScopeSql.CurrentResolvedAllEntriesCte},
+            expected(
                 song_id,
                 instrument,
                 max_score,
@@ -2132,19 +2141,70 @@ public sealed class MaxScoreMaintenanceService
                     @instruments::TEXT[],
                     @maxScores::INTEGER[],
                     @totalEntries::BIGINT[])
+            ), current_stats AS MATERIALIZED (
+                SELECT song_id,
+                       instrument,
+                       entry_count,
+                       max_score
+                FROM song_stats
+                WHERE instrument =
+                    ANY(@affectedInstruments)
             ), stats AS (
-                SELECT COUNT(*)::INTEGER AS matched
+                SELECT
+                    (SELECT COUNT(*)::INTEGER
+                     FROM expected) AS expected_count,
+                    (SELECT COUNT(*)::INTEGER
+                     FROM current_stats) AS actual_count,
+                    (
+                        SELECT COUNT(*)::INTEGER
+                        FROM expected
+                        FULL JOIN current_stats current
+                          USING (song_id, instrument)
+                        WHERE expected.song_id IS NULL
+                           OR current.song_id IS NULL
+                           OR current.max_score
+                                IS DISTINCT FROM
+                                expected.max_score
+                           OR current.entry_count
+                                IS DISTINCT FROM
+                                expected.total_entries
+                    ) AS mismatch_count
+            ), expected_scope_counts AS (
+                SELECT instrument,
+                       COUNT(*)::INTEGER AS scope_count
                 FROM expected
-                JOIN song_stats current
-                  ON current.song_id = expected.song_id
-                 AND current.instrument = expected.instrument
-                 AND current.max_score = expected.max_score
-                  AND current.entry_count =
-                      expected.total_entries
+                GROUP BY instrument
+            ), published_rank_accounts AS (
+                SELECT DISTINCT
+                       resolved.instrument,
+                       resolved.account_id
+                FROM resolved_rows resolved
+                JOIN expected
+                  ON expected.song_id =
+                        resolved.song_id
+                 AND expected.instrument =
+                        resolved.instrument
             ), rankings AS (
-                SELECT COUNT(*)::BIGINT AS row_count
-                FROM account_rankings
-                WHERE instrument = ANY(@affectedInstruments)
+                SELECT
+                    COUNT(*)::BIGINT AS row_count,
+                    COUNT(*) FILTER (
+                        WHERE scope.scope_count IS NULL
+                           OR ranking.total_charted_songs
+                                IS DISTINCT FROM
+                                scope.scope_count
+                           OR published.account_id IS NULL
+                    )::BIGINT AS invalid_count
+                FROM account_rankings ranking
+                LEFT JOIN expected_scope_counts scope
+                  ON scope.instrument =
+                        ranking.instrument
+                LEFT JOIN published_rank_accounts published
+                  ON published.instrument =
+                        ranking.instrument
+                 AND published.account_id =
+                        ranking.account_id
+                WHERE ranking.instrument =
+                    ANY(@affectedInstruments)
             ), rollback AS (
                 SELECT COUNT(*)::INTEGER AS row_count
                 FROM max_score_maintenance_rollback_songs
@@ -2171,7 +2231,7 @@ public sealed class MaxScoreMaintenanceService
                     (SELECT COUNT(*) FROM combo_leaderboard)
                         AS combo_rows
             ), missing_player_stats AS (
-                SELECT @missingPlayerStatsAccountCount::BIGINT
+                SELECT @invalidPlayerStatsAccountCount::BIGINT
                     AS row_count
             ), missing_leaderboard_rivals AS (
                 SELECT COUNT(*)::BIGINT AS row_count
@@ -2232,8 +2292,11 @@ public sealed class MaxScoreMaintenanceService
                 WHERE band.has_source
                   AND NOT band.has_rankings
             )
-            SELECT stats.matched,
+            SELECT stats.expected_count,
+                   stats.actual_count,
+                   stats.mismatch_count,
                    rankings.row_count,
+                   rankings.invalid_count,
                    rollback.row_count,
                    notifications.row_count,
                    notifications.visible_count,
@@ -2254,42 +2317,62 @@ public sealed class MaxScoreMaintenanceService
                  missing_leaderboard_rivals,
                  invalid_band_rankings
             """;
-        var changedPairs = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments.Select(
-                instrument => (
-                    song.SongId,
-                    Instrument: instrument,
-                    MaxScore: song.StagedPath.Maxima
-                        .GetByInstrument(instrument)!.Value)))
+        var affectedInstruments = manifest.Scope
+            .ExpectedChangedInstruments
+            .ToHashSet(StringComparer.Ordinal);
+        var expectedScopes = readSnapshot.Population
+            .Where(pair =>
+                affectedInstruments.Contains(
+                    pair.Key.Instrument))
+            .OrderBy(
+                pair => pair.Key.SongId,
+                StringComparer.Ordinal)
+            .ThenBy(
+                pair => pair.Key.Instrument,
+                StringComparer.Ordinal)
+            .Select(pair =>
+            {
+                readSnapshot.PostPromotionMaxScores.TryGetValue(
+                    pair.Key.SongId,
+                    out var songMaxScores);
+                return (
+                    pair.Key.SongId,
+                    pair.Key.Instrument,
+                    MaxScore: songMaxScores?.GetByInstrument(
+                        pair.Key.Instrument),
+                    TotalEntries: pair.Value);
+            })
             .ToArray();
+        if (expectedScopes.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Final validation has no frozen published scopes for the affected instruments.");
+        }
         cmd.Parameters.Add(
             "songIds",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.SongId).ToArray();
+            expectedScopes.Select(pair => pair.SongId).ToArray();
         cmd.Parameters.Add(
             "instruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.Instrument).ToArray();
+            expectedScopes.Select(pair => pair.Instrument).ToArray();
         cmd.Parameters.Add(
             "maxScores",
             NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
-            changedPairs.Select(pair => pair.MaxScore).ToArray();
+            expectedScopes.Select(pair => pair.MaxScore).ToArray();
         cmd.Parameters.Add(
             "totalEntries",
             NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
-            changedPairs.Select(pair =>
-                    readSnapshot.Population.TryGetValue(
-                        (pair.SongId, pair.Instrument),
-                        out var population)
-                        ? population
-                        : throw new InvalidOperationException(
-                            $"Publication population is missing for {pair.SongId}/{pair.Instrument}."))
+            expectedScopes.Select(pair =>
+                    pair.TotalEntries)
                 .ToArray();
         cmd.Parameters.Add(
             "affectedInstruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.Instrument)
-                .Distinct(StringComparer.Ordinal)
+            affectedInstruments
+                .OrderBy(
+                    instrument => instrument,
+                    StringComparer.Ordinal)
                 .ToArray();
         cmd.Parameters.AddWithValue(
             "manifestSha256",
@@ -2314,8 +2397,8 @@ public sealed class MaxScoreMaintenanceService
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             LeaderboardRivalsCalculator.RankMethods;
         cmd.Parameters.AddWithValue(
-            "missingPlayerStatsAccountCount",
-            missingPlayerStatsAccountCount);
+            "invalidPlayerStatsAccountCount",
+            invalidPlayerStatsAccountCount);
         await using var reader =
             await cmd.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token))
@@ -2325,36 +2408,39 @@ public sealed class MaxScoreMaintenanceService
         }
         var validation = new
         {
-            MatchedStats = reader.GetInt32(0),
-            RankingRows = reader.GetInt64(1),
-            RollbackRows = reader.GetInt32(2),
-            NotificationRows = reader.GetInt32(3),
-            VisibleNotifications = reader.GetInt32(4),
-            StagedCacheRows = reader.GetInt64(5),
-            CompositeRows = reader.GetInt64(6),
-            FamilyRows = reader.GetInt64(7),
-            ComboRows = reader.GetInt64(8),
-            MissingPlayerStats = reader.GetInt64(9),
-            MissingLeaderboardRivals = reader.GetInt64(10),
-            InvalidBandRankings = reader.GetInt64(11),
+            ExpectedStats = reader.GetInt32(0),
+            ActualStats = reader.GetInt32(1),
+            InvalidStats = reader.GetInt32(2),
+            RankingRows = reader.GetInt64(3),
+            InvalidRankings = reader.GetInt64(4),
+            RollbackRows = reader.GetInt32(5),
+            NotificationRows = reader.GetInt32(6),
+            VisibleNotifications = reader.GetInt32(7),
+            StagedCacheRows = reader.GetInt64(8),
+            CompositeRows = reader.GetInt64(9),
+            FamilyRows = reader.GetInt64(10),
+            ComboRows = reader.GetInt64(11),
+            MissingPlayerStats = reader.GetInt64(12),
+            MissingLeaderboardRivals = reader.GetInt64(13),
+            InvalidBandRankings = reader.GetInt64(14),
         };
-        if (validation.MatchedStats != changedPairs.Length
-            || validation.RankingRows <= 0
+        if (validation.ExpectedStats
+                != expectedScopes.Length
+            || validation.ActualStats
+                != expectedScopes.Length
+            || validation.InvalidStats != 0
+            || validation.InvalidRankings != 0
             || validation.RollbackRows != manifest.Songs.Count
             || validation.NotificationRows != 1
             || validation.VisibleNotifications != 0
             || validation.StagedCacheRows
                 != run.StagedCacheEntryCount
-            || validation.CompositeRows <= 0
-            || validation.FamilyRows <= 0
-            || manifest.Scope.ExpectedChangedInstruments.Count > 1
-               && validation.ComboRows <= 0
             || validation.MissingPlayerStats != 0
             || validation.MissingLeaderboardRivals != 0
             || validation.InvalidBandRankings != 0)
         {
             throw new InvalidOperationException(
-                $"Post-maintenance validation failed: stats={validation.MatchedStats}/{changedPairs.Length}, rankings={validation.RankingRows}, rollback={validation.RollbackRows}/{manifest.Songs.Count}, notificationRows={validation.NotificationRows}, visible={validation.VisibleNotifications}, cache={validation.StagedCacheRows}/{run.StagedCacheEntryCount}, composite={validation.CompositeRows}, family={validation.FamilyRows}, combo={validation.ComboRows}, missingPlayerStats={validation.MissingPlayerStats}, missingRivals={validation.MissingLeaderboardRivals}, invalidBandRankings={validation.InvalidBandRankings}.");
+                $"Post-maintenance validation failed: stats={validation.ActualStats}/{validation.ExpectedStats} (mismatches={validation.InvalidStats}), rankings={validation.RankingRows} (invalid={validation.InvalidRankings}), rollback={validation.RollbackRows}/{manifest.Songs.Count}, notificationRows={validation.NotificationRows}, visible={validation.VisibleNotifications}, cache={validation.StagedCacheRows}/{run.StagedCacheEntryCount}, composite={validation.CompositeRows}, family={validation.FamilyRows}, combo={validation.ComboRows}, invalidPlayerStats={validation.MissingPlayerStats}, missingRivals={validation.MissingLeaderboardRivals}, invalidBandRankings={validation.InvalidBandRankings}.");
         }
             },
             IsolationLevel.RepeatableRead,

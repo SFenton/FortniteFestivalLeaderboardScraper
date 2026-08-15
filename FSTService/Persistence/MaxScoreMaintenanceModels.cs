@@ -1301,7 +1301,98 @@ public sealed record MaxScoreMaintenanceApplyReport(
     string? FailureStage,
     string? Detail)
 {
-    public const int CurrentReportVersion = 2;
+    public const int CurrentReportVersion = 3;
+
+    internal MaxScoreMaintenanceApplyReport ValidateContract()
+    {
+        if (ReportVersion != CurrentReportVersion)
+        {
+            throw new ArgumentException(
+                $"reportVersion must be {CurrentReportVersion}.",
+                nameof(ReportVersion));
+        }
+        if (!Enum.IsDefined(Phase))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(Phase),
+                Phase,
+                "Apply report phase is not supported.");
+        }
+        if (ExpectedPublishedScrapeId <= 0
+            || ExpectedPublicationId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ExpectedPublishedScrapeId),
+                "Apply report publication identities must be positive.");
+        }
+        MaxScoreMaintenanceManifest.NormalizeSha256(
+            ManifestSha256,
+            nameof(ManifestSha256));
+        MaxScoreMaintenanceManifest.NormalizeSha256(
+            PlanDigest,
+            nameof(PlanDigest));
+        if (PromotedSongCount < 0
+            || RebuiltInstrumentCount < 0
+            || QuarantinedCandidateCount < 0
+            || VisibleDeliveryCount != 0
+            || StagedCacheEntryCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(StagedCacheEntryCount),
+                "Apply report counters must be nonnegative and visible delivery must remain zero.");
+        }
+        if (Succeeded
+            != (Phase == MaxScoreMaintenancePhase.Completed)
+            || Succeeded
+               && (Resumable || PublicReadsFrozen))
+        {
+            throw new ArgumentException(
+                "Apply report success, completion, resume, and freeze state are inconsistent.");
+        }
+
+        var cacheEvidenceRequired =
+            Phase >= MaxScoreMaintenancePhase.CachesStaged;
+        if (cacheEvidenceRequired)
+        {
+            if (CacheEvidence is null
+                || StagedCacheEntryCount <= 0
+                || CacheEvidence.EntryCount
+                    != StagedCacheEntryCount
+                || CacheEvidence.PublishedScopeCacheKeyCount < 0
+                || CacheEvidence.TargetScopeCount < 0
+                || CacheEvidence.AffectedAccountCount < 0
+                || CacheEvidence.OverlayOnlyAccountCount < 0)
+            {
+                throw new ArgumentException(
+                    "Apply report cache evidence is required and must match the staged cache count from caches_staged onward.",
+                    nameof(CacheEvidence));
+            }
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                CacheEvidence.ContentFingerprint,
+                nameof(CacheEvidence.ContentFingerprint));
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                CacheEvidence.PublishedScopeCacheKeyFingerprint,
+                nameof(CacheEvidence.PublishedScopeCacheKeyFingerprint));
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                CacheEvidence.TargetScopeFingerprint,
+                nameof(CacheEvidence.TargetScopeFingerprint));
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                CacheEvidence.AffectedAccountFingerprint,
+                nameof(CacheEvidence.AffectedAccountFingerprint));
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                CacheEvidence.OverlayOnlyAccountFingerprint,
+                nameof(CacheEvidence.OverlayOnlyAccountFingerprint));
+        }
+        else if (CacheEvidence is not null
+                 || StagedCacheEntryCount != 0)
+        {
+            throw new ArgumentException(
+                "Apply report cache evidence cannot precede the caches_staged checkpoint.",
+                nameof(CacheEvidence));
+        }
+
+        return this;
+    }
 }
 
 internal static class MaxScoreMaintenanceJson

@@ -292,7 +292,9 @@ public sealed class RankingsCalculator
             var populationForInstrument = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             foreach (var ((songId, inst), totalEntries) in allPopulation)
             {
-                if (inst.Equals(instrument, StringComparison.OrdinalIgnoreCase) && totalEntries > 0)
+                if (inst.Equals(instrument, StringComparison.OrdinalIgnoreCase)
+                    && (maintenanceLease is not null
+                        || totalEntries > 0))
                     populationForInstrument[songId] = totalEntries;
             }
 
@@ -311,12 +313,11 @@ public sealed class RankingsCalculator
                     requireSourceLocks: true,
                     (connection, transaction, _) =>
                     {
-                        db.ComputeCurrentStateSongStats(
+                        db.ReplaceCurrentStateSongStatsForMaxScoreMaintenance(
                             maxScoresForInstrument,
                             populationForInstrument,
                             connection,
-                            transaction,
-                            preserveExistingEntryCount: false);
+                            transaction);
                         return Task.CompletedTask;
                     },
                     ct: innerCt);

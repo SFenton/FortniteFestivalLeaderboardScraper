@@ -170,7 +170,10 @@ publication-scope key count/fingerprint. Exact per-entry key/ETag/JSON hashes
 remain durable database evidence rather than expanding the report. Plan may scan all registered-account
 history plus affected-instrument fallback candidates; its aggregates are
 constant-memory, but operators must allow the documented maintenance-window
-cost.
+cost. The strict apply-report parser rejects legacy version 2, unknown
+properties, and version 3 reports missing `cacheEvidence` at
+`caches_staged` or any later phase. Version 3 failures before cache staging
+retain `cacheEvidence=null`.
 
 The retired `--path-repair-*` and
 `--notification-maintenance-pro-lead-max-score-repair` families remain startup

@@ -102,6 +102,40 @@ internal static class MaxScoreMaintenanceFileStore
             requestedPath,
             ct)).Snapshot;
 
+    internal static async Task<MaxScoreMaintenanceApplyReport>
+        LoadApplyReportAsync(
+            string dataDirectory,
+            string requestedPath,
+            CancellationToken ct)
+    {
+        var path = ResolveExistingJsonInputPath(
+            dataDirectory,
+            requestedPath,
+            MaxScoreMaintenanceManifest.MaximumManifestBytes);
+        var payload = await File.ReadAllBytesAsync(path, ct);
+        try
+        {
+            return (JsonSerializer.Deserialize<
+                        MaxScoreMaintenanceApplyReport>(
+                        payload,
+                        MaxScoreMaintenanceJson.Strict)
+                    ?? throw new ArgumentException(
+                        "Max-score maintenance apply report cannot be JSON null.",
+                        nameof(requestedPath)))
+                .ValidateContract();
+        }
+        catch (Exception ex) when (
+            ex is JsonException
+                or ArgumentException
+                or InvalidOperationException)
+        {
+            throw new ArgumentException(
+                $"Max-score maintenance apply report must be strict version {MaxScoreMaintenanceApplyReport.CurrentReportVersion} JSON.",
+                nameof(requestedPath),
+                ex);
+        }
+    }
+
     internal static async Task<(
             string FullPath,
             string Sha256,
@@ -219,13 +253,17 @@ internal static class MaxScoreMaintenanceFileStore
             string requestedPath,
             T report,
             CancellationToken ct)
-        => await WriteNewBytesAsync(
+    {
+        if (report is MaxScoreMaintenanceApplyReport applyReport)
+            applyReport.ValidateContract();
+        return await WriteNewBytesAsync(
             dataDirectory,
             requestedPath,
             JsonSerializer.SerializeToUtf8Bytes(
                 report,
                 MaxScoreMaintenanceJson.Report),
             ct);
+    }
 
     internal static string ResolveNewJsonOutputPath(
         string dataDirectory,

@@ -88,6 +88,11 @@ public interface IInstrumentDatabase : IDisposable
         Npgsql.NpgsqlConnection connection,
         Npgsql.NpgsqlTransaction transaction,
         bool preserveExistingEntryCount = true);
+    int ReplaceCurrentStateSongStatsForMaxScoreMaintenance(
+        IReadOnlyDictionary<string, int?> maxScoresByInstrument,
+        IReadOnlyDictionary<string, long> publicationPopulation,
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();
     List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries();
     List<(string AccountId, string SongId)>

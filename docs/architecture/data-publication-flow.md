@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
@@ -120,7 +121,10 @@ derived rows while retaining the same published scrape/publication ID.
    affected accounts are requeued.
 6. Maintenance ranking mode bypasses `current_leaderboard_entries` and rebuilds
    affected instruments from the exact published source plus supplemental
-   overlay, then rebuilds composite, family, and combo dependencies. One
+   overlay. For each affected instrument it atomically replaces `song_stats`
+   with every frozen published scope, including zero-entry scopes, deletes
+   active-only old rows, and replaces the account-ranking partition before
+   rebuilding composite, family, and combo dependencies. One
    immutable publication-population snapshot is passed to rankings, player
    stats, and all later cache/validation work. The frozen catalog and exact
    scope set, not active/legacy song tables or cached totals, determine
@@ -131,7 +135,9 @@ derived rows while retaining the same published scrape/publication ID.
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
    not written. Chart denominators include matching promoted path-expected
    instruments when provider metadata omitted the real MIDI chart. Affected
-   player-stat tiers and registered-player leaderboard rivals follow.
+   accounts' complete player-stat tier sets are atomically replaced, removing
+   stale active-only instruments while preserving unrelated accounts;
+   registered-player leaderboard rivals follow.
 7. Routine notification dry-run candidates are accepted only for player ranks
    in changed instruments, target-song band rows, and their dependent band
    ranks. Parity uses routine delivery grouping: player ranks per
@@ -150,14 +156,21 @@ derived rows while retaining the same published scrape/publication ID.
    publication scopes. Both staging tables must match, and every key, ETag,
    and JSON SHA-256 is captured in immutable
    `max_score_maintenance_cache_entries`.
+   The committed `caches_staged` checkpoint immediately rejects ordinary
+   cache-build leases and staging DML/truncation for that exact frozen
+   generation; only the matching maintenance lease owner remains authorized.
+   Player-stat cache payloads include `Overall` plus only frozen
+   publication-scope instruments.
    Final validation requires unchanged rank-history, complete consumed
-   score-history and population evidence, exact paths/maxima/song stats,
+   score-history and population evidence, exact paths/maxima and complete
+   zero-inclusive song-stat/ranking scope,
    canonical rollback file SHA/identity matching immutable database rows, zero
    visible delivery, the whole staged-cache hash, and semantic target-scope,
    affected-account, and overlay-only-account cache fingerprints.
-9. A validated resume rechecks semantic cache evidence and both staging tables.
-   Cache-build leases and staging writers cannot replace that validated
-   generation. Cache swap, workflow completion, and freeze release then commit
+9. A resume from `caches_staged` or `validated` rechecks semantic cache
+   evidence and both staging tables. Cache-build leases and staging writers
+   cannot replace that evidence-owned generation. Cache swap, workflow
+   completion, and freeze release then commit
    atomically in a source-locked transaction on the live advisory-lock session
    while its durable mutation token remains set; staging share locks and an
    exact immutable-entry comparison run before the swap. Disposal releases the

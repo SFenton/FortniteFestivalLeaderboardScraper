@@ -16,6 +16,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
@@ -144,7 +145,11 @@ and holds that strict no-active/no-legacy context through cache staging and
 final validation. It snapshots publication-bound population once and passes
 it to rankings, player stats, cache construction, and validation rather than
 reading mutable `leaderboard_population`. It rebuilds changed solo instruments
-plus aggregate dependencies, recalculates
+by replacing the exact frozen, zero-inclusive `song_stats` scope and affected
+ranking partitions, then rebuilds aggregate dependencies. Affected accounts'
+player-stat tier rows are replaced as a complete set while unrelated accounts
+remain untouched; maintenance cache serialization filters tiers to `Overall`
+plus frozen publication instruments. It recalculates
 target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
@@ -329,8 +334,10 @@ freeze: affected publication-bound cache misses, including `/api/songs` and
 both path routes, return `503`. After derived validation a complete cache swap,
 workflow completion, and unfreeze commit together. Maintenance precompute uses
 only frozen-catalog publication scopes and their captured populations for song
-keys and completion denominators. A validated checkpoint makes both staging
-tables immutable to ordinary cache builders/writers; resume and the final
+keys and completion denominators. The `caches_staged` checkpoint and every
+later pre-complete state make both staging tables immutable to ordinary cache
+builders/writers; exact maintenance-owner access remains available for resume
+and final publication. Resume and the final
 source-locked transaction compare every staged key/ETag/JSON hash with durable
 entry evidence before swap. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client

@@ -275,14 +275,16 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     }
 
     internal static async Task<long>
-        CountMissingPlayerStatsAccountsAsync(
+        CountInvalidPlayerStatsAccountsAsync(
             IReadOnlyCollection<string> accountIds,
+            IReadOnlyCollection<string> publishedInstruments,
             DateTime minimumUpdatedAtUtc,
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(accountIds);
+        ArgumentNullException.ThrowIfNull(publishedInstruments);
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
         if (!ReferenceEquals(
@@ -309,18 +311,40 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             FROM unnest(@accountIds::TEXT[])
                 affected(account_id)
             WHERE NOT EXISTS (
-                SELECT 1
-                FROM player_stats_tiers stats
-                WHERE stats.account_id =
-                    affected.account_id
-                  AND stats.updated_at >=
-                      @minimumUpdatedAt
-            )
+                    SELECT 1
+                    FROM player_stats_tiers stats
+                    WHERE stats.account_id =
+                        affected.account_id
+                      AND stats.instrument = 'Overall'
+                      AND stats.updated_at >=
+                          @minimumUpdatedAt
+                  )
+               OR EXISTS (
+                    SELECT 1
+                    FROM player_stats_tiers stats
+                    WHERE stats.account_id =
+                        affected.account_id
+                      AND (
+                          stats.updated_at <
+                              @minimumUpdatedAt
+                          OR (
+                              stats.instrument <> 'Overall'
+                              AND NOT (
+                                  stats.instrument =
+                                  ANY(@publishedInstruments)
+                              )
+                          )
+                      )
+                  )
             """;
         command.Parameters.Add(
             "accountIds",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             accountIds.ToArray();
+        command.Parameters.Add(
+            "publishedInstruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            publishedInstruments.ToArray();
         command.Parameters.AddWithValue(
             "minimumUpdatedAt",
             minimumUpdatedAtUtc);

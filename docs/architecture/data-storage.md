@@ -23,6 +23,7 @@ sources:
   - FSTService/Scraping/RegisteredBandProcessing.cs
   - FSTService/Scraping/RegisteredPlayerBandDiscovery.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/Replay/
   - FSTService/FeatureOptions.cs
@@ -89,7 +90,12 @@ overlay-only-account hashes.
 cache key with its ETag and JSON SHA-256. The evidence is captured atomically
 with the `caches_staged` checkpoint only after the legacy and
 publication-addressed staging tables match exactly; updates/deletes and later
-inserts are rejected. A
+inserts are rejected. From the committed `caches_staged` checkpoint through
+every later pre-complete state, generation-aware lease checks and statement
+triggers reject ordinary cache-build leases plus staging
+insert/update/delete/truncate operations. Only the live maintenance session
+whose lease token matches the exact frozen run/publication may mutate those
+tables for validation or final publication. A
 post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
@@ -123,6 +129,20 @@ instrument scopes, total-song/completion denominators, maximum-score filtering,
 and the expected base/leeway/rank-offset cache keys. Maintenance never uses
 legacy `GetAllSongCounts()`, active `song_stats`/`leaderboard_entries`, or the
 process-cached total-song count for those decisions.
+For each affected instrument, one fenced transaction deletes `song_stats`
+outside the immutable published scope set and upserts every published scope,
+including empty scopes with zero counts. The instrument ranking partition is
+then replaced from that exact source, so active-only accounts and old
+denominators cannot survive. Final validation compares the complete expected
+and actual `song_stats` inventories and rejects ranking rows whose account or
+`total_charted_songs` is not owned by the frozen source.
+
+Affected accounts' `player_stats_tiers` rows are deleted and rebuilt atomically
+per fenced chunk rather than only upserted. This removes stale active-only
+instrument tiers while leaving unrelated accounts untouched. Maintenance cache
+serialization admits `Overall` plus only instruments present in the frozen
+publication scope; unrelated accounts may retain other durable tier rows, but
+those rows cannot leak into the maintenance cache generation.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and
@@ -223,8 +243,9 @@ existing registration behavior.
 Final cache swap, completed checkpoint, and unfreeze run inside one
 source-locked transaction on the live lock-owning session. It share-locks both
 staging tables and compares every key, ETag, and JSON SHA-256 with
-`max_score_maintenance_cache_entries` before any swap. Validated freezes reject
-ordinary cache-build leases and staging writers. The durable gate is cleared
+`max_score_maintenance_cache_entries` before any swap. A `caches_staged` or
+later pre-complete freeze rejects ordinary cache-build leases and staging
+writers. The durable gate is cleared
 only after advisory-lock release. Backend loss before the final commit keeps
 the old cache, freeze, and durable owner. Backend loss after that commit but
 before durable-gate clear keeps the completed cache/publication coherent

@@ -226,6 +226,139 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_report_v3_round_trips_required_cache_evidence()
+    {
+        var report = CreateApplyReport(
+            MaxScoreMaintenancePhase.Completed,
+            succeeded: true,
+            resumable: false,
+            frozen: false,
+            includeCacheEvidence: true);
+
+        await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
+            _dataDirectory,
+            "apply-report-v3.json",
+            report,
+            CancellationToken.None);
+        var loaded =
+            await MaxScoreMaintenanceFileStore
+                .LoadApplyReportAsync(
+                    _dataDirectory,
+                    "apply-report-v3.json",
+                    CancellationToken.None);
+
+        Assert.Equal(
+            MaxScoreMaintenanceApplyReport
+                .CurrentReportVersion,
+            loaded.ReportVersion);
+        Assert.Equal(report, loaded);
+        Assert.NotNull(loaded.CacheEvidence);
+        using var document = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(
+                Path.Combine(
+                    _dataDirectory,
+                    "apply-report-v3.json")));
+        var cacheEvidence = document.RootElement
+            .GetProperty("cacheEvidence");
+        Assert.Equal(
+            4,
+            cacheEvidence
+                .GetProperty(
+                    "publishedScopeCacheKeyCount")
+                .GetInt32());
+        Assert.Equal(
+            new string('e', 64),
+            cacheEvidence
+                .GetProperty(
+                    "overlayOnlyAccountFingerprint")
+                .GetString());
+    }
+
+    [Fact]
+    public async Task Apply_report_v3_accepts_pre_cache_failure_without_evidence()
+    {
+        var report = CreateApplyReport(
+            MaxScoreMaintenancePhase.FreezeEstablished,
+            succeeded: false,
+            resumable: true,
+            frozen: true,
+            includeCacheEvidence: false);
+        await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
+            _dataDirectory,
+            "apply-report-pre-cache.json",
+            report,
+            CancellationToken.None);
+
+        var loaded =
+            await MaxScoreMaintenanceFileStore
+                .LoadApplyReportAsync(
+                    _dataDirectory,
+                    "apply-report-pre-cache.json",
+                    CancellationToken.None);
+
+        Assert.Null(loaded.CacheEvidence);
+        Assert.Equal(0, loaded.StagedCacheEntryCount);
+    }
+
+    [Theory]
+    [InlineData("legacy-version")]
+    [InlineData("missing-cache-evidence")]
+    [InlineData("unknown-property")]
+    public async Task Apply_report_parser_rejects_incompatible_or_non_strict_contracts(
+        string mutation)
+    {
+        var report = CreateApplyReport(
+            MaxScoreMaintenancePhase.CachesStaged,
+            succeeded: false,
+            resumable: true,
+            frozen: true,
+            includeCacheEvidence: true);
+        var incompatible = mutation switch
+        {
+            "legacy-version" => report with
+            {
+                ReportVersion = 2,
+            },
+            "missing-cache-evidence" => report with
+            {
+                CacheEvidence = null,
+            },
+            "unknown-property" => report,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(mutation)),
+        };
+        var json = JsonSerializer.Serialize(
+            incompatible,
+            MaxScoreMaintenanceJson.Report);
+        if (mutation == "unknown-property")
+        {
+            json = json.Insert(
+                json.LastIndexOf(
+                    '}'),
+                ",\"unexpected\":true");
+        }
+        var fileName =
+            $"apply-report-invalid-{mutation}.json";
+        await File.WriteAllTextAsync(
+            Path.Combine(
+                _dataDirectory,
+                fileName),
+            json);
+
+        var error = await Assert.ThrowsAsync<
+            ArgumentException>(
+            () => MaxScoreMaintenanceFileStore
+                .LoadApplyReportAsync(
+                    _dataDirectory,
+                    fileName,
+                    CancellationToken.None));
+        Assert.Contains(
+            "strict version 3",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Stage_parser_rejects_unscoped_song_ids()
     {
         var error = Assert.Throws<ArgumentException>(() =>
@@ -1058,6 +1191,59 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                     }
                     : Array.Empty<object>(),
         });
+
+    private static MaxScoreMaintenanceApplyReport
+        CreateApplyReport(
+            MaxScoreMaintenancePhase phase,
+            bool succeeded,
+            bool resumable,
+            bool frozen,
+            bool includeCacheEvidence)
+    {
+        var cacheEvidence = includeCacheEvidence
+            ? new MaxScoreMaintenanceCacheEvidence(
+                EntryCount: 7,
+                ContentFingerprint: new string('1', 64),
+                PublishedScopeCacheKeyCount: 4,
+                PublishedScopeCacheKeyFingerprint:
+                    new string('2', 64),
+                TargetScopeCount: 2,
+                TargetScopeFingerprint:
+                    new string('3', 64),
+                AffectedAccountCount: 3,
+                AffectedAccountFingerprint:
+                    new string('4', 64),
+                OverlayOnlyAccountCount: 1,
+                OverlayOnlyAccountFingerprint:
+                    new string('e', 64))
+            : null;
+        return new MaxScoreMaintenanceApplyReport(
+            MaxScoreMaintenanceApplyReport
+                .CurrentReportVersion,
+            succeeded,
+            resumable,
+            frozen,
+            ManifestSha256: new string('a', 64),
+            PlanDigest: new string('b', 64),
+            Phase: phase,
+            ExpectedPublishedScrapeId: 1296,
+            ExpectedPublicationId: 500,
+            RollbackSnapshotPath:
+                "maintenance/rollback.json",
+            RollbackSnapshotSha256:
+                new string('c', 64),
+            PromotedSongCount: 2,
+            RebuiltInstrumentCount: 4,
+            QuarantinedCandidateCount: 3,
+            VisibleDeliveryCount: 0,
+            StagedCacheEntryCount:
+                includeCacheEvidence ? 7 : 0,
+            CacheEvidence: cacheEvidence,
+            FailureStage:
+                succeeded ? null : "injected",
+            Detail:
+                succeeded ? null : "injected failure");
+    }
 
     private static MaxScoreMaintenanceManifest CreateManifest()
     {

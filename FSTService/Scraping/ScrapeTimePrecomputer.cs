@@ -1335,6 +1335,17 @@ public sealed class ScrapeTimePrecomputer
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var tierRows = _metaDb.GetPlayerStatsTiers(accountId);
+        if (_strictPublishedSourcesForPrecompute)
+        {
+            var publishedInstruments = instrumentKeys
+                .ToHashSet(StringComparer.Ordinal);
+            tierRows = tierRows
+                .Where(row =>
+                    row.Instrument == "Overall"
+                    || publishedInstruments.Contains(
+                        row.Instrument))
+                .ToList();
+        }
         if (tierRows.Count == 0) return;
 
         var totalSongs = totalSongsOverride

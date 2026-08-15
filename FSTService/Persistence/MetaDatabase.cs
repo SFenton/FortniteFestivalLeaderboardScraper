@@ -4916,6 +4916,101 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
+    public void ReplacePlayerStatsTiersForMaxScoreMaintenance(
+        IReadOnlyCollection<string> accountIds,
+        IReadOnlyCollection<string> publishedInstruments,
+        IReadOnlyList<PlayerStatsTiersRow> rows,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(accountIds);
+        ArgumentNullException.ThrowIfNull(publishedInstruments);
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The maintenance player-tier transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        var normalizedAccountIds = accountIds
+            .Where(accountId =>
+                !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(
+                accountId => accountId,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedAccountIds.Length != accountIds.Count)
+        {
+            throw new ArgumentException(
+                "Maintenance player-tier accounts must be nonblank and unique.",
+                nameof(accountIds));
+        }
+        var allowedInstruments = publishedInstruments
+            .Where(instrument =>
+                !string.IsNullOrWhiteSpace(instrument))
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+        if (allowedInstruments.Count
+            != publishedInstruments.Count)
+        {
+            throw new ArgumentException(
+                "Maintenance player-tier instruments must be nonblank and unique.",
+                nameof(publishedInstruments));
+        }
+        var accountSet = normalizedAccountIds.ToHashSet(
+            StringComparer.OrdinalIgnoreCase);
+        var rowKeys = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (!accountSet.Contains(row.AccountId)
+                || row.Instrument != "Overall"
+                   && !allowedInstruments.Contains(
+                       row.Instrument)
+                || !rowKeys.Add(
+                    row.AccountId
+                    + "\u001f"
+                    + row.Instrument))
+            {
+                throw new ArgumentException(
+                    "Maintenance player-tier rows must be unique and owned by the exact account/publication instrument scope.",
+                    nameof(rows));
+            }
+        }
+        if (normalizedAccountIds.Length == 0)
+        {
+            if (rows.Count != 0)
+            {
+                throw new ArgumentException(
+                    "Maintenance player-tier rows require affected accounts.",
+                    nameof(rows));
+            }
+            return;
+        }
+
+        using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText = """
+                DELETE FROM player_stats_tiers
+                WHERE account_id = ANY(@accountIds)
+                """;
+            delete.Parameters.Add(
+                "accountIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedAccountIds;
+            delete.ExecuteNonQuery();
+        }
+        UpsertPlayerStatsTiersBatch(
+            rows,
+            connection,
+            transaction);
+    }
+
     public List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId)
     {
         using var conn = _ds.OpenConnection();
@@ -11540,6 +11635,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
         var buildLockAcquired = false;
         try
         {
+            EnsureMaxScoreProtectedCacheBuildCanStart(
+                conn,
+                publicationId);
             using (var globalLock = conn.CreateCommand())
             {
                 globalLock.CommandText =
@@ -11592,13 +11690,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
                            WHERE publication.public_reads_frozen
                              AND publication.current_publication_id =
                                  @publicationId
+                             AND publication.published_scrape_id =
+                                 run.expected_published_scrape_id
                              AND publication.public_reads_frozen_reason =
                                  run.freeze_reason
                              AND run.expected_publication_id =
                                  @publicationId
-                             AND run.phase = 'validated'
+                             AND run.phase <> 'completed'
                              AND run.status IN ('running', 'failed')
-                       ) AS validated_max_score_cache
+                             AND run.staged_cache_evidence IS NOT NULL
+                       ) AS protected_max_score_cache
                 FROM publication
                 """;
             cmd.Parameters.AddWithValue(
@@ -11625,14 +11726,14 @@ public sealed partial class MetaDatabase : IMetaDatabase
             var workingPublicationId =
                 reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1);
             var failedCandidateIsolation = reader.GetBoolean(2);
-            var validatedMaxScoreCache = reader.GetBoolean(3);
+            var protectedMaxScoreCache = reader.GetBoolean(3);
             var expectedPublicationId = workingPublicationId
                 ?? currentPublicationId;
 
-            if (validatedMaxScoreCache)
+            if (protectedMaxScoreCache)
             {
                 throw new InvalidOperationException(
-                    $"Publication {publicationId} cache build is blocked by validated max-score maintenance staging evidence.");
+                    $"Publication {publicationId} cache build is blocked by max-score maintenance cache evidence for the same generation.");
             }
 
             if (publicationId == 0)
@@ -12157,7 +12258,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             connection,
             transaction,
             publicationId);
-        EnsureMaxScoreValidatedCacheStagingIsMutable(
+        EnsureMaxScoreProtectedCacheStagingIsMutable(
             connection,
             transaction,
             publicationId);
@@ -12238,7 +12339,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             conn,
             tx,
             publicationId);
-        EnsureMaxScoreValidatedCacheStagingIsMutable(
+        EnsureMaxScoreProtectedCacheStagingIsMutable(
             conn,
             tx,
             publicationId);
@@ -12675,7 +12776,45 @@ public sealed partial class MetaDatabase : IMetaDatabase
            && CurrentPublicationMaintenanceTarget.Value.Value
                == (publicationId ?? 0);
 
-    private static void EnsureMaxScoreValidatedCacheStagingIsMutable(
+    private static void
+        EnsureMaxScoreProtectedCacheBuildCanStart(
+            NpgsqlConnection connection,
+            long publicationId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM scrape_publication_state publication
+                JOIN max_score_maintenance_runs run
+                  ON run.freeze_reason =
+                        publication.public_reads_frozen_reason
+                 AND run.expected_publication_id =
+                        publication.current_publication_id
+                 AND run.expected_published_scrape_id =
+                        publication.published_scrape_id
+                WHERE publication.id = TRUE
+                  AND publication.current_publication_id =
+                        @publicationId
+                  AND publication.working_publication_id IS NULL
+                  AND publication.public_reads_frozen
+                  AND run.phase <> 'completed'
+                  AND run.status IN ('running', 'failed')
+                  AND run.staged_cache_evidence IS NOT NULL
+            )
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        if (command.ExecuteScalar() is true)
+        {
+            throw new InvalidOperationException(
+                $"Publication {publicationId} cache build is blocked by max-score maintenance cache evidence for the same generation.");
+        }
+    }
+
+    private static void EnsureMaxScoreProtectedCacheStagingIsMutable(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         long? publicationId)
@@ -12699,8 +12838,20 @@ public sealed partial class MetaDatabase : IMetaDatabase
                       @publicationId
                   AND publication.working_publication_id IS NULL
                   AND publication.public_reads_frozen
-                  AND run.phase = 'validated'
+                  AND run.expected_published_scrape_id =
+                      publication.published_scrape_id
+                  AND run.phase <> 'completed'
                   AND run.status IN ('running', 'failed')
+                  AND run.staged_cache_evidence IS NOT NULL
+                  AND (
+                      publication.max_score_mutation_gate_token
+                          IS NULL
+                      OR current_setting(
+                              'fst.max_score_maintenance_lease_token',
+                              TRUE)
+                          IS DISTINCT FROM
+                          publication.max_score_mutation_gate_token
+                  )
             )
             """;
         command.Parameters.AddWithValue(
@@ -12709,7 +12860,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (command.ExecuteScalar() is true)
         {
             throw new InvalidOperationException(
-                $"Publication {publicationId.Value} cache staging is immutable after max-score validation.");
+                $"Publication {publicationId.Value} cache staging is immutable after max-score cache evidence capture.");
         }
     }
 

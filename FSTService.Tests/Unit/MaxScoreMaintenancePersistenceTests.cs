@@ -254,7 +254,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     updated_at)
                 VALUES (
                     'account-base',
-                    'Solo_Guitar',
+                    'Overall',
                     '[]'::JSONB,
                     now())
                 """;
@@ -263,8 +263,9 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.Equal(
             1,
             await MaxScoreMaintenanceDerivedStateService
-                .CountMissingPlayerStatsAccountsAsync(
+                .CountInvalidPlayerStatsAccountsAsync(
                     affected,
+                    ["Solo_Guitar"],
                     rebuildStartedAt,
                     connection,
                     transaction,
@@ -280,19 +281,50 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     instrument,
                     tiers_json,
                     updated_at)
-                VALUES (
-                    'account-overlay',
-                    'Solo_Guitar',
-                    '[]'::JSONB,
-                    now())
+                VALUES
+                    (
+                        'account-overlay',
+                        'Overall',
+                        '[]'::JSONB,
+                        now()
+                    ),
+                    (
+                        'account-overlay',
+                        'Solo_Drums',
+                        '[]'::JSONB,
+                        now()
+                    )
                 """;
             await seedOverlayStats.ExecuteNonQueryAsync();
         }
         Assert.Equal(
+            1,
+            await MaxScoreMaintenanceDerivedStateService
+                .CountInvalidPlayerStatsAccountsAsync(
+                    affected,
+                    ["Solo_Guitar"],
+                    rebuildStartedAt,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+
+        await using (var removeStaleStats =
+                     connection.CreateCommand())
+        {
+            removeStaleStats.Transaction = transaction;
+            removeStaleStats.CommandText = """
+                DELETE FROM player_stats_tiers
+                WHERE account_id = 'account-overlay'
+                  AND instrument = 'Solo_Drums'
+                """;
+            await removeStaleStats.ExecuteNonQueryAsync();
+        }
+        Assert.Equal(
             0,
             await MaxScoreMaintenanceDerivedStateService
-                .CountMissingPlayerStatsAccountsAsync(
+                .CountInvalidPlayerStatsAccountsAsync(
                     affected,
+                    ["Solo_Guitar"],
                     rebuildStartedAt,
                     connection,
                     transaction,
@@ -1593,23 +1625,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     @freezeReason,
                     'notifications_quarantined',
                     'running',
-                    1,
-                    jsonb_build_object(
-                        'entryCount', 1,
-                        'contentFingerprint',
-                            repeat('d', 64),
-                        'publishedScopeCacheKeyCount', 0,
-                        'publishedScopeCacheKeyFingerprint',
-                            repeat('e', 64),
-                        'targetScopeCount', 0,
-                        'targetScopeFingerprint',
-                            repeat('f', 64),
-                        'affectedAccountCount', 0,
-                        'affectedAccountFingerprint',
-                            repeat('1', 64),
-                        'overlayOnlyAccountCount', 0,
-                        'overlayOnlyAccountFingerprint',
-                            repeat('2', 64)));
+                    0,
+                    NULL);
 
                 INSERT INTO api_response_cache_staging (
                     cache_key, json_data, etag, cached_at)
@@ -1639,7 +1656,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                         'hex'));
 
                 UPDATE max_score_maintenance_runs
-                SET phase = 'validated'
+                SET phase = 'validated',
+                    staged_cache_entry_count = 1,
+                    staged_cache_evidence =
+                        jsonb_build_object(
+                            'entryCount', 1,
+                            'contentFingerprint',
+                                repeat('d', 64),
+                            'publishedScopeCacheKeyCount', 0,
+                            'publishedScopeCacheKeyFingerprint',
+                                repeat('e', 64),
+                            'targetScopeCount', 0,
+                            'targetScopeFingerprint',
+                                repeat('f', 64),
+                            'affectedAccountCount', 0,
+                            'affectedAccountFingerprint',
+                                repeat('1', 64),
+                            'overlayOnlyAccountCount', 0,
+                            'overlayOnlyAccountFingerprint',
+                                repeat('2', 64))
                 WHERE manifest_sha256 = @manifestDigest;
                 """;
             seed.Parameters.AddWithValue("scrapeId", scrapeId);
@@ -1799,7 +1834,12 @@ public sealed class MaxScoreMaintenancePersistenceTests
             tamper.Parameters.AddWithValue(
                 "publicationId",
                 publicationId);
-            tamper.ExecuteNonQuery();
+            var blocked =
+                Assert.Throws<PostgresException>(
+                    () => tamper.ExecuteNonQuery());
+            Assert.Equal(
+                PostgresErrorCodes.ObjectNotInPrerequisiteState,
+                blocked.SqlState);
         }
 
         using var meta = new MetaDatabase(
@@ -1808,6 +1848,36 @@ public sealed class MaxScoreMaintenancePersistenceTests
         await using var lease =
             await meta.AcquireMaxScoreMaintenanceLeaseAsync(
                 publicationId);
+        await lease.ExecuteTransactionAsync(
+            "owner-cache-tamper",
+            requireSourceLocks: true,
+            async (connection, transaction, ct) =>
+            {
+                await using var tamper =
+                    connection.CreateCommand();
+                tamper.Transaction = transaction;
+                tamper.CommandText = """
+                    UPDATE api_response_cache_staging
+                    SET json_data =
+                            decode(
+                                '7b2274616d7065726564223a747275657d',
+                                'hex'),
+                        etag = 'tampered'
+                    WHERE cache_key = 'route';
+                    UPDATE publication_api_response_cache_staging
+                    SET json_data =
+                            decode(
+                                '7b2274616d7065726564223a747275657d',
+                                'hex'),
+                        etag = 'tampered'
+                    WHERE publication_id = @publicationId
+                      AND cache_key = 'route';
+                    """;
+                tamper.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                await tamper.ExecuteNonQueryAsync(ct);
+            });
         var error =
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => lease.CompleteAsync(
@@ -3804,23 +3874,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 @freezeReason,
                 'notifications_quarantined',
                 'running',
-                1,
-                jsonb_build_object(
-                    'entryCount', 1,
-                    'contentFingerprint',
-                        repeat('d', 64),
-                    'publishedScopeCacheKeyCount', 0,
-                    'publishedScopeCacheKeyFingerprint',
-                        repeat('e', 64),
-                    'targetScopeCount', 0,
-                    'targetScopeFingerprint',
-                        repeat('f', 64),
-                    'affectedAccountCount', 0,
-                    'affectedAccountFingerprint',
-                        repeat('1', 64),
-                    'overlayOnlyAccountCount', 0,
-                    'overlayOnlyAccountFingerprint',
-                        repeat('2', 64)));
+                0,
+                NULL);
 
             INSERT INTO api_response_cache (
                 cache_key, json_data, etag, cached_at)
@@ -3873,7 +3928,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     'hex'));
 
             UPDATE max_score_maintenance_runs
-            SET phase = 'validated'
+            SET phase = 'validated',
+                staged_cache_entry_count = 1,
+                staged_cache_evidence =
+                    jsonb_build_object(
+                        'entryCount', 1,
+                        'contentFingerprint',
+                            repeat('d', 64),
+                        'publishedScopeCacheKeyCount', 0,
+                        'publishedScopeCacheKeyFingerprint',
+                            repeat('e', 64),
+                        'targetScopeCount', 0,
+                        'targetScopeFingerprint',
+                            repeat('f', 64),
+                        'affectedAccountCount', 0,
+                        'affectedAccountFingerprint',
+                            repeat('1', 64),
+                        'overlayOnlyAccountCount', 0,
+                        'overlayOnlyAccountFingerprint',
+                            repeat('2', 64))
             WHERE manifest_sha256 = @manifestDigest;
             """;
         seed.Parameters.AddWithValue("scrapeId", scrapeId);

@@ -7,6 +7,7 @@ sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
+  - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -423,6 +424,11 @@ plus affected-instrument fallback discovery (up to the 600-second command
 timeout), run it only with the worker offline, and keep the resulting evidence
 report.
 
+Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
+and a report at `caches_staged` or later without the complete
+`cacheEvidence` object are invalid. A version 3 failure before cache staging
+legitimately omits that object.
+
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
@@ -458,15 +464,22 @@ Apply:
   passes that immutable snapshot to song stats, rankings, player stats,
   scrape-time cache construction, and final validation; a failed/newer
   scrape's mutable population cannot leak into the current publication. It
-  then rebuilds composite, solo-family, and combo rankings; recalculates
+  atomically deletes active-only `song_stats` rows for each affected
+  instrument, upserts every frozen published scope including zero-entry
+  scopes, and replaces that instrument's ranking partition with the exact
+  frozen-source result. Unaffected instruments are not deleted. It then
+  rebuilds composite, solo-family, and combo rankings; recalculates
   target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
-- rebuilds affected player-stat tiers and every registered player's
+- atomically replaces the complete tier-row set for each affected player-stat
+  account, removing stale active-only instruments while preserving unrelated
+  accounts, then rebuilds every registered player's
   leaderboard rivals. Per-instrument completion denominators come from the
   frozen publication scopes, the overall denominator is the exact published
   song/instrument scope count, and the cached top-level song total is the
-  distinct publication-owned song count;
+  distinct publication-owned song count. Player-stat cache payloads include
+  `Overall` plus only instruments present in the frozen publication scope;
 - classifies affected-instrument player-rank and target-song/dependent-band
   candidates as maintenance, including max-score-percent rank changes that the
   routine visible lane does not emit. Routine parity uses the same visible
@@ -489,7 +502,9 @@ Apply:
   JSON SHA-256 in immutable database evidence; and
 - validates paths, maxima, rankings, exact rollback file/database identity,
   rank-history and complete consumed score-history evidence, immutable
-  publication population, notification audit, both legacy and
+  publication population, the full zero-inclusive `song_stats` inventory,
+  ranking account/scope denominators, affected player-tier scope,
+  notification audit, both legacy and
   publication-addressed staging tables against the immutable entry evidence,
   and staged cache content before atomically swapping the cache and releasing
   the freeze.
@@ -533,10 +548,12 @@ SHA-256, manifest/plan/run timestamp, publication/catalog, and immutable
 database rollback-song rows. Missing, corrupted, or swapped files leave reads
 frozen and fail at the existing resumable phase.
 
-A resume whose durable phase is `validated` re-runs cache semantic validation
-and exact key/ETag/JSON-hash comparison for both staging tables before final
-completion. Ordinary cache-build leases and cache writers are rejected while
-that validated digest-owned generation remains frozen. The final
+A resume whose durable phase is `caches_staged` or `validated` re-runs the
+required cache semantic validation and exact key/ETag/JSON-hash comparison for
+both staging tables before final completion. From `caches_staged` onward,
+ordinary cache-build leases and staging insert/update/delete/truncate
+operations fail promptly against that exact digest-owned publication
+generation; only the matching maintenance lease owner may continue. The final
 source-locked transaction takes staging-table share locks, repeats the exact
 comparison against `max_score_maintenance_cache_entries`, and only then swaps
 both cache tables, marks completion, and unfreezes. Missing, changed, deleted,
@@ -561,12 +578,16 @@ After success, verify:
 - all four path routes (Lead, Pro Lead, Pro Cymbals, and Pro Drums) resolve each
   manifest generation;
 - `songs` and `song_stats` contain the approved maxima and every other maximum
-  is unchanged;
+  is unchanged; every affected-instrument published scope has a row, including
+  zero-entry scopes, active-only old rows are absent, and unaffected
+  instruments remain unchanged;
 - affected rankings, player stats, rivals, band rankings, and precomputed
   responses are current; target leaderboard/player cache fingerprints match
   the exact published source plus overlays, including every registered
-  overlay-only affected account, and publication-only song scopes have their
-  expected keys while active-only scopes have none;
+  overlay-only affected account, affected player tiers contain no active-only
+  instrument, unrelated account tier rows remain durable, cached tier payloads
+  contain only `Overall` plus frozen-scope instruments, and publication-only
+  song scopes have their expected keys while active-only scopes have none;
 - the maintenance notification audit has `visible_delivery_count=0`;
 - no player/band visible event or publication notification marker/cursor was
   rewritten; and

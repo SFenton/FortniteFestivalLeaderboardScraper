@@ -85,7 +85,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             fixture.LastFailure?.ToString());
         Assert.NotNull(result.CacheEvidence);
         Assert.Equal(
-            6,
+            9,
             result.CacheEvidence!
                 .PublishedScopeCacheKeyCount);
         var state = fixture.ReadScopeDivergenceState();
@@ -96,9 +96,33 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.False(state.ActiveOnlyLeewayKeyPresent);
         Assert.False(state.ActiveOnlyOffsetKeyPresent);
         Assert.Equal(["Solo_Bass"], state.PublishedOnlyInstruments);
-        Assert.Equal(2, state.TotalSongs);
-        Assert.Equal(100, state.GuitarCompletionPercent);
-        Assert.Equal(50, state.OverallCompletionPercent);
+        Assert.True(state.ZeroEntryPublishedStatsPresent);
+        Assert.False(state.ActiveOnlyStatsPresent);
+        Assert.False(state.ActiveOnlyRankingPresent);
+        Assert.Equal(50, state.UnaffectedBassEntryCount);
+        Assert.Equal(2, state.GuitarRankingSongCount);
+        Assert.Equal(
+            [
+                "00",
+                ComboIds.FromInstruments(["Solo_Guitar"]),
+            ],
+            state.AffectedAccountCacheInstruments);
+        Assert.Equal(
+            ["Overall", "Solo_Guitar"],
+            state.AffectedAccountDatabaseInstruments);
+        Assert.Equal(
+            ["Overall", "Solo_Bass", "Solo_Drums"],
+            state.UnrelatedAccountDatabaseInstruments);
+        Assert.Equal(
+            [
+                "00",
+                ComboIds.FromInstruments(
+                    ["Solo_Bass"]),
+            ],
+            state.UnrelatedAccountCacheInstruments);
+        Assert.Equal(3, state.TotalSongs);
+        Assert.Equal(50, state.GuitarCompletionPercent);
+        Assert.Equal(33.3, state.OverallCompletionPercent);
     }
 
     [Fact]
@@ -242,12 +266,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.Equal(0, completedState.VisibleNotifications);
     }
 
-    [Theory]
-    [InlineData("mutated")]
-    [InlineData("deleted")]
-    [InlineData("added")]
-    public async Task ApplyOrResume_revalidates_validated_cache_staging_before_resume_and_swap(
-        string mutation)
+    [Fact]
+    public async Task ApplyOrResume_fences_caches_staged_evidence_from_ordinary_precompute_and_resumes()
     {
         await using var fixture =
             await WorkflowFixture.CreateAsync();
@@ -256,10 +276,10 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         fixture.Service.AfterPhaseCheckpointTestHook =
             phase =>
             {
-                if (phase == MaxScoreMaintenancePhase.Validated)
+                if (phase == MaxScoreMaintenancePhase.CachesStaged)
                 {
                     throw new InvalidOperationException(
-                        "validated-checkpoint-stop");
+                        "caches-staged-checkpoint-stop");
                 }
             };
 
@@ -272,35 +292,21 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.True(checkpointed.Resumable);
         Assert.True(checkpointed.PublicReadsFrozen);
         Assert.Equal(
-            MaxScoreMaintenancePhase.Validated,
+            MaxScoreMaintenancePhase.CachesStaged,
             checkpointed.Phase);
         Assert.NotNull(checkpointed.CacheEvidence);
         var canonicalStaging =
             fixture.ReadStagingGeneration();
-        fixture.AssertValidatedCacheWritersBlocked();
+        var canonicalEvidence =
+            fixture.ReadDurableCacheEvidence();
         fixture.Service.AfterPhaseCheckpointTestHook = null;
-        fixture.MutateStagingGeneration(mutation);
-
-        var rejected = await fixture.ApplyAsync(
-            resume: true,
-            plan.PlanDigest,
-            rollbackPath: "rollback.json");
-
-        Assert.False(rejected.Succeeded);
-        Assert.True(rejected.Resumable);
-        Assert.True(rejected.PublicReadsFrozen);
-        Assert.Equal(
-            MaxScoreMaintenancePhase.Validated,
-            rejected.Phase);
-        var failedState = fixture.ReadSafetyState();
-        Assert.True(failedState.Frozen);
-        Assert.Equal("validated", failedState.RunPhase);
-        Assert.Equal("failed", failedState.RunStatus);
-        Assert.True(failedState.LiveSentinelPresent);
-        Assert.Equal(0, failedState.VisibleNotifications);
-
-        fixture.RestoreStagingGeneration(
+        await fixture
+            .AssertCacheEvidenceWritersBlockedAsync();
+        fixture.AssertStagingGenerationEquals(
             canonicalStaging);
+        Assert.Equal(
+            canonicalEvidence,
+            fixture.ReadDurableCacheEvidence());
         var resumed = await fixture.ApplyAsync(
             resume: true,
             plan.PlanDigest,
@@ -331,10 +337,14 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             "workflow-published-only";
         private const string PublishedOnlyInstrument =
             "Solo_Bass";
+        private const string PublishedZeroSongId =
+            "workflow-published-zero";
         private const string ActiveOnlySongId =
             "workflow-active-only";
         private const string BaseAccount = "published-base";
         private const string OverlayAccount = "overlay-only";
+        private const string UnrelatedTierAccount =
+            "unrelated-tier-account";
         private const string ValidPngBase64 =
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -460,6 +470,33 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     },
                     providerJson =
                         publishedOnlyProvider.RootElement.Clone(),
+                });
+                using var publishedZeroProvider =
+                    JsonDocument.Parse(
+                        """
+                        {
+                          "lastModified": "2026-07-20T00:00:00Z",
+                          "track": {
+                            "su": "workflow-published-zero",
+                            "tt": "Published Zero Song",
+                            "an": "Published Zero Artist",
+                            "in": {
+                              "gr": 3
+                            }
+                          }
+                        }
+                        """);
+                catalogSongs.Add(new Song
+                {
+                    track = new Track
+                    {
+                        su = PublishedZeroSongId,
+                        tt = "Published Zero Song",
+                        an = "Published Zero Artist",
+                        @in = new In { gr = 3 },
+                    },
+                    providerJson =
+                        publishedZeroProvider.RootElement.Clone(),
                 });
             }
             var catalog =
@@ -613,12 +650,27 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             {
                 SeedScopeDivergence(dataSource);
             }
-            meta.InsertAccountIds([OverlayAccount]);
+            meta.InsertAccountIds(
+                includeScopeDivergence
+                    ? [OverlayAccount, UnrelatedTierAccount]
+                    : [OverlayAccount]);
             meta.InsertAccountNames(
                 [(OverlayAccount, (string?)"Overlay User")]);
             meta.RegisterUser(
                 "web-tracker",
                 OverlayAccount);
+            if (includeScopeDivergence)
+            {
+                meta.InsertAccountNames(
+                    [
+                        (
+                            UnrelatedTierAccount,
+                            (string?)"Unrelated Tier User"),
+                    ]);
+                meta.RegisterUser(
+                    "web-tracker",
+                    UnrelatedTierAccount);
+            }
 
             var options = new ScraperOptions
             {
@@ -911,174 +963,113 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             return result;
         }
 
-        internal void AssertValidatedCacheWritersBlocked()
+        internal MaxScoreMaintenanceCacheEvidence
+            ReadDurableCacheEvidence()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT staged_cache_evidence::TEXT
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            return JsonSerializer.Deserialize<
+                       MaxScoreMaintenanceCacheEvidence>(
+                       Convert.ToString(
+                           command.ExecuteScalar())!,
+                       MaxScoreMaintenanceJson.Strict)
+                   ?? throw new InvalidOperationException(
+                       "Durable cache evidence was not found.");
+        }
+
+        internal async Task
+            AssertCacheEvidenceWritersBlockedAsync()
         {
             var leaseError =
-                Assert.Throws<InvalidOperationException>(
-                    () => _meta
-                        .AcquirePublicationCacheBuildLease(
-                            PublicationId,
-                            requireCurrentPublication: true));
+                await Assert.ThrowsAsync<
+                    InvalidOperationException>(
+                    () => Task.Run(() =>
+                        {
+                            using var lease = _meta
+                                .AcquirePublicationCacheBuildLease(
+                                    PublicationId,
+                                    requireCurrentPublication: true);
+                        })
+                        .WaitAsync(
+                            TimeSpan.FromSeconds(5)));
             Assert.Contains(
-                "validated max-score maintenance",
+                "max-score maintenance cache evidence",
                 leaseError.Message,
                 StringComparison.OrdinalIgnoreCase);
 
             var writerError =
-                Assert.Throws<InvalidOperationException>(
-                    () => _meta
-                        .BulkSetCachedResponsesStaging(
-                        [
-                            (
-                                Key: "blocked",
-                                Json:
-                                    """{"blocked":true}"""u8
-                                        .ToArray(),
-                                ETag: "blocked"),
-                        ],
-                        PublicationId));
+                await Assert.ThrowsAsync<
+                    InvalidOperationException>(
+                    () => Task.Run(() =>
+                            _meta
+                                .BulkSetCachedResponsesStaging(
+                                    [],
+                                    PublicationId))
+                        .WaitAsync(
+                            TimeSpan.FromSeconds(5)));
             Assert.Contains(
-                "immutable after max-score validation",
+                "cache evidence capture",
                 writerError.Message,
                 StringComparison.OrdinalIgnoreCase);
-        }
 
-        internal void MutateStagingGeneration(
-            string mutation)
-        {
+            var swapError =
+                await Assert.ThrowsAsync<
+                    InvalidOperationException>(
+                    () => Task.Run(() =>
+                            _meta
+                                .SwapCachedResponsesFromStaging(
+                                    PublicationId))
+                        .WaitAsync(
+                            TimeSpan.FromSeconds(5)));
+            Assert.Contains(
+                "cache evidence capture",
+                swapError.Message,
+                StringComparison.OrdinalIgnoreCase);
+
             using var connection =
                 _dataSource.OpenConnection();
-            using var transaction =
-                connection.BeginTransaction();
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.Parameters.AddWithValue(
-                "publicationId",
-                PublicationId);
-            command.CommandText = mutation switch
-            {
-                "mutated" => """
-                    UPDATE api_response_cache_staging
-                    SET json_data =
-                            convert_to(
-                                '{"tampered":true}',
-                                'UTF8'),
-                        etag = 'tampered'
-                    WHERE cache_key = 'firstseen';
-                    UPDATE publication_api_response_cache_staging
-                    SET json_data =
-                            convert_to(
-                                '{"tampered":true}',
-                                'UTF8'),
-                        etag = 'tampered'
-                    WHERE publication_id = @publicationId
-                      AND cache_key = 'firstseen';
-                    """,
-                "deleted" => """
-                    DELETE FROM api_response_cache_staging
-                    WHERE cache_key = 'firstseen';
-                    DELETE FROM publication_api_response_cache_staging
-                    WHERE publication_id = @publicationId
-                      AND cache_key = 'firstseen';
-                    """,
-                "added" => """
-                    INSERT INTO api_response_cache_staging (
-                        cache_key,
-                        json_data,
-                        etag,
-                        cached_at)
-                    VALUES (
-                        'unexpected-cache-key',
-                        convert_to(
-                            '{"unexpected":true}',
-                            'UTF8'),
-                        'unexpected',
-                        now());
-                    INSERT INTO publication_api_response_cache_staging (
-                        publication_id,
-                        cache_key,
-                        json_data,
-                        etag,
-                        cached_at)
-                    VALUES (
-                        @publicationId,
-                        'unexpected-cache-key',
-                        convert_to(
-                            '{"unexpected":true}',
-                            'UTF8'),
-                        'unexpected',
-                        now());
-                    """,
-                _ => throw new ArgumentOutOfRangeException(
-                    nameof(mutation)),
-            };
-            command.ExecuteNonQuery();
-            transaction.Commit();
+            using var directTruncate =
+                connection.CreateCommand();
+            directTruncate.CommandText =
+                "TRUNCATE api_response_cache_staging";
+            var databaseError =
+                Assert.Throws<PostgresException>(
+                    () => directTruncate.ExecuteNonQuery());
+            Assert.Equal(
+                PostgresErrorCodes.ObjectNotInPrerequisiteState,
+                databaseError.SqlState);
         }
 
-        internal void RestoreStagingGeneration(
-            IReadOnlyList<StagingCacheEntry> entries)
+        internal void AssertStagingGenerationEquals(
+            IReadOnlyList<StagingCacheEntry> expected)
         {
-            using var connection =
-                _dataSource.OpenConnection();
-            using var transaction =
-                connection.BeginTransaction();
-            using (var clear = connection.CreateCommand())
+            var actual = ReadStagingGeneration();
+            Assert.Equal(expected.Count, actual.Count);
+            for (var index = 0;
+                 index < expected.Count;
+                 index++)
             {
-                clear.Transaction = transaction;
-                clear.CommandText = """
-                    TRUNCATE api_response_cache_staging;
-                    DELETE FROM publication_api_response_cache_staging
-                    WHERE publication_id = @publicationId;
-                    """;
-                clear.Parameters.AddWithValue(
-                    "publicationId",
-                    PublicationId);
-                clear.ExecuteNonQuery();
+                Assert.Equal(
+                    expected[index].CacheKey,
+                    actual[index].CacheKey);
+                Assert.Equal(
+                    expected[index].ETag,
+                    actual[index].ETag);
+                Assert.True(
+                    expected[index].JsonData
+                        .AsSpan()
+                        .SequenceEqual(
+                            actual[index].JsonData));
             }
-            foreach (var entry in entries)
-            {
-                using var restore = connection.CreateCommand();
-                restore.Transaction = transaction;
-                restore.CommandText = """
-                    INSERT INTO api_response_cache_staging (
-                        cache_key,
-                        json_data,
-                        etag,
-                        cached_at)
-                    VALUES (
-                        @cacheKey,
-                        @jsonData,
-                        @etag,
-                        now());
-                    INSERT INTO publication_api_response_cache_staging (
-                        publication_id,
-                        cache_key,
-                        json_data,
-                        etag,
-                        cached_at)
-                    VALUES (
-                        @publicationId,
-                        @cacheKey,
-                        @jsonData,
-                        @etag,
-                        now());
-                    """;
-                restore.Parameters.AddWithValue(
-                    "publicationId",
-                    PublicationId);
-                restore.Parameters.AddWithValue(
-                    "cacheKey",
-                    entry.CacheKey);
-                restore.Parameters.AddWithValue(
-                    "jsonData",
-                    entry.JsonData);
-                restore.Parameters.AddWithValue(
-                    "etag",
-                    entry.ETag);
-                restore.ExecuteNonQuery();
-            }
-            transaction.Commit();
         }
 
         internal SafetyState ReadSafetyState()
@@ -1271,6 +1262,64 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                         FROM api_response_cache
                         WHERE cache_key =
                             @playerStatsKey
+                    ),
+                    (
+                        SELECT json_data
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @unrelatedPlayerStatsKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM song_stats
+                        WHERE song_id =
+                                @publishedZeroSongId
+                          AND instrument = @instrument
+                          AND entry_count = 0
+                          AND max_score = 60000
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM song_stats
+                        WHERE song_id =
+                                @activeOnlySongId
+                          AND instrument = @instrument
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM account_rankings
+                        WHERE account_id =
+                                'active-only-account'
+                          AND instrument = @instrument
+                    ),
+                    (
+                        SELECT entry_count
+                        FROM song_stats
+                        WHERE song_id =
+                                @publishedOnlySongId
+                          AND instrument =
+                                @publishedOnlyInstrument
+                    ),
+                    (
+                        SELECT COALESCE(
+                            MAX(total_charted_songs),
+                            0)
+                        FROM account_rankings
+                        WHERE instrument = @instrument
+                    ),
+                    ARRAY(
+                        SELECT instrument
+                        FROM player_stats_tiers
+                        WHERE account_id =
+                                @affectedAccount
+                        ORDER BY instrument
+                    ),
+                    ARRAY(
+                        SELECT instrument
+                        FROM player_stats_tiers
+                        WHERE account_id =
+                                @unrelatedAccount
+                        ORDER BY instrument
                     )
                 """;
             command.Parameters.AddWithValue(
@@ -1316,6 +1365,30 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.Parameters.AddWithValue(
                 "playerStatsKey",
                 $"playerstats:{OverlayAccount}");
+            command.Parameters.AddWithValue(
+                "unrelatedPlayerStatsKey",
+                $"playerstats:{UnrelatedTierAccount}");
+            command.Parameters.AddWithValue(
+                "publishedZeroSongId",
+                PublishedZeroSongId);
+            command.Parameters.AddWithValue(
+                "activeOnlySongId",
+                ActiveOnlySongId);
+            command.Parameters.AddWithValue(
+                "publishedOnlySongId",
+                PublishedOnlySongId);
+            command.Parameters.AddWithValue(
+                "publishedOnlyInstrument",
+                PublishedOnlyInstrument);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.Parameters.AddWithValue(
+                "affectedAccount",
+                OverlayAccount);
+            command.Parameters.AddWithValue(
+                "unrelatedAccount",
+                UnrelatedTierAccount);
             using var reader = command.ExecuteReader();
             Assert.True(reader.Read());
 
@@ -1333,6 +1406,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             using var playerStats =
                 JsonDocument.Parse(
                     reader.GetFieldValue<byte[]>(7));
+            using var unrelatedPlayerStats =
+                JsonDocument.Parse(
+                    reader.GetFieldValue<byte[]>(8));
             var instrumentRows = playerStats.RootElement
                 .GetProperty("instruments")
                 .EnumerateArray()
@@ -1353,6 +1429,18 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 .GetProperty("tiers")[0]
                 .GetProperty("cp")
                 .GetDouble();
+            static string[] ReadCacheInstruments(
+                JsonDocument document)
+                => document.RootElement
+                    .GetProperty("instruments")
+                    .EnumerateArray()
+                    .Select(row =>
+                        row.GetProperty("ins")
+                            .GetString()!)
+                    .OrderBy(
+                        instrument => instrument,
+                        StringComparer.Ordinal)
+                    .ToArray();
             return new ScopeDivergenceState(
                 reader.GetBoolean(0),
                 reader.GetBoolean(1),
@@ -1361,6 +1449,16 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 reader.GetBoolean(4),
                 reader.GetBoolean(5),
                 publishedOnlyInstruments,
+                reader.GetBoolean(9),
+                reader.GetBoolean(10),
+                reader.GetBoolean(11),
+                reader.GetInt32(12),
+                reader.GetInt32(13),
+                ReadCacheInstruments(playerStats),
+                reader.GetFieldValue<string[]>(14),
+                reader.GetFieldValue<string[]>(15),
+                ReadCacheInstruments(
+                    unrelatedPlayerStats),
                 playerStats.RootElement
                     .GetProperty("totalSongs")
                     .GetInt32(),
@@ -2071,6 +2169,21 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     path_generation_revision,
                     path_generation_pending)
                 VALUES (
+                    @publishedZeroSongId,
+                    'Published Zero Song',
+                    '2026-07-20T00:00:00Z',
+                    60000,
+                    0,
+                    FALSE);
+
+                INSERT INTO songs (
+                    song_id,
+                    title,
+                    last_modified,
+                    max_lead_score,
+                    path_generation_revision,
+                    path_generation_pending)
+                VALUES (
                     @activeOnlySongId,
                     'Active Only Song',
                     '2026-08-10T00:00:00Z',
@@ -2129,22 +2242,41 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     is_complete,
                     created_at,
                     validated_at)
-                VALUES (
-                    @publishedScrapeId,
-                    @publishedOnlySongId,
-                    @publishedOnlyInstrument,
-                    'alltime',
-                    'snapshot',
-                    @publishedScrapeId,
-                    @publishedScrapeId,
-                    1,
-                    md5('published-only-source'),
-                    md5('published-only-coverage'),
-                    50,
-                    1,
-                    TRUE,
-                    now() - interval '1 hour',
-                    now() - interval '1 hour');
+                VALUES
+                    (
+                        @publishedScrapeId,
+                        @publishedOnlySongId,
+                        @publishedOnlyInstrument,
+                        'alltime',
+                        'snapshot',
+                        @publishedScrapeId,
+                        @publishedScrapeId,
+                        1,
+                        md5('published-only-source'),
+                        md5('published-only-coverage'),
+                        50,
+                        1,
+                        TRUE,
+                        now() - interval '1 hour',
+                        now() - interval '1 hour'
+                    ),
+                    (
+                        @publishedScrapeId,
+                        @publishedZeroSongId,
+                        @instrument,
+                        'alltime',
+                        'empty',
+                        NULL,
+                        @publishedScrapeId,
+                        0,
+                        md5('published-zero-source'),
+                        md5('published-zero-coverage'),
+                        0,
+                        0,
+                        TRUE,
+                        now() - interval '1 hour',
+                        now() - interval '1 hour'
+                    );
 
                 INSERT INTO leaderboard_entries (
                     song_id,
@@ -2187,14 +2319,103 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     log_weight,
                     max_score,
                     computed_at)
+                VALUES
+                    (
+                        @activeOnlySongId,
+                        @instrument,
+                        1,
+                        1,
+                        0,
+                        80000,
+                        now()
+                    ),
+                    (
+                        @publishedOnlySongId,
+                        @publishedOnlyInstrument,
+                        50,
+                        49,
+                        log(2, 50),
+                        70000,
+                        now() - interval '1 day'
+                    );
+
+                INSERT INTO account_rankings (
+                    account_id,
+                    instrument,
+                    songs_played,
+                    total_charted_songs,
+                    coverage,
+                    raw_skill_rating,
+                    adjusted_skill_rating,
+                    adjusted_skill_rank,
+                    weighted_rating,
+                    weighted_rank,
+                    fc_rate,
+                    fc_rate_rank,
+                    total_score,
+                    total_score_rank,
+                    max_score_percent,
+                    max_score_percent_rank,
+                    avg_accuracy,
+                    full_combo_count,
+                    avg_stars,
+                    best_rank,
+                    avg_rank,
+                    computed_at)
                 VALUES (
-                    @activeOnlySongId,
+                    'active-only-account',
                     @instrument,
                     1,
                     1,
-                    0,
-                    80000,
+                    1,
+                    0.01,
+                    0.01,
+                    1,
+                    0.01,
+                    1,
+                    1,
+                    1,
+                    75000,
+                    1,
+                    0.9375,
+                    1,
+                    950000,
+                    1,
+                    5,
+                    1,
+                    1,
                     now());
+
+                INSERT INTO player_stats_tiers (
+                    account_id,
+                    instrument,
+                    tiers_json,
+                    updated_at)
+                VALUES
+                    (
+                        @overlayAccount,
+                        'Solo_Drums',
+                        '[]'::JSONB,
+                        now() - interval '1 day'
+                    ),
+                    (
+                        @unrelatedTierAccount,
+                        'Overall',
+                        '[]'::JSONB,
+                        now() - interval '1 day'
+                    ),
+                    (
+                        @unrelatedTierAccount,
+                        @publishedOnlyInstrument,
+                        '[]'::JSONB,
+                        now() - interval '1 day'
+                    ),
+                    (
+                        @unrelatedTierAccount,
+                        'Solo_Drums',
+                        '[]'::JSONB,
+                        now() - interval '1 day'
+                    );
 
                 INSERT INTO leaderboard_population (
                     song_id,
@@ -2217,11 +2438,20 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 "publishedOnlyInstrument",
                 PublishedOnlyInstrument);
             command.Parameters.AddWithValue(
+                "publishedZeroSongId",
+                PublishedZeroSongId);
+            command.Parameters.AddWithValue(
                 "activeOnlySongId",
                 ActiveOnlySongId);
             command.Parameters.AddWithValue(
                 "instrument",
                 Instrument);
+            command.Parameters.AddWithValue(
+                "overlayAccount",
+                OverlayAccount);
+            command.Parameters.AddWithValue(
+                "unrelatedTierAccount",
+                UnrelatedTierAccount);
             command.ExecuteNonQuery();
         }
 
@@ -2390,6 +2620,15 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         bool ActiveOnlyLeewayKeyPresent,
         bool ActiveOnlyOffsetKeyPresent,
         IReadOnlyList<string> PublishedOnlyInstruments,
+        bool ZeroEntryPublishedStatsPresent,
+        bool ActiveOnlyStatsPresent,
+        bool ActiveOnlyRankingPresent,
+        int UnaffectedBassEntryCount,
+        int GuitarRankingSongCount,
+        IReadOnlyList<string> AffectedAccountCacheInstruments,
+        IReadOnlyList<string> AffectedAccountDatabaseInstruments,
+        IReadOnlyList<string> UnrelatedAccountDatabaseInstruments,
+        IReadOnlyList<string> UnrelatedAccountCacheInstruments,
         int TotalSongs,
         double GuitarCompletionPercent,
         double OverallCompletionPercent);
