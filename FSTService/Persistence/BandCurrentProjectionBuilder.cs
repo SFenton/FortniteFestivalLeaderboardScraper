@@ -393,6 +393,173 @@ public sealed class BandCurrentProjectionBuilder
             orderedResults);
     }
 
+    internal async Task<BandCurrentProjectionIncrementalRefreshResult>
+        RefreshScopesForMaxScoreMaintenanceAsync(
+            IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+            IMaxScoreMaintenanceLease maintenanceLease,
+            BandCurrentProjectionRebuildOptions? options = null,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        options ??= new BandCurrentProjectionRebuildOptions();
+        var normalizedScopes = scopes
+            .Select(NormalizeScope)
+            .Distinct()
+            .OrderBy(static scope => scope.BandType,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.RankingScope,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.ScopeComboId,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.SongId,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedScopes.Length == 0)
+        {
+            return new BandCurrentProjectionIncrementalRefreshResult(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                BandCurrentProjectionPublishResult.NotPublished(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0),
+                0,
+                []);
+        }
+
+        var sw = Stopwatch.StartNew();
+        var scopesToRefresh = options.SkipUnchangedScopes
+            ? await FilterScopesNeedingRefreshAsync(
+                normalizedScopes,
+                ct)
+            : normalizedScopes;
+        if (scopesToRefresh.Length == 0)
+        {
+            return new BandCurrentProjectionIncrementalRefreshResult(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                BandCurrentProjectionPublishResult.NotPublished(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0),
+                Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+                []);
+        }
+
+        var generation =
+            await maintenanceLease.ExecuteTransactionAsync(
+                "derived-band-projection-generation",
+                requireSourceLocks: true,
+                async (connection, transaction, token) =>
+                {
+                    await using var command =
+                        connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText =
+                        $"SELECT nextval('{GenerationSequence}'::regclass)";
+                    return Convert.ToInt64(
+                        await command.ExecuteScalarAsync(token));
+                },
+                ct: ct);
+
+        var results =
+            new List<BandCurrentProjectionScopeResult>(
+                scopesToRefresh.Length);
+        foreach (var scope in scopesToRefresh)
+        {
+            ct.ThrowIfCancellationRequested();
+            var scopeSw = Stopwatch.StartNew();
+            var result =
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-band-projection-scope:{scope.BandType}:{scope.RankingScope}:{scope.ScopeComboId}:{scope.SongId}",
+                    requireSourceLocks: true,
+                    (connection, transaction, token) =>
+                        RebuildScopeInTransactionAsync(
+                            scope,
+                            options,
+                            generation,
+                            connection,
+                            transaction,
+                            token),
+                    ct: ct);
+            scopeSw.Stop();
+            results.Add(result with
+            {
+                ElapsedMs = Math.Round(
+                    scopeSw.Elapsed.TotalMilliseconds,
+                    3),
+            });
+        }
+
+        var publishResult = options.PublishOnSuccess
+            ? await maintenanceLease.ExecuteTransactionAsync(
+                "derived-band-projection-publish",
+                requireSourceLocks: true,
+                (connection, transaction, token) =>
+                    TryPublishGenerationInTransactionAsync(
+                        generation,
+                        scopesToRefresh,
+                        connection,
+                        transaction,
+                        fullRebuiltAt: null,
+                        token),
+                ct: ct)
+            : BandCurrentProjectionPublishResult.NotPublished(
+                generation,
+                scopesToRefresh.Length,
+                0,
+                scopesToRefresh.Length,
+                0,
+                0);
+
+        var affectedBandTypes = GetAffectedBandTypes(
+            options,
+            scopesToRefresh,
+            includeAllWhenUnfiltered: false);
+        var candidateRowsDeleted = options.PublishOnSuccess
+            ? await maintenanceLease.ExecuteTransactionAsync(
+                "derived-band-projection-cleanup",
+                requireSourceLocks: true,
+                (connection, transaction, token) =>
+                    DeleteUnpublishedCandidateRowsInTransactionAsync(
+                        options,
+                        affectedBandTypes,
+                        connection,
+                        transaction,
+                        token),
+                ct: ct)
+            : 0;
+
+        sw.Stop();
+        return new BandCurrentProjectionIncrementalRefreshResult(
+            scopesToRefresh.Length,
+            results.Count,
+            0,
+            results.Sum(static result => result.InsertedRows),
+            results.Sum(static result => result.DeletedRows)
+                + publishResult.DeletedRows
+                + candidateRowsDeleted,
+            candidateRowsDeleted,
+            publishResult,
+            Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+            results);
+    }
+
     private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
@@ -504,51 +671,13 @@ public sealed class BandCurrentProjectionBuilder
         {
             await using var conn = await _dataSource.OpenConnectionAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-
-            if (options.DisableSynchronousCommit)
-            {
-                await using var syncCmd = conn.CreateCommand();
-                syncCmd.Transaction = tx;
-                syncCmd.CommandText = "SET LOCAL synchronous_commit = off";
-                await syncCmd.ExecuteNonQueryAsync(ct);
-            }
-
-            await using var deleteCmd = conn.CreateCommand();
-            deleteCmd.Transaction = tx;
-            ApplyCommandOptions(deleteCmd, options);
-            deleteCmd.CommandText = $"""
-                                DELETE FROM {ProjectionTable}
-                                WHERE song_id = @songId
-                                    AND band_type = @bandType
-                                    AND ranking_scope = @rankingScope
-                                    AND scope_combo_id = @scopeComboId
-                                    AND projection_generation = @generation
-                                """;
-            AddScopeParameters(deleteCmd, scope);
-            deleteCmd.Parameters.AddWithValue("generation", generation);
-            var deletedRows = await deleteCmd.ExecuteNonQueryAsync(ct);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            ApplyCommandOptions(cmd, options);
-            cmd.CommandText = RebuildScopeSql;
-            AddScopeParameters(cmd, scope);
-            cmd.Parameters.AddWithValue("expectedMembers", BandInstrumentMapping.ExpectedMemberCount(scope.BandType));
-            cmd.Parameters.AddWithValue("generation", generation);
-            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-
-            long insertedRows = 0;
-            bool sourceScopeExists = false;
-
-            await using (var reader = await cmd.ExecuteReaderAsync(ct))
-            {
-                if (await reader.ReadAsync(ct))
-                {
-                    insertedRows = reader.GetInt64(0);
-                    sourceScopeExists = reader.GetBoolean(1);
-                }
-            }
-
+            var result = await RebuildScopeInTransactionAsync(
+                scope,
+                options,
+                generation,
+                conn,
+                tx,
+                ct);
             await tx.CommitAsync(ct);
 
             if (updateGlobalState)
@@ -560,16 +689,11 @@ public sealed class BandCurrentProjectionBuilder
             }
 
             sw.Stop();
-            return new BandCurrentProjectionScopeResult(
-                scope.SongId,
-                scope.BandType,
-                scope.RankingScope,
-                scope.ScopeComboId,
-                generation,
-                insertedRows,
-                deletedRows,
-                sourceScopeExists,
-                Math.Round(sw.Elapsed.TotalMilliseconds, 3));
+            return result with
+            {
+                ElapsedMs =
+                    Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+            };
         }
         catch (Exception ex)
         {
@@ -577,6 +701,76 @@ public sealed class BandCurrentProjectionBuilder
             _log.LogError(ex, "Failed to rebuild band current projection scope {SongId}/{BandType}/{RankingScope}/{ScopeComboId}", scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId);
             throw;
         }
+    }
+
+    private static async Task<BandCurrentProjectionScopeResult>
+        RebuildScopeInTransactionAsync(
+            BandCurrentProjectionScopeKey scope,
+            BandCurrentProjectionRebuildOptions options,
+            long generation,
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            CancellationToken ct)
+    {
+        if (options.DisableSynchronousCommit)
+        {
+            await using var syncCmd = conn.CreateCommand();
+            syncCmd.Transaction = tx;
+            syncCmd.CommandText =
+                "SET LOCAL synchronous_commit = off";
+            await syncCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var deleteCmd = conn.CreateCommand();
+        deleteCmd.Transaction = tx;
+        ApplyCommandOptions(deleteCmd, options);
+        deleteCmd.CommandText = $"""
+            DELETE FROM {ProjectionTable}
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+              AND projection_generation = @generation
+            """;
+        AddScopeParameters(deleteCmd, scope);
+        deleteCmd.Parameters.AddWithValue("generation", generation);
+        var deletedRows =
+            await deleteCmd.ExecuteNonQueryAsync(ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        ApplyCommandOptions(cmd, options);
+        cmd.CommandText = RebuildScopeSql;
+        AddScopeParameters(cmd, scope);
+        cmd.Parameters.AddWithValue(
+            "expectedMembers",
+            BandInstrumentMapping.ExpectedMemberCount(
+                scope.BandType));
+        cmd.Parameters.AddWithValue("generation", generation);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+
+        long insertedRows = 0;
+        var sourceScopeExists = false;
+        await using (var reader =
+                     await cmd.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+            {
+                insertedRows = reader.GetInt64(0);
+                sourceScopeExists = reader.GetBoolean(1);
+            }
+        }
+
+        return new BandCurrentProjectionScopeResult(
+            scope.SongId,
+            scope.BandType,
+            scope.RankingScope,
+            scope.ScopeComboId,
+            generation,
+            insertedRows,
+            deletedRows,
+            sourceScopeExists,
+            ElapsedMs: 0);
     }
 
     private async Task<long> NextGenerationAsync(CancellationToken ct)
@@ -946,6 +1140,364 @@ public sealed class BandCurrentProjectionBuilder
             publishedScopes,
             publishedRows,
             deletedRows);
+    }
+
+    private async Task<BandCurrentProjectionPublishResult>
+        TryPublishGenerationInTransactionAsync(
+            long generation,
+            IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            DateTime? fullRebuiltAt,
+            CancellationToken ct)
+    {
+        var normalizedScopes = scopes
+            .Select(NormalizeScope)
+            .Distinct()
+            .OrderBy(static scope => scope.BandType,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.RankingScope,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.ScopeComboId,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static scope => scope.SongId,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedScopes.Length == 0)
+        {
+            return new BandCurrentProjectionPublishResult(
+                generation,
+                true,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0);
+        }
+
+        await using (var create = conn.CreateCommand())
+        {
+            create.Transaction = tx;
+            create.CommandText = """
+                CREATE TEMP TABLE _band_current_publish_scopes (
+                    song_id TEXT NOT NULL,
+                    band_type TEXT NOT NULL,
+                    ranking_scope TEXT NOT NULL,
+                    scope_combo_id TEXT NOT NULL,
+                    PRIMARY KEY (
+                        song_id,
+                        band_type,
+                        ranking_scope,
+                        scope_combo_id)
+                ) ON COMMIT DROP
+                """;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var writer =
+                     await conn.BeginBinaryImportAsync(
+                         "COPY _band_current_publish_scopes (song_id, band_type, ranking_scope, scope_combo_id) FROM STDIN (FORMAT BINARY)",
+                         ct))
+        {
+            foreach (var scope in normalizedScopes)
+            {
+                await writer.StartRowAsync(ct);
+                await writer.WriteAsync(
+                    scope.SongId,
+                    NpgsqlTypes.NpgsqlDbType.Text,
+                    ct);
+                await writer.WriteAsync(
+                    scope.BandType,
+                    NpgsqlTypes.NpgsqlDbType.Text,
+                    ct);
+                await writer.WriteAsync(
+                    scope.RankingScope,
+                    NpgsqlTypes.NpgsqlDbType.Text,
+                    ct);
+                await writer.WriteAsync(
+                    scope.ScopeComboId,
+                    NpgsqlTypes.NpgsqlDbType.Text,
+                    ct);
+            }
+            await writer.CompleteAsync(ct);
+        }
+
+        long readyScopes;
+        long failedScopes;
+        long missingScopes;
+        await using (var guard = conn.CreateCommand())
+        {
+            guard.Transaction = tx;
+            guard.CommandText = $"""
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE scope.status = 'ready'
+                          AND scope.projection_generation =
+                              @generation
+                          AND NOT (
+                              scope.row_count = 0
+                              AND scope.published_generation IS NULL
+                          )
+                    )::BIGINT,
+                    COUNT(*) FILTER (
+                        WHERE scope.status = 'failed'
+                          AND scope.projection_generation =
+                              @generation
+                    )::BIGINT,
+                    COUNT(*) FILTER (
+                        WHERE scope.song_id IS NULL
+                           OR scope.projection_generation
+                              IS DISTINCT FROM @generation
+                           OR scope.status NOT IN ('ready', 'failed')
+                           OR (
+                               scope.status = 'ready'
+                               AND scope.row_count = 0
+                               AND scope.published_generation IS NULL
+                           )
+                    )::BIGINT
+                FROM _band_current_publish_scopes requested
+                LEFT JOIN {ScopeTable} scope
+                  ON scope.song_id = requested.song_id
+                 AND scope.band_type = requested.band_type
+                 AND scope.ranking_scope =
+                     requested.ranking_scope
+                 AND scope.scope_combo_id =
+                     requested.scope_combo_id
+                """;
+            guard.Parameters.AddWithValue(
+                "generation",
+                generation);
+            await using var reader =
+                await guard.ExecuteReaderAsync(ct);
+            await reader.ReadAsync(ct);
+            readyScopes = reader.GetInt64(0);
+            failedScopes = reader.GetInt64(1);
+            missingScopes = reader.GetInt64(2);
+        }
+
+        if (readyScopes == 0)
+        {
+            return new BandCurrentProjectionPublishResult(
+                generation,
+                false,
+                normalizedScopes.Length,
+                readyScopes,
+                failedScopes,
+                missingScopes,
+                0,
+                0,
+                0);
+        }
+
+        long publishedScopes;
+        long publishedRows;
+        long deletedRows;
+        await using (var publish = conn.CreateCommand())
+        {
+            publish.Transaction = tx;
+            publish.CommandTimeout = 0;
+            publish.CommandText = $"""
+                WITH Published AS (
+                    UPDATE {ScopeTable} scope
+                    SET published_generation =
+                            scope.projection_generation,
+                        published_row_count = scope.row_count,
+                        updated_at = @now
+                    FROM _band_current_publish_scopes requested
+                    WHERE scope.song_id = requested.song_id
+                      AND scope.band_type = requested.band_type
+                      AND scope.ranking_scope =
+                          requested.ranking_scope
+                      AND scope.scope_combo_id =
+                          requested.scope_combo_id
+                      AND scope.projection_generation =
+                          @generation
+                      AND scope.status = 'ready'
+                      AND NOT (
+                          scope.row_count = 0
+                          AND scope.published_generation IS NULL
+                      )
+                    RETURNING
+                        scope.song_id,
+                        scope.band_type,
+                        scope.ranking_scope,
+                        scope.scope_combo_id,
+                        scope.published_row_count
+                ),
+                DeletedRows AS (
+                    DELETE FROM {ProjectionTable} projection
+                    USING Published published
+                    WHERE projection.song_id =
+                              published.song_id
+                      AND projection.band_type =
+                              published.band_type
+                      AND projection.ranking_scope =
+                              published.ranking_scope
+                      AND projection.scope_combo_id =
+                              published.scope_combo_id
+                      AND projection.projection_generation
+                              <> @generation
+                    RETURNING 1
+                )
+                SELECT
+                    COUNT(*)::BIGINT,
+                    COALESCE(
+                        SUM(published_row_count),
+                        0)::BIGINT,
+                    (
+                        SELECT COUNT(*)::BIGINT
+                        FROM DeletedRows
+                    )
+                FROM Published
+                """;
+            publish.Parameters.AddWithValue(
+                "generation",
+                generation);
+            publish.Parameters.AddWithValue(
+                "now",
+                DateTime.UtcNow);
+            await using var reader =
+                await publish.ExecuteReaderAsync(ct);
+            await reader.ReadAsync(ct);
+            publishedScopes = reader.GetInt64(0);
+            publishedRows = reader.GetInt64(1);
+            deletedRows = reader.GetInt64(2);
+        }
+
+        if (publishedScopes != readyScopes)
+        {
+            throw new InvalidOperationException(
+                $"Band projection generation {generation} published {publishedScopes:N0}/{readyScopes:N0} ready scopes.");
+        }
+
+        var effectiveFullRebuiltAt =
+            failedScopes == 0
+            && missingScopes == 0
+            && publishedScopes == normalizedScopes.Length
+                ? fullRebuiltAt
+                : null;
+        await RefreshGlobalStateFromScopesAsync(
+            conn,
+            tx,
+            effectiveFullRebuiltAt,
+            ct);
+        return new BandCurrentProjectionPublishResult(
+            generation,
+            publishedScopes > 0,
+            normalizedScopes.Length,
+            readyScopes,
+            failedScopes,
+            missingScopes,
+            publishedScopes,
+            publishedRows,
+            deletedRows);
+    }
+
+    private async Task<long>
+        DeleteUnpublishedCandidateRowsInTransactionAsync(
+            BandCurrentProjectionRebuildOptions options,
+            IReadOnlyCollection<string> affectedBandTypes,
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            CancellationToken ct)
+    {
+        if (affectedBandTypes.Count == 0
+            || options.CandidateCleanupBatchSize <= 0)
+        {
+            return 0;
+        }
+
+        long totalDeleted = 0;
+        var batches = 0;
+        while (true)
+        {
+            if (options.CandidateCleanupMaxBatches > 0
+                && batches >= options.CandidateCleanupMaxBatches)
+            {
+                break;
+            }
+
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            ApplyCommandOptions(cmd, options);
+            cmd.CommandText = $"""
+                WITH candidates AS (
+                    SELECT
+                        projection.song_id,
+                        projection.band_type,
+                        projection.ranking_scope,
+                        projection.scope_combo_id,
+                        projection.projection_generation,
+                        projection.team_key
+                    FROM {ProjectionTable} projection
+                    WHERE projection.band_type =
+                              ANY(@affectedBandTypes)
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM {ScopeTable} scope
+                          WHERE scope.song_id =
+                                    projection.song_id
+                            AND scope.band_type =
+                                    projection.band_type
+                            AND scope.ranking_scope =
+                                    projection.ranking_scope
+                            AND scope.scope_combo_id =
+                                    projection.scope_combo_id
+                            AND scope.published_generation =
+                                    projection.projection_generation
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM {ScopeTable} scope
+                          WHERE scope.song_id =
+                                    projection.song_id
+                            AND scope.band_type =
+                                    projection.band_type
+                            AND scope.ranking_scope =
+                                    projection.ranking_scope
+                            AND scope.scope_combo_id =
+                                    projection.scope_combo_id
+                            AND scope.projection_generation =
+                                    projection.projection_generation
+                            AND scope.status = 'ready'
+                      )
+                    LIMIT @batchSize
+                ),
+                deleted AS (
+                    DELETE FROM {ProjectionTable} projection
+                    USING candidates
+                    WHERE projection.song_id =
+                              candidates.song_id
+                      AND projection.band_type =
+                              candidates.band_type
+                      AND projection.ranking_scope =
+                              candidates.ranking_scope
+                      AND projection.scope_combo_id =
+                              candidates.scope_combo_id
+                      AND projection.projection_generation =
+                              candidates.projection_generation
+                      AND projection.team_key =
+                              candidates.team_key
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM deleted
+                """;
+            cmd.Parameters.AddWithValue(
+                "affectedBandTypes",
+                affectedBandTypes.ToArray());
+            cmd.Parameters.AddWithValue(
+                "batchSize",
+                options.CandidateCleanupBatchSize);
+            var deletedRows = Convert.ToInt64(
+                await cmd.ExecuteScalarAsync(ct));
+            totalDeleted += deletedRows;
+            batches++;
+            if (deletedRows < options.CandidateCleanupBatchSize)
+                break;
+        }
+        return totalDeleted;
     }
 
     private async Task RefreshGlobalStateFromScopesAsync(DateTime? fullRebuiltAt, CancellationToken ct)

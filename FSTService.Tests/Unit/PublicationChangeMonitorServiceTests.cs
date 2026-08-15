@@ -108,8 +108,13 @@ public sealed class PublicationChangeMonitorServiceTests
                     true,
                     DateTime.UtcNow,
                     1277,
-                    "path-repair-ranking-rebuild")
+                    PublicReadFreezeState
+                        .MaxScoreMaintenanceReasonPrefix
+                    + new string('a', 64))
                 : PublicReadFreezeState.NotFrozen);
+        var pathStore = Substitute.For<IPathDataStore>();
+        var instrumentSupportCache =
+            Substitute.For<ISongInstrumentSupportCache>();
         var notifications = new NotificationService(
             NullLogger<NotificationService>.Instance);
         var socket = Substitute.For<WebSocket>();
@@ -136,7 +141,9 @@ public sealed class PublicationChangeMonitorServiceTests
             notifications,
             new SongsCacheService(),
             caches,
-            NullLogger<PublicationChangeMonitorService>.Instance);
+            NullLogger<PublicationChangeMonitorService>.Instance,
+            pathStore,
+            instrumentSupportCache);
 
         try
         {
@@ -158,6 +165,9 @@ public sealed class PublicationChangeMonitorServiceTests
                 WebSocketCloseStatus.PolicyViolation,
                 "Publication changed",
                 Arg.Any<CancellationToken>());
+            pathStore.Received().InvalidateCachedState();
+            instrumentSupportCache.Received()
+                .InvalidateSongInstrumentSupport();
         }
         finally
         {
@@ -208,7 +218,9 @@ public sealed class PublicationChangeMonitorServiceTests
         NotificationService notifications,
         SongsCacheService songsCache,
         ResponseCacheService[] caches,
-        ILogger<PublicationChangeMonitorService> logger)
+        ILogger<PublicationChangeMonitorService> logger,
+        IPathDataStore? pathStore = null,
+        ISongInstrumentSupportCache? instrumentSupportCache = null)
     {
         var startup = new StartupInitializer(
             null!,
@@ -248,7 +260,9 @@ public sealed class PublicationChangeMonitorServiceTests
             notifications,
             lifecycle,
             songsCache,
-            logger);
+            logger,
+            pathStore,
+            instrumentSupportCache);
     }
 
     private static ResponseCacheService[] CreateCaches() =>

@@ -87,6 +87,64 @@ public sealed class LeaderboardRivalsCalculator
         };
     }
 
+    internal async Task<LeaderboardRivalsResult>
+        ComputeForUserForMaxScoreMaintenanceAsync(
+            string userId,
+            IMaxScoreMaintenanceLease maintenanceLease,
+            bool rankingsAuthoritative,
+            CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var totalRivals = 0;
+        var totalSamples = 0;
+
+        foreach (var instrument in instrumentKeys)
+        {
+            ct.ThrowIfCancellationRequested();
+            var instrumentResult =
+                ComputeInstrument(userId, instrument, RankMethods);
+            if (instrumentResult.UserFound
+                || !instrumentResult.HasUserScores
+                || rankingsAuthoritative)
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-leaderboard-rivals:{userId}:{instrument}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        _meta.ReplaceLeaderboardRivalsData(
+                            userId,
+                            instrument,
+                            instrumentResult.Rivals,
+                            instrumentResult.Samples,
+                            instrumentResult.CompletedRankMethods,
+                            instrumentResult.UserRanks,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    },
+                    ct: ct);
+                totalRivals += instrumentResult.Rivals.Count;
+                totalSamples += instrumentResult.Samples.Count;
+            }
+            else
+            {
+                _log.LogWarning(
+                    "Preserving leaderboard rivals for {User}/{Instrument}: scores exist but AccountRankings has no user row.",
+                    userId,
+                    instrument);
+            }
+        }
+
+        return new LeaderboardRivalsResult
+        {
+            RivalCount = totalRivals,
+            SampleCount = totalSamples,
+        };
+    }
+
     private LeaderboardInstrumentRivalsResult ComputeInstrument(
         string userId,
         string instrument,

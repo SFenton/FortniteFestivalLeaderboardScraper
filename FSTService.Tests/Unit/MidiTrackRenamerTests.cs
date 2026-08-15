@@ -127,7 +127,8 @@ public sealed class MidiTrackRenamerTests
             plasticTrackName);
         var variants = MidiTrackRenamer.ProduceVariants(midi);
 
-        var trackNames = ExtractTrackNames(variants.PlasticDrumsMidi);
+        var trackNames = ExtractTrackNames(
+            variants.PlasticDrumsMidi);
         Assert.Contains("PART DRUMS_FNF", trackNames);
         Assert.Contains("PART DRUMS", trackNames);
         Assert.DoesNotContain(plasticTrackName, trackNames);

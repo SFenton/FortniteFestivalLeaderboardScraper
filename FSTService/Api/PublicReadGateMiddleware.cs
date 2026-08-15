@@ -28,9 +28,27 @@ public sealed class PublicReadGateMiddleware
                 context.Response.Headers["X-FST-Public-Read-Freeze-Reason"] = state.Reason;
         }
 
+        if (state.MaxScoreMaintenance
+            && ChangesRegistrationState(context.Request))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["Retry-After"] = "30";
+            await Results.Problem(
+                title: "Registration temporarily unavailable",
+                detail: "Player and band registration changes are paused while max-score maintenance owns the current publication.",
+                statusCode: StatusCodes.Status503ServiceUnavailable)
+                .ExecuteAsync(context);
+            return;
+        }
+
         if (gate.RequiresCachedReads
             && publicationBound
-            && RequiresPublishedData(context.Request)
+            && (RequiresPublishedData(context.Request)
+                || state.MaxScoreMaintenance
+                && RequiresMaxScoreMaintenanceData(context.Request))
+            && !(state.MaxScoreMaintenance
+                 && EndpointHandlesMaxScoreMaintenanceRead(
+                     context.Request))
             && !FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
                 context,
                 gate))
@@ -39,7 +57,7 @@ public sealed class PublicReadGateMiddleware
             context.Response.Headers["Retry-After"] = "30";
             await Results.Problem(
                 title: "Published data unavailable",
-                detail: "A failed candidate changed unversioned derived data. This route is held until a stable published response is available.",
+                detail: "Published data is under a fail-closed maintenance or recovery gate. This route is held until a stable published response is available.",
                 statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
             return;
         }
@@ -83,6 +101,77 @@ public sealed class PublicReadGateMiddleware
             || path.StartsWith("/api/status", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/leaderboard-population", StringComparison.OrdinalIgnoreCase);
     }
+
+    internal static bool RequiresMaxScoreMaintenanceData(
+        HttpRequest request)
+    {
+        var path = request.Path.Value;
+        return !string.IsNullOrEmpty(path)
+            && (path.Equals(
+                    "/api/songs",
+                    StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(
+                    "/api/paths/",
+                    StringComparison.OrdinalIgnoreCase)
+                || IsPublishedSoloLeaderboardPath(path));
+    }
+
+    internal static bool ChangesRegistrationState(
+        HttpRequest request)
+    {
+        var path = request.Path.Value;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var segments = path.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        return (HttpMethods.IsPost(request.Method)
+                && segments.Length == 4
+                && string.Equals(
+                    segments[0],
+                    "api",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[1],
+                    "player",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[3],
+                    "track",
+                    StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsGet(request.Method)
+                && segments.Length == 5
+                && string.Equals(
+                    segments[0],
+                    "api",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[1],
+                    "bands",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[4],
+                    "sync-status",
+                    StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsPost(request.Method)
+                && segments.Length == 3
+                && string.Equals(
+                    segments[0],
+                    "api",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[1],
+                    "backfill",
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool EndpointHandlesMaxScoreMaintenanceRead(
+        HttpRequest request)
+        => string.Equals(
+            request.Path.Value,
+            "/api/songs",
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPublishedSoloLeaderboardPath(string path)
     {

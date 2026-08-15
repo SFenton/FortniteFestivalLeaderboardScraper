@@ -1,14 +1,20 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: eb593898
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/SelectedProfileActivityMiddleware.cs
+  - FSTService/Api/PublicationChangeMonitorService.cs
+  - FSTService/Api/AdminEndpoints.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
   - Hosting modes, middleware, endpoints, auth, rate limits, cache behavior, or publication contracts change.
@@ -84,6 +90,35 @@ scrape lifecycle. Publication-bound routes declare the generation surfaces they
 require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
+
+A digest-owned max-score maintenance freeze requires published cache hits or
+`503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
+forms are included even though they are normally live endpoint code. A warm
+`SongsCacheService` response may serve the prior publication; cold path reads
+and cold exact solo leaderboard reads, including leeway requests, return
+`503`. Outer-cache exact leaderboard hits remain available.
+
+While the exclusive maintenance gate or its freeze is active, the public-read
+gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the
+registration-changing band sync-status route. The manual endpoint holds the
+shared advisory gate through all-time backfill and optional history
+reconstruction; player tracking, band sync, and selected-profile activity use
+the same gate around their registration writes. HTTP admission uses a
+pool-capacity-bounded, nonblocking shared try-lock on an isolated unpooled
+session, so requests return consistent `503` with `Retry-After: 30` rather
+than consuming or queueing behind the normal PostgreSQL pool. Background
+workers retain cancellable waiting admission on isolated sessions.
+
+Each holder verifies its live backend/session token before guarded writes, and
+database triggers fence registration plus leaderboard/score-history writes
+against the durable exclusive owner. Selected-profile activity
+tracking performs no player touch or band/member registration, including when
+the outer response cache handles the request. When the same publication is
+released, every API process invalidates response caches, the path-maxima cache,
+and `SongsCacheService`, then broadcasts a forced publication refresh so
+browsers do not retain the pre-maintenance maxima. Before any later
+registration lookup, gate acquisition also refreshes only path/instrument
+support synchronously; it does not broadly invalidate API caches.
 
 ## Operational progress
 

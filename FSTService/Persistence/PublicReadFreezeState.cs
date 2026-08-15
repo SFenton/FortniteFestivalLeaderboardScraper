@@ -11,6 +11,8 @@ public sealed record PublicReadFreezeState(
         "publication-isolation-pending";
     public const string PublicationCommitDeferredReason =
         "publication-commit-deferred";
+    public const string MaxScoreMaintenanceReasonPrefix =
+        "max-score-maintenance:v1:";
 
     public static PublicReadFreezeState NotFrozen { get; } = new(false, null, null, null);
 
@@ -35,9 +37,22 @@ public sealed record PublicReadFreezeState(
             PublicationCommitDeferredReason,
             StringComparison.Ordinal);
 
+    public bool MaxScoreMaintenance =>
+        IsFrozen
+        && Reason?.StartsWith(
+            MaxScoreMaintenanceReasonPrefix,
+            StringComparison.Ordinal) == true;
+
+    public bool RequiresCachedReads =>
+        PublicationFailureIsolationPending
+        || PublicationCommitDeferred
+        || PublicationCommitPending
+        || MaxScoreMaintenance;
+
     // Retain cache/client refresh compatibility for already-recorded maintenance freezes.
     public bool RequiresSamePublicationRefreshOnRelease =>
         IsFrozen &&
-        Reason is "path-repair-ranking-rebuild"
-            or "path-repair-ranking-alignment";
+        (Reason is "path-repair-ranking-rebuild"
+             or "path-repair-ranking-alignment"
+         || MaxScoreMaintenance);
 }

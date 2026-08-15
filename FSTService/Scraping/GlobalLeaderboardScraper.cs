@@ -11,6 +11,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace FSTService.Scraping;
 
+public interface ISongInstrumentSupportCache
+{
+    void RefreshSongInstrumentSupport();
+    void InvalidateSongInstrumentSupport();
+}
+
 /// <summary>
 /// Fetches *all* entries from a Fortnite Festival V1 leaderboard by paging
 /// through every page (page 0 … totalPages-1).
@@ -21,7 +27,9 @@ namespace FSTService.Scraping;
 ///
 /// Both instrument-level and page-level requests are parallelised.
 /// </summary>
-public class GlobalLeaderboardScraper : ILeaderboardQuerier
+public class GlobalLeaderboardScraper
+    : ILeaderboardQuerier,
+      ISongInstrumentSupportCache
 {
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
@@ -88,6 +96,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private readonly EpicTrafficCoordinator? _trafficCoordinator;
     private readonly int _maxLookupRetries;
     private readonly FestivalService? _festivalService;
+    private readonly IPathDataStore? _pathDataStore;
+    private volatile IReadOnlyDictionary<string, PathGenerationState>?
+        _pathGenerationStates;
+    private readonly object _pathGenerationStatesLock = new();
 
     /// <summary>Exposes the underlying HTTP executor for diagnostics (CDN wire counters).</summary>
     public ResilientHttpExecutor Executor => _executor;
@@ -99,8 +111,19 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         ILogger<GlobalLeaderboardScraper> log,
         FestivalService? festivalService = null,
         EpicTrafficCoordinator? trafficCoordinator = null,
-        IProxyHealthReporter? proxyHealth = null)
-        : this(http, progress, log, ResilientHttpExecutor.DefaultMaxRetries, festivalService, trafficCoordinator, proxyHealth) { }
+        IProxyHealthReporter? proxyHealth = null,
+        IPathDataStore? pathDataStore = null)
+        : this(
+            http,
+            progress,
+            log,
+            ResilientHttpExecutor.DefaultMaxRetries,
+            festivalService,
+            trafficCoordinator,
+            proxyHealth,
+            pathDataStore)
+    {
+    }
 
     public GlobalLeaderboardScraper(
         HttpClient http,
@@ -108,7 +131,17 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         ILogger<GlobalLeaderboardScraper> log,
         int maxLookupRetries,
         FestivalService? festivalService)
-        : this(http, progress, log, maxLookupRetries, festivalService, trafficCoordinator: null, proxyHealth: null) { }
+        : this(
+            http,
+            progress,
+            log,
+            maxLookupRetries,
+            festivalService,
+            trafficCoordinator: null,
+            proxyHealth: null,
+            pathDataStore: null)
+    {
+    }
 
     public GlobalLeaderboardScraper(
         HttpClient http,
@@ -117,7 +150,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries,
         FestivalService? festivalService = null,
         EpicTrafficCoordinator? trafficCoordinator = null,
-        IProxyHealthReporter? proxyHealth = null)
+        IProxyHealthReporter? proxyHealth = null,
+        IPathDataStore? pathDataStore = null)
     {
         _http = http;
         _progress = progress;
@@ -125,6 +159,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _trafficCoordinator = trafficCoordinator;
         _maxLookupRetries = maxLookupRetries;
         _festivalService = festivalService;
+        _pathDataStore = pathDataStore;
         _executor = new ResilientHttpExecutor(http, log, trafficCoordinator, proxyHealth);
     }
 
@@ -146,12 +181,90 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             if (!string.Equals(candidate.track?.su, songId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            return TrackSupportsInstrument(
-                candidate.track,
+            if (TrackSupportsInstrument(candidate.track, instrument))
+                return true;
+
+            return PathStateSupportsInstrument(
+                candidate,
+                GetPathGenerationState(songId),
                 instrument);
         }
 
         return true;
+    }
+
+    private PathGenerationState? GetPathGenerationState(string songId)
+    {
+        if (_pathDataStore is null)
+            return null;
+
+        var states = _pathGenerationStates;
+        if (states is null)
+        {
+            lock (_pathGenerationStatesLock)
+            {
+                states = _pathGenerationStates;
+                if (states is null)
+                {
+                    states =
+                        _pathDataStore.GetPathGenerationStates();
+                    _pathGenerationStates = states;
+                }
+            }
+        }
+
+        return states.TryGetValue(songId, out var state)
+            ? state
+            : null;
+    }
+
+    internal static bool PathStateSupportsInstrument(
+        Song song,
+        PathGenerationState? state,
+        string instrument)
+    {
+        if (state is null
+            || state.PathGenerationPending
+            || state.Revision <= 0
+            || state.GeneratedAtUtc is null
+            || string.IsNullOrWhiteSpace(state.ArtifactGenerationId)
+            || !string.Equals(
+                state.SongId,
+                song.track?.su,
+                StringComparison.OrdinalIgnoreCase)
+            || song.lastModified == DateTime.MinValue
+            || !ProviderTimestampIdentity.Equivalent(
+                state.CatalogLastModified,
+                NormalizeCatalogLastModified(
+                    song.lastModified))
+            || !PathGenerationInstruments.Definitions.Any(
+                definition => string.Equals(
+                    definition.Instrument,
+                    instrument,
+                    StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        return state.ExpectedInstruments.Contains(
+                   instrument,
+                   StringComparer.Ordinal)
+               && state.MaxScores.GetByInstrument(instrument)
+                   is > 0;
+    }
+
+    private static string NormalizeCatalogLastModified(
+        DateTime lastModified)
+    {
+        var utc = lastModified.Kind switch
+        {
+            DateTimeKind.Utc => lastModified,
+            DateTimeKind.Local => lastModified.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(
+                lastModified,
+                DateTimeKind.Utc),
+        };
+        return utc.ToString("O");
     }
 
     internal static bool TrackSupportsInstrument(
@@ -197,6 +310,26 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// each scrape pass to prevent stale state from a previous CDN block.
     /// </summary>
     public void ResetCdnState() => _executor.ResetCdnState();
+
+    public void RefreshSongInstrumentSupport()
+    {
+        if (_pathDataStore is null)
+            return;
+
+        lock (_pathGenerationStatesLock)
+        {
+            _pathGenerationStates =
+                _pathDataStore.GetPathGenerationStates();
+        }
+    }
+
+    public void InvalidateSongInstrumentSupport()
+    {
+        lock (_pathGenerationStatesLock)
+        {
+            _pathGenerationStates = null;
+        }
+    }
 
     // ─── Targeted account lookup ─────────────────────
 

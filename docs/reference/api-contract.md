@@ -1,12 +1,15 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 0af25b3f
+last_verified: 2026-08-14
+last_verified_commit: eb593898
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
@@ -121,6 +124,30 @@ Aggregate player scopes intentionally use different formulas:
   per second per client outside tests.
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
+- During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
+  publication-bound route may serve only an existing published cache hit.
+  Otherwise affected song/path/ranking/player/band surfaces return `503` with
+  `Retry-After`; path and `/api/songs` are explicitly included even though
+  they normally use live endpoint code. `/api/songs` may serve its existing
+  stable process cache; exact solo leaderboard routes, especially leeway
+  queries, use the outer published cache or return `503`.
+- While the exclusive max-score mutation gate or its exact freeze is active,
+  `POST /api/player/{accountId}/track`,
+  `POST /api/backfill/{accountId}`, and
+  `GET /api/bands/{bandType}/{teamKey}/sync-status` return `503` with
+  `Retry-After: 30` before their registration or score-history side effects.
+  HTTP admission is a pool-capacity-bounded, nonblocking shared advisory
+  try-lock on an isolated unpooled session, so the production 100-request/s
+  limit cannot fill the normal 15-connection database pool with maintenance
+  waiters. The manual backfill endpoint holds the shared session across both
+  all-time backfill and optional history reconstruction, including
+  cancellation cleanup. Player tracking, band sync, and selected-profile
+  activity use the same gate, so an exclusive maintenance holder prevents
+  their writes even before freeze-state caches observe the transition.
+  Selected-profile headers never touch player activity or register a selected
+  band/member set until maintenance releases the gate/freeze.
+- Freeze release invalidates path-maxima, song, and response caches and forces
+  a WebSocket same-publication refresh.
 - Operational-live endpoints expose current process/coordination state.
 - Admin/private endpoints must not be reclassified as public data accidentally.
 

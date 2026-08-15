@@ -2,10 +2,14 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: 80346e04
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
+  - FSTService/Persistence/PublishedScrapeIdArgument.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
+  - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
@@ -120,7 +124,7 @@ pass of a continuous worker.
 | Command | Default behavior | Additional flags |
 |---|---|---|
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
-| `--recover-improvement-notifications` | Execute recovery for the current published scrape | `--published-scrape-id`, `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
+| `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
 | `--leaderboard-rivals-recompute-account` `<id>` | Recompute one account and exit | Accepts `--flag=value` form |
@@ -128,3 +132,52 @@ pass of a continuous worker.
 Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
+
+`--published-scrape-id` is parsed once for improvement-notification recovery
+and max-score maintenance. Both `--published-scrape-id 1296` and
+`--published-scrape-id=1296` are accepted. The owning command requires exactly
+one positive value; duplicates, blank/malformed values, and an orphaned scrape
+ID without either owning command are startup errors. The shared option does not
+activate max-score parsing by itself.
+
+### Max-score correction
+
+All max-score files must be `.json` paths below `Scraper:DataDirectory`.
+Stage requests and manifests use canonical strict JSON; unknown properties,
+noncanonical encoding, unsupported versions, duplicate/unsorted song IDs, and
+more than 32 songs are rejected. Request version 2 binds a discovery or
+promotion purpose, exact runtime, exact generated/changed instrument sets, and
+per-song maximum constraints. Unscoped repeated song IDs are rejected.
+
+| Action | Required flags | Behavior |
+|---|---|---|
+| `--max-score-maintenance-stage` | `--published-scrape-id`, `--max-score-maintenance-stage-request`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete immutable generations without pointer mutation; discovery permits explicit partial maximum constraints, while promotion requires complete old/new eight-field maxima |
+| `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes plus observed-score bounds, records publication-population and complete consumed score-history count/range/hash evidence, and emits the deterministic `planDigest` |
+| `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
+| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
+
+Every action writes a versioned report. Apply/resume exit `2` with
+`resumable=true` after a post-freeze failure. Do not manually clear the freeze;
+rerun `--max-score-maintenance-resume` with the same manifest and digests. The
+rollback snapshot timestamp comes from the persisted maintenance run, so a
+crash after file creation but before its database checkpoint reproduces and
+validates the same canonical bytes.
+
+Plan report version 4 includes `populationEvidence` and
+`scoreHistoryEvidence`. Apply/resume report version 3 includes
+`cacheEvidence` after cache staging, including the exact
+publication-scope key count/fingerprint. Exact per-entry key/ETag/JSON hashes
+remain durable database evidence rather than expanding the report. Plan may scan all registered-account
+history plus affected-instrument fallback candidates; its aggregates are
+constant-memory, but operators must allow the documented maintenance-window
+cost. The strict apply-report parser rejects legacy version 2, unknown
+properties, and version 3 reports missing `cacheEvidence` at
+`caches_staged` or any later phase. Version 3 failures before cache staging
+retain `cacheEvidence=null`.
+
+The retired `--path-repair-*` and
+`--notification-maintenance-pro-lead-max-score-repair` families remain startup
+errors in every supported prefix/value form.
+
+See
+[Max-score correction maintenance](../database/MaxScoreCorrectionMaintenanceRunbook.md).

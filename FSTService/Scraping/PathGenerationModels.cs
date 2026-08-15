@@ -10,6 +10,9 @@ internal static class PathGenerationProfiles
         "chopt-fnf-ew0-s20-json-png-prodrums-v3";
     internal const string PlasticDrumsV4 =
         "chopt-fnf-ew0-s20-json-png-prodrums-v4";
+    internal const string PlasticDrumsV4ChoptVersion = "1.16.4";
+    internal const string PlasticDrumsV4BinarySha256 =
+        "4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f";
 
     internal static bool HasInvalidPlasticDrumsScores(string? profile)
         => string.Equals(
@@ -22,10 +25,26 @@ internal static class PathGenerationProfiles
             profile,
             PlasticDrumsV4,
             StringComparison.Ordinal);
+
+    internal static bool IsApprovedPlasticDrumsV4(
+        PathGenerationRuntimeIdentity runtime)
+        => string.Equals(
+               runtime.Version,
+               PlasticDrumsV4ChoptVersion,
+               StringComparison.Ordinal)
+           && string.Equals(
+               runtime.BinarySha256,
+               PlasticDrumsV4BinarySha256,
+               StringComparison.Ordinal)
+           && string.Equals(
+               runtime.Profile,
+               PlasticDrumsV4,
+               StringComparison.Ordinal);
 }
 
 public sealed record PathInstrumentDefinition(
     string ProviderProperty,
+    string MidiTrackName,
     string Instrument,
     string MidiVariant,
     string ChoptInstrument,
@@ -35,16 +54,32 @@ public static class PathGenerationInstruments
 {
     public static readonly IReadOnlyList<PathInstrumentDefinition> Definitions =
     [
-        new("gr", "Solo_Guitar", "og", "guitar"),
-        new("ba", "Solo_Bass", "og", "bass"),
-        new("ds", "Solo_Drums", "og", "drums"),
-        new("vl", "Solo_Vocals", "og", "vocals"),
-        new("pg", "Solo_PeripheralGuitar", "pro", "guitar"),
-        new("pb", "Solo_PeripheralBass", "pro", "bass"),
+        new("gr", "PART GUITAR", "Solo_Guitar", "og", "guitar"),
+        new("ba", "PART BASS", "Solo_Bass", "og", "bass"),
+        new("ds", "PART DRUMS", "Solo_Drums", "og", "drums"),
+        new("vl", "PART VOCALS", "Solo_Vocals", "og", "vocals"),
+        new(
+            "pg",
+            "PLASTIC GUITAR",
+            "Solo_PeripheralGuitar",
+            "pro",
+            "guitar"),
+        new(
+            "pb",
+            "PLASTIC BASS",
+            "Solo_PeripheralBass",
+            "pro",
+            "bass"),
         // Promote PLASTIC DRUMS to PART DRUMS for CHOpt's dedicated FNF engine.
-        new("pd", "Solo_PeripheralCymbals", "drums", "prodrums"),
         new(
             "pd",
+            "PLASTIC DRUMS",
+            "Solo_PeripheralCymbals",
+            "drums",
+            "prodrums"),
+        new(
+            "pd",
+            "PLASTIC DRUMS",
             "Solo_PeripheralDrums",
             "drums",
             "prodrums",
@@ -120,7 +155,9 @@ public sealed record SongPathRequest(
             return [];
 
         return PathGenerationInstruments.Definitions
-            .Where(definition => typedIntensity.HasProviderProperty(definition.ProviderProperty))
+            .Where(definition =>
+                typedIntensity.HasProviderProperty(
+                    definition.ProviderProperty))
             .Select(definition => definition.Instrument)
             .ToArray();
     }
@@ -182,6 +219,16 @@ public enum PathGenerationPromotionOutcome
     SongMissing,
 }
 
+public sealed record PathGenerationBatchPromotionResult(
+    PathGenerationPromotionOutcome Outcome,
+    int PromotedCount,
+    string? FailedSongId = null);
+
+public sealed record PathGenerationBatchPromotionGate(
+    long PublicationId,
+    long PublishedScrapeId,
+    string FreezeReason);
+
 public sealed record PathGenerationError(
     string AttemptId,
     string SongId,
@@ -208,6 +255,7 @@ public sealed record PathGenerationBatchResult(
 
 internal enum PathGenerationAttemptOutcome
 {
+    Staged,
     Promoted,
     Skipped,
     Failed,
@@ -216,4 +264,5 @@ internal enum PathGenerationAttemptOutcome
 internal sealed record PathGenerationAttemptResult(
     PathGenerationAttemptOutcome Outcome,
     string? FailureStage = null,
-    string? Detail = null);
+    string? Detail = null,
+    PathGenerationPromotion? StagedPromotion = null);

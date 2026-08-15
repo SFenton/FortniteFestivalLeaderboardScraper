@@ -37,6 +37,11 @@ public static class DatabaseInitializer
             publication_commit_intent_heartbeat_at TIMESTAMPTZ,
             publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
+            max_score_mutation_gate_token TEXT,
+            max_score_mutation_gate_publication_id BIGINT,
+            max_score_mutation_gate_backend_pid INTEGER,
+            max_score_mutation_gate_backend_start TIMESTAMPTZ,
+            max_score_mutation_gate_acquired_at TIMESTAMPTZ,
             updated_at          TIMESTAMPTZ NOT NULL
         );
         """;
@@ -125,6 +130,15 @@ public static class DatabaseInitializer
                 UseShortTransaction: false,
                 LockTimeout: null,
                 StatementTimeout: null),
+            new(
+                Name: "max-score-maintenance",
+                Sql: MaxScoreMaintenanceSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
         ];
 
     // ── Complete DDL ──────────────────────────────────────────────────────
@@ -994,6 +1008,11 @@ public static class DatabaseInitializer
             publication_commit_intent_heartbeat_at TIMESTAMPTZ,
             publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
+            max_score_mutation_gate_token TEXT,
+            max_score_mutation_gate_publication_id BIGINT,
+            max_score_mutation_gate_backend_pid INTEGER,
+            max_score_mutation_gate_backend_start TIMESTAMPTZ,
+            max_score_mutation_gate_acquired_at TIMESTAMPTZ,
             updated_at          TIMESTAMPTZ NOT NULL
         );
 
@@ -1005,6 +1024,11 @@ public static class DatabaseInitializer
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_heartbeat_at TIMESTAMPTZ;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_owner TEXT;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_token TEXT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_publication_id BIGINT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_backend_pid INTEGER;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_backend_start TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_acquired_at TIMESTAMPTZ;
 
         CREATE TABLE IF NOT EXISTS leaderboard_published_scope_source (
             published_scrape_id    BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
@@ -1074,6 +1098,14 @@ public static class DatabaseInitializer
             LIMIT 1
         ) latest
         WHERE NOT EXISTS (SELECT 1 FROM scrape_publication_state WHERE id = TRUE);
+
+        INSERT INTO scrape_publication_state (
+            id,
+            updated_at)
+        VALUES (
+            TRUE,
+            now())
+        ON CONFLICT (id) DO NOTHING;
 
         -- =====================================================================
         -- SCORE HISTORY (from fst-meta.db)
@@ -1274,6 +1306,131 @@ public static class DatabaseInitializer
         ALTER TABLE registered_bands
             ADD COLUMN IF NOT EXISTS last_member_sync_at TIMESTAMPTZ;
 
+        CREATE OR REPLACE FUNCTION fst_assert_registration_mutation_allowed()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            reads_frozen BOOLEAN;
+            freeze_reason TEXT;
+            mutation_gate_token TEXT;
+            guard_bypass TEXT;
+            gate_bypass_allowed BOOLEAN;
+            freeze_bypass_allowed BOOLEAN;
+        BEGIN
+            SELECT public_reads_frozen,
+                   public_reads_frozen_reason,
+                   max_score_mutation_gate_token
+            INTO reads_frozen,
+                 freeze_reason,
+                 mutation_gate_token
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            FOR SHARE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected because publication state is unavailable.';
+            END IF;
+
+            guard_bypass := current_setting(
+                'fst.max_score_registration_guard_bypass',
+                TRUE);
+            gate_bypass_allowed :=
+                guard_bypass IS NOT NULL
+                AND guard_bypass = mutation_gate_token;
+            freeze_bypass_allowed :=
+                gate_bypass_allowed
+                OR (
+                    guard_bypass IS NOT NULL
+                    AND guard_bypass = freeze_reason
+                );
+
+            IF mutation_gate_token IS NOT NULL
+               AND NOT gate_bypass_allowed
+            THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected while max-score maintenance owns the mutation gate.';
+            END IF;
+
+            IF reads_frozen
+               AND freeze_reason LIKE 'max-score-maintenance:v1:%'
+               AND NOT freeze_bypass_allowed
+            THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected while max-score maintenance owns the publication.';
+            END IF;
+
+            IF TG_LEVEL = 'STATEMENT' THEN
+                RETURN NULL;
+            END IF;
+            IF TG_OP = 'DELETE' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END
+        $$;
+
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_entries_registration_mutation_guard
+            ON leaderboard_entries;
+        CREATE TRIGGER
+            trg_leaderboard_entries_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_entries
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_entries_overlay_registration_mutation_guard
+            ON leaderboard_entries_overlay;
+        CREATE TRIGGER
+            trg_leaderboard_entries_overlay_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_entries_overlay
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_score_history_registration_mutation_guard
+            ON score_history;
+        CREATE TRIGGER
+            trg_score_history_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON score_history
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS trg_registered_users_maintenance_guard
+            ON registered_users;
+        CREATE TRIGGER trg_registered_users_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON registered_users
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS trg_registered_bands_maintenance_guard
+            ON registered_bands;
+        CREATE TRIGGER trg_registered_bands_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON registered_bands
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_registered_user_refresh_scope_maintenance_guard
+            ON registered_user_refresh_scope_progress;
+        CREATE TRIGGER
+            trg_registered_user_refresh_scope_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_user_refresh_scope_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS registered_band_processing_status (
             source_id              TEXT    NOT NULL,
             band_type              TEXT    NOT NULL,
@@ -1291,6 +1448,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_status
             ON registered_band_processing_status (status);
+
+        DROP TRIGGER IF EXISTS
+            trg_registered_band_processing_status_maintenance_guard
+            ON registered_band_processing_status;
+        CREATE TRIGGER
+            trg_registered_band_processing_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_band_processing_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         CREATE TABLE IF NOT EXISTS registered_band_processing_progress (
             source_id   TEXT        NOT NULL,
@@ -1312,6 +1479,16 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_progress_band
             ON registered_band_processing_progress (source_id, band_type, team_key);
 
+        DROP TRIGGER IF EXISTS
+            trg_registered_band_processing_progress_maintenance_guard
+            ON registered_band_processing_progress;
+        CREATE TRIGGER
+            trg_registered_band_processing_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_band_processing_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS registered_player_band_discovery_progress (
             account_id  TEXT        NOT NULL,
             song_id     TEXT        NOT NULL,
@@ -1330,6 +1507,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_registered_player_band_discovery_progress_account
             ON registered_player_band_discovery_progress (account_id);
+
+        DROP TRIGGER IF EXISTS
+            trg_registered_player_band_discovery_maintenance_guard
+            ON registered_player_band_discovery_progress;
+        CREATE TRIGGER
+            trg_registered_player_band_discovery_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_player_band_discovery_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- USER SESSIONS (from fst-meta.db)
@@ -1393,6 +1580,20 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_bfp_account
             ON backfill_progress (account_id);
 
+        DROP TRIGGER IF EXISTS trg_backfill_status_maintenance_guard
+            ON backfill_status;
+        CREATE TRIGGER trg_backfill_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON backfill_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS trg_backfill_progress_maintenance_guard
+            ON backfill_progress;
+        CREATE TRIGGER trg_backfill_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON backfill_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         -- =====================================================================
         -- HISTORY RECON STATUS (from fst-meta.db)
         -- =====================================================================
@@ -1432,6 +1633,16 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_hr_status
             ON history_recon_status (status);
 
+        DROP TRIGGER IF EXISTS
+            trg_history_recon_status_maintenance_guard
+            ON history_recon_status;
+        CREATE TRIGGER
+            trg_history_recon_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON history_recon_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         -- =====================================================================
         -- HISTORY RECON PROGRESS (from fst-meta.db)
         -- =====================================================================
@@ -1457,6 +1668,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_hrp_account
             ON history_recon_progress (account_id);
+
+        DROP TRIGGER IF EXISTS
+            trg_history_recon_progress_maintenance_guard
+            ON history_recon_progress;
+        CREATE TRIGGER
+            trg_history_recon_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON history_recon_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- SEASON WINDOWS (from fst-meta.db)
@@ -1523,6 +1744,16 @@ public static class DatabaseInitializer
             updated_at    TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument)
         );
+
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_population_registration_mutation_guard
+            ON leaderboard_population;
+        CREATE TRIGGER
+            trg_leaderboard_population_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_population
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- PLAYER STATS (from fst-meta.db)
@@ -2177,6 +2408,16 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo, member_index)
         );
 
+        DROP TRIGGER IF EXISTS
+            trg_band_member_stats_registration_mutation_guard
+            ON band_member_stats;
+        CREATE TRIGGER
+            trg_band_member_stats_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_member_stats
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         -- ix_bms_account removed 2026-04-23 (Phase 2): idx_scan=0 forever.
         -- Reverse lookup "get stats for all bands player X played" is not in use;
         -- the PK (song_id, band_type, ...) serves the forward direction. Saves ~650 MB.
@@ -2239,6 +2480,56 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_btc_band_team
             ON band_team_configurations (band_type, team_key);
+
+        DROP TRIGGER IF EXISTS
+            trg_band_entries_registration_mutation_guard
+            ON band_entries;
+        CREATE TRIGGER
+            trg_band_entries_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_entries
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_members_registration_mutation_guard
+            ON band_members;
+        CREATE TRIGGER
+            trg_band_members_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_members
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_membership_registration_mutation_guard
+            ON band_team_membership;
+        CREATE TRIGGER
+            trg_band_team_membership_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_membership
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_membership_state_registration_mutation_guard
+            ON band_team_membership_state;
+        CREATE TRIGGER
+            trg_band_team_membership_state_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_membership_state
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_configurations_registration_mutation_guard
+            ON band_team_configurations;
+        CREATE TRIGGER
+            trg_band_team_configurations_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_configurations
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         CREATE TABLE IF NOT EXISTS band_identity (
             band_id            TEXT        PRIMARY KEY,

@@ -38,6 +38,8 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly PathDataStore _pathDataStore;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
     private readonly TestLogger<PostScrapeOrchestrator> _log;
     private readonly SoloCurrentProjectionBuilder _soloCurrentProjectionBuilder;
     private readonly IDatabasePressureMonitor _databasePressureMonitor;
@@ -122,6 +124,12 @@ public class PostScrapeOrchestratorTests : IDisposable
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
         _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
+        _registrationMutations =
+            new RegistrationMutationCoordinator(
+                _metaDb,
+                _pathDataStore,
+                Substitute.For<
+                    ISongInstrumentSupportCache>());
         _log = new TestLogger<PostScrapeOrchestrator>();
         _soloCurrentProjectionBuilder = new SoloCurrentProjectionBuilder(
             _metaFixture.DataSource,
@@ -165,7 +173,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Options.Create(new ScraperOptions
             {
                 DeferredRegistrationSyncTimeout = TimeSpan.FromMilliseconds(50),
-            }), _log, null,
+            }), _log, _registrationMutations, null,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
             databasePressureMonitor: _databasePressureMonitor,
             workerStatus: _workerStatus,
@@ -296,7 +304,8 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions()), _log, null,
+            Options.Create(new ScraperOptions()), _log,
+            _registrationMutations, null,
             improvementNotifications: improvementNotifications,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
             improvementNotificationOptions: notificationOptions,
@@ -391,6 +400,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(scraperOptions),
             _log,
+            _registrationMutations,
             null,
             soloCurrentProjectionBuilder:
                 soloCurrentProjectionBuilder ?? _soloCurrentProjectionBuilder,
@@ -1225,8 +1235,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(new ScraperOptions
             {
-                RegisteredUserRefreshTimeout = TimeSpan.FromMilliseconds(50),
-            }), _log, null);
+                RegisteredUserRefreshTimeout = TimeSpan.FromMilliseconds(500),
+            }), _log, _registrationMutations, null);
 
         var ctx = CreateContext(
             scrapeId: 1273,
@@ -1313,7 +1323,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Options.Create(new ScraperOptions
             {
                 RegisteredUserRefreshTimeout = TimeSpan.FromMilliseconds(50),
-            }), _log, null);
+            }), _log, _registrationMutations, null);
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
@@ -1420,7 +1430,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            opts, _log, null);
+            opts, _log, _registrationMutations, null);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         var entries = Enumerable.Range(0, 200).Select(i =>
@@ -1486,7 +1496,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
-                Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log, null);
+                Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log, _registrationMutations, null);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 â†’ no-op
@@ -2614,7 +2624,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            opts, _log, null);
+            opts, _log, _registrationMutations, null);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 

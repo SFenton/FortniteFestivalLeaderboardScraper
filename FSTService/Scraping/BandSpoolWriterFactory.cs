@@ -36,6 +36,9 @@ public static class BandSpoolWriterFactory
         {
             using var conn = persistence.DataSource.OpenConnection();
             using var tx = conn.BeginTransaction();
+            RegistrationMutationGate.AssertTransactionAllowed(
+                conn,
+                tx);
             using (var sc = conn.CreateCommand())
             {
                 sc.Transaction = tx;

@@ -120,6 +120,12 @@ public sealed class BackfillSongProgressInfo
     public int TotalSongs { get; init; }
 }
 
+public sealed record RegistrationAdmissionResetResult(
+    int RemovedNegativeBackfillPairChecks,
+    int RequeuedBackfillAccountCount,
+    int RemovedHistoryPairChecks,
+    int RequeuedHistoryAccountCount);
+
 /// <summary>
 /// DTO for history reconstruction tracking status.
 /// </summary>

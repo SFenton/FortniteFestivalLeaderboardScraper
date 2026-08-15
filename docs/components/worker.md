@@ -2,14 +2,28 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: 80346e04
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
+  - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/RegistrationBackfillWorker.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
+  - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/Replay/
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -86,15 +100,86 @@ After startup the worker:
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
 
+Registration-sync work also observes the durable max-score maintenance freeze.
+The worker reports a pause before invoking a writer, and each backfill/history
+orchestrator entry acquires the shared session advisory mutation gate before
+its first account/seasonal lookup or persistence mutation. Registered-user
+refresh, registered-band discovery/processing, and stale registration pruning
+use the same gate. Immediately after acquisition it invalidates path-maxima
+state and synchronously refreshes the singleton scraper's song/instrument
+support. Gate holders and cancellable waiters use isolated unpooled,
+non-multiplexed PostgreSQL sessions, leaving the normal service pool available
+for the guarded work itself. The gate holds no transaction, so long
+Epic/history waits cannot be expired by
+`idle_in_transaction_session_timeout`. Before each guarded mutation the
+worker verifies the owning backend/session token; database triggers fence
+registration, leaderboard entry/population, and score-history writes if a lost
+shared backend allows exclusive maintenance to claim its durable owner token.
+This covers registration-only hosting, including the interval before a
+publication monitor observes a same-publication release. Exclusive maintenance
+admission waits for active holders, blocks later holders, and remains
+fail-closed across cancellation/resume. Ordinary scrape freezes continue to
+use the existing background-work boundary rather than this max-score-only
+rejection.
+
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
 
+Max-score correction is a separate CLI-only one-shot mode. It registers no
+hosted scraper/background services and requires the real `fstworker` offline.
+Discovery and promotion stages share the path-generation admission lock
+without promoting; only the second produces a plan/apply-eligible manifest.
+Plan/apply reject plastic-drums v3, revalidate current rollback and staged
+artifact trees/hashes, then take the exclusive mutation gate before the
+path-generation and global publication locks. Apply establishes or revalidates
+the freeze before taking
+solo overlay/entry, score-history, band-member-stat, and
+leaderboard-population share locks in fixed order, then rechecks that the
+worker remains offline around each mutable phase. Maintenance ranking mode
+suppresses `WorkerStatusPublisher`, bypasses the mutable current projection,
+resolves the exact published snapshot/empty source plus supplemental overlay,
+and holds that strict no-active/no-legacy context through cache staging and
+final validation. It snapshots publication-bound population once and passes
+it to rankings, player stats, cache construction, and validation rather than
+reading mutable `leaderboard_population`. It rebuilds changed solo instruments
+by replacing the exact frozen, zero-inclusive `song_stats` scope and affected
+ranking partitions, then rebuilds aggregate dependencies. Affected accounts'
+player-stat tier rows are replaced as a complete set while unrelated accounts
+remain untouched; maintenance cache serialization filters tiers to `Overall`
+plus frozen publication instruments. It recalculates
+target-song band validity, refreshes affected band current-projection scopes,
+rebuilds dependent band rankings, and explicitly skips
+solo/composite/band rank-history snapshots.
+See the
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+Every max-score database mutation and checkpoint commits through a bounded
+source-locked transaction on the live unpooled advisory-lock session; ordinary
+pooled connections are read-only for that workflow. The final cache swap,
+completed checkpoint, and unfreeze use one such transaction while the durable
+gate remains set. Disposal releases all advisory locks before clearing the
+gate, so backend loss during handoff leaves mutations fail-closed and requires
+a new validated lease to finish release.
+
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums
 and Pro Drums + Cymbals thresholds.
+
+Solo scrape admission and ranking denominators use the union of charted
+provider properties and current promoted `path_expected_instruments`.
+Path-derived support is admitted only when the immutable generation is
+complete, non-pending, and bound to the same song/catalog timestamp. This
+preserves MIDI-inferred charts when provider metadata omitted them without
+turning path state into a second song catalog.
+Promotion refreshes the singleton scraper's cached path support before derived
+work. Same-publication freeze release invalidates that cache in monitoring
+roles. Newly usable path-backed pairs also clear only prior negative backfill
+checks and matching successful-empty history checkpoints, return affected
+history status to `pending`, and requeue only affected accounts. Unrelated
+pairs remain resumable, so a previous unsupported/null all-time or seasonal
+lookup cannot suppress Lead or Pro Lead indefinitely.
 
 ## Two phase views
 
@@ -243,6 +328,20 @@ Role defaults intentionally differ:
 - service resolves public reads through published sources;
 - publication read-context rollout remains disabled until every bound surface
   is generation-addressable.
+
+A digest-owned max-score maintenance freeze is stricter than a normal scrape
+freeze: affected publication-bound cache misses, including `/api/songs` and
+both path routes, return `503`. After derived validation a complete cache swap,
+workflow completion, and unfreeze commit together. Maintenance precompute uses
+only frozen-catalog publication scopes and their captured populations for song
+keys and completion denominators. The `caches_staged` checkpoint and every
+later pre-complete state make both staging tables immutable to ordinary cache
+builders/writers; exact maintenance-owner access remains available for resume
+and final publication. Resume and the final
+source-locked transaction compare every staged key/ETag/JSON hash with durable
+entry evidence before swap. API processes invalidate
+response, path-maxima, and song caches and force a same-publication client
+refresh.
 
 ## Service-level retention planning
 

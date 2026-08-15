@@ -16,6 +16,7 @@ public sealed class SoloFamilyRankingBackfillService
     private readonly IMetaDatabase _metaDb;
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<SoloFamilyRankingBackfillService> _log;
+    private readonly IPathDataStore? _pathDataStore;
     private readonly int _separateReadCommandTimeoutSeconds;
     private readonly int _maintenanceStatementTimeoutSeconds;
     private readonly int _replacementStatementTimeoutSeconds;
@@ -26,7 +27,8 @@ public sealed class SoloFamilyRankingBackfillService
         GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDb,
         NpgsqlDataSource dataSource,
-        ILogger<SoloFamilyRankingBackfillService> log)
+        ILogger<SoloFamilyRankingBackfillService> log,
+        IPathDataStore? pathDataStore = null)
         : this(
             persistence,
             metaDb,
@@ -38,7 +40,8 @@ public sealed class SoloFamilyRankingBackfillService
             maintenanceStatementTimeoutSeconds:
                 DefaultMaintenanceStatementTimeoutSeconds,
             replacementStatementTimeoutSeconds:
-                DefaultReplacementStatementTimeoutSeconds)
+                DefaultReplacementStatementTimeoutSeconds,
+            pathDataStore: pathDataStore)
     {
     }
 
@@ -54,7 +57,8 @@ public sealed class SoloFamilyRankingBackfillService
         int maintenanceStatementTimeoutSeconds =
             DefaultMaintenanceStatementTimeoutSeconds,
         int replacementStatementTimeoutSeconds =
-            DefaultReplacementStatementTimeoutSeconds)
+            DefaultReplacementStatementTimeoutSeconds,
+        IPathDataStore? pathDataStore = null)
     {
         if (separateReadCommandTimeoutSeconds <= 0)
         {
@@ -80,6 +84,7 @@ public sealed class SoloFamilyRankingBackfillService
         _metaDb = metaDb;
         _dataSource = dataSource;
         _log = log;
+        _pathDataStore = pathDataStore;
         _separateReadCommandTimeoutSeconds =
             separateReadCommandTimeoutSeconds;
         _maintenanceStatementTimeoutSeconds =
@@ -137,6 +142,10 @@ public sealed class SoloFamilyRankingBackfillService
                 StringComparer.OrdinalIgnoreCase);
             var sourceRowsByInstrument = new Dictionary<string, int>(
                 StringComparer.OrdinalIgnoreCase);
+            var pathGenerationStates =
+                _pathDataStore?.GetPathGenerationStates()
+                ?? new Dictionary<string, PathGenerationState>(
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
             {
@@ -170,7 +179,8 @@ public sealed class SoloFamilyRankingBackfillService
                 catalogDenominators[instrument] =
                     RankingsCalculator.CountChartedSongs(
                         catalogSongs,
-                        instrument);
+                        instrument,
+                        pathGenerationStates);
             }
 
             var build = SoloFamilyRankingBuilder.BuildRankings(

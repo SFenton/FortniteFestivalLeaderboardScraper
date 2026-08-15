@@ -21,7 +21,6 @@ public sealed class PostScrapeOrchestrator
     private static readonly TimeSpan RegisteredRefreshOperationHeartbeatInterval =
         TimeSpan.FromSeconds(15);
 
-    private const int PlayerStatsTierAccountChunkSize = 512;
     internal const string BandMaintenanceTimingPhase = "BandMaintenance";
     internal const string BandMaintenancePruneSubphase = "prune";
     internal const string BandMaintenanceSearchProjectionSubphase = "search_projection_refresh";
@@ -78,6 +77,8 @@ public sealed class PostScrapeOrchestrator
     private readonly IPostScrapePhaseFaultInjector? _phaseFaultInjector;
     private readonly WorkerStatusPublisher? _workerStatus;
     private readonly DurablePhaseProgressSink? _phaseProgress;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -102,6 +103,8 @@ public sealed class PostScrapeOrchestrator
         BandLeaderboardPersistence bandPersistence,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log,
+        RegistrationMutationCoordinator
+            registrationMutations,
         BandSearchProjectionBuilder? bandSearchProjectionBuilder,
         RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null,
         RegisteredPlayerBandDiscoveryOrchestrator? registeredPlayerBandDiscoveryOrchestrator = null,
@@ -155,6 +158,7 @@ public sealed class PostScrapeOrchestrator
         _phaseFaultInjector = phaseFaultInjector;
         _workerStatus = workerStatus;
         _phaseProgress = phaseProgress;
+        _registrationMutations = registrationMutations;
     }
 
     /// <summary>
@@ -2459,6 +2463,10 @@ public sealed class PostScrapeOrchestrator
             if (ctx.RegisteredIds.Count == 0)
                 return new SongProcessingMachine.MachineResult();
 
+            await using var registrationLease =
+                await _registrationMutations
+                    .AcquireLeaseAsync(refreshCt);
+            await registrationLease.VerifyHeldAsync(refreshCt);
             var chartedSongIds = ctx.ScrapeRequests
                 .Select(static request => request.SongId)
                 .Distinct(StringComparer.Ordinal)
@@ -2874,7 +2882,9 @@ public sealed class PostScrapeOrchestrator
     /// Pass 2 of the two-pass incremental strategy — score-dependent aggregates only.
     /// (Pass 1 — rank refresh for all accounts — is future work.)
     /// </summary>
-    internal Task ComputePlayerStatsTiersAsync(ScrapePassContext ctx, CancellationToken ct)
+    internal async Task ComputePlayerStatsTiersAsync(
+        ScrapePassContext ctx,
+        CancellationToken ct)
     {
         var changedIds = ctx.Aggregates.ChangedAccountIds;
         // Also include registered users (their stats should always be fresh)
@@ -2882,100 +2892,13 @@ public sealed class PostScrapeOrchestrator
         foreach (var id in ctx.RegisteredIds)
             accountIds.Add(id);
 
-        if (accountIds.Count == 0) return Task.CompletedTask;
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
         _log.LogInformation("Computing player stats tiers for {Count:N0} accounts ({Changed:N0} changed + {Registered:N0} registered).",
             accountIds.Count, changedIds.Count, ctx.RegisteredIds.Count);
-
-        var allMaxScores = _pathDataStore.GetAllMaxScores();
-        var metaDb = _persistence.Meta;
-        var instrumentKeys = _persistence.GetInstrumentKeys();
-        int totalSongs = _persistence.GetTotalSongCount();
-        var population = metaDb.GetAllLeaderboardPopulation();
-        int computed = 0;
-
-        foreach (var accountChunk in accountIds.Chunk(PlayerStatsTierAccountChunkSize))
-        {
-            ct.ThrowIfCancellationRequested();
-            Dictionary<string, List<PlayerScoreDto>> profilesByAccount;
-            try
-            {
-                profilesByAccount = _persistence.GetCurrentStatePlayerProfiles(accountChunk);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Stats tier bulk score load failed for {Count:N0} account(s).", accountChunk.Length);
-                throw;
-            }
-
-            var rows = new List<PlayerStatsTiersRow>();
-            foreach (var accountId in accountChunk)
-            {
-                ct.ThrowIfCancellationRequested();
-                if (!profilesByAccount.TryGetValue(accountId, out var allScores) || allScores.Count == 0)
-                    continue;
-
-                try
-                {
-                    var accountRows = BuildPlayerStatsTierRows(accountId, allScores, allMaxScores, instrumentKeys, totalSongs, population, metaDb);
-                    if (accountRows.Count == 0)
-                        continue;
-
-                    rows.AddRange(accountRows);
-                    computed++;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex, "Stats tier computation failed for {AccountId}.", accountId);
-                    throw;
-                }
-            }
-
-            if (rows.Count > 0)
-            {
-                try
-                {
-                    metaDb.UpsertPlayerStatsTiersBatch(rows);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex, "Stats tier batch write failed for {RowCount:N0} row(s).", rows.Count);
-                    throw;
-                }
-            }
-        }
-
-        sw.Stop();
-        _log.LogInformation("Computed player stats tiers for {Computed:N0}/{Total:N0} accounts in {Elapsed:F1}s.",
-            computed, accountIds.Count, sw.Elapsed.TotalSeconds);
-        return Task.CompletedTask;
-    }
-
-    private static List<PlayerStatsTiersRow> BuildPlayerStatsTierRows(
-        string accountId,
-        IReadOnlyList<PlayerScoreDto> allScores,
-        Dictionary<string, SongMaxScores> allMaxScores,
-        IReadOnlyList<string> instrumentKeys,
-        int totalSongs,
-        Dictionary<(string SongId, string Instrument), long> population,
-        IMetaDatabase metaDb)
-    {
-        if (allScores.Count == 0)
-            return [];
-
-        Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null;
-        var maxThresholds = PlayerStatsTierRowBuilder.BuildAboveMaxThresholds(allScores, allMaxScores);
-        if (maxThresholds.Count > 0)
-            fallbacks = metaDb.GetAllValidScoreTiers(accountId, maxThresholds);
-
-        return PlayerStatsTierRowBuilder.BuildRows(
-            accountId,
-            allScores,
-            instrumentKeys,
-            totalSongs,
-            allMaxScores,
-            population,
-            fallbacks);
+        await PlayerStatsTierRebuilder.RebuildAsync(
+            _persistence,
+            _pathDataStore,
+            accountIds,
+            _log,
+            ct);
     }
 }

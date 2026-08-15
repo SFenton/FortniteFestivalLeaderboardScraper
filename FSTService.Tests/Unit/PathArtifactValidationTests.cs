@@ -71,6 +71,26 @@ public sealed class PathArtifactValidationTests
     }
 
     [Fact]
+    public void JsonValidation_RequiresAuthoredDrumFillsWhenRequested()
+    {
+        Assert.True(PathArtifactValidator.TryParseJson(
+            RichPathJson,
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                """[{ "startBeat": 0, "endBeat": 1 }]""",
+                "[]",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
+    }
+
+    [Fact]
     public void JsonValidation_RequiresCompleteV2ActivationMetadataWhenRequested()
     {
         Assert.True(PathArtifactValidator.TryParseJson(
@@ -145,26 +165,6 @@ public sealed class PathArtifactValidationTests
             requirePositiveScore: true,
             out _,
             requiredSchemaVersion: 2));
-    }
-
-    [Fact]
-    public void JsonValidation_RequiresAuthoredDrumFillsWhenRequested()
-    {
-        Assert.True(PathArtifactValidator.TryParseJson(
-            RichPathJson,
-            requirePositiveScore: true,
-            out _,
-            requiredSchemaVersion: 2,
-            requireNonEmptyDrumFills: true));
-        Assert.False(PathArtifactValidator.TryParseJson(
-            RichPathJson.Replace(
-                """[{ "startBeat": 0, "endBeat": 1 }]""",
-                "[]",
-                StringComparison.Ordinal),
-            requirePositiveScore: true,
-            out _,
-            requiredSchemaVersion: 2,
-            requireNonEmptyDrumFills: true));
     }
 
     [Theory]
