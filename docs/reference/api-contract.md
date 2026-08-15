@@ -1,12 +1,14 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 0af25b3f
+last_verified: 2026-08-14
+last_verified_commit: 165a5fef
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
@@ -137,6 +139,13 @@ version-1 field. Contract version 2 adds:
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
+historical compatibility. `post.checkpoint` and
+`post.deferred_registration_sync` are reserved descriptors and are not current
+worker execution policies. Current conditional phases use
+`phaseStatus=skipped` plus a warning reason when work is intentionally omitted;
+absence alone is not evidence that a best-effort phase starved.
 
 Weak overall or ETA evidence is omitted, not serialized as false precision.
 Initial overall progress is normally `indeterminate`. Existing `phase`,

@@ -1,3 +1,5 @@
+using FSTService.Scraping;
+
 namespace FSTService.Tests.Unit;
 
 public class ScrapePhaseResolverTests
@@ -252,6 +254,23 @@ public class ScrapePhaseResolverTests
         Assert.True(result.HasFlag(ScrapePhase.BandScrapePhase));
         Assert.False(result.HasFlag(ScrapePhase.BandScrape));
         Assert.False(result.HasFlag(ScrapePhase.BandExtraction));
+    }
+
+    [Theory]
+    [InlineData(ScrapePhase.None, false)]
+    [InlineData(ScrapePhase.BandScrape, false)]
+    [InlineData(ScrapePhase.BandScrapePhase, true)]
+    [InlineData(ScrapePhase.BandExtraction, false)]
+    [InlineData(ScrapePhase.BandScrapePhase | ScrapePhase.SoloEnrichment, true)]
+    public void Legacy_band_scrape_runs_only_for_the_supported_direct_mode(
+        ScrapePhase requested,
+        bool expected)
+    {
+        var resolved = ScrapePhaseResolver.Resolve(requested);
+
+        Assert.Equal(
+            expected,
+            PostScrapeOrchestrator.ShouldLaunchLegacyBandScrape(resolved));
     }
 
     [Fact]

@@ -244,16 +244,6 @@ public sealed class ScraperWorker : BackgroundService
         // track endpoint) can attach at any time.
         _cyclicalMachine.Start(stoppingToken);
 
-        // Pre-warm the rankings cache for registered users before the scrape loop
-        // starts. The cache TTL is 5 min, so the worst case for API requests is a
-        // single on-demand CTE query.
-        if (_persistence.GetInstrumentKeys().Count > 0)
-        {
-            var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
-            if (registeredIds.Count > 0)
-                await _persistence.PreWarmRankingsCacheAsync(registeredIds, stoppingToken);
-        }
-
         // Precomputed API responses are now served from PostgreSQL.
         // No disk load needed — data persists across restarts in the api_response_cache table.
         {
@@ -712,6 +702,9 @@ public sealed class ScraperWorker : BackgroundService
     private static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
         => ScrapeOrchestrator.GetEnabledInstruments(opts);
 
+    internal static bool IsSuccessfulPhaseOutcomeStatus(string status) =>
+        status is "completed" or "skipped";
+
     // ─── Scrape pass (V1 alltime global) ────────────────────────
 
     /// <summary>
@@ -925,8 +918,11 @@ public sealed class ScraperWorker : BackgroundService
                         string.Equals(outcome.Criticality, "publication_critical", StringComparison.Ordinal)
                             ? PostScrapePhaseCriticality.PublicationCritical
                             : PostScrapePhaseCriticality.BestEffort,
-                        string.Equals(outcome.Status, "completed", StringComparison.Ordinal),
-                        outcome.ErrorMessage));
+                        IsSuccessfulPhaseOutcomeStatus(outcome.Status),
+                        outcome.ErrorMessage)
+                    {
+                        Status = outcome.Status,
+                    });
                 }
 
                 result = new ScrapePassResult

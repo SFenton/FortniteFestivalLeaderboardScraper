@@ -22,14 +22,12 @@ public static class PostScrapePhasePolicy
             ["LegacyBandScrape"] = PostScrapePhaseCriticality.PublicationCritical,
             ["RegisteredPlayerBandDiscovery"] = PostScrapePhaseCriticality.BestEffort,
             ["RegisteredBandTargetedProcessing"] = PostScrapePhaseCriticality.BestEffort,
-            ["DeferredRegistrationSync"] = PostScrapePhaseCriticality.PublicationCritical,
             ["BandMaintenance"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PrepareSoloCurrentProjectionForDerived"] = PostScrapePhaseCriticality.PublicationCritical,
             ["ComputeRankings"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Rivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["LeaderboardRivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PlayerStatsTiers"] = PostScrapePhaseCriticality.PublicationCritical,
-            ["Checkpoint"] = PostScrapePhaseCriticality.BestEffort,
             ["ActivateShadowSnapshots"] = PostScrapePhaseCriticality.PublicationCritical,
             ["SealSoloCurrentProjectionScopes"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Cleanup.SoloCurrentProjection"] = PostScrapePhaseCriticality.PublicationCritical,
@@ -56,7 +54,10 @@ public sealed record PostScrapePhaseOutcome(
     string Phase,
     PostScrapePhaseCriticality Criticality,
     bool Success,
-    string? ErrorMessage);
+    string? ErrorMessage)
+{
+    public string Status { get; init; } = Success ? "completed" : "failed";
+}
 
 public sealed class PostScrapeExecutionLedger
 {

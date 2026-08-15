@@ -78,6 +78,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public void Host_resolves_post_scrape_orchestrator_without_retired_dependencies()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        Assert.NotNull(
+            scope.ServiceProvider.GetRequiredService<PostScrapeOrchestrator>());
+    }
+
+    [Fact]
     public async Task EmbeddedManualRoute_ReturnsCurrentSpaWithAppManualFeatureBootstrap()
     {
         var response = await _client.GetAsync("/manual");
@@ -1232,13 +1241,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var publishedId = metaDb.StartScrapeRun();
         metaDb.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
             publishedId,
-            "Checkpoint",
+            "FirstSeenSeason",
             "best_effort",
             "failed",
             now,
             now.AddMilliseconds(5),
             5,
-            "checkpoint warning"));
+            "first-seen warning"));
         metaDb.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
         metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
 
@@ -1278,7 +1287,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             1,
             json.GetProperty("lastCompletedUpdate").GetProperty("bestEffortFailureCount").GetInt32());
         Assert.Equal(
-            "Checkpoint",
+            "FirstSeenSeason",
             json.GetProperty("lastCompletedUpdate").GetProperty("bestEffortFailedPhases")[0].GetString());
     }
 

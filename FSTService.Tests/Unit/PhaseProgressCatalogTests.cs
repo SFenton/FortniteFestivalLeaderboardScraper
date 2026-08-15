@@ -69,4 +69,21 @@ public sealed class PhaseProgressCatalogTests
             PostScrapePhasePolicy.All.Keys,
             phase => Assert.NotNull(PhaseProgressCatalog.FindPostScrape(phase)));
     }
+
+    [Fact]
+    public void Retired_execution_paths_keep_reserved_stable_ids_without_policies()
+    {
+        Assert.Equal(
+            ["post.checkpoint", "post.deferred_registration_sync"],
+            PhaseProgressCatalog.Reserved.Order(StringComparer.Ordinal));
+
+        Assert.All(
+            PhaseProgressCatalog.Reserved,
+            phaseId =>
+            {
+                var descriptor = Assert.IsType<PhaseProgressDescriptor>(
+                    PhaseProgressCatalog.FindById(phaseId));
+                Assert.False(PostScrapePhasePolicy.All.ContainsKey(descriptor.LegacyPhase));
+            });
+    }
 }

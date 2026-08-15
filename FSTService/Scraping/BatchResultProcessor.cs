@@ -7,8 +7,7 @@ namespace FSTService.Scraping;
 /// Processes V2 batch lookup results: detects score changes, upserts entries to
 /// instrument databases, inserts ScoreHistory rows, and raises population floors.
 ///
-/// Consolidates logic previously duplicated across <see cref="PostScrapeRefresher"/>
-/// and <see cref="HistoryReconstructor"/>.
+/// Shared by the recurring registered-user and history-reconstruction paths.
 ///
 /// When <see cref="SetStagingAccounts"/> is active, writes for designated accounts
 /// are buffered in memory instead of hitting the DB. Call <see cref="FlushStagedData"/>

@@ -2,10 +2,12 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-14
-last_verified_commit: 434f6f20
+last_verified_commit: 165a5fef
 sources:
   - FSTService/appsettings.json
   - FSTService/Program.cs
+  - FSTService/FeatureOptions.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - docker-compose.yml
   - .env.example
   - deploy/docker-compose.yml
@@ -76,6 +78,10 @@ the three publication correctness gates, writes published scope sources, keeps
 public-read ownership off the worker, leaves unchanged-snapshot reuse and
 publication read context disabled, and sets
 `WriteLegacyLiveLeaderboardDuringScrape=false`.
+With that value, the post-scrape legacy stored-rank phase records an explicit
+successful `skipped` outcome and performs no rank update. Setting the rollback
+flag to `true` restores the existing legacy recompute implementation and its
+publication-critical failure behavior.
 
 Do not copy one role file onto the other.
 

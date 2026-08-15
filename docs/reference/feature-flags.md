@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-14
+last_verified_commit: 165a5fef
 sources:
   - FSTService/FeatureOptions.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/FeatureEndpoints.cs
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
@@ -67,7 +68,11 @@ Role files override code/appsettings defaults:
 
 The worker therefore does not maintain legacy mutable leaderboard rows during
 the primary scrape. Supplemental legacy writes remain a separate flag and
-must not be inferred from the primary-write setting.
+must not be inferred from the primary-write setting. While the primary flag is
+false, `RankRecompute` is retained as a rollback contract but records a
+successful `skipped` phase outcome instead of scheduling a no-op update. Turning
+the flag back on restores the existing recompute path; it does not weaken the
+publication-critical phase policy.
 
 ## Public feature contract
 

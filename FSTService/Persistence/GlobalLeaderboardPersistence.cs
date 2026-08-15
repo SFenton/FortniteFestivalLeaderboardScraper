@@ -3055,59 +3055,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
-    /// Call after heavy write phases (scrape drain, post-scrape enrichment) to keep
-    /// WAL files small and prevent auto-checkpoints from firing during API reads.
-    /// </summary>
-    public void CheckpointAll()
-    {
-        Parallel.ForEach(_instrumentDbs.Values, db => db.Checkpoint());
-        _metaDb.Checkpoint();
-        _log.LogDebug("WAL checkpoint completed on all databases.");
-    }
-
-    /// <summary>
-    /// Pre-warm the per-song rankings cache for all registered users across all instruments.
-    /// Call after scrape passes and on service startup so that API requests for
-    /// registered users hit the in-memory cache instead of the expensive CTE query.
-    /// </summary>
-    public void PreWarmRankingsCache(IReadOnlyCollection<string> accountIds)
-    {
-        if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
-
-        _log.LogInformation(
-            "Pre-warming rankings cache for {UserCount} user(s) across {InstrumentCount} instrument(s)...",
-            accountIds.Count, _instrumentDbs.Count);
-
-        var instruments = _instrumentDbs.Keys.ToList();
-        for (int i = 0; i < instruments.Count; i++)
-        {
-            var instrument = instruments[i];
-            var db = _instrumentDbs[instrument];
-            db.PreWarmRankingsBatch(accountIds);
-            _log.LogDebug("Pre-warmed rankings for {Instrument} ({N}/{Total}).",
-                instrument, i + 1, instruments.Count);
-        }
-
-        _log.LogInformation(
-            "Pre-warmed rankings cache for {UserCount} registered user(s) across {InstrumentCount} instrument(s).",
-            accountIds.Count, instruments.Count);
-    }
-
-    /// <summary>
-    /// Async wrapper that runs <see cref="PreWarmRankingsCache"/> on a thread-pool thread
-    /// with a timeout. If the timeout expires, pre-warming is cancelled and the caller
-    /// continues — the cache will self-populate on first API requests instead.
-    /// </summary>
-    public async Task PreWarmRankingsCacheAsync(
-        IReadOnlyCollection<string> accountIds,
-        CancellationToken ct = default)
-    {
-        if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
-
-        await Task.Run(() => PreWarmRankingsCache(accountIds), ct);
-    }
-
-    /// <summary>
     /// Get a player's scores across all instruments (player profile).
     /// </summary>
     public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)

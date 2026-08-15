@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: 165a5fef
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -42,10 +42,19 @@ diagnostic or replay data without becoming the published generation.
 6. **Post-processing**
    - `PostScrapeOrchestrator` owns enrichment, registered-user refresh,
      projections, rankings, rivals, statistics, precomputation, and cleanup.
+   - Snapshot-only production workers record legacy `RankRecompute` as
+     intentionally skipped; enabling the legacy-write rollback flag restores
+     the existing recompute path and its publication-critical failure policy.
+   - PostgreSQL finalization does not schedule retired wrapper checkpoint or
+     rankings-cache-warm calls.
+   - Dedicated registration workers and the run-once drain own durable
+     registration backlog/history work; the retired deferred post-scrape sync
+     is not a publication phase.
    - Per-instrument validity, leeway, and ranking calculations consume the
      eight persisted CHOpt maxima, including distinct plastic-drums modes.
    - Publication-critical outcomes can reject the candidate; best-effort
-     failures remain visible without silently changing their classification.
+     failures and intentional skips remain visible without silently changing
+     their classification.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
    - Build required published scope-source mappings and notification plans.

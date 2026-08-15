@@ -10640,9 +10640,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
         return combos;
     }
 
-    // ── Maintenance ──────────────────────────────────────────────────
-    public void Checkpoint() { }
-
     // ── API response cache ───────────────────────────────────────────
 
     public PublicationCacheLookup GetCurrentCacheLookup(

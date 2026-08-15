@@ -2869,10 +2869,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return list;
     }
 
-    public void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds) { /* No-op for PG — MVCC handles concurrency, no cache needed */ }
-
-    public void Checkpoint() { }
-
     // ── Private helpers ──────────────────────────────────────────────
 
     private void SyncBandContextEntries(

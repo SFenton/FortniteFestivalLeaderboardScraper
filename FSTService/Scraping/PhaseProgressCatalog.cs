@@ -15,6 +15,13 @@ public static class PhaseProgressCatalog
     public const string PlanVersion = "fst.scrape-plan.v2";
     public const string OperationId = "scrape.update";
 
+    private static readonly IReadOnlySet<string> ReservedIds =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "post.deferred_registration_sync",
+            "post.checkpoint",
+        };
+
     private static readonly PhaseProgressDescriptor[] Descriptors =
     [
         new("scrape.leaderboards", "Scraping leaderboard scores", "Scraping", 100,
@@ -90,6 +97,10 @@ public static class PhaseProgressCatalog
 
     public static IReadOnlyList<PhaseProgressDescriptor> All { get; } =
         Array.AsReadOnly(Descriptors);
+
+    public static IReadOnlySet<string> Reserved => ReservedIds;
+
+    public static bool IsReserved(string phaseId) => ReservedIds.Contains(phaseId);
 
     public static PhaseProgressDescriptor? FindPostScrape(string phaseName) =>
         ByPostScrapeName.GetValueOrDefault(phaseName);

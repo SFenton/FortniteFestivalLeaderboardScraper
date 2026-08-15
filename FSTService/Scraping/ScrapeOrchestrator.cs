@@ -365,10 +365,6 @@ public sealed class ScrapeOrchestrator
                 }
             }
 
-            // Checkpoint all WAL files after the heavy write phase to keep them small
-            // and prevent auto-checkpoints from firing during API reads.
-            _progress.SetSubOperation("checkpointing");
-            _persistence.CheckpointAll();
         }
         else
         {

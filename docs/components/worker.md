@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: 165a5fef
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -109,11 +109,24 @@ The pipeline has two useful abstractions:
 `ScrapePhaseResolver` expands `--solo-scrape`, `--solo-leaderboards`, and
 `--band-scrape`, and fills intermediate solo phases. Selective flags affect the
 first launch pass only; later scheduled cycles use the full pipeline.
+`--band-post-scrape` is the supported direct legacy `BandScrapePhase` mode.
+Normal full and `--band-scrape` passes already fetch band data through
+`BandScrape` and therefore do not launch the legacy fetcher.
 
 ## Post-scrape timing
 
 Terminal phase names and publication criticality remain recorded through
-`scrape_phase_outcomes`.
+`scrape_phase_outcomes`. Intentional non-execution records `status=skipped`
+instead of looking like starvation: snapshot-only workers skip legacy rank
+recompute, pressure-gated history cleanup records the pressure reason in
+durable progress, notification gating records its reason after publication,
+and service-level retention reports its own skipped disposition. A skipped
+publication-critical rollback phase remains successful for publication; a
+failed one does not.
+
+PostgreSQL has no per-wrapper cache warm or manual checkpoint implementation.
+The worker no longer schedules those retired calls at startup, after network
+writes, or during finalization.
 
 Band maintenance additionally records three stable timing subphases under the
 `BandMaintenance` phase:
@@ -154,6 +167,11 @@ Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
 leaderboard scrape, named post-scrape phases, and publication commit. The
 catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
 carry both the stable ID and the current human-readable phase name.
+`post.checkpoint` and `post.deferred_registration_sync` remain reserved for
+historical manifests and persisted progress rows but have no current execution
+policy. Registration backlog/history work is owned by the dedicated recurring
+and run-once drain paths; recurring registered-user refresh remains in
+`RefreshRegisteredUsers`.
 
 The worker writes additive `scrape_phase_attempts` rows:
 

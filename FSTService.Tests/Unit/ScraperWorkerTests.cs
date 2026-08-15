@@ -266,4 +266,18 @@ public class ScraperWorkerTests : IDisposable
 
         Assert.Contains("manifests=8207/8208", error.Message);
     }
+
+    [Theory]
+    [InlineData("completed", true)]
+    [InlineData("skipped", true)]
+    [InlineData("failed", false)]
+    [InlineData("cancelled", false)]
+    public void Resume_phase_status_preserves_intentional_skips(
+        string status,
+        bool expectedSuccess)
+    {
+        Assert.Equal(
+            expectedSuccess,
+            ScraperWorker.IsSuccessfulPhaseOutcomeStatus(status));
+    }
 }

@@ -98,9 +98,6 @@ public interface IInstrumentDatabase : IDisposable
     List<AccountRankingSummary> GetAllRankingSummariesDetailed(
         int commandTimeoutSeconds = 0);
 
-    // ── Cache pre-warming ────────────────────────────────────────────
-    void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds);
-
     // ── Materialized ranking pipeline ────────────────────────────────
     void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     void MaterializeCurrentStateValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
@@ -108,6 +105,4 @@ public interface IInstrumentDatabase : IDisposable
         int credibilityThreshold, double populationMedian, double thresholdMultiplier);
     Npgsql.NpgsqlConnection OpenConnection();
 
-    // ── Maintenance ──────────────────────────────────────────────────
-    void Checkpoint();
 }

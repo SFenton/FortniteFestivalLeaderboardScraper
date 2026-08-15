@@ -31,7 +31,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly AccountNameResolver _nameResolver;
     protected readonly ScoreBackfiller _backfiller;
     protected readonly BackfillQueue _backfillQueue;
-    protected readonly PostScrapeRefresher _refresher;
     protected readonly SongProcessingMachine _machine;
     protected readonly CyclicalSongMachine _cyclicalMachine;
     protected readonly SharedDopPool _pool;
@@ -88,10 +87,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
         _backfillQueue = new BackfillQueue();
 
         _progress = new ScrapeProgressTracker();
-
-        _refresher = Substitute.For<PostScrapeRefresher>(
-            _scraper, _persistence, new ScrapeProgressTracker(),
-            Substitute.For<ILogger<PostScrapeRefresher>>());
 
         _machine = Substitute.For<SongProcessingMachine>(
             (ILeaderboardQuerier)_scraper,
@@ -179,10 +174,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _persistence.Meta, options, Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
-        // ServiceProvider returns the mocked machine
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
-
         var precomputer = new ScrapeTimePrecomputer(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions());
 
         var bandPersistence = new BandLeaderboardPersistence(
@@ -211,8 +202,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            serviceProvider,
             _historyReconstructor,
             _pool,
             _cyclicalMachine,
