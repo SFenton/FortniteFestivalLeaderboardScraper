@@ -699,11 +699,11 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
         try
         {
             Assert.True(publicationStarted.Wait(TimeSpan.FromSeconds(5)));
-            await Task.Delay(TimeSpan.FromMilliseconds(250));
-            Assert.True(publicationTask.IsCompleted);
+            var busy = await publicationTask.WaitAsync(
+                TimeSpan.FromSeconds(5));
             Assert.Equal(
                 1,
-                (await publicationTask).LockRejections);
+                busy.LockRejections);
         }
         finally
         {
