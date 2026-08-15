@@ -568,6 +568,8 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             await _sut
                 .StageCurrentPublicationCachesForMaintenanceAsync(
                     publicationId,
+                    festivalService.Songs,
+                    _pathDataStore.GetAllMaxScores(),
                     publicationPopulation,
                     maintenanceLease,
                     CancellationToken.None);

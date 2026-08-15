@@ -12,7 +12,9 @@ public static class PlayerStatsTierRowBuilder
         int totalSongs,
         Dictionary<string, SongMaxScores> allMaxScores,
         IReadOnlyDictionary<(string SongId, string Instrument), long> population,
-        Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null)
+        Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null,
+        IReadOnlyDictionary<string, int>? totalSongsByInstrument = null,
+        int? overallTotalSongs = null)
     {
         if (allScores.Count == 0)
             return [];
@@ -37,7 +39,17 @@ public static class PlayerStatsTierRowBuilder
             if (!byInstrument.TryGetValue(instrument, out var scores) || scores.Count == 0)
                 continue;
 
-            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, instrument, totalSongs, population, fallbacks);
+            var instrumentTotalSongs =
+                totalSongsByInstrument?.GetValueOrDefault(
+                    instrument)
+                ?? totalSongs;
+            var tiers = PlayerStatsCalculator.ComputeTiers(
+                scores,
+                allMaxScores,
+                instrument,
+                instrumentTotalSongs,
+                population,
+                fallbacks);
             perInstrumentTiers[instrument] = tiers;
             rows.Add(new PlayerStatsTiersRow
             {
@@ -49,7 +61,10 @@ public static class PlayerStatsTierRowBuilder
 
         if (perInstrumentTiers.Count > 0)
         {
-            var overallTiers = PlayerStatsCalculator.ComputeOverallTiers(perInstrumentTiers, totalSongs);
+            var overallTiers =
+                PlayerStatsCalculator.ComputeOverallTiers(
+                    perInstrumentTiers,
+                    overallTotalSongs ?? totalSongs);
             rows.Add(new PlayerStatsTiersRow
             {
                 AccountId = accountId,

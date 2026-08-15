@@ -208,13 +208,36 @@ public sealed class RankingsCalculator
             : populationOverride
               ?? throw new InvalidOperationException(
                   "Max-score rankings require an immutable publication population snapshot.");
-        var totalChartedByInstrument = instruments.ToDictionary(
-            instrument => instrument,
-            instrument => CountChartedSongs(
-                festivalService.Songs,
-                instrument,
-                pathGenerationStates),
-            StringComparer.OrdinalIgnoreCase);
+        if (maintenanceLease is not null)
+        {
+            var publishedScopes = allPopulation.Keys.ToHashSet();
+            allMaxScores = allMaxScores
+                .Where(pair => publishedScopes.Any(scope =>
+                    string.Equals(
+                        scope.SongId,
+                        pair.Key,
+                        StringComparison.OrdinalIgnoreCase)))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        var totalChartedByInstrument = maintenanceLease is null
+            ? instruments.ToDictionary(
+                instrument => instrument,
+                instrument => CountChartedSongs(
+                    festivalService.Songs,
+                    instrument,
+                    pathGenerationStates),
+                StringComparer.OrdinalIgnoreCase)
+            : instruments.ToDictionary(
+                instrument => instrument,
+                instrument => allPopulation.Keys.Count(scope =>
+                    string.Equals(
+                        scope.Instrument,
+                        instrument,
+                        StringComparison.OrdinalIgnoreCase)),
+                StringComparer.OrdinalIgnoreCase);
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
         _progress.BeginPhaseProgress(
@@ -254,6 +277,12 @@ public sealed class RankingsCalculator
             var maxScoresForInstrument = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
             foreach (var (songId, songMax) in allMaxScores)
             {
+                if (maintenanceLease is not null
+                    && !allPopulation.ContainsKey(
+                        (songId, instrument)))
+                {
+                    continue;
+                }
                 var max = songMax.GetByInstrument(instrument);
                 if (max.HasValue)
                     maxScoresForInstrument[songId] = max;

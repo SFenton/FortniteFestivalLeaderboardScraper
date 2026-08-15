@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-14
-last_verified_commit: f8cf6f02
+last_verified_commit: 80346e04
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -149,7 +149,11 @@ scrape/publication freeze writers cannot overwrite or clear it. A failure
 leaves public reads fail-closed and must be continued with the matching resume
 command; do not manually unfreeze. Cache publication and freeze release commit
 together only after derived, notification, rollback, and rank-history
-validation.
+validation. A `validated` checkpoint also protects its cache staging
+generation from ordinary builders/writers; resume and the final locked
+transaction require exact key/ETag/JSON-hash parity with immutable database
+evidence. Never repair this by clearing the freeze or publishing a different
+staging generation.
 
 ## Service availability
 

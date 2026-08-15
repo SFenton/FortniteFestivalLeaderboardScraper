@@ -2,13 +2,14 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 3bcf03d6
+last_verified_commit: 80346e04
 sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
@@ -21,6 +22,7 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/BandRankingRepairService.cs
@@ -81,6 +83,12 @@ and fallback rows for every song in each rebuilt instrument. The report records
 scope/row counts, population range, history ID/time ranges, and deterministic
 hashes. Any relevant population/source/history insert, update, or delete after
 plan changes the plan digest and rejects apply.
+
+The frozen catalog and that publication scope/population snapshot are also the
+only maintenance cache inventory. Active-only or legacy-only songs/scopes,
+`song_stats`, `leaderboard_entries`, and cached total-song counts do not choose
+maintenance song keys or completion denominators. Every changed manifest scope
+must exist in the publication snapshot before freeze.
 
 Apply acquires locks in this order:
 
@@ -455,7 +463,10 @@ Apply:
   over-threshold flags, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
 - rebuilds affected player-stat tiers and every registered player's
-  leaderboard rivals;
+  leaderboard rivals. Per-instrument completion denominators come from the
+  frozen publication scopes, the overall denominator is the exact published
+  song/instrument scope count, and the cached top-level song total is the
+  distinct publication-owned song count;
 - classifies affected-instrument player-rank and target-song/dependent-band
   candidates as maintenance, including max-score-percent rank changes that the
   routine visible lane does not emit. Routine parity uses the same visible
@@ -471,12 +482,17 @@ Apply:
   `1296`'s completed notification marker unchanged;
 - holds the strict published-source read context through cache generation and
   final validation, stages a complete current-publication API cache, and
-  records a bounded whole-cache fingerprint plus semantic target-scope,
-  affected-account, and overlay-only-account fingerprints; and
+  requires the exact solo base/leeway/rank-offset key inventory derived from
+  the frozen catalog and publication scopes. It records a bounded whole-cache
+  fingerprint plus semantic target-scope, affected-account, and
+  overlay-only-account fingerprints, and persists every cache key, ETag, and
+  JSON SHA-256 in immutable database evidence; and
 - validates paths, maxima, rankings, exact rollback file/database identity,
   rank-history and complete consumed score-history evidence, immutable
-  publication population, notification audit, and staged cache content before
-  atomically swapping the cache and releasing the freeze.
+  publication population, notification audit, both legacy and
+  publication-addressed staging tables against the immutable entry evidence,
+  and staged cache content before atomically swapping the cache and releasing
+  the freeze.
 
 Freeze release invalidates API/path/song and scraper admission caches in every
 monitoring role and forces connected clients to refresh even though the
@@ -517,6 +533,16 @@ SHA-256, manifest/plan/run timestamp, publication/catalog, and immutable
 database rollback-song rows. Missing, corrupted, or swapped files leave reads
 frozen and fail at the existing resumable phase.
 
+A resume whose durable phase is `validated` re-runs cache semantic validation
+and exact key/ETag/JSON-hash comparison for both staging tables before final
+completion. Ordinary cache-build leases and cache writers are rejected while
+that validated digest-owned generation remains frozen. The final
+source-locked transaction takes staging-table share locks, repeats the exact
+comparison against `max_score_maintenance_cache_entries`, and only then swaps
+both cache tables, marks completion, and unfreezes. Missing, changed, deleted,
+or extra rows remain frozen and resumable; restore the exact checkpointed
+staging generation before retrying.
+
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase
 checkpoint. Final cache publication and unfreeze are likewise refused. The
@@ -539,7 +565,8 @@ After success, verify:
 - affected rankings, player stats, rivals, band rankings, and precomputed
   responses are current; target leaderboard/player cache fingerprints match
   the exact published source plus overlays, including every registered
-  overlay-only affected account;
+  overlay-only affected account, and publication-only song scopes have their
+  expected keys while active-only scopes have none;
 - the maintenance notification audit has `visible_delivery_count=0`;
 - no player/band visible event or publication notification marker/cursor was
   rewritten; and

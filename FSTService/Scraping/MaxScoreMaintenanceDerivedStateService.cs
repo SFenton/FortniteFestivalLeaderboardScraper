@@ -49,6 +49,8 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     public async Task<MaxScoreMaintenanceDerivedStateResult> RebuildAsync(
         MaxScoreMaintenanceManifest manifest,
         IReadOnlyList<Song> publishedCatalogSongs,
+        IReadOnlyDictionary<string, SongMaxScores>
+            publicationMaxScores,
         IReadOnlyDictionary<
             (string SongId, string Instrument),
             long> publicationPopulation,
@@ -58,6 +60,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(publishedCatalogSongs);
+        ArgumentNullException.ThrowIfNull(publicationMaxScores);
         ArgumentNullException.ThrowIfNull(publicationPopulation);
         ArgumentNullException.ThrowIfNull(affectedStatsAccounts);
         ArgumentNullException.ThrowIfNull(maintenanceLease);
@@ -145,6 +148,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             _pathDataStore,
             affectedStatsAccounts,
             _log,
+            publicationMaxScores,
             publicationPopulation,
             maintenanceLease,
             ct);

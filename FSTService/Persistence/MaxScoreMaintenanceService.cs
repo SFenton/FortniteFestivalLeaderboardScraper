@@ -521,6 +521,8 @@ public sealed class MaxScoreMaintenanceService
                 }
 
                 var resumingExistingRun = run is not null;
+                var resumeStartedAtValidated =
+                    run?.Phase == MaxScoreMaintenancePhase.Validated;
                 var rollbackEvidenceValidated = false;
                 if (run is null)
                 {
@@ -610,10 +612,25 @@ public sealed class MaxScoreMaintenanceService
                 authoritativeReadPass =
                     _persistence
                         .BeginMaxScoreMaintenancePublishedReadPass();
+                var publishedContext = LoadPublishedContext(
+                    manifest.ExpectedPublishedScrapeId,
+                    manifest.ExpectedPublicationId,
+                    manifest.Songs
+                        .Select(song => song.SongId)
+                        .ToArray(),
+                    requireUnfrozen: false,
+                    requiredFreezeReason:
+                        PublicReadFreezeState
+                            .MaxScoreMaintenanceReasonPrefix
+                        + manifestDigest);
+                ValidateManifestCatalogIdentity(
+                    manifest,
+                    publishedContext.Catalog);
                 var readSnapshot =
                     await CaptureMaintenanceReadSnapshotAsync(
                         lease,
                         manifest,
+                        publishedContext.CatalogSongs,
                         ct);
                 if (run is null)
                 {
@@ -806,6 +823,7 @@ public sealed class MaxScoreMaintenanceService
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: null,
                         cacheEvidence: null,
+                        cachePublicationId: null,
                         ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
@@ -821,23 +839,10 @@ public sealed class MaxScoreMaintenanceService
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
-                    var context = LoadPublishedContext(
-                        manifest.ExpectedPublishedScrapeId,
-                        manifest.ExpectedPublicationId,
-                        manifest.Songs
-                            .Select(song => song.SongId)
-                            .ToArray(),
-                        requireUnfrozen: false,
-                        requiredFreezeReason:
-                            PublicReadFreezeState
-                                .MaxScoreMaintenanceReasonPrefix
-                            + manifestDigest);
-                    ValidateManifestCatalogIdentity(
-                        manifest,
-                        context.Catalog);
                     var derived = await _derivedState.RebuildAsync(
                         manifest,
-                        context.CatalogSongs,
+                        publishedContext.CatalogSongs,
+                        readSnapshot.PostPromotionMaxScores,
                         readSnapshot.Population,
                         readSnapshot.AffectedPlayerStatsAccounts,
                         lease,
@@ -857,6 +862,7 @@ public sealed class MaxScoreMaintenanceService
                             derived.RebuiltInstrumentCount,
                         stagedCacheEntryCount: null,
                         cacheEvidence: null,
+                        cachePublicationId: null,
                         ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
@@ -896,6 +902,8 @@ public sealed class MaxScoreMaintenanceService
                         await _precomputer
                             .StageCurrentPublicationCachesForMaintenanceAsync(
                                 manifest.ExpectedPublicationId,
+                                publishedContext.CatalogSongs,
+                                readSnapshot.PostPromotionMaxScores,
                                 readSnapshot.Population,
                                 lease,
                                 ct);
@@ -929,6 +937,8 @@ public sealed class MaxScoreMaintenanceService
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: stagedCacheEntries,
                         cacheEvidence: cacheEvidence,
+                        cachePublicationId:
+                            manifest.ExpectedPublicationId,
                         ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
@@ -962,9 +972,26 @@ public sealed class MaxScoreMaintenanceService
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: null,
                         cacheEvidence: null,
+                        cachePublicationId: null,
                         ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
+                        ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
+                }
+
+                if (resumeStartedAtValidated)
+                {
+                    await lease.VerifyHeldAsync(
+                        requireSourceLocks: true,
+                        ct);
+                    await ValidateCompletedMaintenanceAsync(
+                        lease,
+                        manifest,
+                        manifestDigest,
+                        run,
+                        readSnapshot,
                         ct);
                 }
 
@@ -1134,14 +1161,23 @@ public sealed class MaxScoreMaintenanceService
 
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
-        var postPromotionMaxScores =
-            BuildPostPromotionMaxScores(manifest);
         var populationSnapshot =
             await LoadPublishedPopulationSnapshotAsync(
                 manifest,
                 connection,
                 transaction,
                 ct);
+        ValidatePublishedScopeOwnership(
+            context.CatalogSongs,
+            populationSnapshot.Population.Keys);
+        ValidateManifestPopulationCoverage(
+            manifest,
+            populationSnapshot.Population);
+        var postPromotionMaxScores =
+            BuildPostPromotionMaxScores(
+                manifest,
+                context.CatalogSongs,
+                populationSnapshot.Population.Keys);
         var scoreHistoryEvidence =
             await ComputeScoreHistoryEvidenceAsync(
                 manifest,
@@ -2037,6 +2073,25 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, transaction, token) =>
             {
+        await using (var cacheLocks = conn.CreateCommand())
+        {
+            cacheLocks.Transaction = transaction;
+            cacheLocks.CommandText = """
+                LOCK TABLE api_response_cache_staging
+                    IN SHARE MODE;
+                LOCK TABLE publication_api_response_cache_staging
+                    IN SHARE MODE;
+                """;
+            await cacheLocks.ExecuteNonQueryAsync(token);
+        }
+        await MaxScoreMaintenanceCacheEntryEvidenceStore
+            .ValidateAsync(
+                manifestDigest,
+                manifest.ExpectedPublicationId,
+                run.StagedCacheEntryCount,
+                conn,
+                transaction,
+                token);
         var scoreHistoryEvidence =
             await ComputeScoreHistoryEvidenceAsync(
                 manifest,
@@ -2353,6 +2408,8 @@ public sealed class MaxScoreMaintenanceService
         var payloads =
             new Dictionary<string, byte[]>(
                 StringComparer.Ordinal);
+        var actualPublishedScopeCacheKeys =
+            new HashSet<string>(StringComparer.Ordinal);
         await using (var connection =
                      await _dataSource.OpenConnectionAsync(ct))
         {
@@ -2431,6 +2488,33 @@ public sealed class MaxScoreMaintenanceService
                 contentFingerprint = reader.GetString(1);
             }
 
+            await using (var keys = connection.CreateCommand())
+            {
+                keys.CommandTimeout = 600;
+                keys.CommandText = """
+                    SELECT cache_key
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND (
+                          cache_key LIKE 'lb:%'
+                          OR cache_key LIKE
+                              'lb-rank-offsets:%'
+                          OR cache_key LIKE
+                              'lb-rank-offsets-v1:%'
+                      )
+                    """;
+                keys.Parameters.AddWithValue(
+                    "publicationId",
+                    manifest.ExpectedPublicationId);
+                await using var reader =
+                    await keys.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    actualPublishedScopeCacheKeys.Add(
+                        reader.GetString(0));
+                }
+            }
+
             if (requestedKeys.Length > 0)
             {
                 await using var payload = connection.CreateCommand();
@@ -2463,6 +2547,35 @@ public sealed class MaxScoreMaintenanceService
             throw new InvalidOperationException(
                 "Maintenance cache staging produced no aggregate evidence.");
         }
+
+        var expectedPublishedScopeCacheKeys =
+            BuildExpectedPublishedScopeCacheKeys(
+                readSnapshot);
+        if (!actualPublishedScopeCacheKeys.SetEquals(
+                expectedPublishedScopeCacheKeys))
+        {
+            var missing = expectedPublishedScopeCacheKeys
+                .Except(
+                    actualPublishedScopeCacheKeys,
+                    StringComparer.Ordinal)
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .Take(5);
+            var unexpected = actualPublishedScopeCacheKeys
+                .Except(
+                    expectedPublishedScopeCacheKeys,
+                    StringComparer.Ordinal)
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .Take(5);
+            throw new InvalidOperationException(
+                "Staged publication-scope cache key inventory differs from the frozen catalog and population snapshot: "
+                + $"missing=[{string.Join(",", missing)}], "
+                + $"unexpected=[{string.Join(",", unexpected)}].");
+        }
+        var expectedPublishedScopeKeyFingerprint =
+            ComputeEvidenceFingerprint(
+                expectedPublishedScopeCacheKeys
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToArray());
 
         var expectedScopes = new List<CacheScopeFingerprintRow>();
         var actualScopes = new List<CacheScopeFingerprintRow>();
@@ -2612,12 +2725,50 @@ public sealed class MaxScoreMaintenanceService
         return new MaxScoreMaintenanceCacheEvidence(
             entryCount,
             contentFingerprint,
+            expectedPublishedScopeCacheKeys.Count,
+            expectedPublishedScopeKeyFingerprint,
             expectedScopes.Count,
             expectedTargetFingerprint,
             expectedAccounts.Count,
             expectedAccountFingerprint,
             expectedOverlayAccounts.Length,
             expectedOverlayFingerprint);
+    }
+
+    private static HashSet<string>
+        BuildExpectedPublishedScopeCacheKeys(
+            MaxScoreMaintenanceReadSnapshot readSnapshot)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var songId in readSnapshot.PublishedScopes
+                     .Select(scope => scope.SongId)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            keys.Add(LeaderboardCacheKeys.LeaderboardAll(
+                songId,
+                LeaderboardCacheKeys.SongDetailPreviewTop,
+                leeway: null));
+            keys.Add(LeaderboardCacheKeys.LeaderboardAll(
+                songId,
+                LeaderboardCacheKeys.SongDetailPreviewTop,
+                leeway: 1.0));
+        }
+        foreach (var scope in readSnapshot.PublishedScopes)
+        {
+            if (readSnapshot.PostPromotionMaxScores.TryGetValue(
+                    scope.SongId,
+                    out var maxScores)
+                && maxScores.GetByInstrument(
+                    scope.Instrument) is > 0)
+            {
+                keys.Add(
+                    LeaderboardCacheKeys
+                        .LeaderboardRankOffsets(
+                            scope.SongId,
+                            scope.Instrument));
+            }
+        }
+        return keys;
     }
 
     private List<CacheAccountFingerprintRow>
@@ -3334,9 +3485,24 @@ public sealed class MaxScoreMaintenanceService
 
     private Dictionary<string, SongMaxScores>
         BuildPostPromotionMaxScores(
-            MaxScoreMaintenanceManifest manifest)
+            MaxScoreMaintenanceManifest manifest,
+            IReadOnlyCollection<Song> publishedCatalogSongs,
+            IEnumerable<(string SongId, string Instrument)>
+                publishedScopes)
     {
+        var catalogSongIds = publishedCatalogSongs
+            .Select(song => song.track?.su)
+            .Where(static songId =>
+                !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .ToHashSet(StringComparer.Ordinal);
+        var scopedSongIds = publishedScopes
+            .Select(scope => scope.SongId)
+            .ToHashSet(StringComparer.Ordinal);
         var result = _pathStore.GetAllMaxScores()
+            .Where(pair =>
+                catalogSongIds.Contains(pair.Key)
+                && scopedSongIds.Contains(pair.Key))
             .ToDictionary(
                 pair => pair.Key,
                 pair => MaxScoreMaintenanceMaxima
@@ -3355,6 +3521,7 @@ public sealed class MaxScoreMaintenanceService
         CaptureMaintenanceReadSnapshotAsync(
             IMaxScoreMaintenanceLease lease,
             MaxScoreMaintenanceManifest manifest,
+            IReadOnlyCollection<Song> publishedCatalogSongs,
             CancellationToken ct)
     {
         if (!_persistence
@@ -3364,8 +3531,6 @@ public sealed class MaxScoreMaintenanceService
                 "Max-score input capture requires the strict published-source read context.");
         }
 
-        var postPromotionMaxScores =
-            BuildPostPromotionMaxScores(manifest);
         return await lease.ExecuteTransactionAsync(
             "capture-publication-bound-inputs",
             requireSourceLocks: true,
@@ -3377,6 +3542,25 @@ public sealed class MaxScoreMaintenanceService
                         connection,
                         transaction,
                         token);
+                var publishedScopes = population.Population.Keys
+                    .OrderBy(
+                        scope => scope.SongId,
+                        StringComparer.Ordinal)
+                    .ThenBy(
+                        scope => scope.Instrument,
+                        StringComparer.Ordinal)
+                    .ToArray();
+                ValidatePublishedScopeOwnership(
+                    publishedCatalogSongs,
+                    publishedScopes);
+                ValidateManifestPopulationCoverage(
+                    manifest,
+                    population.Population);
+                var postPromotionMaxScores =
+                    BuildPostPromotionMaxScores(
+                        manifest,
+                        publishedCatalogSongs,
+                        publishedScopes);
                 var affectedAccounts =
                     await MaxScoreMaintenanceDerivedStateService
                         .LoadAffectedPlayerStatsAccountsAsync(
@@ -3403,12 +3587,58 @@ public sealed class MaxScoreMaintenanceService
                     population.Population,
                     population.Evidence,
                     scoreHistory,
+                    publishedScopes,
                     affectedAccounts.ToArray(),
                     cacheAccounts.RegisteredAccounts.ToArray(),
                     cacheAccounts.OverlayOnlyAccounts.ToArray());
             },
             IsolationLevel.RepeatableRead,
             ct);
+    }
+
+    private static void ValidatePublishedScopeOwnership(
+        IReadOnlyCollection<Song> publishedCatalogSongs,
+        IEnumerable<(string SongId, string Instrument)>
+            publishedScopes)
+    {
+        var catalogSongIds = publishedCatalogSongs
+            .Select(song => song.track?.su)
+            .Where(static songId =>
+                !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var scope in publishedScopes)
+        {
+            if (!catalogSongIds.Contains(scope.SongId)
+                || !GlobalLeaderboardScraper.AllInstruments
+                    .Contains(
+                        scope.Instrument,
+                        StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Published scope {scope.SongId}/{scope.Instrument} is not owned by the frozen catalog.");
+            }
+        }
+    }
+
+    private static void ValidateManifestPopulationCoverage(
+        MaxScoreMaintenanceManifest manifest,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> population)
+    {
+        foreach (var song in manifest.Songs)
+        {
+            foreach (var instrument in song.ChangedInstruments)
+            {
+                if (!population.ContainsKey(
+                        (song.SongId, instrument)))
+                {
+                    throw new InvalidOperationException(
+                        $"Published population is missing for maintenance scope {song.SongId}/{instrument}.");
+                }
+            }
+        }
     }
 
     private static async Task<AffectedCacheAccounts>
@@ -3653,6 +3883,7 @@ public sealed class MaxScoreMaintenanceService
         int? rebuiltInstrumentCount,
         long? stagedCacheEntryCount,
         MaxScoreMaintenanceCacheEvidence? cacheEvidence,
+        long? cachePublicationId,
         CancellationToken ct)
     {
         await lease.ExecuteTransactionAsync(
@@ -3660,6 +3891,32 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, tx, token) =>
             {
+        if (nextPhase == MaxScoreMaintenancePhase.CachesStaged)
+        {
+            if (!cachePublicationId.HasValue
+                || stagedCacheEntryCount is not > 0
+                || cacheEvidence is null
+                || cacheEvidence.EntryCount
+                    != stagedCacheEntryCount.Value)
+            {
+                throw new InvalidOperationException(
+                    "The cache-staging checkpoint requires exact publication, count, and aggregate evidence.");
+            }
+            await MaxScoreMaintenanceCacheEntryEvidenceStore
+                .CaptureAsync(
+                    manifestDigest,
+                    cachePublicationId.Value,
+                    stagedCacheEntryCount.Value,
+                    conn,
+                    tx,
+                    token);
+        }
+        else if (cachePublicationId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Cache publication identity is only valid for the cache-staging checkpoint.");
+        }
+
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
@@ -4521,6 +4778,9 @@ public sealed class MaxScoreMaintenanceService
             PopulationEvidence,
         MaxScoreMaintenanceScoreHistoryEvidence
             ScoreHistoryEvidence,
+        IReadOnlyList<(
+            string SongId,
+            string Instrument)> PublishedScopes,
         IReadOnlyList<string> AffectedPlayerStatsAccounts,
         IReadOnlyList<string> AffectedRegisteredAccounts,
         IReadOnlyList<string> OverlayOnlyRegisteredAccounts);

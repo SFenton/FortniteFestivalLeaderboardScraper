@@ -1575,7 +1575,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     freeze_reason,
                     phase,
                     status,
-                    staged_cache_entry_count)
+                    staged_cache_entry_count,
+                    staged_cache_evidence)
                 VALUES (
                     @manifestDigest,
                     1,
@@ -1590,9 +1591,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     @historyFingerprint,
                     '{}'::jsonb,
                     @freezeReason,
-                    'validated',
+                    'notifications_quarantined',
                     'running',
-                    1);
+                    1,
+                    jsonb_build_object(
+                        'entryCount', 1,
+                        'contentFingerprint',
+                            repeat('d', 64),
+                        'publishedScopeCacheKeyCount', 0,
+                        'publishedScopeCacheKeyFingerprint',
+                            repeat('e', 64),
+                        'targetScopeCount', 0,
+                        'targetScopeFingerprint',
+                            repeat('f', 64),
+                        'affectedAccountCount', 0,
+                        'affectedAccountFingerprint',
+                            repeat('1', 64),
+                        'overlayOnlyAccountCount', 0,
+                        'overlayOnlyAccountFingerprint',
+                            repeat('2', 64)));
 
                 INSERT INTO api_response_cache_staging (
                     cache_key, json_data, etag, cached_at)
@@ -1605,6 +1622,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     decode('7b7d', 'hex'),
                     'etag',
                     now());
+
+                INSERT INTO max_score_maintenance_cache_entries (
+                    manifest_sha256,
+                    cache_key,
+                    etag,
+                    json_sha256)
+                VALUES (
+                    @manifestDigest,
+                    'route',
+                    'etag',
+                    encode(
+                        digest(
+                            decode('7b7d', 'hex'),
+                            'sha256'),
+                        'hex'));
+
+                UPDATE max_score_maintenance_runs
+                SET phase = 'validated'
+                WHERE manifest_sha256 = @manifestDigest;
                 """;
             seed.Parameters.AddWithValue("scrapeId", scrapeId);
             seed.Parameters.AddWithValue(
@@ -1705,6 +1741,111 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.True(
             meta.IsAccountRegistered(
                 "post-cache-account"));
+    }
+
+    [Fact]
+    public async Task Final_cache_publication_rechecks_immutable_entry_evidence_before_unfreeze()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1297;
+        const long publicationId = 501;
+        var manifestDigest = new string('6', 64);
+        SeedValidatedCompletionState(
+            dataSource,
+            scrapeId,
+            publicationId,
+            manifestDigest);
+        using (var connection =
+               dataSource.OpenConnection())
+        using (var mutateEvidence =
+               connection.CreateCommand())
+        {
+            mutateEvidence.CommandText = """
+                UPDATE max_score_maintenance_cache_entries
+                SET etag = 'replacement'
+                WHERE manifest_sha256 = @manifestDigest
+                  AND cache_key = 'route'
+                """;
+            mutateEvidence.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            var immutable =
+                Assert.Throws<PostgresException>(
+                    () => mutateEvidence.ExecuteNonQuery());
+            Assert.Equal("55000", immutable.SqlState);
+        }
+        using (var connection =
+               dataSource.OpenConnection())
+        using (var tamper = connection.CreateCommand())
+        {
+            tamper.CommandText = """
+                UPDATE api_response_cache_staging
+                SET json_data =
+                        decode(
+                            '7b2274616d7065726564223a747275657d',
+                            'hex'),
+                    etag = 'tampered'
+                WHERE cache_key = 'route';
+                UPDATE publication_api_response_cache_staging
+                SET json_data =
+                        decode(
+                            '7b2274616d7065726564223a747275657d',
+                            'hex'),
+                    etag = 'tampered'
+                WHERE publication_id = @publicationId
+                  AND cache_key = 'route';
+                """;
+            tamper.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            tamper.ExecuteNonQuery();
+        }
+
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        await using var lease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        var error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => lease.CompleteAsync(
+                    scrapeId,
+                    manifestDigest));
+        Assert.Contains(
+            "immutable entry evidence",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        using var verifyConnection =
+            dataSource.OpenConnection();
+        using var verify =
+            verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT publication.public_reads_frozen,
+                   run.phase,
+                   run.status,
+                   (
+                       SELECT etag
+                       FROM api_response_cache
+                       WHERE cache_key = 'route'
+                   )
+            FROM scrape_publication_state publication
+            JOIN max_score_maintenance_runs run
+              ON run.manifest_sha256 =
+                 @manifestDigest
+            WHERE publication.id = TRUE
+            """;
+        verify.Parameters.AddWithValue(
+            "manifestDigest",
+            manifestDigest);
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.Equal("validated", reader.GetString(1));
+        Assert.Equal("running", reader.GetString(2));
+        Assert.Equal("old-etag", reader.GetString(3));
     }
 
     [Fact]
@@ -3645,7 +3786,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 freeze_reason,
                 phase,
                 status,
-                staged_cache_entry_count)
+                staged_cache_entry_count,
+                staged_cache_evidence)
             VALUES (
                 @manifestDigest,
                 1,
@@ -3660,9 +3802,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 @historyFingerprint,
                 '{}'::jsonb,
                 @freezeReason,
-                'validated',
+                'notifications_quarantined',
                 'running',
-                1);
+                1,
+                jsonb_build_object(
+                    'entryCount', 1,
+                    'contentFingerprint',
+                        repeat('d', 64),
+                    'publishedScopeCacheKeyCount', 0,
+                    'publishedScopeCacheKeyFingerprint',
+                        repeat('e', 64),
+                    'targetScopeCount', 0,
+                    'targetScopeFingerprint',
+                        repeat('f', 64),
+                    'affectedAccountCount', 0,
+                    'affectedAccountFingerprint',
+                        repeat('1', 64),
+                    'overlayOnlyAccountCount', 0,
+                    'overlayOnlyAccountFingerprint',
+                        repeat('2', 64)));
 
             INSERT INTO api_response_cache (
                 cache_key, json_data, etag, cached_at)
@@ -3696,6 +3854,27 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 decode('7b226e6577223a747275657d', 'hex'),
                 'new-etag',
                 now());
+
+            INSERT INTO max_score_maintenance_cache_entries (
+                manifest_sha256,
+                cache_key,
+                etag,
+                json_sha256)
+            VALUES (
+                @manifestDigest,
+                'route',
+                'new-etag',
+                encode(
+                    digest(
+                        decode(
+                            '7b226e6577223a747275657d',
+                            'hex'),
+                        'sha256'),
+                    'hex'));
+
+            UPDATE max_score_maintenance_runs
+            SET phase = 'validated'
+            WHERE manifest_sha256 = @manifestDigest;
             """;
         seed.Parameters.AddWithValue("scrapeId", scrapeId);
         seed.Parameters.AddWithValue(

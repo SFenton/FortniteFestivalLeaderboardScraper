@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 3bcf03d6
+last_verified_commit: 80346e04
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
@@ -81,8 +82,14 @@ complete consumed `score_history` evidence, freeze owner, last durable phase,
 rollback file digest, notification audit link, counters, staged-cache evidence,
 and bounded failure detail. Population evidence stores scope count, effective
 range, and hash. History evidence stores row count, ID/time ranges, and hash.
-Cache evidence stores the whole-stage hash plus target-scope,
-affected-account, and overlay-only-account hashes. A
+Cache evidence stores the whole-stage hash, the exact publication-scope cache
+key inventory hash, and target-scope, affected-account, and
+overlay-only-account hashes.
+`max_score_maintenance_cache_entries` stores one immutable row per staged
+cache key with its ETag and JSON SHA-256. The evidence is captured atomically
+with the `caches_staged` checkpoint only after the legacy and
+publication-addressed staging tables match exactly; updates/deletes and later
+inserts are rejected. A
 post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
@@ -111,6 +118,11 @@ count. It is snapshotted once under the exclusive fence and never falls back
 to mutable `leaderboard_population`. The strict read context remains active
 through cache generation and final validation, so active snapshots, the worker
 projection, and legacy rows cannot enter the staged cache.
+The frozen catalog plus this population map also owns maintenance song and
+instrument scopes, total-song/completion denominators, maximum-score filtering,
+and the expected base/leeway/rank-offset cache keys. Maintenance never uses
+legacy `GetAllSongCounts()`, active `song_stats`/`leaderboard_entries`, or the
+process-cached total-song count for those decisions.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and
@@ -209,10 +221,13 @@ history pairs are preserved. Ordinary scrape/publication freezes retain their
 existing registration behavior.
 
 Final cache swap, completed checkpoint, and unfreeze run inside one
-source-locked transaction on the live lock-owning session; the durable gate is
-cleared only after advisory-lock release. Backend loss before the final commit
-keeps the old cache, freeze, and durable owner. Backend loss after that commit
-but before durable-gate clear keeps the completed cache/publication coherent
+source-locked transaction on the live lock-owning session. It share-locks both
+staging tables and compares every key, ETag, and JSON SHA-256 with
+`max_score_maintenance_cache_entries` before any swap. Validated freezes reject
+ordinary cache-build leases and staging writers. The durable gate is cleared
+only after advisory-lock release. Backend loss before the final commit keeps
+the old cache, freeze, and durable owner. Backend loss after that commit but
+before durable-gate clear keeps the completed cache/publication coherent
 and leaves guarded mutations fail-closed. A new validated lease may replace
 the stale owner token and either resume the incomplete workflow or complete
 the post-commit release.

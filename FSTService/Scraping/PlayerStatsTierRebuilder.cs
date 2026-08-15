@@ -23,6 +23,7 @@ public static class PlayerStatsTierRebuilder
             accountIds,
             log,
             maintenanceLease: null,
+            maxScoresOverride: null,
             populationOverride: null,
             ct: ct);
 
@@ -32,6 +33,8 @@ public static class PlayerStatsTierRebuilder
             IPathDataStore pathDataStore,
             IReadOnlyCollection<string> accountIds,
             ILogger log,
+            IReadOnlyDictionary<string, SongMaxScores>
+                publicationMaxScores,
             IReadOnlyDictionary<
                 (string SongId, string Instrument),
                 long> publicationPopulation,
@@ -45,6 +48,9 @@ public static class PlayerStatsTierRebuilder
             maintenanceLease
                 ?? throw new ArgumentNullException(
                     nameof(maintenanceLease)),
+            publicationMaxScores
+                ?? throw new ArgumentNullException(
+                    nameof(publicationMaxScores)),
             publicationPopulation
                 ?? throw new ArgumentNullException(
                     nameof(publicationPopulation)),
@@ -57,6 +63,8 @@ public static class PlayerStatsTierRebuilder
             IReadOnlyCollection<string> accountIds,
             ILogger log,
             IMaxScoreMaintenanceLease? maintenanceLease,
+            IReadOnlyDictionary<string, SongMaxScores>?
+                maxScoresOverride,
             IReadOnlyDictionary<
                 (string SongId, string Instrument),
                 long>? populationOverride,
@@ -78,15 +86,55 @@ public static class PlayerStatsTierRebuilder
             .OrderBy(accountId => accountId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var allMaxScores = pathDataStore.GetAllMaxScores();
+        var allMaxScores = maintenanceLease is null
+            ? pathDataStore.GetAllMaxScores()
+            : maxScoresOverride?.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase)
+              ?? throw new InvalidOperationException(
+                  "Max-score player stats require publication-owned maximum scores.");
         var metaDb = persistence.Meta;
-        var instrumentKeys = persistence.GetInstrumentKeys();
-        var totalSongs = persistence.GetTotalSongCount();
+        var instrumentKeys = maintenanceLease is null
+            ? persistence.GetInstrumentKeys()
+            : GlobalLeaderboardScraper.AllInstruments
+                .Where(instrument =>
+                    populationOverride!.Keys.Any(scope =>
+                        string.Equals(
+                            scope.Instrument,
+                            instrument,
+                            StringComparison.Ordinal)))
+                .ToArray();
+        var totalSongs = maintenanceLease is null
+            ? persistence.GetTotalSongCount()
+            : populationOverride!.Keys
+                .Select(scope => scope.SongId)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
         var population = maintenanceLease is null
             ? metaDb.GetAllLeaderboardPopulation()
             : populationOverride
               ?? throw new InvalidOperationException(
                   "Max-score player stats require an immutable publication population snapshot.");
+        var maintenanceScopes = maintenanceLease is null
+            ? null
+            : population.Keys.ToHashSet();
+        var totalSongsByInstrument = maintenanceLease is null
+            ? null
+            : population.Keys
+                .GroupBy(
+                    scope => scope.Instrument,
+                    StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .Select(scope => scope.SongId)
+                        .Distinct(StringComparer.Ordinal)
+                        .Count(),
+                    StringComparer.Ordinal);
+        var overallTotalSongs = maintenanceLease is null
+            ? (int?)null
+            : population.Count;
         var rebuiltAccounts = 0;
         var writtenRows = 0;
 
@@ -106,6 +154,15 @@ public static class PlayerStatsTierRebuilder
                     || allScores.Count == 0)
                 {
                     continue;
+                }
+                if (maintenanceScopes is not null)
+                {
+                    allScores = allScores
+                        .Where(score => maintenanceScopes.Contains(
+                            (score.SongId, score.Instrument)))
+                        .ToList();
+                    if (allScores.Count == 0)
+                        continue;
                 }
 
                 Dictionary<
@@ -129,7 +186,9 @@ public static class PlayerStatsTierRebuilder
                     totalSongs,
                     allMaxScores,
                     population,
-                    fallbacks);
+                    fallbacks,
+                    totalSongsByInstrument,
+                    overallTotalSongs);
                 if (accountRows.Count == 0)
                     continue;
 

@@ -67,6 +67,41 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
+    public async Task ApplyOrResume_builds_cache_inventory_and_completion_from_publication_owned_scopes()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true);
+        var plan = await fixture.PlanAsync();
+        Assert.True(plan.CanApply);
+
+        var result = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            result.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.NotNull(result.CacheEvidence);
+        Assert.Equal(
+            6,
+            result.CacheEvidence!
+                .PublishedScopeCacheKeyCount);
+        var state = fixture.ReadScopeDivergenceState();
+        Assert.True(state.PublishedOnlyBaseKeyPresent);
+        Assert.True(state.PublishedOnlyLeewayKeyPresent);
+        Assert.True(state.PublishedOnlyOffsetKeyPresent);
+        Assert.False(state.ActiveOnlyBaseKeyPresent);
+        Assert.False(state.ActiveOnlyLeewayKeyPresent);
+        Assert.False(state.ActiveOnlyOffsetKeyPresent);
+        Assert.Equal(["Solo_Bass"], state.PublishedOnlyInstruments);
+        Assert.Equal(2, state.TotalSongs);
+        Assert.Equal(100, state.GuitarCompletionPercent);
+        Assert.Equal(50, state.OverallCompletionPercent);
+    }
+
+    [Fact]
     public async Task ApplyOrResume_rejects_post_plan_score_history_mutation_and_accepts_corrected_apply()
     {
         await using var fixture =
@@ -207,6 +242,84 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.Equal(0, completedState.VisibleNotifications);
     }
 
+    [Theory]
+    [InlineData("mutated")]
+    [InlineData("deleted")]
+    [InlineData("added")]
+    public async Task ApplyOrResume_revalidates_validated_cache_staging_before_resume_and_swap(
+        string mutation)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        Assert.True(plan.CanApply);
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase == MaxScoreMaintenancePhase.Validated)
+                {
+                    throw new InvalidOperationException(
+                        "validated-checkpoint-stop");
+                }
+            };
+
+        var checkpointed = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(checkpointed.Succeeded);
+        Assert.True(checkpointed.Resumable);
+        Assert.True(checkpointed.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Validated,
+            checkpointed.Phase);
+        Assert.NotNull(checkpointed.CacheEvidence);
+        var canonicalStaging =
+            fixture.ReadStagingGeneration();
+        fixture.AssertValidatedCacheWritersBlocked();
+        fixture.Service.AfterPhaseCheckpointTestHook = null;
+        fixture.MutateStagingGeneration(mutation);
+
+        var rejected = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.Resumable);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Validated,
+            rejected.Phase);
+        var failedState = fixture.ReadSafetyState();
+        Assert.True(failedState.Frozen);
+        Assert.Equal("validated", failedState.RunPhase);
+        Assert.Equal("failed", failedState.RunStatus);
+        Assert.True(failedState.LiveSentinelPresent);
+        Assert.Equal(0, failedState.VisibleNotifications);
+
+        fixture.RestoreStagingGeneration(
+            canonicalStaging);
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            resumed.Phase);
+        Assert.False(resumed.PublicReadsFrozen);
+        var completedState = fixture.ReadSafetyState();
+        Assert.False(completedState.Frozen);
+        Assert.Equal("completed", completedState.RunPhase);
+        Assert.Equal("completed", completedState.RunStatus);
+        Assert.False(completedState.LiveSentinelPresent);
+    }
+
     private sealed class WorkflowFixture : IAsyncDisposable
     {
         private const long PublishedScrapeId = 1296;
@@ -214,6 +327,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         private const long PublicationId = 500;
         private const string SongId = "workflow-song";
         private const string Instrument = "Solo_Guitar";
+        private const string PublishedOnlySongId =
+            "workflow-published-only";
+        private const string PublishedOnlyInstrument =
+            "Solo_Bass";
+        private const string ActiveOnlySongId =
+            "workflow-active-only";
         private const string BaseAccount = "published-base";
         private const string OverlayAccount = "overlay-only";
         private const string ValidPngBase64 =
@@ -252,7 +371,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 _dataDirectory,
                 "rollback.json");
 
-        internal static async Task<WorkflowFixture> CreateAsync()
+        internal static async Task<WorkflowFixture> CreateAsync(
+            bool includeScopeDivergence = false)
         {
             var dataDirectory = Path.Combine(
                 Directory.GetCurrentDirectory(),
@@ -311,8 +431,40 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 providerJson =
                     providerDocument.RootElement.Clone(),
             };
+            var catalogSongs = new List<Song> { song };
+            if (includeScopeDivergence)
+            {
+                using var publishedOnlyProvider =
+                    JsonDocument.Parse(
+                        """
+                        {
+                          "lastModified": "2026-07-15T00:00:00Z",
+                          "track": {
+                            "su": "workflow-published-only",
+                            "tt": "Published Only Song",
+                            "an": "Published Artist",
+                            "in": {
+                              "ba": 3
+                            }
+                          }
+                        }
+                        """);
+                catalogSongs.Add(new Song
+                {
+                    track = new Track
+                    {
+                        su = PublishedOnlySongId,
+                        tt = "Published Only Song",
+                        an = "Published Artist",
+                        @in = new In { ba = 3 },
+                    },
+                    providerJson =
+                        publishedOnlyProvider.RootElement.Clone(),
+                });
+            }
             var catalog =
-                SongCatalogSnapshotBuilder.Create([song]);
+                SongCatalogSnapshotBuilder.Create(
+                    catalogSongs);
 
             var currentIdentity =
                 new MaxScoreMaintenancePathIdentity(
@@ -457,6 +609,10 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 catalog,
                 catalogCapturedAt,
                 currentIdentity);
+            if (includeScopeDivergence)
+            {
+                SeedScopeDivergence(dataSource);
+            }
             meta.InsertAccountIds([OverlayAccount]);
             meta.InsertAccountNames(
                 [(OverlayAccount, (string?)"Overlay User")]);
@@ -724,6 +880,207 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             }
         }
 
+        internal IReadOnlyList<StagingCacheEntry>
+            ReadStagingGeneration()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT cache_key, json_data, etag
+                FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId
+                ORDER BY cache_key
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            var result = new List<StagingCacheEntry>();
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                result.Add(new StagingCacheEntry(
+                    reader.GetString(0),
+                    reader.GetFieldValue<byte[]>(1),
+                    reader.GetString(2)));
+            }
+            Assert.NotEmpty(result);
+            Assert.Contains(
+                result,
+                entry => entry.CacheKey == "firstseen");
+            return result;
+        }
+
+        internal void AssertValidatedCacheWritersBlocked()
+        {
+            var leaseError =
+                Assert.Throws<InvalidOperationException>(
+                    () => _meta
+                        .AcquirePublicationCacheBuildLease(
+                            PublicationId,
+                            requireCurrentPublication: true));
+            Assert.Contains(
+                "validated max-score maintenance",
+                leaseError.Message,
+                StringComparison.OrdinalIgnoreCase);
+
+            var writerError =
+                Assert.Throws<InvalidOperationException>(
+                    () => _meta
+                        .BulkSetCachedResponsesStaging(
+                        [
+                            (
+                                Key: "blocked",
+                                Json:
+                                    """{"blocked":true}"""u8
+                                        .ToArray(),
+                                ETag: "blocked"),
+                        ],
+                        PublicationId));
+            Assert.Contains(
+                "immutable after max-score validation",
+                writerError.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal void MutateStagingGeneration(
+            string mutation)
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var transaction =
+                connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            command.CommandText = mutation switch
+            {
+                "mutated" => """
+                    UPDATE api_response_cache_staging
+                    SET json_data =
+                            convert_to(
+                                '{"tampered":true}',
+                                'UTF8'),
+                        etag = 'tampered'
+                    WHERE cache_key = 'firstseen';
+                    UPDATE publication_api_response_cache_staging
+                    SET json_data =
+                            convert_to(
+                                '{"tampered":true}',
+                                'UTF8'),
+                        etag = 'tampered'
+                    WHERE publication_id = @publicationId
+                      AND cache_key = 'firstseen';
+                    """,
+                "deleted" => """
+                    DELETE FROM api_response_cache_staging
+                    WHERE cache_key = 'firstseen';
+                    DELETE FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = 'firstseen';
+                    """,
+                "added" => """
+                    INSERT INTO api_response_cache_staging (
+                        cache_key,
+                        json_data,
+                        etag,
+                        cached_at)
+                    VALUES (
+                        'unexpected-cache-key',
+                        convert_to(
+                            '{"unexpected":true}',
+                            'UTF8'),
+                        'unexpected',
+                        now());
+                    INSERT INTO publication_api_response_cache_staging (
+                        publication_id,
+                        cache_key,
+                        json_data,
+                        etag,
+                        cached_at)
+                    VALUES (
+                        @publicationId,
+                        'unexpected-cache-key',
+                        convert_to(
+                            '{"unexpected":true}',
+                            'UTF8'),
+                        'unexpected',
+                        now());
+                    """,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(mutation)),
+            };
+            command.ExecuteNonQuery();
+            transaction.Commit();
+        }
+
+        internal void RestoreStagingGeneration(
+            IReadOnlyList<StagingCacheEntry> entries)
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var transaction =
+                connection.BeginTransaction();
+            using (var clear = connection.CreateCommand())
+            {
+                clear.Transaction = transaction;
+                clear.CommandText = """
+                    TRUNCATE api_response_cache_staging;
+                    DELETE FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId;
+                    """;
+                clear.Parameters.AddWithValue(
+                    "publicationId",
+                    PublicationId);
+                clear.ExecuteNonQuery();
+            }
+            foreach (var entry in entries)
+            {
+                using var restore = connection.CreateCommand();
+                restore.Transaction = transaction;
+                restore.CommandText = """
+                    INSERT INTO api_response_cache_staging (
+                        cache_key,
+                        json_data,
+                        etag,
+                        cached_at)
+                    VALUES (
+                        @cacheKey,
+                        @jsonData,
+                        @etag,
+                        now());
+                    INSERT INTO publication_api_response_cache_staging (
+                        publication_id,
+                        cache_key,
+                        json_data,
+                        etag,
+                        cached_at)
+                    VALUES (
+                        @publicationId,
+                        @cacheKey,
+                        @jsonData,
+                        @etag,
+                        now());
+                    """;
+                restore.Parameters.AddWithValue(
+                    "publicationId",
+                    PublicationId);
+                restore.Parameters.AddWithValue(
+                    "cacheKey",
+                    entry.CacheKey);
+                restore.Parameters.AddWithValue(
+                    "jsonData",
+                    entry.JsonData);
+                restore.Parameters.AddWithValue(
+                    "etag",
+                    entry.ETag);
+                restore.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
+
         internal SafetyState ReadSafetyState()
         {
             using var connection =
@@ -857,6 +1214,158 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 reader.GetInt64(5),
                 targetScores,
                 accountScores);
+        }
+
+        internal ScopeDivergenceState
+            ReadScopeDivergenceState()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @publishedOnlyBaseKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @publishedOnlyLeewayKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @publishedOnlyOffsetKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @activeOnlyBaseKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @activeOnlyLeewayKey
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @activeOnlyOffsetKey
+                    ),
+                    (
+                        SELECT json_data
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @publishedOnlyBaseKey
+                    ),
+                    (
+                        SELECT json_data
+                        FROM api_response_cache
+                        WHERE cache_key =
+                            @playerStatsKey
+                    )
+                """;
+            command.Parameters.AddWithValue(
+                "publishedOnlyBaseKey",
+                LeaderboardCacheKeys.LeaderboardAll(
+                    PublishedOnlySongId,
+                    LeaderboardCacheKeys
+                        .SongDetailPreviewTop,
+                    null));
+            command.Parameters.AddWithValue(
+                "publishedOnlyLeewayKey",
+                LeaderboardCacheKeys.LeaderboardAll(
+                    PublishedOnlySongId,
+                    LeaderboardCacheKeys
+                        .SongDetailPreviewTop,
+                    1.0));
+            command.Parameters.AddWithValue(
+                "publishedOnlyOffsetKey",
+                LeaderboardCacheKeys
+                    .LeaderboardRankOffsets(
+                        PublishedOnlySongId,
+                        PublishedOnlyInstrument));
+            command.Parameters.AddWithValue(
+                "activeOnlyBaseKey",
+                LeaderboardCacheKeys.LeaderboardAll(
+                    ActiveOnlySongId,
+                    LeaderboardCacheKeys
+                        .SongDetailPreviewTop,
+                    null));
+            command.Parameters.AddWithValue(
+                "activeOnlyLeewayKey",
+                LeaderboardCacheKeys.LeaderboardAll(
+                    ActiveOnlySongId,
+                    LeaderboardCacheKeys
+                        .SongDetailPreviewTop,
+                    1.0));
+            command.Parameters.AddWithValue(
+                "activeOnlyOffsetKey",
+                LeaderboardCacheKeys
+                    .LeaderboardRankOffsets(
+                        ActiveOnlySongId,
+                        Instrument));
+            command.Parameters.AddWithValue(
+                "playerStatsKey",
+                $"playerstats:{OverlayAccount}");
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+
+            using var publishedOnly =
+                JsonDocument.Parse(
+                    reader.GetFieldValue<byte[]>(6));
+            var publishedOnlyInstruments =
+                publishedOnly.RootElement
+                    .GetProperty("instruments")
+                    .EnumerateArray()
+                    .Select(item =>
+                        item.GetProperty("instrument")
+                            .GetString()!)
+                    .ToArray();
+            using var playerStats =
+                JsonDocument.Parse(
+                    reader.GetFieldValue<byte[]>(7));
+            var instrumentRows = playerStats.RootElement
+                .GetProperty("instruments")
+                .EnumerateArray()
+                .ToArray();
+            var guitarCombo =
+                ComboIds.FromInstruments([Instrument]);
+            var guitarCompletion = instrumentRows
+                .Single(row =>
+                    row.GetProperty("ins")
+                        .GetString() == guitarCombo)
+                .GetProperty("tiers")[0]
+                .GetProperty("cp")
+                .GetDouble();
+            var overallCompletion = instrumentRows
+                .Single(row =>
+                    row.GetProperty("ins")
+                        .GetString() == "00")
+                .GetProperty("tiers")[0]
+                .GetProperty("cp")
+                .GetDouble();
+            return new ScopeDivergenceState(
+                reader.GetBoolean(0),
+                reader.GetBoolean(1),
+                reader.GetBoolean(2),
+                reader.GetBoolean(3),
+                reader.GetBoolean(4),
+                reader.GetBoolean(5),
+                publishedOnlyInstruments,
+                playerStats.RootElement
+                    .GetProperty("totalSongs")
+                    .GetInt32(),
+                guitarCompletion,
+                overallCompletion);
         }
 
         internal string ReadRankStatsEvidence()
@@ -1532,6 +2041,190 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.ExecuteNonQuery();
         }
 
+        private static void SeedScopeDivergence(
+            NpgsqlDataSource dataSource)
+        {
+            using var connection =
+                dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO songs (
+                    song_id,
+                    title,
+                    last_modified,
+                    max_bass_score,
+                    path_generation_revision,
+                    path_generation_pending)
+                VALUES (
+                    @publishedOnlySongId,
+                    'Published Only Song',
+                    '2026-07-15T00:00:00Z',
+                    70000,
+                    0,
+                    FALSE);
+
+                INSERT INTO songs (
+                    song_id,
+                    title,
+                    last_modified,
+                    max_lead_score,
+                    path_generation_revision,
+                    path_generation_pending)
+                VALUES (
+                    @activeOnlySongId,
+                    'Active Only Song',
+                    '2026-08-10T00:00:00Z',
+                    80000,
+                    0,
+                    FALSE);
+
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    @publishedScrapeId,
+                    @publishedOnlySongId,
+                    @publishedOnlyInstrument,
+                    'published-only-account',
+                    65000,
+                    950000,
+                    TRUE,
+                    5,
+                    3,
+                    3,
+                    0.5,
+                    1,
+                    1,
+                    'scrape',
+                    now() - interval '1 day',
+                    now() - interval '1 hour');
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @publishedScrapeId,
+                    @publishedOnlySongId,
+                    @publishedOnlyInstrument,
+                    'alltime',
+                    'snapshot',
+                    @publishedScrapeId,
+                    @publishedScrapeId,
+                    1,
+                    md5('published-only-source'),
+                    md5('published-only-coverage'),
+                    50,
+                    1,
+                    TRUE,
+                    now() - interval '1 hour',
+                    now() - interval '1 hour');
+
+                INSERT INTO leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    @activeOnlySongId,
+                    @instrument,
+                    'active-only-account',
+                    75000,
+                    950000,
+                    TRUE,
+                    5,
+                    3,
+                    3,
+                    0.5,
+                    1,
+                    1,
+                    'scrape',
+                    now() - interval '1 day',
+                    now() - interval '20 minutes');
+
+                INSERT INTO song_stats (
+                    song_id,
+                    instrument,
+                    entry_count,
+                    previous_entry_count,
+                    log_weight,
+                    max_score,
+                    computed_at)
+                VALUES (
+                    @activeOnlySongId,
+                    @instrument,
+                    1,
+                    1,
+                    0,
+                    80000,
+                    now());
+
+                INSERT INTO leaderboard_population (
+                    song_id,
+                    instrument,
+                    total_entries,
+                    updated_at)
+                VALUES (
+                    @activeOnlySongId,
+                    @instrument,
+                    300,
+                    now());
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                PublishedScrapeId);
+            command.Parameters.AddWithValue(
+                "publishedOnlySongId",
+                PublishedOnlySongId);
+            command.Parameters.AddWithValue(
+                "publishedOnlyInstrument",
+                PublishedOnlyInstrument);
+            command.Parameters.AddWithValue(
+                "activeOnlySongId",
+                ActiveOnlySongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.ExecuteNonQuery();
+        }
+
         private static void WriteGeneration(
             string dataDirectory,
             string songId,
@@ -1683,4 +2376,21 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         long StagedCacheRows,
         bool LiveSentinelPresent,
         long VisibleNotifications);
+
+    private sealed record StagingCacheEntry(
+        string CacheKey,
+        byte[] JsonData,
+        string ETag);
+
+    private sealed record ScopeDivergenceState(
+        bool PublishedOnlyBaseKeyPresent,
+        bool PublishedOnlyLeewayKeyPresent,
+        bool PublishedOnlyOffsetKeyPresent,
+        bool ActiveOnlyBaseKeyPresent,
+        bool ActiveOnlyLeewayKeyPresent,
+        bool ActiveOnlyOffsetKeyPresent,
+        IReadOnlyList<string> PublishedOnlyInstruments,
+        int TotalSongs,
+        double GuitarCompletionPercent,
+        double OverallCompletionPercent);
 }

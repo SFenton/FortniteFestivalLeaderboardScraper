@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 3bcf03d6
+last_verified_commit: 80346e04
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
@@ -164,8 +164,10 @@ crash after file creation but before its database checkpoint reproduces and
 validates the same canonical bytes.
 
 Plan report version 4 includes `populationEvidence` and
-`scoreHistoryEvidence`. Apply/resume report version 2 includes
-`cacheEvidence` after cache staging. Plan may scan all registered-account
+`scoreHistoryEvidence`. Apply/resume report version 3 includes
+`cacheEvidence` after cache staging, including the exact
+publication-scope key count/fingerprint. Exact per-entry key/ETag/JSON hashes
+remain durable database evidence rather than expanding the report. Plan may scan all registered-account
 history plus affected-instrument fallback candidates; its aggregates are
 constant-memory, but operators must allow the documented maintenance-window
 cost.

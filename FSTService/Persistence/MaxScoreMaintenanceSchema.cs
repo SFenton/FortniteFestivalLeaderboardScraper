@@ -82,6 +82,13 @@ internal static class MaxScoreMaintenanceSchema
                         length(
                             staged_cache_evidence
                                 ->> 'contentFingerprint') = 64
+                        AND length(
+                            staged_cache_evidence
+                                ->> 'publishedScopeCacheKeyFingerprint') = 64
+                        AND (
+                            staged_cache_evidence
+                                ->> 'publishedScopeCacheKeyCount')::INTEGER
+                            >= 0
                         AND (
                             staged_cache_evidence
                                 ->> 'entryCount')::BIGINT =
@@ -159,6 +166,21 @@ internal static class MaxScoreMaintenanceSchema
                             score_history_evidence
                                 ->> 'fingerprint') = 64);
             END IF;
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_runs'::regclass
+                  AND conname =
+                        'ck_max_score_cache_evidence'
+                  AND pg_get_constraintdef(oid)
+                        NOT LIKE
+                            '%publishedScopeCacheKeyFingerprint%'
+            ) THEN
+                ALTER TABLE max_score_maintenance_runs
+                    DROP CONSTRAINT
+                        ck_max_score_cache_evidence;
+            END IF;
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
@@ -176,6 +198,13 @@ internal static class MaxScoreMaintenanceSchema
                             length(
                                 staged_cache_evidence
                                     ->> 'contentFingerprint') = 64
+                            AND length(
+                                staged_cache_evidence
+                                    ->> 'publishedScopeCacheKeyFingerprint') = 64
+                            AND (
+                                staged_cache_evidence
+                                    ->> 'publishedScopeCacheKeyCount')::INTEGER
+                                >= 0
                             AND (
                                 staged_cache_evidence
                                     ->> 'entryCount')::BIGINT =
@@ -264,6 +293,18 @@ internal static class MaxScoreMaintenanceSchema
             ix_max_score_maintenance_runs_status
             ON max_score_maintenance_runs(status, updated_at DESC);
 
+        CREATE TABLE IF NOT EXISTS
+            max_score_maintenance_cache_entries (
+                manifest_sha256 TEXT NOT NULL
+                    REFERENCES max_score_maintenance_runs(
+                        manifest_sha256),
+                cache_key      TEXT NOT NULL,
+                etag           TEXT NOT NULL,
+                json_sha256    TEXT NOT NULL
+                    CHECK (length(json_sha256) = 64),
+                PRIMARY KEY (manifest_sha256, cache_key)
+            );
+
         CREATE OR REPLACE FUNCTION reject_max_score_maintenance_identity_change()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -325,6 +366,35 @@ internal static class MaxScoreMaintenanceSchema
         END
         $$;
 
+        CREATE OR REPLACE FUNCTION
+            enforce_max_score_cache_entry_evidence_immutability()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF TG_OP = 'INSERT' THEN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM max_score_maintenance_runs run
+                    WHERE run.manifest_sha256 =
+                            NEW.manifest_sha256
+                      AND run.phase =
+                            'notifications_quarantined'
+                      AND run.status IN ('running', 'failed')
+                ) THEN
+                    RAISE EXCEPTION
+                        'Max-score cache entry evidence can only be captured at the cache-staging checkpoint.'
+                        USING ERRCODE = '55000';
+                END IF;
+                RETURN NEW;
+            END IF;
+
+            RAISE EXCEPTION
+                'Max-score cache entry evidence is immutable.'
+                USING ERRCODE = '55000';
+        END
+        $$;
+
         CREATE OR REPLACE FUNCTION reject_max_score_rollback_mutation()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -364,6 +434,24 @@ internal static class MaxScoreMaintenanceSchema
                 FOR EACH ROW
                 EXECUTE FUNCTION
                     reject_max_score_maintenance_identity_change();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'max_score_maintenance_cache_entries'::regclass
+                  AND tgname =
+                        'trg_enforce_max_score_cache_entry_evidence_immutability'
+                  AND NOT tgisinternal
+            ) THEN
+                CREATE TRIGGER
+                    trg_enforce_max_score_cache_entry_evidence_immutability
+                BEFORE INSERT OR UPDATE OR DELETE
+                ON max_score_maintenance_cache_entries
+                FOR EACH ROW
+                EXECUTE FUNCTION
+                    enforce_max_score_cache_entry_evidence_immutability();
             END IF;
 
             IF NOT EXISTS (

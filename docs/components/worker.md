@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 3bcf03d6
+last_verified_commit: 80346e04
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -17,6 +17,7 @@ sources:
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
@@ -326,7 +327,12 @@ Role defaults intentionally differ:
 A digest-owned max-score maintenance freeze is stricter than a normal scrape
 freeze: affected publication-bound cache misses, including `/api/songs` and
 both path routes, return `503`. After derived validation a complete cache swap,
-workflow completion, and unfreeze commit together. API processes invalidate
+workflow completion, and unfreeze commit together. Maintenance precompute uses
+only frozen-catalog publication scopes and their captured populations for song
+keys and completion denominators. A validated checkpoint makes both staging
+tables immutable to ordinary cache builders/writers; resume and the final
+source-locked transaction compare every staged key/ETag/JSON hash with durable
+entry evidence before swap. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client
 refresh.
 

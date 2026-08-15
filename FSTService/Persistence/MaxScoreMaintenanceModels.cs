@@ -1173,7 +1173,7 @@ public sealed record MaxScoreMaintenanceStageReport(
     string? ManifestSha256,
     IReadOnlyList<MaxScoreMaintenanceStageSongReport> Songs)
 {
-    public const int CurrentReportVersion = 2;
+    public const int CurrentReportVersion = 3;
 }
 
 public sealed record MaxScoreMaintenancePlanCheck(
@@ -1234,6 +1234,8 @@ public sealed record MaxScoreMaintenanceScoreHistoryEvidence(
 public sealed record MaxScoreMaintenanceCacheEvidence(
     long EntryCount,
     string ContentFingerprint,
+    int PublishedScopeCacheKeyCount,
+    string PublishedScopeCacheKeyFingerprint,
     int TargetScopeCount,
     string TargetScopeFingerprint,
     int AffectedAccountCount,

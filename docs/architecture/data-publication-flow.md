@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 3bcf03d6
+last_verified_commit: 80346e04
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -12,6 +12,7 @@ sources:
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
@@ -121,7 +122,10 @@ derived rows while retaining the same published scrape/publication ID.
    affected instruments from the exact published source plus supplemental
    overlay, then rebuilds composite, family, and combo dependencies. One
    immutable publication-population snapshot is passed to rankings, player
-   stats, and all later cache/validation work.
+   stats, and all later cache/validation work. The frozen catalog and exact
+   scope set, not active/legacy song tables or cached totals, determine
+   per-instrument/overall completion denominators and cache song/instrument
+   inventory.
    Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
@@ -142,17 +146,25 @@ derived rows while retaining the same published scrape/publication ID.
 8. The strict published-source-plus-overlay read context remains active while
    a complete current-publication API cache is built and validated in staging;
    active snapshots, worker projection rows, and legacy fallback are forbidden.
+   Base, leeway, and rank-offset keys must exactly match the frozen
+   publication scopes. Both staging tables must match, and every key, ETag,
+   and JSON SHA-256 is captured in immutable
+   `max_score_maintenance_cache_entries`.
    Final validation requires unchanged rank-history, complete consumed
    score-history and population evidence, exact paths/maxima/song stats,
    canonical rollback file SHA/identity matching immutable database rows, zero
    visible delivery, the whole staged-cache hash, and semantic target-scope,
    affected-account, and overlay-only-account cache fingerprints.
-9. Cache swap, workflow completion, and freeze release commit atomically in a
-   source-locked transaction on the live advisory-lock session while its
-   durable mutation token remains set. Disposal releases the publication,
-   path-generation, and exclusive mutation advisory locks before clearing the
-   token. Queued holders cannot pass the advisory gate early, and stale direct
-   entry or population writers remain durably blocked throughout the handoff.
+9. A validated resume rechecks semantic cache evidence and both staging tables.
+   Cache-build leases and staging writers cannot replace that validated
+   generation. Cache swap, workflow completion, and freeze release then commit
+   atomically in a source-locked transaction on the live advisory-lock session
+   while its durable mutation token remains set; staging share locks and an
+   exact immutable-entry comparison run before the swap. Disposal releases the
+   publication, path-generation, and exclusive mutation advisory locks before
+   clearing the token. Queued holders cannot pass the advisory gate early, and
+   stale direct entry or population writers remain durably blocked throughout
+   the handoff.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument

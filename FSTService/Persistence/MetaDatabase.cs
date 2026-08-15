@@ -11567,7 +11567,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 WITH publication AS (
                     SELECT current_publication_id,
                            working_publication_id,
-                           published_scrape_id
+                           published_scrape_id,
+                           COALESCE(
+                               public_reads_frozen,
+                               FALSE) AS public_reads_frozen,
+                           public_reads_frozen_reason
                     FROM scrape_publication_state
                     WHERE id = TRUE
                 )
@@ -11581,13 +11585,29 @@ public sealed partial class MetaDatabase : IMetaDatabase
                                0)
                              AND scrape.status = 'failed'
                              AND scrape.failure_phase = ANY(@failurePhases)
-                       ) AS failed_candidate_isolation
+                       ) AS failed_candidate_isolation,
+                       EXISTS (
+                           SELECT 1
+                           FROM max_score_maintenance_runs run
+                           WHERE publication.public_reads_frozen
+                             AND publication.current_publication_id =
+                                 @publicationId
+                             AND publication.public_reads_frozen_reason =
+                                 run.freeze_reason
+                             AND run.expected_publication_id =
+                                 @publicationId
+                             AND run.phase = 'validated'
+                             AND run.status IN ('running', 'failed')
+                       ) AS validated_max_score_cache
                 FROM publication
                 """;
             cmd.Parameters.AddWithValue(
                 "failurePhases",
                 NpgsqlDbType.Array | NpgsqlDbType.Text,
                 FailedCandidateReadIsolationFailurePhases);
+            cmd.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
             using var reader = cmd.ExecuteReader();
             if (!reader.Read())
             {
@@ -11605,8 +11625,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
             var workingPublicationId =
                 reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1);
             var failedCandidateIsolation = reader.GetBoolean(2);
+            var validatedMaxScoreCache = reader.GetBoolean(3);
             var expectedPublicationId = workingPublicationId
                 ?? currentPublicationId;
+
+            if (validatedMaxScoreCache)
+            {
+                throw new InvalidOperationException(
+                    $"Publication {publicationId} cache build is blocked by validated max-score maintenance staging evidence.");
+            }
 
             if (publicationId == 0)
             {
@@ -12130,6 +12157,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
             connection,
             transaction,
             publicationId);
+        EnsureMaxScoreValidatedCacheStagingIsMutable(
+            connection,
+            transaction,
+            publicationId);
 
         // Start with a clean staging table
         using (var trunc = connection.CreateCommand())
@@ -12204,6 +12235,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
             && !IsPublicationMaintenanceLockHeld(publicationId))
             AcquirePublicationCacheMutationLock(conn, tx);
         publicationId = ResolveCacheTargetPublicationId(
+            conn,
+            tx,
+            publicationId);
+        EnsureMaxScoreValidatedCacheStagingIsMutable(
             conn,
             tx,
             publicationId);
@@ -12346,6 +12381,57 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     "Max-score maintenance completion lost its exact publication or freeze identity.");
             }
         }
+
+        using (var cacheLocks = conn.CreateCommand())
+        {
+            cacheLocks.Transaction = tx;
+            cacheLocks.CommandText = """
+                LOCK TABLE api_response_cache_staging
+                    IN SHARE MODE;
+                LOCK TABLE publication_api_response_cache_staging
+                    IN SHARE MODE;
+                """;
+            cacheLocks.ExecuteNonQuery();
+        }
+        long stagedCacheEntryCount;
+        using (var run = conn.CreateCommand())
+        {
+            run.Transaction = tx;
+            run.CommandText = """
+                SELECT staged_cache_entry_count
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestSha256
+                  AND expected_publication_id = @publicationId
+                  AND expected_published_scrape_id =
+                      @publishedScrapeId
+                  AND phase = 'validated'
+                  AND status IN ('running', 'failed')
+                  AND staged_cache_evidence IS NOT NULL
+                FOR UPDATE
+                """;
+            run.Parameters.AddWithValue(
+                "manifestSha256",
+                normalizedDigest);
+            run.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            run.Parameters.AddWithValue(
+                "publishedScrapeId",
+                publishedScrapeId);
+            var value = run.ExecuteScalar();
+            if (value is null or DBNull)
+            {
+                throw new InvalidOperationException(
+                    "Validated max-score cache evidence is missing from the durable run.");
+            }
+            stagedCacheEntryCount = Convert.ToInt64(value);
+        }
+        MaxScoreMaintenanceCacheEntryEvidenceStore.Validate(
+            normalizedDigest,
+            publicationId,
+            stagedCacheEntryCount,
+            conn,
+            tx);
 
         using (var swap = conn.CreateCommand())
         {
@@ -12588,6 +12674,44 @@ public sealed partial class MetaDatabase : IMetaDatabase
         => CurrentPublicationMaintenanceTarget.Value.HasValue
            && CurrentPublicationMaintenanceTarget.Value.Value
                == (publicationId ?? 0);
+
+    private static void EnsureMaxScoreValidatedCacheStagingIsMutable(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long? publicationId)
+    {
+        if (!publicationId.HasValue)
+            return;
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM scrape_publication_state publication
+                JOIN max_score_maintenance_runs run
+                  ON run.freeze_reason =
+                     publication.public_reads_frozen_reason
+                 AND run.expected_publication_id =
+                     publication.current_publication_id
+                WHERE publication.id = TRUE
+                  AND publication.current_publication_id =
+                      @publicationId
+                  AND publication.working_publication_id IS NULL
+                  AND publication.public_reads_frozen
+                  AND run.phase = 'validated'
+                  AND run.status IN ('running', 'failed')
+            )
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId.Value);
+        if (command.ExecuteScalar() is true)
+        {
+            throw new InvalidOperationException(
+                $"Publication {publicationId.Value} cache staging is immutable after max-score validation.");
+        }
+    }
 
     private static void ReleasePublicationCacheBuildLocks(
         NpgsqlConnection connection,
