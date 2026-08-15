@@ -4,7 +4,8 @@
     "entryJsGzipMaxBytes": 260000,
     "entryJsGzipMinHeadroomBytes": 5000,
     "entryJsBrotliMaxBytes": 220000,
-    "largestChunkGzipMaxBytes": 120000
+    "largestChunkGzipMaxBytes": 120000,
+    "manualDeployMaxBytes": 18000000
   },
   "routes": {
     "Songs": {

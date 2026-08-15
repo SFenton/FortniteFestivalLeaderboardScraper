@@ -6,7 +6,6 @@
 import { describe, it, expect } from 'vitest';
 
 // Hook barrel re-exports (src/hooks/*.ts)
-import { useAccountSearch } from '../src/hooks/data/useAccountSearch';
 import { useFilteredSongs } from '../src/hooks/data/useFilteredSongs';
 import { useIsMobile } from '../src/hooks/ui/useIsMobile';
 import { useLoadPhase } from '../src/hooks/data/useLoadPhase';
@@ -50,7 +49,6 @@ import * as models from '@festival/core/api';
 
 describe('barrel re-exports', () => {
   it('hook barrels export functions', () => {
-    expect(typeof useAccountSearch).toBe('function');
     expect(typeof useFilteredSongs).toBe('function');
     expect(typeof useIsMobile).toBe('function');
     expect(typeof useLoadPhase).toBe('function');

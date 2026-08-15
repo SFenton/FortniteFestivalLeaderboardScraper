@@ -33,8 +33,12 @@ sources:
   - FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx
   - FortniteFestivalWeb/src/pages/suggestions/components/SuggestionsLoadSentinel.tsx
   - FortniteFestivalWeb/src/pages/suggestions/suggestionsSessionCache.ts
+  - FortniteFestivalWeb/src/pages/manual/ManualPage.tsx
+  - FortniteFestivalWeb/src/pages/manual/manualScreenshotAssets.ts
+  - FortniteFestivalWeb/manual-assets/generated/manifest.json
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
+  - FortniteFestivalWeb/scripts/generate-manual-image-variants.mjs
   - FortniteFestivalWeb/scripts/generate-theme-css.mjs
   - .github/workflows/web-performance.yml
   - FortniteFestivalWeb/src/routes.ts
@@ -76,6 +80,12 @@ present. Root diagnostic fixtures render independently of publication and
 backend-availability gates. Conditional shell dialogs and the first-run
 carousel also load through interaction/visibility boundaries rather than the
 normal returning-user entry.
+
+The production build classifies every TypeScript source module. Application
+modules must be reachable from the normal or lazy Vite graph; only component
+stories and an explicit set of type-only modules may remain outside it.
+Obsolete implementations and tests that import only those implementations are
+removed together rather than retained to inflate coverage.
 
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
@@ -354,6 +364,21 @@ caching, and falls back to `index.html` for client routes.
 
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
+
+Manual screenshots use PNG only as the authoring format under
+`FortniteFestivalWeb/manual-assets/source/screenshots`. The source captures and
+schema-v2 generation manifest are excluded from Docker and Vite deployment.
+The public bundle contains 376 responsive WebP variants plus three canonical
+PNGs retained only for the documented `song-detail-cards` legacy alias. All
+supported Chromium, WebKit, and Firefox projects decode WebP, so each carousel
+uses its full-resolution hashed WebP as the `<img>` fallback and retries it once
+without the responsive `<source>` after a candidate decode failure.
+
+`manual:images:check` verifies all 141 source hashes, PNG metadata, encoded WebP
+dimensions/hashes, alias closure, the generated TypeScript map, and an exact
+deploy file list. The generated public Manual directory is 17,080,853 bytes;
+the embedded bundle, including physical legacy aliases, is capped at
+18,000,000 bytes by the normal performance-budget check.
 
 ## Browser test ownership
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const webRoot = path.resolve(__dirname, '..');
-const totalCeiling = 96;
+const totalCeiling = 93;
 const propertyCeilings: Record<string, number> = {
   iconAction: 19,
   iconChevron: 1,
@@ -15,9 +15,8 @@ const propertyCeilings: Record<string, number> = {
   iconMd: 1,
   iconSm: 6,
   iconTab: 3,
-  iconXl: 13,
+  iconXl: 12,
   settingsSliderPadding: 1,
-  starInline: 2,
   thumb: 5,
 };
 const fileCeilings: Record<string, number> = {
@@ -48,13 +47,11 @@ const fileCeilings: Record<string, number> = {
   'src/pages/settings/LicensesPage.tsx': 1,
   'src/pages/settings/SettingsPage.tsx': 2,
   'src/pages/shop/ShopPage.tsx': 2,
-  'src/pages/songinfo/components/chart/ScoreCardList.tsx': 1,
   'src/pages/songs/SongsPage.tsx': 3,
   'src/pages/songs/components/SongsToolbar.tsx': 7,
   'src/pages/songs/firstRun/demo/MetadataDemo.tsx': 1,
   'src/pages/songs/firstRun/demo/NavigationDemo.tsx': 4,
   'src/pages/songs/firstRun/demo/SongIconsDemo.tsx': 1,
-  'src/pages/songs/modals/components/filters/StarsToggles.tsx': 2,
   'src/pages/suggestions/SuggestionsPage.tsx': 1,
   'src/pages/suggestions/modals/SuggestionsFilterModal.tsx': 1,
 };

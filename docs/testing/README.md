@@ -17,6 +17,7 @@ sources:
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
+  - FortniteFestivalWeb/scripts/generate-manual-image-variants.mjs
   - FortniteFestivalWeb/scripts/generate-theme-css.mjs
   - FortniteFestivalWeb/scripts/shared-package-boundary-plugin.mjs
   - FortniteFestivalWeb/e2e/README.md
@@ -165,9 +166,31 @@ The production build also enforces the Rank By interaction boundary. Normal
 route and Rank By closures must exclude metric-help definitions,
 `FirstRunCarousel`, `Math.tsx`, KaTeX, and KaTeX CSS. The lazy metric-help
 closure must contain those modules and retain the direct dynamic edge from Rank
-By. Playwright request tests separately prove that KaTeX JS/CSS waits for the
+By.
+The same Vite plugin compares every `src/**/*.ts` and `src/**/*.tsx` file with
+the complete production and lazy chunk graph. Only component stories and the
+documented type-only allowlist may be unreachable; any other source file fails
+the build as unclassified dead code.
+
+Playwright request tests separately prove that KaTeX JS/CSS waits for the
 per-instrument info action, KaTeX fonts wait for a formula slide, and band,
 combo, and solo-family controls never expose the instrument-only help.
+
+Manual authoring PNGs are outside `public/`; only generated deploy assets enter
+the Vite and embedded bundles. Validate source hashes, image metadata,
+responsive variants, full-resolution WebP fallbacks, legacy alias files, and
+the 17.5 MB public closure with:
+
+```bash
+corepack yarn manual:images:check
+```
+
+The normal bundle-budget command additionally caps the embedded Manual
+directory at 18 MB. Chromium wide/mobile tests protect responsive selection,
+request bounds, dimensions, lazy mounting, and layout stability. The
+cross-engine browser suite forces one selected WebP candidate to fail and
+requires exactly one successful full-resolution WebP fallback without a PNG
+request or retry loop.
 
 ## Suggestions performance
 

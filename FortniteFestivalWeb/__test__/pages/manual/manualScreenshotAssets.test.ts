@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -9,7 +9,8 @@ import {
   MANUAL_SCREENSHOT_VIEWPORTS,
 } from '../../../src/pages/manual/manualScreenshotAssets';
 
-const screenshotsDir = resolve(process.cwd(), 'public/manual/screenshots');
+const sourceScreenshotsDir = resolve(process.cwd(), 'manual-assets/source/screenshots');
+const deployScreenshotsDir = resolve(process.cwd(), 'public/manual/screenshots');
 
 describe('Manual screenshot asset manifest', () => {
   it('aliases byte-identical screenshots without retaining duplicate PNG files', () => {
@@ -22,12 +23,14 @@ describe('Manual screenshot asset manifest', () => {
       const overview = getManualScreenshotAsset('song-detail-overview', viewport as keyof typeof MANUAL_SCREENSHOT_VIEWPORTS);
 
       expect(cards).toEqual(overview);
-      expect(cards.fallbackSrc).toContain(`/song-detail-overview-${viewport}.png`);
-      expect(existsSync(resolve(screenshotsDir, `song-detail-cards-${viewport}.png`))).toBe(false);
+      expect(cards.fallbackSrc).toMatch(new RegExp(
+        `/optimized/song-detail-overview-${viewport}-[a-f0-9]{12}-${MANUAL_SCREENSHOT_VIEWPORTS[viewport as keyof typeof MANUAL_SCREENSHOT_VIEWPORTS].width}\\.webp\\?fallback=1$`,
+      ));
+      expect(existsSync(resolve(sourceScreenshotsDir, `song-detail-cards-${viewport}.png`))).toBe(false);
     }
   });
 
-  it('tracks every canonical fallback and responsive WebP variant without byte-identical PNG pairs', () => {
+  it('tracks every authoring source, responsive WebP variant, and full-resolution WebP fallback', () => {
     const entries = Object.entries(MANUAL_SCREENSHOT_SOURCE_HASHES);
     expect(entries).toHaveLength(141);
     expect(new Set(entries.map(([, hash]) => hash)).size).toBe(entries.length);
@@ -39,15 +42,29 @@ describe('Manual screenshot asset manifest', () => {
           ? 'compact'
           : 'wide';
       const config = MANUAL_SCREENSHOT_VIEWPORTS[viewport];
-      const fallback = resolve(screenshotsDir, `${key}.png`);
-      expect(existsSync(fallback), `${key} fallback`).toBe(true);
-      expect(sha256(fallback), `${key} source hash`).toBe(sourceHash);
+      const source = resolve(sourceScreenshotsDir, `${key}.png`);
+      expect(existsSync(source), `${key} source`).toBe(true);
+      expect(sha256(source), `${key} source hash`).toBe(sourceHash);
 
       for (const width of config.variants) {
-        const webp = resolve(screenshotsDir, `optimized/${key}-${sourceHash.slice(0, 12)}-${width}.webp`);
+        const webp = resolve(deployScreenshotsDir, `optimized/${key}-${sourceHash.slice(0, 12)}-${width}.webp`);
         expect(existsSync(webp), `${key} ${width}w WebP`).toBe(true);
       }
+      const asset = getManualScreenshotAsset(key.slice(0, -(viewport.length + 1)), viewport);
+      expect(asset.fallbackSrc).toContain(
+        `/optimized/${key}-${sourceHash.slice(0, 12)}-${config.width}.webp?fallback=1`,
+      );
     }
+
+    expect(
+      readdirSync(deployScreenshotsDir)
+        .filter(fileName => fileName.endsWith('.png'))
+        .sort(),
+    ).toEqual([
+      'song-detail-overview-compact.png',
+      'song-detail-overview-mobile.png',
+      'song-detail-overview-wide.png',
+    ]);
   });
 
   it('deduplicates the maskable icon through the web manifest while retaining its legacy HTTP alias', () => {

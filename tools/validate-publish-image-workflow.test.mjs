@@ -14,6 +14,14 @@ test('current publish workflow satisfies the distribution contract', () => {
   assert.deepEqual(validatePublishImageWorkflow(workflow, dockerfile), []);
 });
 
+test('web image installs from the immutable Yarn lockfile', () => {
+  const mutated = dockerfile.replace('yarn install --immutable', 'yarn install');
+  assert.ok(
+    validatePublishImageWorkflow(workflow, mutated)
+      .some(error => error.includes('committed Yarn lockfile')),
+  );
+});
+
 test('pull-request and master validation cannot regain path filters', () => {
   for (const event of ['push', 'pull_request']) {
     const mutated = workflow.replace(
