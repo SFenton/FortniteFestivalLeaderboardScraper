@@ -2149,8 +2149,9 @@ public sealed class MaxScoreMaintenanceService
                 token,
                 _options
                     .MaxScoreMaintenanceCommandTimeoutSeconds);
-        var scoreHistoryEvidence =
-            await ComputeScoreHistoryEvidenceAsync(
+        var scoreHistorySnapshot =
+            await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
                 manifest,
                 readSnapshot.PostPromotionMaxScores,
                 conn,
@@ -2159,6 +2160,8 @@ public sealed class MaxScoreMaintenanceService
                 _options
                     .MaxScoreMaintenanceCommandTimeoutSeconds,
                 EvidenceCommandTimeoutTestHook);
+        var scoreHistoryEvidence =
+            scoreHistorySnapshot.Evidence;
         if (scoreHistoryEvidence
                 != readSnapshot.ScoreHistoryEvidence
             || scoreHistoryEvidence
@@ -2166,6 +2169,28 @@ public sealed class MaxScoreMaintenanceService
         {
             throw new InvalidOperationException(
                 "Score history changed during max-score maintenance.");
+        }
+        if (!scoreHistorySnapshot
+                .AffectedPlayerStatsAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .AffectedPlayerStatsAccounts,
+                    StringComparer.Ordinal)
+            || !scoreHistorySnapshot
+                .AffectedRegisteredAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .AffectedRegisteredAccounts,
+                    StringComparer.Ordinal)
+            || !scoreHistorySnapshot
+                .OverlayOnlyRegisteredAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .OverlayOnlyRegisteredAccounts,
+                    StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Affected score-history account selectors changed during max-score maintenance.");
         }
 
         var publishedInstruments = readSnapshot.PublishedScopes
@@ -3219,6 +3244,31 @@ public sealed class MaxScoreMaintenanceService
                 ScraperOptions
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
             Action<string, int>? commandTimeoutConfigured = null)
+        => (
+            await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
+                    manifest,
+                    postPromotionMaxScores,
+                    connection,
+                    transaction,
+                    ct,
+                    commandTimeoutSeconds,
+                    commandTimeoutConfigured))
+            .Evidence;
+
+    // Differential-test oracle for the pre-optimization selector semantics.
+    internal static async Task<MaxScoreMaintenanceScoreHistoryEvidence>
+        ComputeScoreHistoryEvidenceReferenceAsync(
+            MaxScoreMaintenanceManifest manifest,
+            IReadOnlyDictionary<string, SongMaxScores>
+                postPromotionMaxScores,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct,
+            int commandTimeoutSeconds =
+                ScraperOptions
+                    .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
+            Action<string, int>? commandTimeoutConfigured = null)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(postPromotionMaxScores);
@@ -3725,23 +3775,9 @@ public sealed class MaxScoreMaintenanceService
                         manifest,
                         publishedCatalogSongs,
                         publishedScopes);
-                var affectedAccounts =
-                    await MaxScoreMaintenanceDerivedStateService
-                        .LoadAffectedPlayerStatsAccountsAsync(
-                            manifest,
-                            connection,
-                            transaction,
-                            token,
-                            _options
-                                .MaxScoreMaintenanceCommandTimeoutSeconds);
-                var cacheAccounts =
-                    await LoadAffectedCacheAccountsAsync(
-                        manifest,
-                        connection,
-                        transaction,
-                        token);
                 var scoreHistory =
-                    await ComputeScoreHistoryEvidenceAsync(
+                    await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                        .ComputeAsync(
                         manifest,
                         postPromotionMaxScores,
                         connection,
@@ -3755,11 +3791,14 @@ public sealed class MaxScoreMaintenanceService
                         StringComparer.OrdinalIgnoreCase),
                     population.Population,
                     population.Evidence,
-                    scoreHistory,
+                    scoreHistory.Evidence,
                     publishedScopes,
-                    affectedAccounts.ToArray(),
-                    cacheAccounts.RegisteredAccounts.ToArray(),
-                    cacheAccounts.OverlayOnlyAccounts.ToArray());
+                    scoreHistory
+                        .AffectedPlayerStatsAccounts,
+                    scoreHistory
+                        .AffectedRegisteredAccounts,
+                    scoreHistory
+                        .OverlayOnlyRegisteredAccounts);
             },
             IsolationLevel.RepeatableRead,
             ct);
@@ -3808,95 +3847,6 @@ public sealed class MaxScoreMaintenanceService
                 }
             }
         }
-    }
-
-    private async Task<AffectedCacheAccounts>
-        LoadAffectedCacheAccountsAsync(
-            MaxScoreMaintenanceManifest manifest,
-            NpgsqlConnection connection,
-            NpgsqlTransaction transaction,
-            CancellationToken ct)
-    {
-        var changedPairs = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments.Select(
-                instrument => (
-                    song.SongId,
-                    Instrument: instrument)))
-            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
-            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
-            .ToArray();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        ConfigureEvidenceCommandTimeout(
-            command,
-            "affected-cache-account-evidence");
-        command.CommandText = $"""
-            WITH affected(song_id, instrument) AS (
-                SELECT *
-                FROM unnest(
-                    @songIds::TEXT[],
-                    @instruments::TEXT[])
-            ),
-            {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte},
-            affected_accounts AS MATERIALIZED (
-                SELECT DISTINCT resolved.account_id
-                FROM resolved_rows resolved
-            )
-            SELECT affected.account_id,
-                   EXISTS (
-                       SELECT 1
-                       FROM registered_users registered
-                       WHERE registered.account_id =
-                           affected.account_id),
-                   EXISTS (
-                       SELECT 1
-                       FROM leaderboard_entries_overlay overlay
-                       JOIN selected_sources selected
-                         ON selected.song_id = overlay.song_id
-                        AND selected.instrument =
-                            overlay.instrument
-                       WHERE overlay.account_id =
-                                 affected.account_id
-                         AND NOT EXISTS (
-                             SELECT 1
-                             FROM leaderboard_entries_snapshot snapshot
-                             WHERE selected.source_kind =
-                                       'snapshot'
-                               AND snapshot.snapshot_id =
-                                   selected.source_snapshot_id
-                               AND snapshot.song_id =
-                                   selected.song_id
-                               AND snapshot.instrument =
-                                   selected.instrument
-                               AND snapshot.account_id =
-                                   affected.account_id))
-            FROM affected_accounts affected
-            ORDER BY affected.account_id
-            """;
-        command.Parameters.Add(
-            "songIds",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.SongId).ToArray();
-        command.Parameters.Add(
-            "instruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.Instrument).ToArray();
-        var registered = new List<string>();
-        var overlayOnly = new List<string>();
-        await using var reader =
-            await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            if (!reader.GetBoolean(1))
-                continue;
-            var accountId = reader.GetString(0);
-            registered.Add(accountId);
-            if (reader.GetBoolean(2))
-                overlayOnly.Add(accountId);
-        }
-        return new AffectedCacheAccounts(
-            registered,
-            overlayOnly);
     }
 
     private static string ComputePlanDigest(
@@ -4963,10 +4913,6 @@ public sealed class MaxScoreMaintenanceService
             (string SongId, string Instrument),
             long> Population,
         MaxScoreMaintenancePopulationEvidence Evidence);
-
-    private sealed record AffectedCacheAccounts(
-        IReadOnlyList<string> RegisteredAccounts,
-        IReadOnlyList<string> OverlayOnlyAccounts);
 
     private sealed record MaxScoreMaintenanceReadSnapshot(
         IReadOnlyDictionary<string, SongMaxScores>
