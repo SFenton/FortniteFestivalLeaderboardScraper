@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
+import '../../../../../src/components/firstRun/firstRunEnglish';
 import LeavingTomorrowDemo from '../../../../../src/pages/songs/firstRun/demo/LeavingTomorrowDemo';
 import NewInShopDemo from '../../../../../src/pages/songs/firstRun/demo/NewInShopDemo';
 import ShopHighlightDemo from '../../../../../src/pages/songs/firstRun/demo/ShopHighlightDemo';

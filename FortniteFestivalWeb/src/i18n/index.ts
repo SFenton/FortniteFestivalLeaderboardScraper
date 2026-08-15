@@ -6,6 +6,7 @@ i18n.use(initReactI18next).init({
   resources: { en: { translation: en } },
   lng: 'en',
   fallbackLng: 'en',
+  initAsync: false,
   interpolation: { escapeValue: false },
 });
 

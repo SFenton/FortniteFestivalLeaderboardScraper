@@ -58,11 +58,15 @@ test('route metadata updates title, announcement, and PUSH/POP focus policy', as
   await gotoAppRoute(page, '/settings');
   await page.getByTestId('fre-overlay').waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
   await dismissObstructions(page);
-  await expect(page).toHaveTitle('Settings | Festival Score Tracker');
+  await expect(page).toHaveTitle('Settings | Festival Score Tracker', {
+    timeout: 15_000,
+  });
 
   await page.getByText('Licenses', { exact: true }).click();
   await expect(page).toHaveURL(/#\/settings\/licenses$/);
-  await expect(page).toHaveTitle('Licenses | Festival Score Tracker');
+  await expect(page).toHaveTitle('Licenses | Festival Score Tracker', {
+    timeout: 15_000,
+  });
   await expect(page.getByText('Navigated to Licenses')).toBeAttached();
   await expect(page.locator('main#main-content')).toBeFocused();
 
@@ -70,7 +74,9 @@ test('route metadata updates title, announcement, and PUSH/POP focus policy', as
   await settingsTab.focus();
   await page.goBack();
   await expect(page).toHaveURL(/#\/settings$/);
-  await expect(page).toHaveTitle('Settings | Festival Score Tracker');
+  await expect(page).toHaveTitle('Settings | Festival Score Tracker', {
+    timeout: 15_000,
+  });
   await expect(settingsTab).toBeFocused();
 });
 

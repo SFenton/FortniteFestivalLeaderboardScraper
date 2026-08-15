@@ -8,7 +8,6 @@ import type {
 } from '@festival/core/api';
 import { Colors, Gap, Radius, padding } from '@festival/theme';
 import type { SelectedProfile } from '../../hooks/data/useSelectedProfile';
-import i18n from '../../i18n';
 import { FrostedCard } from '../../components/common/FrostedCard';
 import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
 import {
@@ -17,11 +16,7 @@ import {
   type ServiceProgressMemory,
 } from './serviceProgress';
 import styles from './SettingsServiceProgress.module.css';
-import serviceInfoEnglish from './serviceInfo.en.json';
-
-i18n.addResourceBundle('en', 'translation', {
-  settings: { serviceInfo: serviceInfoEnglish },
-}, true, true);
+import './settingsEnglish';
 
 type MetricRow = {
   id: string;
@@ -359,7 +354,7 @@ export function SettingsServiceProgressCard({
   serviceInfo,
   loadFailed,
 }: ServiceProgressCardProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'settings'], { nsMode: 'fallback' });
   const progressMemory = useRef<ServiceProgressMemory | null>(null);
   const fallback = loadFailed
     ? t('common.failedToLoad')
@@ -614,7 +609,7 @@ export function SelectedProfileSyncCard({
   bandStatus,
   loadFailed,
 }: SelectedProfileSyncCardProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'settings'], { nsMode: 'fallback' });
   const fallback = loadFailed
     ? t('common.failedToLoad')
     : t('common.loading');

@@ -443,8 +443,8 @@
     "syncEntriesFound": "{{count}} entries found",
     "syncRivalsFound": "{{count}} rivals found",
     "throttle_cdn_busy": "Waiting for Epic Games API- retrying shortly",
-    "probe_retrying": "Retrying\u2026",
-    "probe_waiting": "Retrying in {{seconds}}s\u2026",
+    "probe_retrying": "Retrying…",
+    "probe_waiting": "Retrying in {{seconds}}s…",
     "probe_exhausted": "Unable to reach Epic Games API",
     "syncPendingRanks": "Scores are available now. Global ranks and rank-based views will catch up on the next server-side ranking pass.",
     "noPlayer": "No player selected",
@@ -603,60 +603,222 @@
     "startNewMix": "Start a new mix"
   },
   "suggestionCategory": {
-    "near_fc_any": { "title": "FC These Next!", "desc": "If you can get gold stars, you can FC it!" },
-    "near_fc_any_decade": { "title": "FC These Next! ({{decade}})", "desc": "If you can get gold stars, you can FC it! Limited to {{decade}} songs." },
-    "near_fc_relaxed": { "title": "Close to FC (92%+)", "desc": "Great runs to try and FC next!" },
-    "near_fc_relaxed_decade": { "title": "Close to FC (92%+) - {{decade}}", "desc": "Great runs to try and FC next! Limited to {{decade}} songs." },
-    "almost_six_star": { "title": "Push to Gold Stars", "desc": "Push these five-star runs to gold stars!" },
-    "almost_six_star_decade": { "title": "Push {{decade}} to Gold", "desc": "Push these five-star runs to gold stars! Limited to {{decade}} songs." },
-    "star_gains": { "title": "Easy Star Gains", "desc": "Hit a new high score to get even more stars on these songs!" },
-    "star_gains_decade": { "title": "Easy Star Gains ({{decade}})", "desc": "Hit a new high score to get even more stars on these songs! Limited to {{decade}} songs." },
-    "unfc_instrument": { "title": "Finish the {{instrument}} FCs", "desc": "Play these songs again on {{instrument}} and grab an FC!" },
-    "unfc_instrument_decade": { "title": "Close {{instrument}} FCs ({{decade}})", "desc": "Play these songs again on {{instrument}} and grab an FC! Limited to {{decade}} songs." },
-    "more_stars": { "title": "Push These to Gold Stars", "desc": "Try gold-starring this selection of tracks!" },
-    "more_stars_decade": { "title": "Push {{decade}} to Gold", "desc": "Try gold-starring this selection of tracks! Limited to {{decade}} songs." },
-    "unplayed_any": { "title": "Try Something New", "desc": "Songs you haven't played on any instrument yet." },
-    "unplayed_any_decade": { "title": "First Plays ({{decade}})", "desc": "Unplayed songs from the {{decade}}." },
-    "unplayed_instrument": { "title": "New on {{instrument}}", "desc": "Songs you haven't played on {{instrument}} yet." },
-    "unplayed_instrument_decade": { "title": "First {{instrument}} Plays ({{decade}})", "desc": "Unplayed {{instrument}} songs from the {{decade}}." },
-    "artist_sampler": { "title": "{{artist}} Essentials", "desc": "A selection of songs by {{artist}}." },
-    "variety_pack": { "title": "Variety Pack", "desc": "A mix of songs from different artists." },
-    "first_plays_mixed": { "title": "First Plays (Mixed)", "desc": "Unplayed picks across instruments." },
-    "first_plays_mixed_decade": { "title": "First Plays (Mixed {{decade}})", "desc": "Unplayed picks across instruments. Limited to {{decade}} songs." },
-    "artist_unplayed": { "title": "Discover {{artist}}", "desc": "Unplayed songs from {{artist}}." },
-    "samename": { "title": "Songs Named '{{name}}'", "desc": "Different tracks sharing the same title." },
-    "samename_nearfc": { "title": "Close to FC: '{{name}}' Variants", "desc": "FC these same-name songs for a unique achievement!" },
-    "almost_elite": { "title": "Almost Elite", "desc": "You're in the top 5% on these — one good run could crack the top 1%." },
-    "almost_elite_decade": { "title": "Almost Elite ({{decade}})", "desc": "You're in the top 5% on these {{decade}} songs — one good run could crack the top 1%." },
-    "almost_elite_instrument": { "title": "Almost Elite on {{instrument}}", "desc": "Your {{instrument}} scores are in the top 5% — push them into the top 1%." },
-    "almost_elite_instrument_decade": { "title": "Almost Elite on {{instrument}} ({{decade}})", "desc": "Your {{instrument}} scores on these {{decade}} songs are in the top 5% — push them into the top 1%." },
-    "pct_push": { "title": "Percentile Push", "desc": "These scores are close to the next percentile bracket — replay them to climb." },
-    "pct_push_decade": { "title": "Percentile Push ({{decade}})", "desc": "These {{decade}} scores are close to the next percentile bracket — replay them to climb." },
-    "pct_push_instrument": { "title": "Percentile Push: {{instrument}}", "desc": "Replay these {{instrument}} songs to jump to the next percentile bracket." },
-    "pct_push_instrument_decade": { "title": "Percentile Push: {{instrument}} ({{decade}})", "desc": "Replay these {{decade}} {{instrument}} songs to jump to the next percentile bracket." },
-    "stale_global": { "title": "Untouched for {{seasons}} Season(s)", "desc": "Songs you haven't played since {{seasons}} season(s) ago." },
-    "stale_instrument": { "title": "Stale {{instrument}} Songs ({{seasons}}+ Seasons)", "desc": "{{instrument}} songs untouched for {{seasons}}+ seasons." },
-    "same_pct_improve": { "title": "Competitive Improvements", "desc": "Songs where your percentile is the same across all instruments. An improvement on any instrument moves you up everywhere." },
-    "same_pct_bucket": { "title": "Break Into {{target}}", "desc": "Songs where all your instruments are ranked Top {{bucket}}%. Improve any instrument to break the tie and climb to {{target}}." },
-    "pct_improve_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with at least one instrument ranked Top {{bucket}}%. A small score bump could push you higher." },
-    "pct_improve_instrument_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with {{instrument}} scores ranked Top {{bucket}}%. A small score bump could push you higher." },
-    "improve_rankings_instrument": { "title": "Improve {{instrument}} Rankings", "desc": "A varied mix of {{instrument}} songs across different percentile brackets — all with room to grow." },
-    "song_rival_gap": { "title": "Close the Gap vs {{rival}}", "desc": "Songs where {{rival}} barely leads you. One good run could overtake them." },
-    "song_rival_protect": { "title": "Protect Your Lead vs {{rival}}", "desc": "You're barely ahead of {{rival}} on these. Don't let them pass you." },
-    "song_rival_battleground": { "title": "Battleground Songs", "desc": "Multiple rivals are clustered around your rank on these songs. Every position matters." },
-    "song_rival_spotlight": { "title": "Rival Spotlight: {{rival}}", "desc": "A curated mix of your rivalry with {{rival}} — catches, defenses, and closest battles." },
-    "song_rival_slipping": { "title": "{{rival}} is Pulling Ahead", "desc": "{{rival}} has a big lead on these songs. Time to close the gap." },
-    "song_rival_dominate": { "title": "Dominate {{rival}}", "desc": "You're crushing {{rival}} on these. Keep up the dominance." },
-    "song_rival_near_fc": { "title": "FC These to Beat {{rival}}!", "desc": "Almost FC songs where your rival also competes. Nail the combo to pull ahead." },
-    "song_rival_stale": { "title": "Stale Songs Your Rivals Are Beating You On", "desc": "Songs you haven't touched in a while where rivals have pulled ahead." },
-    "song_rival_star_gains": { "title": "Gain Stars & Beat {{rival}}", "desc": "Improving your star count on these would also overtake a rival." },
-    "song_rival_pct_push": { "title": "Climb Past {{rival}}", "desc": "A percentile push on these would also move you past a rival." },
-    "near_max_5k": { "title": "Almost Perfect (Within 5k)", "desc": "Scores within 5,000 of the theoretical max. You're almost there!" },
-    "near_max_5k_decade": { "title": "Almost Perfect (Within 5k) ({{decade}})", "desc": "Scores within 5,000 of the theoretical max. Limited to {{decade}} songs." },
-    "near_max_10k": { "title": "Close to Max (Within 10k)", "desc": "Scores within 10,000 of the theoretical max. A great run could close the gap." },
-    "near_max_10k_decade": { "title": "Close to Max (Within 10k) ({{decade}})", "desc": "Scores within 10,000 of the theoretical max. Limited to {{decade}} songs." },
-    "near_max_15k": { "title": "Approaching Max (Within 15k)", "desc": "Scores within 15,000 of the theoretical max. Keep pushing!" },
-    "near_max_15k_decade": { "title": "Approaching Max (Within 15k) ({{decade}})", "desc": "Scores within 15,000 of the theoretical max. Limited to {{decade}} songs." }
+    "near_fc_any": {
+      "title": "FC These Next!",
+      "desc": "If you can get gold stars, you can FC it!"
+    },
+    "near_fc_any_decade": {
+      "title": "FC These Next! ({{decade}})",
+      "desc": "If you can get gold stars, you can FC it! Limited to {{decade}} songs."
+    },
+    "near_fc_relaxed": {
+      "title": "Close to FC (92%+)",
+      "desc": "Great runs to try and FC next!"
+    },
+    "near_fc_relaxed_decade": {
+      "title": "Close to FC (92%+) - {{decade}}",
+      "desc": "Great runs to try and FC next! Limited to {{decade}} songs."
+    },
+    "almost_six_star": {
+      "title": "Push to Gold Stars",
+      "desc": "Push these five-star runs to gold stars!"
+    },
+    "almost_six_star_decade": {
+      "title": "Push {{decade}} to Gold",
+      "desc": "Push these five-star runs to gold stars! Limited to {{decade}} songs."
+    },
+    "star_gains": {
+      "title": "Easy Star Gains",
+      "desc": "Hit a new high score to get even more stars on these songs!"
+    },
+    "star_gains_decade": {
+      "title": "Easy Star Gains ({{decade}})",
+      "desc": "Hit a new high score to get even more stars on these songs! Limited to {{decade}} songs."
+    },
+    "unfc_instrument": {
+      "title": "Finish the {{instrument}} FCs",
+      "desc": "Play these songs again on {{instrument}} and grab an FC!"
+    },
+    "unfc_instrument_decade": {
+      "title": "Close {{instrument}} FCs ({{decade}})",
+      "desc": "Play these songs again on {{instrument}} and grab an FC! Limited to {{decade}} songs."
+    },
+    "more_stars": {
+      "title": "Push These to Gold Stars",
+      "desc": "Try gold-starring this selection of tracks!"
+    },
+    "more_stars_decade": {
+      "title": "Push {{decade}} to Gold",
+      "desc": "Try gold-starring this selection of tracks! Limited to {{decade}} songs."
+    },
+    "unplayed_any": {
+      "title": "Try Something New",
+      "desc": "Songs you haven't played on any instrument yet."
+    },
+    "unplayed_any_decade": {
+      "title": "First Plays ({{decade}})",
+      "desc": "Unplayed songs from the {{decade}}."
+    },
+    "unplayed_instrument": {
+      "title": "New on {{instrument}}",
+      "desc": "Songs you haven't played on {{instrument}} yet."
+    },
+    "unplayed_instrument_decade": {
+      "title": "First {{instrument}} Plays ({{decade}})",
+      "desc": "Unplayed {{instrument}} songs from the {{decade}}."
+    },
+    "artist_sampler": {
+      "title": "{{artist}} Essentials",
+      "desc": "A selection of songs by {{artist}}."
+    },
+    "variety_pack": {
+      "title": "Variety Pack",
+      "desc": "A mix of songs from different artists."
+    },
+    "first_plays_mixed": {
+      "title": "First Plays (Mixed)",
+      "desc": "Unplayed picks across instruments."
+    },
+    "first_plays_mixed_decade": {
+      "title": "First Plays (Mixed {{decade}})",
+      "desc": "Unplayed picks across instruments. Limited to {{decade}} songs."
+    },
+    "artist_unplayed": {
+      "title": "Discover {{artist}}",
+      "desc": "Unplayed songs from {{artist}}."
+    },
+    "samename": {
+      "title": "Songs Named '{{name}}'",
+      "desc": "Different tracks sharing the same title."
+    },
+    "samename_nearfc": {
+      "title": "Close to FC: '{{name}}' Variants",
+      "desc": "FC these same-name songs for a unique achievement!"
+    },
+    "almost_elite": {
+      "title": "Almost Elite",
+      "desc": "You're in the top 5% on these — one good run could crack the top 1%."
+    },
+    "almost_elite_decade": {
+      "title": "Almost Elite ({{decade}})",
+      "desc": "You're in the top 5% on these {{decade}} songs — one good run could crack the top 1%."
+    },
+    "almost_elite_instrument": {
+      "title": "Almost Elite on {{instrument}}",
+      "desc": "Your {{instrument}} scores are in the top 5% — push them into the top 1%."
+    },
+    "almost_elite_instrument_decade": {
+      "title": "Almost Elite on {{instrument}} ({{decade}})",
+      "desc": "Your {{instrument}} scores on these {{decade}} songs are in the top 5% — push them into the top 1%."
+    },
+    "pct_push": {
+      "title": "Percentile Push",
+      "desc": "These scores are close to the next percentile bracket — replay them to climb."
+    },
+    "pct_push_decade": {
+      "title": "Percentile Push ({{decade}})",
+      "desc": "These {{decade}} scores are close to the next percentile bracket — replay them to climb."
+    },
+    "pct_push_instrument": {
+      "title": "Percentile Push: {{instrument}}",
+      "desc": "Replay these {{instrument}} songs to jump to the next percentile bracket."
+    },
+    "pct_push_instrument_decade": {
+      "title": "Percentile Push: {{instrument}} ({{decade}})",
+      "desc": "Replay these {{decade}} {{instrument}} songs to jump to the next percentile bracket."
+    },
+    "stale_global": {
+      "title": "Untouched for {{seasons}} Season(s)",
+      "desc": "Songs you haven't played since {{seasons}} season(s) ago."
+    },
+    "stale_instrument": {
+      "title": "Stale {{instrument}} Songs ({{seasons}}+ Seasons)",
+      "desc": "{{instrument}} songs untouched for {{seasons}}+ seasons."
+    },
+    "same_pct_improve": {
+      "title": "Competitive Improvements",
+      "desc": "Songs where your percentile is the same across all instruments. An improvement on any instrument moves you up everywhere."
+    },
+    "same_pct_bucket": {
+      "title": "Break Into {{target}}",
+      "desc": "Songs where all your instruments are ranked Top {{bucket}}%. Improve any instrument to break the tie and climb to {{target}}."
+    },
+    "pct_improve_bucket": {
+      "title": "Top {{bucket}}% Push",
+      "desc": "Songs with at least one instrument ranked Top {{bucket}}%. A small score bump could push you higher."
+    },
+    "pct_improve_instrument_bucket": {
+      "title": "Top {{bucket}}% Push",
+      "desc": "Songs with {{instrument}} scores ranked Top {{bucket}}%. A small score bump could push you higher."
+    },
+    "improve_rankings_instrument": {
+      "title": "Improve {{instrument}} Rankings",
+      "desc": "A varied mix of {{instrument}} songs across different percentile brackets — all with room to grow."
+    },
+    "song_rival_gap": {
+      "title": "Close the Gap vs {{rival}}",
+      "desc": "Songs where {{rival}} barely leads you. One good run could overtake them."
+    },
+    "song_rival_protect": {
+      "title": "Protect Your Lead vs {{rival}}",
+      "desc": "You're barely ahead of {{rival}} on these. Don't let them pass you."
+    },
+    "song_rival_battleground": {
+      "title": "Battleground Songs",
+      "desc": "Multiple rivals are clustered around your rank on these songs. Every position matters."
+    },
+    "song_rival_spotlight": {
+      "title": "Rival Spotlight: {{rival}}",
+      "desc": "A curated mix of your rivalry with {{rival}} — catches, defenses, and closest battles."
+    },
+    "song_rival_slipping": {
+      "title": "{{rival}} is Pulling Ahead",
+      "desc": "{{rival}} has a big lead on these songs. Time to close the gap."
+    },
+    "song_rival_dominate": {
+      "title": "Dominate {{rival}}",
+      "desc": "You're crushing {{rival}} on these. Keep up the dominance."
+    },
+    "song_rival_near_fc": {
+      "title": "FC These to Beat {{rival}}!",
+      "desc": "Almost FC songs where your rival also competes. Nail the combo to pull ahead."
+    },
+    "song_rival_stale": {
+      "title": "Stale Songs Your Rivals Are Beating You On",
+      "desc": "Songs you haven't touched in a while where rivals have pulled ahead."
+    },
+    "song_rival_star_gains": {
+      "title": "Gain Stars & Beat {{rival}}",
+      "desc": "Improving your star count on these would also overtake a rival."
+    },
+    "song_rival_pct_push": {
+      "title": "Climb Past {{rival}}",
+      "desc": "A percentile push on these would also move you past a rival."
+    },
+    "near_max_5k": {
+      "title": "Almost Perfect (Within 5k)",
+      "desc": "Scores within 5,000 of the theoretical max. You're almost there!"
+    },
+    "near_max_5k_decade": {
+      "title": "Almost Perfect (Within 5k) ({{decade}})",
+      "desc": "Scores within 5,000 of the theoretical max. Limited to {{decade}} songs."
+    },
+    "near_max_10k": {
+      "title": "Close to Max (Within 10k)",
+      "desc": "Scores within 10,000 of the theoretical max. A great run could close the gap."
+    },
+    "near_max_10k_decade": {
+      "title": "Close to Max (Within 10k) ({{decade}})",
+      "desc": "Scores within 10,000 of the theoretical max. Limited to {{decade}} songs."
+    },
+    "near_max_15k": {
+      "title": "Approaching Max (Within 15k)",
+      "desc": "Scores within 15,000 of the theoretical max. Keep pushing!"
+    },
+    "near_max_15k_decade": {
+      "title": "Approaching Max (Within 15k) ({{decade}})",
+      "desc": "Scores within 15,000 of the theoretical max. Limited to {{decade}} songs."
+    }
   },
   "suggestionFilterType": {
     "NearFC": "Near FC",
@@ -687,85 +849,6 @@
     "SongRivalsDesc": "Suggestions based on per-song rivals.",
     "LeaderboardRivals": "Leaderboard Rivals",
     "LeaderboardRivalsDesc": "Suggestions based on ranking neighbors."
-  },
-  "settings": {
-    "title": "Settings",
-    "quickLinks": "Quick Links",
-    "appSettings": "App Settings",
-    "appSettingsHint": "General Festival Score Tracker app settings.",
-    "diagnosticsTitle": "Diagnostics",
-    "diagnosticsHint": "Debug-only tools for investigating mobile tap and navigation issues.",
-    "tapDiagnostics": "Tap Diagnostics",
-    "tapDiagnosticsDesc": "Capture recent taps, hit targets, routes, and shell state in a local diagnostic buffer on this device.",
-    "tapTelemetry": "Upload Tap Telemetry",
-    "tapTelemetryDesc": "Send sanitized tap diagnostic batches to the development service logs while diagnostics are enabled.",
-    "tapTelemetryRequiresDiagnostics": "Enable Tap Diagnostics first, then upload sanitized batches to the development service logs.",
-    "licensesNavTitle": "Licenses",
-    "licensesNavDescription": "Open source package license details.",
-    "licenses": {
-      "title": "Licenses"
-    },
-    "showInstrumentIcons": "Show Instrument Icons",
-    "showInstrumentIconsDesc": "Display instrument icons on each song row showing which parts have leaderboard scores or FCs.",
-    "enableVisualOrder": "Enable Independent Song Row Visual Order",
-    "enableVisualOrderDesc": "When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order.",
-    "songRowVisualOrder": "Song Row Visual Order",
-    "songRowVisualOrderHint": "Drag to reorder metadata items on song rows.",
-    "maxScoreLeeway": "Maximum Score Leeway",
-    "filterInvalidScoresDesc": "Hide song scores that exceed the mathematical maximum by more than the leeway percentage.",
-    "filterInvalidScoresToggleDesc": "When enabled, the app will attempt to filter out invalid leaderboard values based on the maximum score derived from the CHOpt path.",
-    "maxScoreLeewayDesc": "This slider controls a percentage value that allows for some expanded range of scores to still be valid. For example, a CHOpt path with a max score of 100k and {{leeway}}% leeway will allow the app to accept scores up to {{maxScore}} as \u201Cvalid\u201D.",
-    "songRowVisualOrderDesc": "When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.",
-    "pathDefaultView": "CHOpt Path Default View",
-    "pathDefaultViewDesc": "Choose whether CHOpt paths open as an image or text table by default.",
-    "pathDefaultViewImage": "Image",
-    "pathDefaultViewText": "Text",
-    "defaultSearchTarget": "Default Search Target",
-    "defaultSearchTargetDesc": "Choose which search results tab opens first when you use Search.",
-    "pathColumnOrder": "CHOpt Text Path Column Order",
-    "pathColumnOrderDesc": "Choose the order columns appear in the CHOpt text path view. You can also drag column headers directly in the path modal.",
-    "showInstruments": "Show Instruments",
-    "showInstrumentsHint": "Choose which instruments to display throughout the app.",
-    "showMetadata": "Show Instrument Metadata",
-    "showMetadataHint": "When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.",
-    "instruments": "Instruments",
-    "metadata": "Song Metadata",
-    "metadataOrder": "Metadata Display Order",
-    "visualOrder": "Song Row Visual Order",
-    "scoreFiltering": "Score Filtering",
-    "filterInvalidScores": "Filter Invalid Scores",
-    "experimentalRanks": "Enable Experimental Leaderboard Ranks",
-    "experimentalRanksDesc": "Enable this to see more ranking mechanisms in the Leaderboards page.",
-    "showButtonsInHeaderMobile": "Show Buttons In Header (Mobile)",
-    "showButtonsInHeaderMobileDesc": "Shows the Quick Links, Select Player Profile, Song Rivals, and similar header text/buttons on mobile. Turn this off to hide them and free up screen space; these actions will still be available from the floating action button on supported pages.",
-    "leeway": "Leeway",
-    "exportDataButton": "Export Data",
-    "refreshProfileNameButton": "Refresh Profile Name",
-    "refreshProfileNamesButton": "Refresh Profile Names",
-    "refreshProfileNameDescription": "Check Epic for the latest display name for {{profile}}.",
-    "refreshProfileNamesDescription": "Check Epic for the latest member display names for {{profile}}.",
-    "refreshProfileNameChecking": "Checking...",
-    "exportDataSection": "Export Data",
-    "exportDataDescription": "Download an Excel workbook archive with available data for {{player}}.",
-    "exportDataNoPlayerDescription": "Select a player profile to export data.",
-    "exportDataNoProfileDescription": "Select a player or band profile to export data.",
-    "exportDataSyncStatusLoading": "Checking sync status for {{profile}}.",
-    "exportDataSyncIncomplete": "Data export will be available after sync completes for {{profile}}.",
-    "exportDataSyncStatusFailed": "Sync status could not be checked for {{profile}}.",
-    "exportDataPreparing": "Preparing...",
-    "exportDataFailed": "Export failed. Try again in a moment.",
-    "resetAll": "Reset All Settings",
-    "resetSection": "Reset Settings",
-    "resetDescription": "Restore all settings to their default values.",
-    "resetConfirmTitle": "Reset Settings",
-    "resetConfirmMessage": "Are you sure you want to restore all settings to their default values?",
-    "versionTitle": "Festival Score Tracker Version",
-    "versionHint": "Festival Score Tracker information to help with debugging.",
-    "appVersion": "App Version",
-    "serviceVersion": "Service Version",
-    "coreVersion": "@festival/core Version",
-    "themeVersion": "@festival/theme Version",
-    "version": "Version"
   },
   "instruments": {
     "lead": "Lead",
@@ -806,6 +889,9 @@
   "changelog": {
     "title": "What's New"
   },
+  "settings": {
+    "filterInvalidScores": "Filter Invalid Scores"
+  },
   "nav": {
     "songs": "Songs",
     "songInfo": "Song Info",
@@ -818,490 +904,6 @@
     "leaderboards": "Leaderboards",
     "manual": "App Manual"
   },
-  "appManual": {
-    "title": "App Manual",
-    "quickLinks": "Manual Sections",
-    "previousScreenshot": "Previous screenshot",
-    "nextScreenshot": "Next screenshot",
-    "screenshotAlt": "{{topic}} screenshot for {{viewport}}",
-    "screenshotCaption": "{{topic}} reference view for {{viewport}}.",
-    "screenshotPending": "Reference image pending",
-    "viewports": {
-      "mobile": "Mobile",
-      "compact": "Compact Web",
-      "wide": "Wide Web"
-    },
-    "sections": {
-      "navigation": {
-        "title": "Navigation Basics",
-        "copy": {
-          "intro": "Navigation changes depending on screen size and selected profile. The sidebar, mobile header, bottom navigation, and floating action button all point to the same app areas, but each layout keeps common actions close to your thumb or cursor.",
-          "context": "Songs, Leaderboards, Item Shop, App Manual, and App Settings are available from primary navigation. Suggestions and Statistics appear once a player or band profile is active, while Rivals appears only for a selected solo player."
-        },
-        "carousels": {
-          "overview": "Navigation overview"
-        },
-        "subsections": {
-          "sidebar": {
-            "title": "Sidebar And Desktop Rail",
-            "copy": {
-              "body": "On wider screens, the pinned sidebar keeps the main app areas visible while the right-side rail can hold page quick links. The App Manual link sits below the profile area and above Settings so help stays close to account context without crowding the main feature links."
-            },
-            "carousels": {
-              "sidebar": "Sidebar placement"
-            }
-          },
-          "mobileActions": {
-            "title": "Mobile Header And Floating Actions",
-            "copy": {
-              "body": "On phones, the top header focuses on the current page title and the bottom navigation keeps high-frequency destinations reachable. The floating action button changes by page, opening search, filters, page quick links, or profile actions when those controls are relevant."
-            },
-            "carousels": {
-              "mobileActions": "Mobile actions"
-            }
-          },
-          "quickLinks": {
-            "title": "Quick Links",
-            "copy": {
-              "body": "Pages with long scrolling content expose quick links so you can jump directly to the part you need. In this manual, parent sections and nested subsections both appear in Quick Links, with subsections indented under their parent topic."
-            },
-            "carousels": {
-              "quickLinks": "Quick link hierarchy"
-            }
-          }
-        }
-      },
-      "songs": {
-        "title": "Songs Page",
-        "copy": {
-          "intro": "The Songs page is the main browsing surface for tracks, score progress, metadata, and profile-specific opportunities. It works well as a full catalog when no profile is selected and becomes a personal or band progress list after you choose a profile.",
-          "context": "Search, sorting, filtering, shop visibility, instrument settings, and selected-profile data all shape what the list shows. The result supports quick browsing, cleanup sessions, and targeted improvement runs without forcing you into a separate view."
-        },
-        "carousels": {
-          "overview": "Songs overview"
-        },
-        "subsections": {
-          "rows": {
-            "title": "Rows And Visible Metadata",
-            "copy": {
-              "body": "Song rows can show title, artist, season, intensity, difficulty, stars, score, percentile, accuracy, full-combo state, and shop state depending on your settings. Instrument icons and row ordering help you scan which parts matter before opening details."
-            },
-            "carousels": {
-              "rows": "Song row metadata"
-            }
-          },
-          "profileSorts": {
-            "title": "Selected-Profile Data And Extra Sorts",
-            "copy": {
-              "body": "When a player or band profile is selected, Songs can sort and filter by profile-aware fields such as scores, accuracy, stars, percentile, full-combo gaps, max-score distance, last played, missing scores, and band score state. These options make the same catalog behave like a tailored practice list."
-            },
-            "carousels": {
-              "profileSorts": "Profile-aware sorting"
-            }
-          },
-          "searchSortFilter": {
-            "title": "Search, Sort, And Filter",
-            "copy": {
-              "body": "Search narrows the visible song list by title and artist. Sort controls change the order, while filters narrow by instruments, seasons, stars, percentile ranges, difficulty, shop state, missing scores, missing full combos, leeway, and selected-band conditions."
-            },
-            "carousels": {
-              "searchSortFilter": "Search sort filter controls"
-            }
-          }
-        }
-      },
-      "profiles": {
-        "title": "Selecting Profiles",
-        "copy": {
-          "intro": "Profiles decide which scores, suggestions, statistics, and navigation options the app can show. You can browse without a profile, but selecting one gives Songs and detail pages the context needed to highlight personal progress or band progress.",
-          "context": "Player and band profiles intentionally affect the app differently. Switching between those profile types resets song filters so the next profile starts from a clean browsing state."
-        },
-        "carousels": {
-          "overview": "Profile selection overview"
-        },
-        "subsections": {
-          "player": {
-            "title": "Player Profile Selection",
-            "copy": {
-              "body": "Use Search or the profile action to select a solo player. A selected player unlocks personal song data, Player Details, solo Statistics, Suggestions, mobile Compete, and Rivals."
-            },
-            "carousels": {
-              "player": "Player profile selection"
-            }
-          },
-          "band": {
-            "title": "Band Profile Selection",
-            "copy": {
-              "body": "Band profiles represent a selected team and band type. Once selected, Songs and Suggestions can focus on band performances, Band Details can show members and rank history, and Statistics points to the band page instead of solo player details."
-            },
-            "carousels": {
-              "band": "Band profile selection"
-            }
-          },
-          "context": {
-            "title": "Profile Context Across Pages",
-            "copy": {
-              "body": "The selected profile follows you through Songs, Suggestions, Statistics, Leaderboards, and detail pages. Links preserve that context so score rows, filters, and comparison views stay focused on the profile you chose."
-            },
-            "carousels": {
-              "context": "Profile context"
-            }
-          }
-        }
-      },
-      "playerDetails": {
-        "title": "Player Details",
-        "copy": {
-          "intro": "Player Details gathers a selected player's progress into one long-form view. It is built for scanning summary cards first, then drilling into instrument sections, songs, bands, rank movement, and history when you need more context.",
-          "context": "Most cards are navigational. Clicking a stat or song can move you into Songs, song details, Leaderboards, or history while preserving the selected player context."
-        },
-        "carousels": {
-          "overview": "Player details overview"
-        },
-        "subsections": {
-          "summary": {
-            "title": "Summary And Statistic Cards",
-            "copy": {
-              "body": "Summary cards highlight songs played, full combos, gold stars, average accuracy, best rank, and global statistic ranks when available. They provide the fastest read on a player's overall shape before you inspect individual instruments."
-            },
-            "carousels": {
-              "summary": "Player summary cards"
-            }
-          },
-          "instruments": {
-            "title": "Instrument Sections And Graphs",
-            "copy": {
-              "body": "Instrument sections break progress down by visible instruments. They can include ranked metrics, score history, rank history, percentile tables, and useful song links so you can understand both current strength and recent movement."
-            },
-            "carousels": {
-              "instruments": "Instrument sections"
-            }
-          },
-          "navigation": {
-            "title": "Top Songs, Bands, And Drilldowns",
-            "copy": {
-              "body": "Top and bottom song groups, player bands, and card actions help you move from a high-level profile into the exact songs, teams, or rankings behind the numbers."
-            },
-            "carousels": {
-              "navigation": "Player drilldowns"
-            }
-          }
-        }
-      },
-      "bandDetails": {
-        "title": "Band Details",
-        "copy": {
-          "intro": "Band Details focuses on a selected team's shared performance. It shows who is in the band, what type of band it is, how the team ranks, and which songs best explain the band's current position.",
-          "context": "Band pages keep member context visible so you can move between team performance and individual player details without losing track of the selected profile."
-        },
-        "carousels": {
-          "overview": "Band details overview"
-        },
-        "subsections": {
-          "members": {
-            "title": "Members And Band Summary",
-            "copy": {
-              "body": "The top of a band page identifies the band type, members, and selected-band context. Member rows link back to individual player details so you can inspect each player's contribution separately."
-            },
-            "carousels": {
-              "members": "Band members"
-            }
-          },
-          "rankHistory": {
-            "title": "Band Statistics And Rank History",
-            "copy": {
-              "body": "Band statistics summarize the team's rank and rating while the rank-history graph shows how that position has changed over time. This is the fastest way to tell whether a band is climbing, holding, or slipping."
-            },
-            "carousels": {
-              "rankHistory": "Band rank history"
-            }
-          },
-          "songs": {
-            "title": "Band Songs And Combo Context",
-            "copy": {
-              "body": "Best and worst band songs show where the team has the strongest and weakest rankings. Band instrument filtering can focus the view on specific member-to-instrument assignments when a combo is selected."
-            },
-            "carousels": {
-              "songs": "Band songs"
-            }
-          }
-        }
-      },
-      "songDetail": {
-        "title": "Song Detail And Detail Cards",
-        "copy": {
-          "intro": "Song Detail turns one track into a focused workspace. It gathers metadata, scores, history, leaderboard previews, top performances, and path access so you can inspect the song without losing the selected profile context.",
-          "context": "Detail cards are designed for comparison. They show what the song is, how hard each part is, where the selected profile stands, and where to go next."
-        },
-        "carousels": {
-          "overview": "Song detail overview"
-        },
-        "subsections": {
-          "cards": {
-            "title": "Song Header And Metadata Cards",
-            "copy": {
-              "body": "The song header and cards group title, artist, album art, intensity, instrument difficulty, shop state, and selected-profile score information. The layout changes with screen size but keeps the song identity and main actions near the top."
-            },
-            "carousels": {
-              "cards": "Song detail cards"
-            }
-          },
-          "leaderboards": {
-            "title": "Leaderboard Previews And Score History",
-            "copy": {
-              "body": "Leaderboard previews show top entries and selected-profile placement when available. Score history charts and lists help you see previous attempts, score changes, accuracy, stars, full-combo state, and dates for the selected song and instrument."
-            },
-            "carousels": {
-              "leaderboards": "Leaderboard previews"
-            }
-          },
-          "pathsHistory": {
-            "title": "Paths And Player History",
-            "copy": {
-              "body": "View Paths opens CHOpt path information as an image or text table according to App Settings. Player History gives a longer chronological view of score attempts and lets you sort the history data for easier comparison."
-            },
-            "carousels": {
-              "pathsHistory": "Paths and history"
-            }
-          }
-        }
-      },
-      "syncHistory": {
-        "title": "Sync Card And Post-Sync Data",
-        "copy": {
-          "intro": "When a player profile needs more history, the sync card explains what the app is waiting on and gives you a visible progress point inside Player Details. The card is about what you can see next, not about technical internals.",
-          "context": "After sync completes, profile-aware views can show richer history, graphs, recommendations, rank movement, and per-song context."
-        },
-        "carousels": {
-          "overview": "Sync and history overview"
-        },
-        "subsections": {
-          "card": {
-            "title": "Sync Card",
-            "copy": {
-              "body": "The sync card appears when a selected player is tracked or has pending profile data. It keeps progress visible from Player Details so you know whether to wait, browse other pages, or come back later."
-            },
-            "carousels": {
-              "card": "Sync card"
-            }
-          },
-          "after": {
-            "title": "After Sync Completes",
-            "copy": {
-              "body": "Once profile data is ready, the app can fill in more complete score history, personal bests, full-combo state, rank movement, and Suggestions context. The same pages become more useful without changing how you navigate them."
-            },
-            "carousels": {
-              "after": "Post-sync detail"
-            }
-          },
-          "graphs": {
-            "title": "Graphs, History, And Recommendations",
-            "copy": {
-              "body": "Graphs and history views make progress visible over time, while Suggestions can use the completed profile context to surface missed songs, stale songs, percentile pushes, and other improvement groups."
-            },
-            "carousels": {
-              "graphs": "Graphs and recommendations"
-            }
-          }
-        }
-      },
-      "suggestions": {
-        "title": "Suggestions",
-        "copy": {
-          "intro": "Suggestions turns profile context into focused song groups. Instead of browsing the whole catalog, you can start from categories that point toward discovery, cleanup, improvement runs, and profile-specific gaps.",
-          "context": "Suggestion filters are separate from normal Songs filters, so you can explore recommended groups without disturbing your saved Songs page setup."
-        },
-        "carousels": {
-          "overview": "Suggestions overview"
-        },
-        "subsections": {
-          "solo": {
-            "title": "Solo Suggestions",
-            "copy": {
-              "body": "With a selected player, Suggestions can surface unplayed songs, stale songs, near-max-score songs, percentile pushes, artist groups, and rival-based ideas. Category cards act as launch points back into Songs."
-            },
-            "carousels": {
-              "solo": "Solo suggestions"
-            }
-          },
-          "band": {
-            "title": "Band Suggestions",
-            "copy": {
-              "body": "With a selected band profile, Suggestions focuses on the band's songs and available band context. This makes it easier to find team cleanup targets without mixing solo progress into the list."
-            },
-            "carousels": {
-              "band": "Band suggestions"
-            }
-          },
-          "filters": {
-            "title": "Suggestion Filters And Category Cards",
-            "copy": {
-              "body": "Suggestion filters narrow by instrument, category, and profile context. Category cards summarize why a group matters and take you directly to a filtered song list."
-            },
-            "carousels": {
-              "filters": "Suggestion filters"
-            }
-          }
-        }
-      },
-      "compete": {
-        "title": "Compete",
-        "copy": {
-          "intro": "Compete is a mobile-only hub for selected solo players. It groups competitive entry points into a smaller surface so phones can jump into Leaderboards and Rivals without requiring the wider desktop layout.",
-          "context": "The Compete tab appears in bottom navigation when a solo player profile is selected. Links from the hub preserve that player context so ranking and rival views stay personal."
-        },
-        "carousels": {
-          "overview": "Compete overview"
-        },
-        "subsections": {
-          "mobileHub": {
-            "title": "Mobile Compete Hub",
-            "copy": {
-              "body": "The Compete hub is designed for phone navigation. It gives selected solo players a compact place to start competitive browsing without scrolling through desktop-oriented navigation."
-            },
-            "carousels": {
-              "mobileHub": "Mobile compete hub"
-            }
-          },
-          "leaderboards": {
-            "title": "Leaderboards Entry Points",
-            "copy": {
-              "body": "Leaderboards links from Compete can take you into ranking overviews and full ranking lists while keeping the selected player available for your-rank context."
-            },
-            "carousels": {
-              "leaderboards": "Compete leaderboards"
-            }
-          },
-          "rivals": {
-            "title": "Rivals Entry Points",
-            "copy": {
-              "body": "Rivals links from Compete lead into solo-player rival views, including song rivals and leaderboard neighbors. These views are only meaningful when a solo player profile is active."
-            },
-            "carousels": {
-              "rivals": "Compete rivals"
-            }
-          }
-        }
-      },
-      "leaderboardsRivals": {
-        "title": "Leaderboards And Rivals",
-        "copy": {
-          "intro": "Leaderboards compare ranked accounts and bands across instruments, band types, combos, and ranking metrics. Rivals starts from a selected solo player and narrows the comparison to nearby competitors or shared songs.",
-          "context": "Use Leaderboards when you want broad ranking context. Use Rivals when you want a more personal comparison around one selected solo player."
-        },
-        "carousels": {
-          "overview": "Leaderboards and Rivals overview"
-        },
-        "subsections": {
-          "fullRankings": {
-            "title": "Overview And Full Rankings",
-            "copy": {
-              "body": "The Leaderboards overview groups solo instruments, band rankings, combo rankings, and rank-history context. Full ranking pages add paging, selected-player placement, metric controls, and instrument or scope switching."
-            },
-            "carousels": {
-              "fullRankings": "Full rankings"
-            }
-          },
-          "metrics": {
-            "title": "Ranking Metrics And Scopes",
-            "copy": {
-              "body": "Metric controls switch between total score, adjusted rank, weighted rank, full-combo rate, and max-score percentage when enabled. Scope controls decide whether you are looking at a solo instrument, band type, combo, or family ranking."
-            },
-            "carousels": {
-              "metrics": "Ranking metrics"
-            }
-          },
-          "rivalsSolo": {
-            "title": "Solo-Player Rivals",
-            "copy": {
-              "body": "Rivals is available only for selected solo player profiles. It can show song rivals, common-song comparisons, combo or instrument rival groups, leaderboard neighbors, rival detail pages, and rivalry drilldowns."
-            },
-            "carousels": {
-              "rivalsSolo": "Solo rivals"
-            }
-          }
-        }
-      },
-      "shop": {
-        "title": "Item Shop",
-        "copy": {
-          "intro": "The Item Shop page collects songs currently available in the shop and highlights limited-time browsing states. It is useful when you want to inspect shop songs directly or use shop state as a signal while browsing Songs.",
-          "context": "Shop visibility can also appear on song rows and song details when enabled in App Settings."
-        },
-        "carousels": {
-          "overview": "Item Shop overview"
-        },
-        "subsections": {
-          "gridList": {
-            "title": "Grid And List Views",
-            "copy": {
-              "body": "Grid and list views support different browsing densities. Grid view emphasizes album art and visual scanning, while list view is better when you want a tighter table-like pass through shop songs."
-            },
-            "carousels": {
-              "gridList": "Shop grid and list"
-            }
-          },
-          "badges": {
-            "title": "Shop Badges On Songs And Details",
-            "copy": {
-              "body": "Shop badges can appear on Songs rows and song detail headers, helping you spot tracks that are currently available while staying in your normal browsing flow."
-            },
-            "carousels": {
-              "badges": "Shop badges"
-            }
-          },
-          "settings": {
-            "title": "Leaving-Tomorrow And Visibility Settings",
-            "copy": {
-              "body": "App Settings can hide Item Shop UI or change how shop highlights appear. Leaving-tomorrow states help you notice songs that may need attention soon."
-            },
-            "carousels": {
-              "settings": "Shop settings"
-            }
-          }
-        }
-      },
-      "settings": {
-        "title": "App Settings",
-        "copy": {
-          "intro": "App Settings control how the app looks and how much information appears while browsing. They are especially useful for reducing noise when you only care about certain instruments, metadata fields, path views, or mobile controls.",
-          "context": "The examples below focus on app preferences and browsing behavior. Operational status rows are intentionally not part of this manual."
-        },
-        "carousels": {
-          "overview": "App Settings overview"
-        },
-        "subsections": {
-          "instruments": {
-            "title": "Instrument Visibility And Metadata",
-            "copy": {
-              "body": "Show Instruments decides which instruments appear across Songs, Player Details, Suggestions, and Leaderboards. Show Instrument Metadata and Song Row Visual Order control which extra values appear when Songs is focused on a single instrument."
-            },
-            "carousels": {
-              "instruments": "Instrument settings"
-            }
-          },
-          "paths": {
-            "title": "Paths, Leeway, And Ranking Examples",
-            "copy": {
-              "body": "Common examples include changing the CHOpt path default view, reordering text path columns, adjusting max-score leeway, and enabling experimental leaderboard ranks when you want more ranking mechanisms visible."
-            },
-            "carousels": {
-              "paths": "Path and ranking settings"
-            }
-          },
-          "preferences": {
-            "title": "Mobile Header, Shop, Export, And Reset",
-            "copy": {
-              "body": "Other examples include showing or hiding mobile header buttons, changing shop highlighting, replaying first-run guides, exporting selected profile data, and resetting saved app preferences."
-            },
-            "carousels": {
-              "preferences": "App preference settings"
-            }
-          }
-        }
-      }
-    }
-  },
   "shop": {
     "viewGrid": "Grid",
     "viewList": "List",
@@ -1309,7 +911,7 @@
     "switchToListView": "Switch to list view",
     "itemShop": "Item Shop",
     "empty": "No songs in the Item Shop",
-    "emptyHint": "Check back later \u2014 the shop updates regularly."
+    "emptyHint": "Check back later — the shop updates regularly."
   },
   "chart": {
     "scoreHistory": "Score History",
@@ -1527,344 +1129,20 @@
     "colOd": "Overdrive %",
     "colScore": "Score"
   },
-  "firstRun": {
-    "carouselLabel": "Feature tour",
-    "demoSimulated": "Some demo data may be simulated.",
-    "songs": {
-      "songList": {
-        "title": "Song List",
-        "description": "Browse and search the entire Festival library. Tap a song to see leaderboards and more details."
-      },
-      "sort": {
-        "title": "Sort Songs",
-        "description": "Tap the sort button to reorder by default song data. Select a player profile to narrow it down even more."
-      },
-      "navigation": {
-        "title": "Navigation",
-        "description": "Use the sidebar or bottom tabs to switch between Songs, Suggestions, Statistics, and Settings.",
-        "descriptionMobile": "Use the bottom tabs to navigate the app. Select a player profile to see even more options.",
-        "descriptionDesktop": "Use the sidebar to navigate the app. Select a player profile to see even more options."
-      },
-      "filter": {
-        "title": "Filter Songs",
-        "description": "Filter down the song list by global data, and refine it with per-instrument filters."
-      },
-      "songIcons": {
-        "title": "Instrument Icons",
-        "description": "When showing all instruments, quickly identify songs you've FC'd (gold), played (green), or haven't played (red)."
-      },
-      "metadata": {
-        "title": "Song Metadata",
-        "description": "When filtering to a single instrument, see more details about your best score. Customize the order, and what appears, in Settings."
-      },
-      "shop": {
-        "title": "Item Shop Highlights",
-        "description": "Songs currently available in the Item Shop are highlighted with a pulsing glow so you can spot them at a glance."
-      },
-      "new": {
-        "title": "New in the Item Shop",
-        "description": "New songs in Festival that are in the item shop for the first time pulse gold, while regular shop songs keep the green highlight."
-      },
-      "leaving": {
-        "title": "Leaving Tomorrow",
-        "description": "Songs about to leave the Item Shop pulse red so you know which ones to grab before they're gone."
-      }
-    },
-    "statistics": {
-      "drillDown": {
-        "title": "Drill Into Your Data",
-        "description": "Tap any stat card marked with a chevron to jump to the Songs page with pre-applied filters, instantly showing you all songs for that category."
-      },
-      "overview": {
-        "title": "Global Statistics",
-        "description": "See a player's overall performance at a glance — songs played, full combos, gold stars, accuracy, and best rank. Tap any stat with an indicator to jump to the relevant songs."
-      },
-      "instrumentBreakdown": {
-        "title": "Per-Instrument Stats",
-        "description": "Scroll down to see detailed stats for each instrument, and tap to immediately be taken to a filtered list of songs for that instrument."
-      },
-      "percentiles": {
-        "title": "Percentile Rankings",
-        "description": "See where a player ranks relative to all players. The percentile table breaks down how many scores land in each bracket — from Top 1% to Top 100%."
-      },
-      "topSongs": {
-        "title": "Highest and Lowest Rank Breakdown",
-        "description": "Each instrument shows your highest and lowest five songs by percentile rank. Tap any song to see its leaderboard and score history."
-      },
-      "selectProfile": {
-        "title": "Select Player Profile",
-        "descriptionMobile": "Press the pulsing player profile button at the top of the screen, or the dedicated button inside the FAB menu, to select this player profile and see all of their tracked data.",
-        "descriptionDesktop": "Press the Select Player Profile button at the top of the screen to select this player profile and see all of their tracked data."
-      }
-    },
-    "suggestions": {
-      "overview": {
-        "title": "Personalized Suggestions",
-        "description": "Get tailored song suggestions based on your scores — find your best improvement opportunities, achievement gaps, and next milestones."
-      },
-      "categoryCard": {
-        "title": "Suggestion Cards",
-        "description": "Each suggestion is a themed card with songs tailored to what you have and haven't played — near FCs, unplayed tracks, percentile pushes, and more."
-      },
-      "globalFilter": {
-        "title": "Filter Suggestions",
-        "description": "Tap the filter button to control which suggestions are visible to you."
-      },
-      "instrumentFilter": {
-        "title": "Per-Instrument Filters",
-        "description": "Select an instrument to fine-tune which suggestion types appear for that specific instrument."
-      },
-      "infiniteScroll": {
-        "title": "More Suggestions",
-        "description": "Scroll down to keep loading personalized suggestions. Start a new mix when you reach the session limit."
-      },
-      "demo": {
-        "unfcTitle": "Finish the Lead FCs",
-        "unfcDesc": "Play these songs again on Lead and grab an FC!",
-        "pctPushTitle": "Percentile Push: Bass",
-        "pctPushDesc": "Replay these Bass songs to jump to the next percentile bracket.",
-        "staleTitle": "Play Tap Vocals This Season",
-        "staleDesc": "Songs you haven't played on Tap Vocals this season.",
-        "nearFcTitle": "FC These Next!",
-        "nearFcDesc": "If you can get gold stars, you can FC it!",
-        "unplayedTitle": "New on Drums",
-        "unplayedDesc": "Songs you haven't played on Drums yet.",
-        "varietyTitle": "Variety Pack",
-        "varietyDesc": "Two different artists for variety.",
-        "perInstrumentHeader": "Per-Instrument Types"
-      }
-    },
-    "settings": {
-      "showFirstRunTitle": "First Run Guides",
-      "showFirstRunHint": "Re-visit the first run experience for each page.",
-      "showButton": "Show"
-    },
-    "songInfo": {
-      "chart": {
-        "title": "Score History Chart",
-        "description": "When you have a player selected, their score history for this song appears at the top — charting accuracy and score over time. Change instruments to see more data!"
-      },
-      "barSelect": {
-        "title": "Select a Bar for Details",
-        "description": "Tap any bar on the chart to see the details for that score — date, season, score, and accuracy."
-      },
-      "viewAll": {
-        "title": "View Player Scores",
-        "description": "Below the chart, the player's top scores are listed for quick reference. If there's more than five, tapping View all scores will take you to the player history page, where you can see all tracked history for that user, score, and instrument."
-      },
-      "topScores": {
-        "title": "Top Scores Per Instrument",
-        "description": "Each instrument shows the top leaderboard entries for this song. Tap any player to go to their page, or \"View full leaderboard\" to go to the instrument leaderboard for the selected song."
-      },
-      "paths": {
-        "title": "Optimal Paths",
-        "descriptionMobile": "Tap \"View Paths\" in the action button to see the optimal score path for any instrument and difficulty.",
-        "descriptionDesktop": "Tap \"View Paths\" in the header to see the optimal score path for any instrument and difficulty."
-      },
-      "shop": {
-        "title": "Item Shop Link",
-        "descriptionMobile": "When a song is in the Item Shop, a shop icon appears on the song card. Tap it to go straight to the store.",
-        "descriptionDesktop": "When a song is in the Item Shop, an Item Shop button appears in the header. Tap it to go straight to the store."
-      },
-      "new": {
-        "title": "New Shop Songs",
-        "descriptionMobile": "When a shop song is newly added, the Item Shop pill pulses gold instead of green.",
-        "descriptionDesktop": "When a shop song is newly added, the Item Shop button pulses gold instead of green."
-      },
-      "leaving": {
-        "title": "Leaving Tomorrow",
-        "descriptionMobile": "When a song is about to leave the Item Shop, the Item Shop pill turns red so you know to act fast.",
-        "descriptionDesktop": "When a song is about to leave the Item Shop, the Item Shop button turns red so you know to act fast."
-      }
-    },
-    "playerHistory": {
-      "scoreList": {
-        "title": "Score History",
-        "description": "Every tracked score change for this song and instrument is listed here. Your personal best is highlighted so you can spot it at a glance."
-      },
-      "sort": {
-        "title": "Sort Scores",
-        "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season — ascending or descending.",
-        "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season — ascending or descending."
-      }
-    },
-    "leaderboards": {
-      "overview": {
-        "title": "Global Rankings",
-        "description": "See how players rank across all songs on each instrument. Rankings are computed after every scrape pass."
-      },
-      "experimentalMetrics": {
-        "title": "Experimental Ranking Metrics",
-        "description": "Sort by Adjusted Percentile, Popularity-Weighted Percentile, FC Rate, or Max Score %. These experimental metrics estimate performance from rank percentiles, score counts, and population weighting — tap the ? icon on any metric for details."
-      },
-      "yourRank": {
-        "title": "Your Rank",
-        "description": "Your position appears in purple. Tap 'View all rankings' to see the full leaderboard for any instrument."
-      },
-      "metricInfo": {
-        "adjusted": {
-          "how": {
-            "title": "How Adjusted Percentile Works",
-            "description": "Ranks become top-percentile scores. Average them, then apply the score-count rule. Lower is better."
-          },
-          "experience": {
-            "title": "Why Score Count Matters",
-            "description": "A few scores on an instrument are only a small sample. As you add more scores, your actual rank percentiles drive the rating more directly."
-          },
-          "hood": {
-            "title": "Under the Hood",
-            "description": "The formula factors in the number of scores on the instrument. More scores means the player's actual percentile average determines more of the rating."
-          },
-          "hoodExample": {
-            "title": "What Changes With More Scores",
-            "description": "More scores move the rating closer to the player's earned average rank percentile."
-          },
-          "experimental": {
-            "title": "Why It's Experimental",
-            "description": "All songs count equally regardless of chart difficulty, and how strongly score count affects early rankings is a tuning choice."
-          }
-        },
-        "weighted": {
-          "how": {
-            "title": "How Popularity-Weighted Percentile Works",
-            "description": "Like Adjusted Percentile, but songs with larger leaderboard populations have more influence on the average."
-          },
-          "experience": {
-            "title": "Why Score Count Matters",
-            "description": "A few scores on an instrument are only a small sample. As you add more scores, your weighted percentile average drives the rating more directly."
-          },
-          "hood": {
-            "title": "Under the Hood",
-            "description": "Each song's rank percentile is multiplied by a log₂ player-count weight before averaging, then the number of scores on the instrument is factored in so players with only a few scores do not rank too highly."
-          },
-          "hoodWeight": {
-            "title": "Song Population Weight",
-            "description": "N is the song's player count. The log scale lets bigger leaderboards count more without taking over."
-          },
-          "hoodAverage": {
-            "title": "Weighted Average",
-            "description": "p is rank percentile and w is population weight. Their weighted average becomes RWP."
-          },
-          "hoodRating": {
-            "title": "Final Rating",
-            "description": "RWP is blended with score count n so a few scores do not rank too highly."
-          },
-          "experimental": {
-            "title": "Why It's Experimental",
-            "description": "More players does not always mean a harder chart. Popularity is only a weighting signal, and the log scale is a tuning choice."
-          }
-        },
-        "fcrate": {
-          "how": {
-            "title": "How FC Rate Works",
-            "description": "Full Combos divided by the total number of charted songs for the instrument."
-          },
-          "experience": {
-            "title": "Why Catalog Coverage Matters",
-            "description": "Unplayed charts remain in the denominator, so a few easy Full Combos cannot create a perfect rate."
-          },
-          "hood": {
-            "title": "Under the Hood",
-            "description": "FC Rate uses the catalog-wide Full Combo fraction directly, without Bayesian score-count adjustment."
-          },
-          "experimental": {
-            "title": "Why It's Experimental",
-            "description": "Easy FCs count the same as hard ones, and near-misses aren't distinguished from total failures."
-          }
-        },
-        "maxscore": {
-          "how": {
-            "title": "How Max Score % Works",
-            "description": "For each song, how close your score is to the computed theoretical maximum."
-          },
-          "experience": {
-            "title": "Why Playing More Songs Helps",
-            "description": "A few near-perfect scores across only a couple songs carry less weight than consistent accuracy across many songs."
-          },
-          "hood": {
-            "title": "Under the Hood",
-            "description": "Scores above 105% of the computed maximum are excluded; eligible ratios are capped at 105%."
-          },
-          "hoodCap": {
-            "title": "Eligibility And Per-Song Cap",
-            "description": "Only scores at or below the 105% validity cutoff are included, then each eligible ratio is capped at 105% and averaged."
-          },
-          "hoodRating": {
-            "title": "Final Rating",
-            "description": "The capped average is blended with score count n so a few near-perfect scores do not rank too highly."
-          },
-          "experimental": {
-            "title": "Why It's Experimental",
-            "description": "The computed maximum isn't always perfect, and new songs may temporarily lack data."
-          }
-        }
-      }
-    },
-    "compete": {
-      "hub": {
-        "title": "Compete Hub",
-        "description": "Your competitive snapshot — see your leaderboard rankings and closest rivals at a glance."
-      },
-      "leaderboards": {
-        "title": "Leaderboards",
-        "description": "The top-ranked players across all instruments. Tap to explore the full global rankings."
-      },
-      "rivals": {
-        "title": "Rivals",
-        "description": "See who's just ahead and behind you. Tap to view all your rivals and head-to-head matchups."
-      }
-    },
-    "rivals": {
-      "overview": {
-        "title": "Your Rivals",
-        "description": "Rivals are players near your skill level on each instrument. See who's just above and below you."
-      },
-      "instruments": {
-        "title": "Per-Instrument Rivals",
-        "description": "Each instrument has its own rival list — plus a common rivals section for players who appear across multiple instruments."
-      },
-      "detail": {
-        "title": "Head-to-Head",
-        "description": "Tap a rival to see a song-by-song comparison, broken down by closest battles, almost passed, and more."
-      }
-    },
-    "shop": {
-      "overview": {
-        "title": "Item Shop",
-        "description": "Browse the songs currently available for purchase in the Item Shop."
-      },
-      "views": {
-        "title": "Grid & List View",
-        "description": "Switch between a visual grid of album art and a compact list — tap the toggle in the header."
-      },
-      "highlighting": {
-        "title": "Shop Highlighting",
-        "description": "Songs from the Item Shop are highlighted with a pulsing glow on the Songs page so you can spot them at a glance."
-      },
-      "new": {
-        "title": "New Shop Songs",
-        "description": "New songs in Festival that are in the item shop for the first time pulse gold in shop views and on song rows."
-      },
-      "leaving": {
-        "title": "Leaving Tomorrow",
-        "description": "Songs about to leave the Item Shop pulse red — in the grid, list, and on the Songs page — so you never miss a last-chance purchase."
-      }
-    }
-  },
   "rivals": {
     "title": "Rivals",
     "lastComputed": "Last computed: {{date}}",
     "aboveYou": "Above You",
     "belowYou": "Below You",
     "sharedSongs": "{{count}} shared songs",
-    "avgDelta": "Avg \u0394 {{delta}}",
+    "avgDelta": "Avg Δ {{delta}}",
     "ahead": "{{count}} ahead",
     "aheadLabel": "songs ahead",
     "songsAhead": "songs ahead",
     "songsBehind": "songs behind",
     "behind": "{{count}} behind",
     "noPlayer": "Track a player to see their rivals.",
-    "computing": "Rivals are being computed\u2026",
+    "computing": "Rivals are being computed…",
     "noRivals": "Not enough data to identify rivals yet.",
     "noRivalsSubtitleSingle": "Play more songs on your selected instrument to generate a roster of Rivals.",
     "noRivalsSubtitlePlural": "Play more songs on your selected instruments to generate a roster of Rivals.",
@@ -1888,22 +1166,22 @@
     "viewAllRankings": "View all rankings",
     "detail": {
       "vs": "vs. {{name}}",
-      "summary": "{{total}} shared songs \u00b7 {{ahead}} ahead / {{behind}} behind",
+      "summary": "{{total}} shared songs · {{ahead}} ahead / {{behind}} behind",
       "closestBattles": "Closest Battles",
       "closestBattlesDesc": "Songs where you and your rival are neck and neck.",
       "almostPassed": "Almost Passed",
-      "almostPassedDesc": "You're just behind \u2014 one good run could flip these.",
+      "almostPassedDesc": "You're just behind — one good run could flip these.",
       "slippingAway": "Slipping Away",
       "slippingAwayDesc": "They're pulling further ahead on these songs.",
       "barelyWinning": "Barely Winning",
-      "barelyWinningDesc": "You're just ahead \u2014 don't let them catch up.",
+      "barelyWinningDesc": "You're just ahead — don't let them catch up.",
       "pullingForward": "Pulling Forward",
       "pullingForwardDesc": "You have a solid lead on these songs.",
       "dominatingThem": "Dominating Them",
-      "dominatingThemDesc": "You're far ahead \u2014 these are your strongest matchups.",
+      "dominatingThemDesc": "You're far ahead — these are your strongest matchups.",
       "you": "You",
       "them": "Them",
-      "rankDelta": "\u0394 {{delta}} ranks",
+      "rankDelta": "Δ {{delta}} ranks",
       "noSongs": "No song data for this rival.",
       "viewAll": "View all {{count}} songs"
     }
