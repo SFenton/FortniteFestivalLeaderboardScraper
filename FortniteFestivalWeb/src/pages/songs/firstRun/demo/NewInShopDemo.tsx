@@ -14,7 +14,7 @@ const ROW_H = Layout.demoRowHeight;
 const ROW_H_MOBILE = Layout.demoRowMobileHeight;
 
 export default function NewInShopDemo() {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'firstRun'], { nsMode: 'fallback' });
   const isMobile = useIsMobile();
   const { state: { songs } } = useFestival();
   const { shopSongIds, newShopIds } = useShop();

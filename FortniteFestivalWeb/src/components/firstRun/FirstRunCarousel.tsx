@@ -12,6 +12,7 @@ import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import { useSwipeNavigation } from '../../hooks/ui/useSwipeNavigation';
 import { useOverlayDialogFocus } from '../../hooks/ui/useOverlayDialogFocus';
+import './firstRunEnglish';
 
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
@@ -23,7 +24,7 @@ type FirstRunCarouselProps = {
 };
 
 export default function FirstRunCarousel({ slides, onDismiss, onExitComplete, ariaLabel, returnFocusTarget }: FirstRunCarouselProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'firstRun'], { nsMode: 'fallback' });
   const isMobile = useIsMobile();
   const S = useCarouselStyles();
   const [animIn, setAnimIn] = useState(false);

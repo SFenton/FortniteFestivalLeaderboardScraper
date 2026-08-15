@@ -16,6 +16,7 @@ import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePag
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { useSwipeNavigation } from '../../hooks/ui/useSwipeNavigation';
 import { getManualScreenshotAsset, type ManualScreenshotAsset, type ManualScreenshotViewport } from './manualScreenshotAssets';
+import './manualEnglish';
 
 type ManualSectionId =
   | 'navigation'
@@ -220,7 +221,7 @@ function subsectionCarouselTitleKey(section: ManualSection, subsection: ManualSu
 
 export default function ManualPage() {
   useSetPageReady(true);
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const scrollContainerRef = useScrollContainer();
   const isWideDesktop = useIsWideDesktop();
@@ -326,7 +327,7 @@ function ManualSectionBlock({ section, registerSectionRef, forcedCarouselIds, su
   forcedCarouselIds: ReadonlySet<string>;
   suppressObservedMounts: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const title = t(sectionTitleKey(section));
 
@@ -369,7 +370,7 @@ function ManualSubsectionBlock({ section, subsection, registerSectionRef, forced
   forcedCarouselIds: ReadonlySet<string>;
   suppressObservedMounts: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const title = t(subsectionTitleKey(section, subsection));
 
@@ -389,7 +390,7 @@ function ManualSubsectionBlock({ section, subsection, registerSectionRef, forced
 }
 
 function ManualParagraphs({ keysList, resolveKey, style }: { keysList: string[]; resolveKey: (key: string) => string; style: CSSProperties }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   return (
     <>
       {keysList.map(copyKey => <p key={copyKey} style={style}>{t(resolveKey(copyKey))}</p>)}
@@ -430,7 +431,7 @@ function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey, for
   forceMounted: boolean;
   suppressObservedMounts: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const scrollContainerRef = useScrollContainer();
   const slotRef = useRef<HTMLDivElement>(null);
@@ -507,7 +508,7 @@ function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey, for
 }
 
 function ScreenshotCarouselContent({ carouselId, titleKey, slides }: { carouselId: string; titleKey: string; slides: ScreenshotSlide[] }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const [index, setIndex] = useState(0);
   const [fallbackSlideKey, setFallbackSlideKey] = useState<string | null>(null);

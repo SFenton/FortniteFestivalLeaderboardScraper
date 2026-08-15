@@ -49,6 +49,8 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 import { useSelectedProfileSyncStatus } from './useSelectedProfileSyncStatus';
+import './settingsEnglish';
+import '../../components/firstRun/firstRunEnglish';
 
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
@@ -199,7 +201,7 @@ function LeewaySlider({ value, label, onChange }: { value: number; label: string
 
 export default function SettingsPage() {
   useSetPageReady(true);
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'settings', 'firstRun'], { nsMode: 'fallback' });
   const queryClient = useQueryClient();
   const { settings, updateSettings, resetSettings } = useSettings();
   const { profile: selectedProfile } = useTrackedPlayer();

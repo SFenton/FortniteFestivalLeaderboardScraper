@@ -23,7 +23,7 @@ function typeToggles(): ToggleState[] {
 }
 
 export default function InstrumentFilterDemo() {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'firstRun'], { nsMode: 'fallback' });
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const s = useDemoStyles();

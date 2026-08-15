@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { act, render, screen, fireEvent } from '@testing-library/react';
+import '../../../../src/components/firstRun/firstRunEnglish';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import { TestProviders } from '../../../helpers/TestProviders';
 

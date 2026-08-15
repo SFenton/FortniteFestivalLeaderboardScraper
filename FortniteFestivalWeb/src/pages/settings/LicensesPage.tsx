@@ -11,6 +11,7 @@ import ModalShell from '../../components/modals/components/ModalShell';
 import { modalStyles } from '../../components/modals/modalStyles';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { licenseManifest, type LicenseManifestEntry } from '../../generated/licenseManifest';
+import './settingsEnglish';
 
 function formatEcosystem(ecosystem: LicenseManifestEntry['ecosystem']): string {
   switch (ecosystem) {
@@ -25,7 +26,7 @@ function formatEcosystem(ecosystem: LicenseManifestEntry['ecosystem']): string {
 
 export default function LicensesPage() {
   useSetPageReady(true);
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'settings'], { nsMode: 'fallback' });
   const styles = useStyles();
   const [selectedEntry, setSelectedEntry] = useState<LicenseManifestEntry | null>(null);
   const licenseScrollRef = useRef<HTMLDivElement>(null);
