@@ -3352,7 +3352,7 @@ public sealed class MaxScoreMaintenanceService
                  AND changed.instrument =
                      resolved.instrument
             ), registered_accounts AS MATERIALIZED (
-                SELECT DISTINCT account_id
+                SELECT account_id
                 FROM registered_users
             ), player_stats_fallback_scopes AS MATERIALIZED (
                 SELECT resolved.song_id,
@@ -3426,95 +3426,60 @@ public sealed class MaxScoreMaintenanceService
                       FROM affected_player_accounts affected
                       WHERE affected.account_id =
                           history.account_id)
+            ), canonical_rows AS MATERIALIZED (
+                SELECT id,
+                       changed_at,
+                       jsonb_build_array(
+                           id,
+                           song_id,
+                           instrument,
+                           account_id,
+                           old_score,
+                           new_score,
+                           old_rank,
+                           new_rank,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           percentile,
+                           season,
+                           CASE
+                               WHEN score_achieved_at IS NULL
+                                   THEN NULL
+                               ELSE (
+                                   EXTRACT(
+                                       EPOCH FROM
+                                           score_achieved_at)
+                                   * 1000000)::BIGINT
+                           END,
+                           season_rank,
+                           all_time_rank,
+                           difficulty,
+                           (
+                               EXTRACT(
+                                   EPOCH FROM changed_at)
+                               * 1000000)::BIGINT)::TEXT
+                           AS row_identity
+                FROM relevant_history
             ), aggregate_evidence AS (
                 SELECT COUNT(*)::BIGINT AS row_count,
-                       MIN(history.id)::BIGINT AS minimum_id,
-                       MAX(history.id)::BIGINT AS maximum_id,
-                       MIN(history.changed_at)
-                           AS minimum_changed_at,
-                       MAX(history.changed_at)
-                           AS maximum_changed_at,
+                       MIN(id)::BIGINT AS minimum_id,
+                       MAX(id)::BIGINT AS maximum_id,
+                       MIN(changed_at) AS minimum_changed_at,
+                       MAX(changed_at) AS maximum_changed_at,
                        COALESCE(
                            SUM(
-                               hash_record_extended(
-                                   ROW(
-                                       history.id,
-                                       history.song_id,
-                                       history.instrument,
-                                       history.account_id,
-                                       history.old_score,
-                                       history.new_score,
-                                       history.old_rank,
-                                       history.new_rank,
-                                       history.accuracy,
-                                       history.is_full_combo,
-                                       history.stars,
-                                       history.percentile,
-                                       history.season,
-                                       CASE
-                                           WHEN
-                                               history
-                                                   .score_achieved_at
-                                               IS NULL
-                                               THEN NULL::BIGINT
-                                           ELSE (
-                                               EXTRACT(
-                                                   EPOCH FROM
-                                                       history
-                                                           .score_achieved_at)
-                                               * 1000000)::BIGINT
-                                       END,
-                                       history.season_rank,
-                                       history.all_time_rank,
-                                       history.difficulty,
-                                       (
-                                           EXTRACT(
-                                               EPOCH FROM
-                                                   history.changed_at)
-                                           * 1000000)::BIGINT),
+                               hashtextextended(
+                                   row_identity,
                                    0)::NUMERIC),
                            0)::TEXT AS hash_sum,
                        COALESCE(
                            bit_xor(
-                               hash_record_extended(
-                                   ROW(
-                                       history.id,
-                                       history.song_id,
-                                       history.instrument,
-                                       history.account_id,
-                                       history.old_score,
-                                       history.new_score,
-                                       history.old_rank,
-                                       history.new_rank,
-                                       history.accuracy,
-                                       history.is_full_combo,
-                                       history.stars,
-                                       history.percentile,
-                                       history.season,
-                                       CASE
-                                           WHEN
-                                               history
-                                                   .score_achieved_at
-                                               IS NULL
-                                               THEN NULL::BIGINT
-                                           ELSE (
-                                               EXTRACT(
-                                                   EPOCH FROM
-                                                       history
-                                                           .score_achieved_at)
-                                               * 1000000)::BIGINT
-                                       END,
-                                       history.season_rank,
-                                       history.all_time_rank,
-                                       history.difficulty,
-                                       (
-                                           EXTRACT(
-                                               EPOCH FROM
-                                                   history.changed_at)
-                                           * 1000000)::BIGINT),
+                               hashtextextended(
+                                   row_identity,
                                    1)),
                            0)::TEXT AS hash_xor
-                FROM relevant_history history
+                FROM canonical_rows
             )
             SELECT row_count,
                    minimum_id,

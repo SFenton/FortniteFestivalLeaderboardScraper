@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: afc475f6
+last_verified_commit: 68ae7e99
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -154,15 +154,19 @@ affected-account rows on other instruments. The resulting affected,
 registered-cache, overlay-only-cache, and fallback sets are reused throughout
 the same read snapshot.
 
-Registered history uses a semi-join against distinct registrations, while
-nonregistered history uses unique account/song/instrument fallback keys and
-the existing score-history lookup index. The two branches aggregate
-independently to count, ID/time ranges, and typed hash sum/xor state, then
-combine associatively into the report fingerprint. No history row is copied to
-a temporary table or serialized as JSON. Selector tables are `ON COMMIT DROP`
-and also removed explicitly; a savepoint restores the caller's maintenance
-transaction after cancellation or timeout without releasing its pre-existing
-publication/source fences.
+Registered history joins the captured registration rows with the same
+multiplicity as the established contract, while nonregistered history uses
+unique account/song/instrument fallback keys and the existing score-history
+lookup index. Each branch preserves the prior
+`hashtextextended(jsonb_build_array(...)::TEXT, seed)` row identity exactly,
+including field order, JSON nulls, signed values, and epoch-microsecond
+timestamps. The branches aggregate independently to count, ID/time ranges, and
+hash sum/xor state, then combine associatively into the unchanged report
+fingerprint envelope. JSON text is hashed per row but never retained; no
+history row is copied to a temporary table or ordered payload. Selector tables
+are `ON COMMIT DROP` and also removed explicitly; a savepoint restores the
+caller's maintenance transaction after cancellation or timeout without
+releasing its pre-existing publication/source fences.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical

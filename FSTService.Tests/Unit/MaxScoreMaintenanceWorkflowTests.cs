@@ -66,9 +66,13 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             (stage, seconds) =>
                 configured.Enqueue((stage, seconds));
 
+        var reference =
+            await fixture
+                .ComputeReferenceScoreHistoryEvidenceAsync();
         var plan = await fixture.PlanAsync();
 
         Assert.True(plan.CanApply);
+        Assert.Equal(reference, plan.ScoreHistoryEvidence);
         AssertConfiguredEvidenceTimeouts(
             configured,
             commandTimeoutSeconds);
@@ -93,7 +97,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.True(interrupted.Resumable);
         Assert.True(interrupted.PublicReadsFrozen);
         Assert.Equal(
-            plan.ScoreHistoryEvidence,
+            reference,
             fixture.ReadDurableScoreHistoryEvidence());
         AssertConfiguredEvidenceTimeouts(
             configured,
@@ -110,7 +114,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             resumed.Succeeded,
             fixture.LastFailure?.ToString());
         Assert.Equal(
-            plan.ScoreHistoryEvidence,
+            reference,
             fixture.ReadDurableScoreHistoryEvidence());
         AssertConfiguredEvidenceTimeouts(
             configured,
@@ -952,6 +956,28 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 Manifest.ComputeDigest(),
                 NextReportPath("plan"),
                 CancellationToken.None);
+
+        internal async Task<MaxScoreMaintenanceScoreHistoryEvidence>
+            ComputeReferenceScoreHistoryEvidenceAsync()
+        {
+            var maxima = Manifest.Songs.ToDictionary(
+                song => song.SongId,
+                song => song.StagedPath.Maxima
+                    .ToSongMaxScores(),
+                StringComparer.OrdinalIgnoreCase);
+            await using var connection =
+                await _dataSource.OpenConnectionAsync();
+            await using var transaction =
+                await connection.BeginTransactionAsync(
+                    System.Data.IsolationLevel.RepeatableRead);
+            return await MaxScoreMaintenanceService
+                .ComputeScoreHistoryEvidenceReferenceAsync(
+                    Manifest,
+                    maxima,
+                    connection,
+                    transaction,
+                    CancellationToken.None);
+        }
 
         internal Task<MaxScoreMaintenanceApplyReport> ApplyAsync(
             bool resume,

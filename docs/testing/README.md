@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: afc475f6
+last_verified_commit: 68ae7e99
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -89,15 +89,19 @@ timeout and serializable transaction, restores the `120s` mutation timeout,
 and leaves validation failures frozen.
 
 The focused score-history matrix compares the optimized selector/branch
-aggregates with the former global resolver on a deterministic randomized
-fixture. Named cases cover multi-device registration deduplication, registered
-history outside affected scopes, player fallback on another instrument,
-ranking fallback on another song, strict current/history thresholds,
-player/ranking overlap, and snapshot/overlay precedence. Lock-blocked
-cancellation and shared-deadline timeout cases require savepoint cleanup, no
-remaining selector temp tables, and two successful repeated invocations in the
-same repeatable-read transaction. Workflow assertions require plan, apply, and
-resume to persist identical score-history evidence.
+aggregates with the exact pre-optimization SQL on a deterministic randomized
+fixture. PostgreSQL 17 golden rows pin the canonical JSON text and both
+`hashtextextended` seeds for null fields, microsecond timestamps, and signed
+scores/ranks; a full golden fingerprint spans both registered and
+nonregistered branches plus established multi-device registration
+multiplicity. Named cases cover registered history outside affected scopes,
+player fallback on another instrument, ranking fallback on another song,
+strict current/history thresholds, player/ranking overlap, and
+snapshot/overlay precedence. Lock-blocked cancellation and shared-deadline
+timeout cases require savepoint cleanup, no remaining selector temp tables,
+and two successful repeated invocations in the same repeatable-read
+transaction. Workflow assertions compare plan evidence with the master SQL
+oracle and require apply/resume revalidation to persist that same evidence.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

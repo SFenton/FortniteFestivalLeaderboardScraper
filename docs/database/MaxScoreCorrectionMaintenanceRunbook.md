@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: afc475f6
+last_verified_commit: 68ae7e99
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -439,17 +439,25 @@ deterministic `ON CONFLICT` precedence identical to the authoritative
 `DISTINCT ON` sort. It reuses the affected/cache account sets for downstream
 player-stat and cache work instead of resolving them again.
 
-The registered branch reads all history once through an `EXISTS` semi-join
-against distinct account registrations, so multiple registered devices cannot
-duplicate a history row. The nonregistered branch probes the existing
+The registered branch reads all history once by joining the captured
+registration rows, preserving the established per-device multiplicity in the
+report contract. The nonregistered branch probes the existing
 `ix_sh_valid_lookup` account/song/instrument/score index from unique exact
 fallback scopes. Player fallbacks still require current score greater than the
 maximum; ranking fallbacks require current score greater than the 5% threshold;
 both admit only history at or below that threshold. Overlap is unique.
-Each branch emits only count, ID/time extrema, and typed 64-bit hash sum/XOR
-state. The application combines those associative values into the unchanged
-report fingerprint envelope. There is no history-sized temporary relation,
-ordered payload aggregation, or per-row JSON serialization.
+Each branch applies the exact prior
+`hashtextextended(jsonb_build_array(...)::TEXT, seed)` expression with the
+original field order, JSON null representation, signed numeric values, and
+epoch-microsecond timestamp conversion, then emits only count, ID/time extrema,
+and hash sum/XOR state. The application combines those associative values into
+the unchanged report fingerprint envelope. The transient JSON text is hashed
+immediately; there is no history-sized temporary relation or ordered payload
+aggregation.
+
+The plan report remains version 4 and the apply/resume report remains version
+3 because the row bytes, seed hashes, aggregate envelope, and resulting
+fingerprint match the pre-optimization contract exactly.
 
 Expected work is:
 

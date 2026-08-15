@@ -8,7 +8,273 @@ namespace FSTService.Tests.Unit;
 public sealed partial class MaxScoreMaintenancePersistenceTests
 {
     [Fact]
-    public async Task Score_history_evidence_preserves_exact_consumption_predicates()
+    public void Score_history_row_hash_matches_legacy_postgresql_golden_values()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH source(
+                id,
+                song_id,
+                instrument,
+                account_id,
+                old_score,
+                new_score,
+                old_rank,
+                new_rank,
+                accuracy,
+                is_full_combo,
+                stars,
+                percentile,
+                season,
+                score_achieved_at,
+                season_rank,
+                all_time_rank,
+                difficulty,
+                changed_at) AS (
+                VALUES
+                    (
+                        101::INTEGER,
+                        'registered-song'::TEXT,
+                        'Solo_Drums'::TEXT,
+                        'registered-account'::TEXT,
+                        NULL::INTEGER,
+                        -17::INTEGER,
+                        NULL::INTEGER,
+                        -3::INTEGER,
+                        NULL::INTEGER,
+                        NULL::BOOLEAN,
+                        NULL::INTEGER,
+                        NULL::REAL,
+                        NULL::INTEGER,
+                        NULL::TIMESTAMPTZ,
+                        NULL::INTEGER,
+                        (-2147483647 - 1)::INTEGER,
+                        NULL::INTEGER,
+                        '1969-12-31 23:59:59.999999+00'
+                            ::TIMESTAMPTZ
+                    ),
+                    (
+                        202::INTEGER,
+                        'song-a'::TEXT,
+                        'Solo_Guitar'::TEXT,
+                        'account-overlay'::TEXT,
+                        -123456::INTEGER,
+                        50000::INTEGER,
+                        -9::INTEGER,
+                        7::INTEGER,
+                        -100::INTEGER,
+                        FALSE::BOOLEAN,
+                        -5::INTEGER,
+                        -12.5::REAL,
+                        -2::INTEGER,
+                        '2026-08-15 12:34:56.123456+00'
+                            ::TIMESTAMPTZ,
+                        -6::INTEGER,
+                        8::INTEGER,
+                        -10::INTEGER,
+                        '2038-01-19 03:14:07.654321+00'
+                            ::TIMESTAMPTZ
+                    )
+            ), canonical AS (
+                SELECT id,
+                       jsonb_build_array(
+                           id,
+                           song_id,
+                           instrument,
+                           account_id,
+                           old_score,
+                           new_score,
+                           old_rank,
+                           new_rank,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           percentile,
+                           season,
+                           CASE
+                               WHEN score_achieved_at IS NULL
+                                   THEN NULL
+                               ELSE (
+                                   EXTRACT(
+                                       EPOCH FROM
+                                           score_achieved_at)
+                                   * 1000000)::BIGINT
+                           END,
+                           season_rank,
+                           all_time_rank,
+                           difficulty,
+                           (
+                               EXTRACT(
+                                   EPOCH FROM changed_at)
+                               * 1000000)::BIGINT)::TEXT
+                           AS row_identity
+                FROM source
+            )
+            SELECT id,
+                   row_identity,
+                   hashtextextended(row_identity, 0),
+                   hashtextextended(row_identity, 1)
+            FROM canonical
+            ORDER BY id;
+            """;
+        using var reader = command.ExecuteReader();
+        var rows = new List<LegacyRowHashGolden>();
+        while (reader.Read())
+        {
+            rows.Add(new LegacyRowHashGolden(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3)));
+        }
+
+        Assert.Equal(
+            [
+                new LegacyRowHashGolden(
+                    101,
+                    "[101, \"registered-song\", \"Solo_Drums\", \"registered-account\", null, -17, null, -3, null, null, null, null, null, null, null, -2147483648, null, -1]",
+                    -6642989747900786470,
+                    8880190386365305163),
+                new LegacyRowHashGolden(
+                    202,
+                    "[202, \"song-a\", \"Solo_Guitar\", \"account-overlay\", -123456, 50000, -9, 7, -100, false, -5, -12.5, -2, 1786797296123456, -6, 8, -10, 2147483647654321]",
+                    -7476338321732978398,
+                    -2244904219321693245),
+            ],
+            rows);
+    }
+
+    [Fact]
+    public async Task Score_history_evidence_matches_legacy_postgresql_golden_fingerprint()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 60_000);
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+            };
+        using (var connection = dataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO registered_users (
+                    device_id,
+                    account_id,
+                    registered_at)
+                VALUES
+                    (
+                        'golden-device-a',
+                        'registered-account',
+                        '2026-08-15 00:00:00+00'),
+                    (
+                        'golden-device-b',
+                        'registered-account',
+                        '2026-08-15 00:00:00+00');
+
+                INSERT INTO score_history (
+                    id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    old_score,
+                    new_score,
+                    old_rank,
+                    new_rank,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    percentile,
+                    season,
+                    score_achieved_at,
+                    season_rank,
+                    all_time_rank,
+                    difficulty,
+                    changed_at)
+                VALUES
+                    (
+                        101,
+                        'registered-song',
+                        'Solo_Drums',
+                        'registered-account',
+                        NULL,
+                        -17,
+                        NULL,
+                        -3,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        (-2147483647 - 1),
+                        NULL,
+                        '1969-12-31 23:59:59.999999+00'
+                    ),
+                    (
+                        202,
+                        'song-a',
+                        'Solo_Guitar',
+                        'account-overlay',
+                        -123456,
+                        50000,
+                        -9,
+                        7,
+                        -100,
+                        FALSE,
+                        -5,
+                        -12.5,
+                        -2,
+                        '2026-08-15 12:34:56.123456+00',
+                        -6,
+                        8,
+                        -10,
+                        '2038-01-19 03:14:07.654321+00'
+                    );
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var (optimized, reference) =
+            await ComputeEvidencePairAsync(
+                dataSource,
+                manifest,
+                maxima);
+
+        Assert.Equal(reference, optimized);
+        Assert.Equal(
+            new MaxScoreMaintenanceScoreHistoryEvidence(
+                3,
+                101,
+                202,
+                DateTime.UnixEpoch.AddTicks(-10),
+                new DateTime(
+                        2038,
+                        1,
+                        19,
+                        3,
+                        14,
+                        7,
+                        DateTimeKind.Utc)
+                    .AddTicks(6_543_210),
+                "ab59b91303bfdf3865f68e5909f49c9eff55573fbc4c06417666231376b22097"),
+            optimized);
+    }
+
+    [Fact]
+    public async Task Score_history_evidence_preserves_master_consumption_predicates()
     {
         using var dataSource =
             SharedPostgresContainer.CreateDatabase();
@@ -160,7 +426,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 maxima);
 
         Assert.Equal(reference, optimized);
-        Assert.Equal(5, optimized.RowCount);
+        Assert.Equal(6, optimized.RowCount);
 
         return;
 
@@ -195,7 +461,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
-    public async Task Score_history_evidence_matches_reference_on_randomized_fixture()
+    public async Task Score_history_evidence_matches_pre_optimization_sql_on_randomized_fixture()
     {
         using var dataSource =
             SharedPostgresContainer.CreateDatabase();
@@ -319,6 +585,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         var historyInstruments = new string[600];
         var historyAccounts = new string[600];
         var historyScores = new int[600];
+        var historyRanks = new int[600];
         var historyAccuracies = new int[600];
         var historyChangedAt = new DateTime[600];
         var historyAchievedAt = new DateTime[600];
@@ -339,7 +606,9 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             historyAccounts[index] =
                 accounts[random.Next(accounts.Length)];
             historyScores[index] =
-                random.Next(5_000, 60_000);
+                random.Next(-60_000, 60_001);
+            historyRanks[index] =
+                random.Next(-500, 501);
             historyAccuracies[index] =
                 random.Next(80, 101);
             historyChangedAt[index] =
@@ -390,8 +659,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             history.Parameters.Add(
                 "ranks",
                 NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
-                Enumerable.Repeat(1, historySongIds.Length)
-                    .ToArray();
+                historyRanks;
             history.Parameters.Add(
                 "accuracies",
                 NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
@@ -897,6 +1165,12 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         int? SnapshotScore,
         int? OverlayScore,
         int SourcePriority = 100);
+
+    private sealed record LegacyRowHashGolden(
+        int Id,
+        string RowIdentity,
+        long SeedZeroHash,
+        long SeedOneHash);
 
     private sealed class ScoreHistoryBlocker(
         NpgsqlConnection connection,

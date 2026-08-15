@@ -80,7 +80,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         ) ON COMMIT DROP;
 
         CREATE TEMP TABLE fst_max_score_evidence_registered_accounts (
-            account_id TEXT PRIMARY KEY
+            account_id TEXT NOT NULL
         ) ON COMMIT DROP;
 
         CREATE TEMP TABLE fst_max_score_evidence_fallback_scopes (
@@ -130,8 +130,12 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         INSERT INTO fst_max_score_evidence_registered_accounts (
             account_id)
         SELECT account_id
-        FROM registered_users
-        ON CONFLICT (account_id) DO NOTHING;
+        FROM registered_users;
+
+        CREATE INDEX
+            fst_max_score_evidence_registered_accounts_account_idx
+        ON fst_max_score_evidence_registered_accounts (
+            account_id);
 
         ANALYZE fst_max_score_evidence_maxima;
         ANALYZE fst_max_score_evidence_sources;
@@ -364,8 +368,8 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                MAX(history.changed_at) AS maximum_changed_at,
                COALESCE(
                    SUM(
-                       hash_record_extended(
-                           ROW(
+                       hashtextextended(
+                           jsonb_build_array(
                                history.id,
                                history.song_id,
                                history.instrument,
@@ -382,7 +386,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                                CASE
                                    WHEN history.score_achieved_at
                                             IS NULL
-                                       THEN NULL::BIGINT
+                                       THEN NULL
                                    ELSE (
                                        EXTRACT(
                                            EPOCH FROM
@@ -396,13 +400,13 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                                    EXTRACT(
                                        EPOCH FROM
                                            history.changed_at)
-                                   * 1000000)::BIGINT),
+                                   * 1000000)::BIGINT)::TEXT,
                            0)::NUMERIC),
                    0)::TEXT AS hash_sum,
                COALESCE(
                    bit_xor(
-                       hash_record_extended(
-                           ROW(
+                       hashtextextended(
+                           jsonb_build_array(
                                history.id,
                                history.song_id,
                                history.instrument,
@@ -419,7 +423,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                                CASE
                                    WHEN history.score_achieved_at
                                             IS NULL
-                                       THEN NULL::BIGINT
+                                       THEN NULL
                                    ELSE (
                                        EXTRACT(
                                            EPOCH FROM
@@ -433,7 +437,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                                    EXTRACT(
                                        EPOCH FROM
                                            history.changed_at)
-                                   * 1000000)::BIGINT),
+                                   * 1000000)::BIGINT)::TEXT,
                            1)),
                    0)::TEXT AS hash_xor
         """;
@@ -443,10 +447,8 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         "\n" +
         """
         FROM score_history history
-        WHERE EXISTS (
-            SELECT 1
-            FROM fst_max_score_evidence_registered_accounts registered
-            WHERE registered.account_id = history.account_id);
+        JOIN fst_max_score_evidence_registered_accounts registered
+          ON registered.account_id = history.account_id;
         """;
 
     private const string FallbackAggregateSql =
