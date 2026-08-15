@@ -42,20 +42,19 @@ import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useServiceInfo } from '../../hooks/data/useServiceInfo';
-import { SelectedProfileSyncCard, SettingsServiceProgressCard } from './SettingsServiceProgress';
+import { SettingsServiceProgressCard } from './SettingsServiceProgress';
 import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
-import { useSelectedProfileSyncStatus } from './useSelectedProfileSyncStatus';
 import './settingsEnglish';
 import '../../components/firstRun/firstRunEnglish';
 
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
-type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'profile-sync' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
+type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -240,11 +239,6 @@ export default function SettingsPage() {
   const serviceInfoQuery = useServiceInfo('settings');
   const serviceInfo = serviceInfoQuery.data ?? null;
   const serviceInfoLoadFailed = serviceInfoQuery.isError;
-  const {
-    playerStatus: trackedPlayerSyncStatus,
-    bandStatus: selectedBandSyncStatus,
-    loadFailed: selectedProfileSyncLoadFailed,
-  } = useSelectedProfileSyncStatus(selectedProfile);
   const [isExportingData, setIsExportingData] = useState(false);
   const [exportDataFailed, setExportDataFailed] = useState(false);
   const [isRefreshingProfileName, setIsRefreshingProfileName] = useState(false);
@@ -415,9 +409,6 @@ export default function SettingsPage() {
       { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata'), icon: <IoList size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle'), icon: <IoInformationCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title'), icon: <IoServer size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
-      ...(selectedProfile
-        ? [{ id: 'profile-sync' as const, label: t('settings.serviceInfo.selectedProfileSyncTitle'), landmarkLabel: t('settings.serviceInfo.selectedProfileSyncTitle'), icon: <IoPersonCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> }]
-        : []),
       { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle'), icon: <IoSparkles size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle'), icon: <IoDocumentText size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       ...(hasSelectedProfile
@@ -427,7 +418,7 @@ export default function SettingsPage() {
       { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection'), icon: <IoTrash size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
     );
     return items;
-  }, [diagnosticsSettingsVisible, hasSelectedProfile, refreshProfileNameLabel, selectedProfile, t]);
+  }, [diagnosticsSettingsVisible, hasSelectedProfile, refreshProfileNameLabel, t]);
 
   const {
     activeItemId,
@@ -759,23 +750,6 @@ export default function SettingsPage() {
               />
             </div>
           </FadeInDiv>
-
-          {selectedProfile && (
-            <FadeInDiv delay={stagger(staggerIndex++)}>
-              <div ref={(element) => registerSectionRef('profile-sync', element)}>
-                <SectionHeader
-                  title={t('settings.serviceInfo.selectedProfileSyncTitle')}
-                  description={t('settings.serviceInfo.selectedProfileSyncHint')}
-                />
-                <SelectedProfileSyncCard
-                  profile={selectedProfile}
-                  playerStatus={trackedPlayerSyncStatus}
-                  bandStatus={selectedBandSyncStatus}
-                  loadFailed={selectedProfileSyncLoadFailed}
-                />
-              </div>
-            </FadeInDiv>
-          )}
 
           {/* ── First Run Guides ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
