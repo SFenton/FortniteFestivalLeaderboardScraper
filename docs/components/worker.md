@@ -184,10 +184,20 @@ is complete, non-pending, and bound to the same song/catalog timestamp.
 Normal ranking denominators use a deduplicated union over the exact current
 catalog: provider-admitted songs, matching promoted path instruments, and
 songs with positive population for that exact song/instrument. Population
-outside the current catalog cannot enlarge the denominator. After rebuilding
-per-instrument rankings, the already-required summary load rejects mixed
-denominators, counts above the denominator, and non-finite or out-of-range
-coverage/FC rates before aggregate rankings or publication can continue.
+outside the current catalog cannot enlarge the denominator. Positive
+current-catalog population can retain a denominator scope even when a present
+provider sentinel currently blocks refresh, because persisted ranking inputs
+can still own that scope.
+
+Ranking materialization includes only current-catalog song IDs; retained
+leaderboard and `song_stats` rows for removed songs remain historical source
+data but do not contribute to current songs played, Full Combos, scores, or
+rates. After a partition is successfully rebuilt, the already-required summary
+load rejects mixed denominators, counts above the denominator, and non-finite
+or out-of-range coverage/FC rates before aggregate rankings or publication can
+continue. Instruments deliberately skipped because their selected denominator
+is zero retain the prior warn-and-skip behavior and are not treated as a new
+ranking generation.
 Promotion refreshes the singleton scraper's cached path support before derived
 work. Same-publication freeze release invalidates that cache in monitoring
 roles. Newly usable path-backed pairs also clear only prior negative backfill

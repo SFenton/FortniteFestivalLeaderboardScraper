@@ -67,10 +67,16 @@ diagnostic or replay data without becoming the published generation.
      non-charted value is present. Ranking denominators stay bounded to the
      exact current catalog while unioning provider support, promoted path
      support, and positive population for the same song/instrument.
-   - The per-instrument summary pass fails publication-critical ranking work
-     before aggregate calculation when denominators differ by account, counts
-     exceed the denominator, or coverage/FC rates are non-finite or outside
-     the valid range.
+   - Current ranking materialization filters retained score/stat sources to
+     exact current-catalog song IDs without deleting their historical rows.
+     Positive current-catalog population may retain a denominator scope even
+     when an explicit provider sentinel blocks its current refresh.
+   - For each successfully rebuilt instrument, the summary pass fails
+     publication-critical ranking work before aggregate calculation when
+     denominators differ by account, counts exceed the denominator, or
+     coverage/FC rates are non-finite or outside the valid range. A
+     zero-denominator instrument remains an explicit warn-and-skip, not a
+     rebuilt partition.
    - Publication-critical outcomes can reject the candidate; best-effort
      failures remain visible without silently changing their classification.
 7. **Prepare publication**

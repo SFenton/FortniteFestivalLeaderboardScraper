@@ -209,6 +209,12 @@ public sealed class RankingsCalculator
             : populationOverride
               ?? throw new InvalidOperationException(
                   "Max-score rankings require an immutable publication population snapshot.");
+        var currentCatalogSongIds = festivalService.Songs
+            .Select(static song => song.track?.su)
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         if (maintenanceLease is not null)
         {
             var publishedScopes = allPopulation.Keys.ToHashSet();
@@ -256,6 +262,8 @@ public sealed class RankingsCalculator
         // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
+        var rebuiltInstruments = new ConcurrentDictionary<string, byte>(
+            StringComparer.OrdinalIgnoreCase);
         await Parallel.ForEachAsync(instrumentsToRebuild,
             new ParallelOptions
             {
@@ -450,6 +458,7 @@ public sealed class RankingsCalculator
 
                 db.MaterializeCurrentStateValidEntries(
                     conn,
+                    currentCatalogSongIds,
                     BaseThresholdMultiplier);
                 matSw.Stop();
                 arSw.Start();
@@ -479,6 +488,7 @@ public sealed class RankingsCalculator
                         db.MaterializeCurrentStateValidEntries(
                             connection,
                             transaction,
+                            currentCatalogSongIds,
                             BaseThresholdMultiplier);
                         matSw.Stop();
                         arSw.Start();
@@ -494,6 +504,7 @@ public sealed class RankingsCalculator
                     },
                     ct: innerCt);
             }
+            rebuiltInstruments.TryAdd(instrument, 0);
             _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
             LogPhase("per_instrument.materialize_valid_entries", instrument, matSw.Elapsed);
 
@@ -533,9 +544,7 @@ public sealed class RankingsCalculator
 
             var full = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
             var summaries = db.GetAllRankingSummariesDetailed();
-            if (instrumentsToRebuild.Contains(
-                    instrument,
-                    StringComparer.OrdinalIgnoreCase))
+            if (rebuiltInstruments.ContainsKey(instrument))
             {
                 ValidateInstrumentRankingSummaries(
                     instrument,

@@ -128,7 +128,16 @@ public interface IInstrumentDatabase : IDisposable
     void MaterializeCurrentStateValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     void MaterializeCurrentStateValidEntries(
         Npgsql.NpgsqlConnection conn,
+        IReadOnlyCollection<string> currentCatalogSongIds,
+        double baseThreshold);
+    void MaterializeCurrentStateValidEntries(
+        Npgsql.NpgsqlConnection conn,
         Npgsql.NpgsqlTransaction? transaction,
+        double baseThreshold);
+    void MaterializeCurrentStateValidEntries(
+        Npgsql.NpgsqlConnection conn,
+        Npgsql.NpgsqlTransaction? transaction,
+        IReadOnlyCollection<string> currentCatalogSongIds,
         double baseThreshold);
     int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,
         int credibilityThreshold, double populationMedian, double thresholdMultiplier);

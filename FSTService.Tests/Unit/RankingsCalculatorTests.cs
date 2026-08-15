@@ -1145,6 +1145,59 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeAllAsync_ZeroDenominatorSkipDoesNotValidateStaleRankingRows()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "retained_song",
+            [MakeEntry("retained", 1_000, rank: 1)]);
+        guitarDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        var before = guitarDb.GetAccountRanking("retained");
+        Assert.NotNull(before);
+
+        await _sut.ComputeAllAsync(
+            new FestivalService((IFestivalPersistence?)null),
+            CancellationToken.None);
+
+        var after = guitarDb.GetAccountRanking("retained");
+        Assert.NotNull(after);
+        Assert.Equal(before.TotalChartedSongs, after.TotalChartedSongs);
+        Assert.Equal(before.TotalScore, after.TotalScore);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_ExcludesOutOfCatalogScoresWithoutDeletingSourceData()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("current", 1_000, rank: 1, fc: false)]);
+        guitarDb.UpsertEntries(
+            "retired_song",
+            [MakeEntry("current", 900, rank: 1, fc: true)]);
+        guitarDb.RecomputeAllRanks();
+
+        await _sut.ComputeAllAsync(
+            CreateFestivalServiceWithSongs(1),
+            CancellationToken.None);
+
+        var ranking = guitarDb.GetAccountRanking("current");
+        Assert.NotNull(ranking);
+        Assert.Equal(1, ranking.SongsPlayed);
+        Assert.Equal(0, ranking.FullComboCount);
+        Assert.Equal(1_000, ranking.TotalScore);
+        Assert.Equal(1, ranking.TotalChartedSongs);
+        Assert.Equal(1, ranking.Coverage, precision: 6);
+        Assert.Equal(0, ranking.FcRate, precision: 6);
+
+        Assert.NotNull(guitarDb.GetEntry("retired_song", "current"));
+        Assert.Equal(1, guitarDb.GetLeaderboardCount("retired_song"));
+        Assert.True(guitarDb.GetAllSongCounts().ContainsKey("retired_song"));
+    }
+
+    [Fact]
     public async Task ComputeAllAsync_Cancellation_Throws()
     {
         var cts = new CancellationTokenSource();
@@ -1198,6 +1251,7 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         // Run full computation
         var festivalService = CreateFestivalServiceWithSongs(1);
+        festivalService.Songs[0].track.su = "song_ot";
         await _sut.ComputeAllAsync(festivalService, CancellationToken.None);
 
         // The over-threshold player should still have rankings
@@ -1224,7 +1278,12 @@ public sealed class RankingsCalculatorTests : IDisposable
             accuracy: 98, isFullCombo: true, stars: 6,
             scoreAchievedAt: "2025-01-01T00:00:00Z");
 
-        await _sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);
+        var festivalService = CreateFestivalServiceWithSongs(1);
+        festivalService.Songs[0].track.su =
+            "song_snapshot_rankings";
+        await _sut.ComputeAllAsync(
+            festivalService,
+            CancellationToken.None);
 
         var snapshotRanking = guitarDb.GetAccountRanking("snapshot_only");
         var liveRanking = guitarDb.GetAccountRanking("live_only");
@@ -1701,6 +1760,24 @@ public sealed class RankingsCalculatorTests : IDisposable
         proxy.OpenConnection().Returns(_ => inner.OpenConnection());
         proxy.When(x => x.MaterializeCurrentStateValidEntries(Arg.Any<NpgsqlConnection>(), Arg.Any<double>()))
             .Do(call => inner.MaterializeCurrentStateValidEntries(call.Arg<NpgsqlConnection>(), call.Arg<double>()));
+        proxy.When(x => x.MaterializeCurrentStateValidEntries(
+                Arg.Any<NpgsqlConnection>(),
+                Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<double>()))
+            .Do(call => inner.MaterializeCurrentStateValidEntries(
+                call.ArgAt<NpgsqlConnection>(0),
+                call.ArgAt<IReadOnlyCollection<string>>(1),
+                call.ArgAt<double>(2)));
+        proxy.When(x => x.MaterializeCurrentStateValidEntries(
+                Arg.Any<NpgsqlConnection>(),
+                Arg.Any<NpgsqlTransaction?>(),
+                Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<double>()))
+            .Do(call => inner.MaterializeCurrentStateValidEntries(
+                call.ArgAt<NpgsqlConnection>(0),
+                call.ArgAt<NpgsqlTransaction?>(1),
+                call.ArgAt<IReadOnlyCollection<string>>(2),
+                call.ArgAt<double>(3)));
         proxy.ComputeAccountRankingsFromMaterialized(Arg.Any<NpgsqlConnection>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<double>(), Arg.Any<double>())
             .Returns(call => inner.ComputeAccountRankingsFromMaterialized(
                 call.ArgAt<NpgsqlConnection>(0),

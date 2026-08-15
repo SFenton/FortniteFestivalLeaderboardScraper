@@ -69,14 +69,22 @@ current-catalog song, support is the union of provider admission, a matching
 promoted path instrument, and positive mutable `leaderboard_population` for
 that same song/instrument. The population table is supplementary evidence in
 this path: stale rows whose song is absent from the current catalog are never
-counted.
+counted. Positive population for a current-catalog scope may keep that scope in
+the denominator even when a present provider sentinel prevents a new scrape,
+because retained ranking inputs can still contain it.
 
-Every stored account-ranking row for an instrument must carry the selected
+Current ranking materialization filters resolved score rows and valid-score
+overrides to current-catalog song IDs. Removed-song leaderboard entries and
+`song_stats` remain stored for history and recovery but do not contribute to
+current songs played, Full Combos, total score, coverage, or FC rate.
+
+Every successfully rebuilt account-ranking partition must carry its selected
 uniform denominator. The post-ranking summary pass rejects rows whose
 denominator differs, whose songs/full combos exceed it, or whose coverage/FC
-rate is non-finite or outside `[0,1]`. This keeps downstream family, combo,
-history, and cached responses from normalizing or publishing inconsistent
-per-account values.
+rate is non-finite or outside `[0,1]`. Instruments skipped because their
+selected denominator is zero are not newly validated or rewritten. This keeps
+downstream family, combo, history, and cached responses from normalizing or
+publishing inconsistent per-account values.
 
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate

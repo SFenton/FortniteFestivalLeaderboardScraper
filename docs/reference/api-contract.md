@@ -106,11 +106,13 @@ production meanings:
   is omitted from that raw average but remains in the score count used by the
   credibility adjustment.
 
-For one per-instrument ranking generation, `totalChartedSongs` is uniform
-across every account row. The server derives it from the exact current catalog
-and validated chart evidence, and fails the ranking build instead of emitting
-mixed or out-of-range rows. Browser leaderboard views render each persisted
-row denominator verbatim; they do not clamp or infer a replacement total.
+For one successfully rebuilt per-instrument ranking generation,
+`totalChartedSongs` is uniform across every account row. The server derives it
+from the exact current catalog and validated chart evidence, excludes retained
+removed-song scores from current metrics without deleting their source rows,
+and fails the ranking build instead of emitting mixed or out-of-range rows.
+Browser leaderboard views render each persisted row denominator verbatim; they
+do not clamp or infer a replacement total.
 
 Aggregate player scopes intentionally use different formulas:
 
