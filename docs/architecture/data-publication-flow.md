@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified_commit: 6071299d
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
@@ -62,6 +63,14 @@ diagnostic or replay data without becoming the published generation.
      projections, rankings, rivals, statistics, precomputation, and cleanup.
    - Per-instrument validity, leeway, and ranking calculations consume the
      eight persisted CHOpt maxima, including distinct plastic-drums modes.
+   - A missing provider difficulty remains scrape-eligible unless an explicit
+     non-charted value is present. Ranking denominators stay bounded to the
+     exact current catalog while unioning provider support, promoted path
+     support, and positive population for the same song/instrument.
+   - The per-instrument summary pass fails publication-critical ranking work
+     before aggregate calculation when denominators differ by account, counts
+     exceed the denominator, or coverage/FC rates are non-finite or outside
+     the valid range.
    - Publication-critical outcomes can reject the candidate; best-effort
      failures remain visible without silently changing their classification.
 7. **Prepare publication**

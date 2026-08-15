@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified_commit: 6071299d
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -13,6 +13,8 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService.Tests/Unit/GlobalLeaderboardScraperTests.cs
+  - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
@@ -171,12 +173,21 @@ The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums
 and Pro Drums + Cymbals thresholds.
 
-Solo scrape admission and ranking denominators use the union of charted
-provider properties and current promoted `path_expected_instruments`.
-Path-derived support is admitted only when the immutable generation is
-complete, non-pending, and bound to the same song/catalog timestamp. This
-preserves MIDI-inferred charts when provider metadata omitted them without
-turning path state into a second song catalog.
+Solo scrape admission treats an omitted per-instrument provider difficulty as
+unknown rather than unsupported, because Epic can expose a real leaderboard
+without the matching difficulty property. A present provider property must
+still contain a charted difficulty, so explicit sentinels such as Pro Vocals
+`bd=99` remain excluded. Current promoted `path_expected_instruments`
+independently supplement provider support only when the immutable generation
+is complete, non-pending, and bound to the same song/catalog timestamp.
+
+Normal ranking denominators use a deduplicated union over the exact current
+catalog: provider-admitted songs, matching promoted path instruments, and
+songs with positive population for that exact song/instrument. Population
+outside the current catalog cannot enlarge the denominator. After rebuilding
+per-instrument rankings, the already-required summary load rejects mixed
+denominators, counts above the denominator, and non-finite or out-of-range
+coverage/FC rates before aggregate rankings or publication can continue.
 Promotion refreshes the singleton scraper's cached path support before derived
 work. Same-publication freeze release invalidates that cache in monitoring
 roles. Newly usable path-backed pairs also clear only prior negative backfill

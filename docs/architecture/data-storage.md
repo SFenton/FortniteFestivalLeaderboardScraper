@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: 6071299d
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -61,6 +61,22 @@ surface is not the production service persistence model.
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
+
+### Solo ranking denominator ownership
+
+Normal per-instrument ranking denominators are catalog-bound. For each exact
+current-catalog song, support is the union of provider admission, a matching
+promoted path instrument, and positive mutable `leaderboard_population` for
+that same song/instrument. The population table is supplementary evidence in
+this path: stale rows whose song is absent from the current catalog are never
+counted.
+
+Every stored account-ranking row for an instrument must carry the selected
+uniform denominator. The post-ranking summary pass rejects rows whose
+denominator differs, whose songs/full combos exceed it, or whose coverage/FC
+rate is non-finite or outside `[0,1]`. This keeps downstream family, combo,
+history, and cached responses from normalizing or publishing inconsistent
+per-account values.
 
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: eb593898
+last_verified: 2026-08-15
+last_verified_commit: 6071299d
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -17,6 +17,7 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
 ---
@@ -104,6 +105,12 @@ production meanings:
   pre-adjustment average. A valid score on a chart without a computed maximum
   is omitted from that raw average but remains in the score count used by the
   credibility adjustment.
+
+For one per-instrument ranking generation, `totalChartedSongs` is uniform
+across every account row. The server derives it from the exact current catalog
+and validated chart evidence, and fails the ranking build instead of emitting
+mixed or out-of-range rows. Browser leaderboard views render each persisted
+row denominator verbatim; they do not clamp or infer a replacement total.
 
 Aggregate player scopes intentionally use different formulas:
 

@@ -194,26 +194,56 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Theory]
-    [InlineData("Solo_Guitar", true)]
-    [InlineData("Solo_Bass", false)]
-    [InlineData("Solo_Drums", false)]
-    [InlineData("Solo_Vocals", false)]
-    [InlineData("Solo_PeripheralGuitar", false)]
-    [InlineData("Solo_PeripheralBass", false)]
-    [InlineData("Solo_PeripheralDrums", false)]
-    [InlineData("Solo_PeripheralCymbals", false)]
-    [InlineData("Solo_PeripheralVocals", false)]
-    public void TrackSupportsInstrument_RequiresProviderChartMetadata(
-        string instrument,
-        bool expected)
+    [InlineData("Solo_Guitar")]
+    [InlineData("Solo_PeripheralGuitar")]
+    public void TrackSupportsInstrument_MissingLeadPropertyRemainsAdmitted(
+        string instrument)
     {
         var track = new Track
         {
-            @in = new In { gr = 0 },
+            @in = new In { ba = 3 },
         };
 
-        Assert.Equal(
-            expected,
+        Assert.True(
+            GlobalLeaderboardScraper.TrackSupportsInstrument(
+                track,
+                instrument));
+    }
+
+    [Theory]
+    [InlineData("Solo_Guitar")]
+    [InlineData("Solo_Bass")]
+    [InlineData("Solo_Drums")]
+    [InlineData("Solo_Vocals")]
+    [InlineData("Solo_PeripheralGuitar")]
+    [InlineData("Solo_PeripheralBass")]
+    [InlineData("Solo_PeripheralDrums")]
+    [InlineData("Solo_PeripheralCymbals")]
+    [InlineData("Solo_PeripheralVocals")]
+    public void TrackSupportsInstrument_PresentSentinelRemainsUnsupported(
+        string instrument)
+    {
+        var intensity = new In();
+        switch (instrument)
+        {
+            case "Solo_Guitar": intensity.gr = 99; break;
+            case "Solo_Bass": intensity.ba = 99; break;
+            case "Solo_Drums": intensity.ds = 99; break;
+            case "Solo_Vocals": intensity.vl = 99; break;
+            case "Solo_PeripheralGuitar": intensity.pg = 99; break;
+            case "Solo_PeripheralBass": intensity.pb = 99; break;
+            case "Solo_PeripheralDrums":
+            case "Solo_PeripheralCymbals":
+                intensity.pd = 99;
+                break;
+            case "Solo_PeripheralVocals": intensity.bd = 99; break;
+        }
+        var track = new Track
+        {
+            @in = intensity,
+        };
+
+        Assert.False(
             GlobalLeaderboardScraper.TrackSupportsInstrument(
                 track,
                 instrument));
@@ -236,13 +266,35 @@ public class GlobalLeaderboardScraperTests
                 instrument));
     }
 
+    [Theory]
+    [InlineData("Solo_Guitar")]
+    [InlineData("Solo_PeripheralGuitar")]
+    public async Task MissingLeadProperty_DoesNotSkipExistingLeaderboard(
+        string instrument)
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(0);
+        service.Songs[0].track.@in = new In { ba = 3 };
+        var (scraper, handler) = CreateScraper(service);
+        handler.EnqueueJsonOk("[]");
+
+        var entry = await scraper.LookupAccountAsync(
+            "song-1",
+            instrument,
+            "account-1",
+            "token",
+            "caller");
+
+        Assert.Null(entry);
+        Assert.Single(handler.Requests);
+    }
+
     [Fact]
-    public async Task ShowThem_MidiPromotedInstrumentIsAdmittedWhenProviderMetadataIsOmitted()
+    public async Task ShowThem_MidiPromotedInstrumentIsAdmittedWhenIntensityMetadataIsOmitted()
     {
         var service = CreateFestivalServiceWithMicModeDifficulty(0);
         var song = service.Songs[0];
         song.track.tt = "Show Them";
-        song.track.@in = new In { gr = 3 };
+        song.track.@in = null!;
         song.lastModified = new DateTime(
             2026,
             8,
@@ -281,7 +333,7 @@ public class GlobalLeaderboardScraperTests
         var service = CreateFestivalServiceWithMicModeDifficulty(0);
         var song = service.Songs[0];
         song.track.tt = "Show Them";
-        song.track.@in = new In { gr = 3 };
+        song.track.@in = null!;
         song.lastModified = new DateTime(
             2026,
             8,
@@ -321,7 +373,7 @@ public class GlobalLeaderboardScraperTests
     {
         var service = CreateFestivalServiceWithMicModeDifficulty(0);
         var song = service.Songs[0];
-        song.track.@in = new In();
+        song.track.@in = null!;
         song.lastModified = new DateTime(
             2026,
             8,

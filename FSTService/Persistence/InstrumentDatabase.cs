@@ -3088,7 +3088,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         if (commandTimeoutSeconds > 0)
             cmd.CommandTimeout = commandTimeoutSeconds;
-        cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
+        cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, coverage, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<AccountRankingSummary>();
         using var r = cmd.ExecuteReader();
@@ -3105,8 +3105,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 r.GetInt32(7),
                 r.GetInt32(8),
                 r.GetDouble(9),
-                r.IsDBNull(10) ? null : r.GetDouble(10),
-                r.IsDBNull(11) ? null : r.GetDouble(11)));
+                r.GetDouble(10),
+                r.IsDBNull(11) ? null : r.GetDouble(11),
+                r.IsDBNull(12) ? null : r.GetDouble(12)));
         }
 
         return list;
