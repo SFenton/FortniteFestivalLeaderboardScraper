@@ -219,7 +219,10 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             MaxScoreMaintenanceManifest manifest,
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
-            CancellationToken ct)
+            CancellationToken ct,
+            int commandTimeoutSeconds =
+                ScraperOptions
+                    .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(connection);
@@ -246,7 +249,10 @@ public sealed class MaxScoreMaintenanceDerivedStateService
 
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandTimeout = 600;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            commandTimeoutSeconds,
+            "affected-player-stats-account-evidence");
         cmd.CommandText = $"""
             WITH affected(song_id, instrument) AS (
                 SELECT *

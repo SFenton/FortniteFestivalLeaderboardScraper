@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: 24a3175c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -159,7 +159,11 @@ Every max-score database mutation and checkpoint commits through a bounded
 source-locked transaction on the live unpooled advisory-lock session; ordinary
 pooled connections are read-only for that workflow. The final cache swap,
 completed checkpoint, and unfreeze use one such transaction while the durable
-gate remains set. Disposal releases all advisory locks before clearing the
+gate remains set. That transaction keeps a `5s` lock timeout, uses the
+configured maintenance statement timeout only for final immutable cache
+validation, and restores the `120s` bounded mutation timeout before the cache
+swap, checkpoint, verification, and unfreeze. Any failure rolls the
+transaction back. Disposal releases all advisory locks before clearing the
 gate, so backend loss during handoff leaves mutations fail-closed and requires
 a new validated lease to finish release.
 

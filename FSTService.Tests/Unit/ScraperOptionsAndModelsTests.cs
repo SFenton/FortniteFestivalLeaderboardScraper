@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FSTService.Auth;
 using FSTService.Persistence;
+using Microsoft.Extensions.Configuration;
 
 namespace FSTService.Tests.Unit;
 
@@ -17,6 +18,9 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(16, opts.DegreeOfParallelism);
         Assert.Equal(1, opts.RankHistorySnapshotMaxDegreeOfParallelism);
         Assert.Equal(4, opts.LeaderboardRivalsMaxDegreeOfParallelism);
+        Assert.Equal(
+            600,
+            opts.MaxScoreMaintenanceCommandTimeoutSeconds);
         Assert.True(opts.QueryLead);
         Assert.True(opts.QueryDrums);
         Assert.True(opts.QueryVocals);
@@ -80,6 +84,87 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.RegistrationSyncWorkerOnly);
         Assert.Equal(RegistrationBackfillMode.ForegroundEpicExclusive, opts.RegistrationBackfillMode);
         Assert.Equal("Test Song", opts.TestSongQuery);
+    }
+
+    [Fact]
+    public void ScraperOptions_BindsProductionMaxScoreMaintenanceTimeoutOverride()
+    {
+        var prefix =
+            $"FST_MAX_SCORE_TIMEOUT_{Guid.NewGuid():N}_";
+        var variable =
+            prefix
+            + "Scraper__MaxScoreMaintenanceCommandTimeoutSeconds";
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                variable,
+                "1800");
+            var configuration =
+                new ConfigurationBuilder()
+                    .AddEnvironmentVariables(prefix)
+                    .Build();
+            var options = new ScraperOptions();
+
+            configuration
+                .GetSection(ScraperOptions.Section)
+                .Bind(options);
+
+            Assert.Equal(
+                1800,
+                options
+                    .MaxScoreMaintenanceCommandTimeoutSeconds);
+            Assert.False(
+                new ScraperOptionsValidator()
+                    .Validate(null, options)
+                    .Failed);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                variable,
+                null);
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(600)]
+    [InlineData(1800)]
+    [InlineData(86_400)]
+    public void ScraperOptionsValidator_AcceptsBoundedMaxScoreMaintenanceTimeout(
+        int value)
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                MaxScoreMaintenanceCommandTimeoutSeconds =
+                    value,
+            });
+
+        Assert.False(result.Failed);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(86_401)]
+    public void ScraperOptionsValidator_RejectsInvalidMaxScoreMaintenanceTimeout(
+        int value)
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                MaxScoreMaintenanceCommandTimeoutSeconds =
+                    value,
+            });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "must be between 1 and 86400 seconds",
+            result.FailureMessage,
+            StringComparison.Ordinal);
     }
 
     [Fact]

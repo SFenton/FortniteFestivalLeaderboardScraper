@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: 24a3175c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -173,7 +173,12 @@ derived rows while retaining the same published scrape/publication ID.
    completion, and freeze release then commit
    atomically in a source-locked transaction on the live advisory-lock session
    while its durable mutation token remains set; staging share locks and an
-   exact immutable-entry comparison run before the swap. Disposal releases the
+   exact immutable-entry comparison run before the swap. The transaction keeps
+   `lock_timeout=5s`, uses the configured maintenance `statement_timeout` only
+   around that final comparison, and restores `statement_timeout=120s` before
+   the bounded swap/checkpoint/verification/unfreeze mutations. Failure to
+   validate or restore the bounded timeout rolls back without releasing the
+   freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
    clearing the token. Queued holders cannot pass the advisory gate early, and
    stale direct entry or population writers remain durably blocked throughout
