@@ -238,7 +238,10 @@ export function SettingsServiceProgressCard({
   const current = serviceInfo.currentUpdate;
   const isUpdating = current.status === 'updating';
   const phaseLabel = servicePhaseLabel(t, serviceInfo, display);
-  const subphaseLabel = serviceSubphaseLabel(t, serviceInfo, display);
+  const translatedSubphaseLabel = serviceSubphaseLabel(t, serviceInfo, display);
+  const subphaseLabel = translatedSubphaseLabel?.trim() === phaseLabel.trim()
+    ? null
+    : translatedSubphaseLabel;
   const phaseState = phaseStatusText(t, display.phaseStatus);
   const units = unitsText(t, display);
   const eta = display.eta;

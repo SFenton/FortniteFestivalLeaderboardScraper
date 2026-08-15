@@ -236,9 +236,10 @@ is added, and publication-boundary cache/reset ownership is unchanged.
 
 The service area uses one flat `FrostedCard` with no tinted or bordered
 subcards. Its first live summary line combines update and worker state, then
-puts the specific translated phase and subphase in the card's primary visual
-position. Idle state uses that same position to say that the service is waiting
-for the next update.
+puts the specific translated phase and any distinct subphase in the card's
+primary visual position. Identical phase/subphase labels collapse to one line.
+Idle state uses that same position to say that the service is waiting for the
+next update.
 
 The browser uses stable phase/subphase IDs for localization with safe label
 fallbacks. A phase bar is determinate only when service-info v2 reports a final

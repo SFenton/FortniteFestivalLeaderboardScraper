@@ -1026,6 +1026,50 @@ describe('SettingsPage', () => {
     expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
   });
 
+  it('does not repeat a subphase label that matches the current phase', async () => {
+    mockServiceInfoResponse({
+      ...defaultServiceInfo,
+      contractVersion: 2,
+      phasePlan: {
+        version: 'fst.scrape-plan.v2',
+        phases: [{
+          id: 'post.band_maintenance',
+          label: 'Maintaining band projections',
+          legacyPhase: 'BandMaintenance',
+          ordinal: 300,
+          defaultUnitsKind: 'scopes',
+        }],
+      },
+      currentUpdate: {
+        status: 'updating',
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'BandMaintenance',
+        subOperation: 'maintaining_band_projection',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'post.band_maintenance',
+        phaseStatus: 'running',
+        subphaseId: 'maintaining_band_projection',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        phaseOrdinal: 300,
+        phaseAttempt: 1,
+        unitsKind: 'scopes',
+        unitsCompleted: 4,
+        unitsTotal: 10,
+        unitsTotalFinal: true,
+        phasePercent: 40,
+        overallPercentKind: 'indeterminate',
+        overallPercent: null,
+        branches: null,
+      },
+    });
+
+    renderSettings();
+
+    const step = await screen.findByTestId('settings-service-info-row-update-step-position');
+    expect(within(step).getAllByText('Maintaining band projections')).toHaveLength(1);
+  });
+
   it('shows failure, stale worker, and warning states without masking published data', async () => {
     const failedServiceInfo = {
       ...defaultServiceInfo,
