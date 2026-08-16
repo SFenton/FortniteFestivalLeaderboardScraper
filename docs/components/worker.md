@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -157,15 +157,19 @@ target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
 Before any post-freeze mutation and again on resume, maintenance reloads each
-mapped highest observed score, compares it with the ranking threshold
-`floor(newMaximum × 21 / 20)` rather than the CHOpt denominator, and
-reconstructs the approved plan-digest v5 evidence. Stage requests and manifests
-reject every target maximum above `2,045,222,521`, as do actual current/staged
-path and report validation. Unrelated frozen-catalog maxima use a saturated
+mapped raw highest score, highest score eligible at or below
+`floor(newMaximum × 21 / 20)`, and above-cutoff row count, then reconstructs
+the approved plan-digest v6 evidence. The CHOpt maximum remains the ratio
+denominator; the exact `21 / 20` threshold is the separate 105% ranking
+eligibility cutoff. Raw rows above it are reported as ranking-invalid outliers
+and do not block compatibility. Stage requests and manifests reject every
+target maximum above `2,045,222,521`, as do actual current/staged path and
+report validation. Unrelated frozen-catalog maxima use a saturated
 `int.MaxValue` threshold, which is equivalent for PostgreSQL `INTEGER` scores
 and keeps evidence parameters representable without admitting the value as a
-maintenance target. A missing source, target score above its cutoff, or changed
-still-valid evidence keeps the workflow frozen and resumable.
+maintenance target. A missing source, invalid maximum/cutoff, eligible score
+above its cutoff, or any raw/eligible/count drift keeps the workflow frozen
+and resumable.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 Every max-score database mutation and checkpoint commits through a bounded

@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-15
-last_verified_commit: b7ce5d3a
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -75,18 +75,22 @@ briefly acquires the exclusive mutation gate, path-generation lock, publication
 lock, and fixed-order source locks on one isolated unpooled session. It records
 a durable random gate-owner token/backend identity while admitted, validates
 the manifest and immutable artifacts, resolves observed scores from the exact
-published source plus supplemental overlay, fingerprints score sources,
-notification state, rank history, publication population, and the complete
-consumed `score_history` set, and requires zero unexplained routine candidates
-without creating a freeze. Population evidence comes only from the current
+published source plus supplemental overlay, and records each changed pair's
+raw highest score, highest score eligible at or below the exact 105% ranking
+cutoff, and above-cutoff row count. Raw outliers remain visible evidence but
+are not blockers. Plan also fingerprints score sources, notification state,
+rank history, publication population, and the complete consumed
+`score_history` set, and requires zero unexplained routine candidates without
+creating a freeze. Population evidence comes only from the current
 publication's complete scope-source rows plus supplemental overlays; mutable
 `leaderboard_population` is never a maintenance fallback. Score-history
 evidence covers the exact union consumed by the rebuild and cache: every
 registered account's history, fallback rows for affected player-stat accounts,
 and fallback rows for every song in each rebuilt instrument. The report records
-scope/row counts, population range, history ID/time ranges, and deterministic
-hashes. Any relevant population/source/history insert, update, or delete after
-plan changes the plan digest and rejects apply.
+scope/row counts, population range, history ID/time ranges, observed raw and
+eligible maxima/outlier counts, and deterministic hashes. Any relevant
+population/source/history or observed outlier-population insert, update, or
+delete after plan changes the plan digest and rejects apply.
 
 The frozen catalog and that publication scope/population snapshot are also the
 only maintenance cache inventory. Active-only or legacy-only songs/scopes,
@@ -204,12 +208,12 @@ overflowing threshold without allowing the value through target admission.
 
 Run from the production-owned Compose directory. Host-side request/report
 files belong below the mounted FST data directory; command paths below are
-relative to `Scraper:DataDirectory`. Replace `1301` only with the exact current
+relative to `Scraper:DataDirectory`. Replace `1302` only with the exact current
 published scrape confirmed during preflight.
 
 ```bash
 FST_DATA=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data
-PUBLISHED_SCRAPE_ID=1301
+PUBLISHED_SCRAPE_ID=1302
 MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS=1800
 EVIDENCE_REL="maintenance/max-score-${PUBLISHED_SCRAPE_ID}-v4-canary"
 EVIDENCE="$FST_DATA/$EVIDENCE_REL"
@@ -421,7 +425,7 @@ PLAN_DIGEST=$(
     def rankingCutoff:
       ((. * 21 / 20) | floor);
     select(
-      .reportVersion == 5 and
+      .reportVersion == 6 and
       .canApply == true and
       (.scoreHistoryFingerprint | length) == 64 and
       .populationEvidence.scopeCount > 0 and
@@ -438,8 +442,19 @@ PLAN_DIGEST=$(
         .newMaximum <=
           maximumScoreWithRepresentableRankingCutoff and
         .validCutoff == (.newMaximum | rankingCutoff) and
-        (.highestObservedScore == null or
-          .highestObservedScore <= .validCutoff) and
+        .aboveValidCutoffCount >= 0 and
+        (.highestEligibleObservedScore == null or
+          .highestEligibleObservedScore <= .validCutoff) and
+        (if .highestObservedScore == null then
+          .highestEligibleObservedScore == null and
+            .aboveValidCutoffCount == 0
+        elif .highestObservedScore <= .validCutoff then
+          .highestEligibleObservedScore ==
+            .highestObservedScore and
+            .aboveValidCutoffCount == 0
+        else
+          .aboveValidCutoffCount > 0
+        end) and
         .passed == true) and
       (.artifactEvidence | length) == 2 and
       all(.artifactEvidence[];
@@ -457,12 +472,18 @@ Each observed-score row requires `sourceMapped=true`. Its `validCutoff` is the
 exact integer returned by
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
 `floor(newMaximum × 21 / 20)`, with `newMaximum` no greater than
-`2,045,222,521`. `highestObservedScore` may be null; otherwise it must be less
-than or equal to that cutoff. A score above the CHOpt denominator but within
-this cutoff is valid evidence. A score above the cutoff, an unrepresentable
-maximum, or a missing authoritative source mapping fails closed. This contract
-does not use `Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to
-deep-scrape counting and pruning, not ranking or maintenance validity.
+`2,045,222,521`. The CHOpt maximum is the ratio denominator; `validCutoff` is
+the separate 105% ranking eligibility boundary. `highestObservedScore` is the
+optional raw maximum, `highestEligibleObservedScore` is the optional maximum
+at or below the cutoff, and `aboveValidCutoffCount` is the complete raw outlier
+count. A mapped source with no rows records both maxima as null and count zero.
+A source containing only invalid outliers records a null eligible maximum and
+a positive outlier count. Raw scores above the cutoff do not block plan;
+missing source mapping, invalid maximum/cutoff, or an eligible score above the
+cutoff fails closed. Score-history/ranking fallback evidence owns how invalid
+current rows are excluded or replaced. This contract does not use
+`Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to deep-scrape
+counting and pruning, not ranking or maintenance validity.
 
 The frozen catalog can contain an unrelated maximum above the target admission
 bound. Plan evidence must not reject that value before deciding whether its
@@ -474,7 +495,9 @@ Snapshot rows and supplemental overlay-only rows use the same authoritative
 resolver as production `InstrumentDatabase` reads. Apply uses both approved
 digests:
 
-Plan report version 5 performs two live-scale bounded aggregates. Population
+Plan report version 6 performs three live-scale bounded evidence reads.
+Observed-score evidence resolves current authoritative rows once for raw
+maximum, eligible maximum, and above-cutoff count. Population
 evidence visits each current published scope and its resolved overlay rows.
 Score-history evidence now prepares narrow `ON COMMIT DROP` selectors under the
 existing repeatable-read/source-lock transaction:
@@ -521,10 +544,12 @@ the unchanged report fingerprint envelope. The transient JSON text is hashed
 immediately; there is no history-sized temporary relation or ordered payload
 aggregation.
 
-Plan report version 5 adds the explicit per-row `validCutoff`. Plan-digest
-contract version 5 binds that field, the exact `21 / 20` integer rounding, and
-the representable maximum admitted by the manifest contract. The apply/resume
-report remains version 3 because its output contract did not change.
+Plan report version 6 adds per-row `highestEligibleObservedScore` and
+`aboveValidCutoffCount` while retaining the raw `highestObservedScore` and
+explicit `validCutoff`. Plan-digest contract version 6 binds all four fields,
+the exact `21 / 20` integer rounding, and the representable maximum admitted by
+the manifest contract. The apply/resume report remains version 3 because its
+output contract did not change.
 
 Expected work is:
 
@@ -558,20 +583,29 @@ Valid values are `1`-`86400`. A failed plan's `plan` check reports
 `stage=<sanitized-evidence-stage>` plus the base exception message, never SQL or
 connection data.
 
-### 2026-08-15 production evidence
+### 2026-08-16 production evidence
 
-Publication `1301` is authoritative and unfrozen, notifications are complete,
-the worker is stopped, and final maintenance staging exists. The current
-1,800-second plan still times out in `complete-score-history-evidence`.
-Removing temporary spill was insufficient: the active broad candidate insert
-still scanned approximately `407 GB` of the `Solo_Guitar` snapshot partition
-and `543 GB` of `Solo_PeripheralGuitar` before applying thresholds. That plan
-produced no new approved digest. No freeze, apply, path promotion, database
-mutation, merge, or deployment occurred.
+Publication `1302` is authoritative and unfrozen, notifications are complete,
+the worker is stopped, and the worker-start flock is held. The final plan now
+completes quickly and every check passes except the legacy raw-maximum
+observed-score gate:
 
-This direct selective implementation is repository-only until reviewed,
-merged, and deployed. Generate a fresh plan after deployment; do not reuse an
-older report or digest.
+- Show Them Who We Are Lead has new maximum `63,750`, cutoff `66,937`, and
+  raw highest observed score `145,947`;
+- Run It Lead has new maximum `51,573`, cutoff `54,151`, and raw highest
+  observed score `66,030`;
+- Run It Pro Lead has raw score `51,588`, within the `54,151` cutoff.
+
+The two raw highs are ranking-invalid outliers. Earlier publication evidence
+also contained ordinary slight above-maximum scores that remained below the
+105% cutoff. Ranking already excludes above-cutoff current rows and consumes
+valid score-history fallbacks, so treating the raw outliers as a plan blocker
+contradicts the publication contract.
+
+This version-6 evidence implementation is repository-only until reviewed,
+merged, and deployed. No freeze, apply, path promotion, production database
+mutation, merge, or deployment occurred. Generate a fresh plan after
+deployment; do not reuse an older report or digest.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete
@@ -594,10 +628,12 @@ docker compose run --rm --no-deps \
 
 Apply:
 
-- reloads observed-score evidence after freeze, requires every mapped score to
-  remain at or below its exact ranking cutoff, and reconstructs the v5 plan
-  digest from the persisted plan identities before mutation; resume performs
-  the same check, so even a still-valid evidence change fails digest equality;
+- reloads raw highest, eligible highest, and above-cutoff count evidence after
+  freeze, requires mapped sources plus valid maximum/cutoff/eligible evidence,
+  and reconstructs the v6 plan digest from the persisted plan identities
+  before mutation; resume performs the same check, so any raw maximum,
+  eligible maximum, or outlier-count change fails digest equality even when
+  compatibility remains true;
 - persists file and PostgreSQL rollback evidence before promotion; canonical
   rollback JSON v3 uses the durable run creation timestamp, exact
   publication/catalog identity, and database rollback-song identity so

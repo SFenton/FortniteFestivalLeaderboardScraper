@@ -1026,42 +1026,29 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Theory]
-    [InlineData(60_000, true, null, 63_000, true)]
-    [InlineData(60_000, true, 60_000, 63_000, true)]
-    [InlineData(60_000, true, 60_001, 63_000, true)]
-    [InlineData(60_000, true, 63_000, 63_000, true)]
-    [InlineData(60_000, true, 63_001, 63_000, false)]
-    [InlineData(60_000, false, null, 63_000, false)]
-    [InlineData(51_573, true, 54_151, 54_151, true)]
-    [InlineData(51_573, true, 54_152, 54_151, false)]
-    public void Observed_score_gate_uses_mapped_ranking_validity_cutoff(
+    [InlineData(60_000, 63_000, true, null, true)]
+    [InlineData(60_000, 63_000, true, 60_000, true)]
+    [InlineData(60_000, 63_000, true, 60_001, true)]
+    [InlineData(60_000, 63_000, true, 63_000, true)]
+    [InlineData(60_000, 63_000, true, 63_001, false)]
+    [InlineData(60_000, 62_999, true, 62_999, false)]
+    [InlineData(60_000, 63_000, false, null, false)]
+    [InlineData(51_573, 54_151, true, 54_151, true)]
+    public void Observed_score_gate_uses_mapped_eligible_ranking_cutoff(
         int newMaximum,
+        int validCutoff,
         bool sourceMapped,
-        int? highestObservedScore,
-        int expectedValidCutoff,
+        int? highestEligibleObservedScore,
         bool expected)
     {
-        var validCutoff =
-            RankingsCalculator.ComputeMaxScoreThreshold(
-                newMaximum);
-
-        Assert.Equal(expectedValidCutoff, validCutoff);
         Assert.Equal(
             expected,
             MaxScoreMaintenanceService
                 .IsObservedScoreCompatible(
                     newMaximum,
+                    validCutoff,
                     sourceMapped,
-                    highestObservedScore));
-        new MaxScoreMaintenanceObservedScoreCheck(
-                "song",
-                "Solo_Guitar",
-                newMaximum,
-                validCutoff,
-                sourceMapped,
-                highestObservedScore,
-                expected)
-            .ValidateContract();
+                    highestEligibleObservedScore));
     }
 
     [Fact]
@@ -1078,14 +1065,17 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             RankingsCalculator.ComputeMaxScoreThreshold(maximum),
             SourceMapped: true,
             HighestObservedScore: int.MaxValue,
+            HighestEligibleObservedScore: int.MaxValue,
+            AboveValidCutoffCount: 0,
             Passed: true);
 
         Assert.False(
             MaxScoreMaintenanceService
                 .IsObservedScoreCompatible(
                     maximum,
+                    check.ValidCutoff,
                     sourceMapped: true,
-                    highestObservedScore: int.MaxValue));
+                    highestEligibleObservedScore: int.MaxValue));
         Assert.Throws<ArgumentException>(
             check.ValidateContract);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -1093,8 +1083,11 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 "song",
                 "Solo_Guitar",
                 maximum,
+                check.ValidCutoff,
                 sourceMapped: true,
-                highestObservedScore: int.MaxValue));
+                highestObservedScore: int.MaxValue,
+                highestEligibleObservedScore: int.MaxValue,
+                aboveValidCutoffCount: 0));
     }
 
     [Theory]
@@ -1102,56 +1095,80 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
         ShowThemWhoWeAreSongId,
         "Solo_Guitar",
         63_750,
-        63_764,
+        145_947,
+        63_750,
+        1,
         66_937)]
     [InlineData(
         RunItSongId,
         "Solo_Guitar",
         51_573,
-        52_809,
+        66_030,
+        51_573,
+        1,
         54_151)]
     [InlineData(
         RunItSongId,
         "Solo_PeripheralGuitar",
         51_573,
         51_588,
+        51_588,
+        0,
         54_151)]
     [InlineData(
         ShowThemWhoWeAreSongId,
         "Solo_PeripheralGuitar",
         65_367,
         65_228,
+        65_228,
+        0,
         68_635)]
-    public void Live_shaped_observed_scores_are_valid(
+    public void Live_shaped_observed_score_evidence_is_compatible(
         string songId,
         string instrument,
         int newMaximum,
         int highestObservedScore,
+        int highestEligibleObservedScore,
+        long aboveValidCutoffCount,
         int expectedValidCutoff)
     {
+        var validCutoff =
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                newMaximum);
         var check =
             new MaxScoreMaintenanceObservedScoreCheck(
                 songId,
                 instrument,
                 newMaximum,
-                RankingsCalculator.ComputeMaxScoreThreshold(
-                    newMaximum),
+                validCutoff,
                 SourceMapped: true,
                 highestObservedScore,
+                highestEligibleObservedScore,
+                aboveValidCutoffCount,
                 Passed:
                     MaxScoreMaintenanceService
                         .IsObservedScoreCompatible(
                             newMaximum,
+                            validCutoff,
                             sourceMapped: true,
-                            highestObservedScore));
+                            highestEligibleObservedScore));
 
         Assert.Equal(expectedValidCutoff, check.ValidCutoff);
+        Assert.Equal(
+            highestObservedScore,
+            check.HighestObservedScore);
+        Assert.Equal(
+            highestEligibleObservedScore,
+            check.HighestEligibleObservedScore);
+        Assert.Equal(
+            aboveValidCutoffCount,
+            check.AboveValidCutoffCount);
         Assert.True(check.Passed);
         check.ValidateContract();
     }
 
     [Fact]
-    public void Plan_report_v5_serializes_valid_cutoff_and_rejects_incompatible_json()
+    public void Plan_report_v6_serializes_observed_evidence_and_rejects_version_5()
     {
         var check =
             new MaxScoreMaintenanceObservedScoreCheck(
@@ -1160,11 +1177,13 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 51_573,
                 54_151,
                 SourceMapped: true,
-                HighestObservedScore: 52_809,
+                HighestObservedScore: 66_030,
+                HighestEligibleObservedScore: 52_809,
+                AboveValidCutoffCount: 1,
                 Passed: true);
         var report = CreatePlanReport(check);
         Assert.Equal(
-            5,
+            6,
             MaxScoreMaintenancePlanReport
                 .CurrentPlanDigestContractVersion);
         var json = JsonSerializer.Serialize(
@@ -1184,6 +1203,24 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                     .GetProperty("observedScoreChecks")[0]
                     .GetProperty("validCutoff")
                     .GetInt32());
+            Assert.Equal(
+                66_030,
+                document.RootElement
+                    .GetProperty("observedScoreChecks")[0]
+                    .GetProperty("highestObservedScore")
+                    .GetInt32());
+            Assert.Equal(
+                52_809,
+                document.RootElement
+                    .GetProperty("observedScoreChecks")[0]
+                    .GetProperty("highestEligibleObservedScore")
+                    .GetInt32());
+            Assert.Equal(
+                1,
+                document.RootElement
+                    .GetProperty("observedScoreChecks")[0]
+                    .GetProperty("aboveValidCutoffCount")
+                    .GetInt64());
         }
         JsonSerializer.Deserialize<
                 MaxScoreMaintenancePlanReport>(
@@ -1192,7 +1229,7 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             .ValidateContract();
 
         var legacy = JsonNode.Parse(json)!.AsObject();
-        legacy["reportVersion"] = 4;
+        legacy["reportVersion"] = 5;
         var legacyReport = JsonSerializer.Deserialize<
             MaxScoreMaintenancePlanReport>(
             legacy.ToJsonString(),
@@ -1214,6 +1251,21 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 MaxScoreMaintenanceJson.Strict)!;
         Assert.Throws<ArgumentException>(
             missingCutoffReport.ValidateContract);
+
+        var missingOutlierCount =
+            JsonNode.Parse(json)!.AsObject();
+        Assert.True(
+            missingOutlierCount["observedScoreChecks"]!
+                .AsArray()[0]!
+                .AsObject()
+                .Remove("aboveValidCutoffCount"));
+        var missingOutlierCountReport =
+            JsonSerializer.Deserialize<
+                MaxScoreMaintenancePlanReport>(
+                missingOutlierCount.ToJsonString(),
+                MaxScoreMaintenanceJson.Strict)!;
+        Assert.Throws<ArgumentException>(
+            missingOutlierCountReport.ValidateContract);
 
         var unknownProperty =
             JsonNode.Parse(json)!.AsObject();
