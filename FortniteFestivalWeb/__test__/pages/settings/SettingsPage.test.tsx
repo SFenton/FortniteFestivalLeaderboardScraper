@@ -851,9 +851,11 @@ describe('SettingsPage', () => {
 
     expect(screen.getByText('Service Info')).toBeDefined();
     expect(await screen.findByText('Leaderboard Service State')).toBeDefined();
-    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
-      'Waiting for the next update',
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+        'Waiting for the next update',
+      );
+    });
     expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
     expect(screen.queryByTestId('settings-service-info-row-worker-status')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-step-position')).toBeNull();
@@ -1099,9 +1101,11 @@ describe('SettingsPage', () => {
     renderSettings();
 
     expect(await screen.findByText('Leaderboard Service State')).toBeDefined();
-    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
-      'Leaderboard update stalled',
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+        'Leaderboard update stalled',
+      );
+    });
     expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
     expect(screen.getByTestId('settings-service-info-row-update-step-position')).toHaveTextContent(
       'Scraping · Fetching leaderboards',
