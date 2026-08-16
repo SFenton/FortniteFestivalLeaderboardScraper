@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified_commit: b7ce5d3a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -191,12 +191,23 @@ those rows cannot leak into the maintenance cache generation.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and
-fallback candidates across every song in each rebuilt instrument. Narrow
-transaction-local selectors resolve authoritative snapshot rows followed by
-supplemental overlay precedence for all affected-instrument rows and exact
-affected-account rows on other instruments. The resulting affected,
-registered-cache, overlay-only-cache, and fallback sets are reused throughout
-the same read snapshot.
+fallback candidates across every song in each rebuilt instrument. Before
+selection, a transaction-local publication row must match the manifest
+publication/scrape, have no working publication, name a `current` generation,
+and carry a ready `solo_scope_sources` `scrape_id` binding whose row count and
+JSON identities match complete nonempty all-time source rows.
+
+There is no publication-wide current-candidate temporary table. Exact changed
+scopes enumerate every current account independent of score, preserving
+overlay-only classification. Ranking and affected-player fallback keys are
+inserted directly with per-scope parameterized snapshot probes grouped by
+instrument. Snapshot predicates use
+`(snapshot_id, song_id, instrument, score DESC)` with a strict integer
+`score > cutoff/maximum`; runtime pruning removes other instrument partitions.
+An account's snapshot row is excluded whenever a supplemental overlay exists
+for the same scope, regardless of the overlay score, and only a qualifying
+overlay is inserted. Unique `ON CONFLICT DO NOTHING` fallback keys preserve
+player/ranking differential semantics.
 
 Registered history joins the captured registration rows with the same
 multiplicity as the established contract, while nonregistered history uses
@@ -208,9 +219,11 @@ timestamps. The branches aggregate independently to count, ID/time ranges, and
 hash sum/xor state, then combine associatively into the unchanged report
 fingerprint envelope. JSON text is hashed per row but never retained; no
 history row is copied to a temporary table or ordered payload. Selector tables
-are `ON COMMIT DROP` and also removed explicitly; a savepoint restores the
+contain only publication/source/maxima/account/fallback keys, are
+`ON COMMIT DROP`, and are also removed explicitly; a savepoint restores the
 caller's maintenance transaction after cancellation or timeout without
-releasing its pre-existing publication/source fences.
+releasing its pre-existing publication/source fences. No new index is
+required.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical

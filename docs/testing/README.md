@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified_commit: b7ce5d3a
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -97,7 +97,7 @@ Focused score-history selector differential and cleanup validation:
 
 ```bash
 dotnet test FSTService.Tests/FSTService.Tests.csproj \
-  --filter 'FullyQualifiedName~Score_history_evidence_|FullyQualifiedName~Plan_apply_and_resume_preserve_evidence'
+  --filter 'FullyQualifiedName~Score_history_evidence_|FullyQualifiedName~Score_history_snapshot_probe_plan|FullyQualifiedName~Plan_apply_and_resume_preserve_evidence'
 ```
 
 This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
@@ -128,12 +128,22 @@ scores/ranks; a full golden fingerprint spans both registered and
 nonregistered branches plus established multi-device registration
 multiplicity. Named cases cover registered history outside affected scopes,
 player fallback on another instrument, ranking fallback on another song,
-strict current/history thresholds, player/ranking overlap, and
-snapshot/overlay precedence. Lock-blocked cancellation and shared-deadline
-timeout cases require savepoint cleanup, no remaining selector temp tables,
-and two successful repeated invocations in the same repeatable-read
-transaction. Workflow assertions compare plan evidence with the master SQL
-oracle and require apply/resume revalidation to persist that same evidence.
+strict current/history thresholds, a low changed score enabling player
+fallback elsewhere, player/ranking overlap, snapshot-high/overlay-low
+exclusion, snapshot-low/overlay-high inclusion, overlay-only accounts, and
+duplicate registrations. Publication-fence cases reject an unpublished or
+wrong publication, a working/non-current generation, incomplete/zero source
+rows, and a missing or scrape-mismatched `solo_scope_sources` binding.
+
+The PostgreSQL 17 command-shape/`EXPLAIN (FORMAT JSON)` case forces a generic
+prepared plan and verifies the exact snapshot/song/instrument/score predicate,
+`Subplans Removed: 8`, no snapshot sequential scan, and an index definition of
+`(snapshot_id, song_id, instrument, score DESC)`. Lock-blocked cancellation
+and shared-deadline timeout cases require savepoint cleanup, no remaining
+selector temp tables, and two successful repeated invocations in the same
+repeatable-read transaction. Workflow assertions compare plan evidence with
+the master SQL oracle and require apply/resume revalidation to persist that
+same evidence.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

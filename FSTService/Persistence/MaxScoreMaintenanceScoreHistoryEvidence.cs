@@ -17,12 +17,12 @@ internal sealed record MaxScoreMaintenanceScoreHistorySnapshot(
 
 internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
 {
+    internal const string PublicationTable =
+        "fst_max_score_evidence_publication";
     internal const string MaximaTable =
         "fst_max_score_evidence_maxima";
     internal const string SourcesTable =
         "fst_max_score_evidence_sources";
-    internal const string CandidatesTable =
-        "fst_max_score_evidence_candidates";
     internal const string AffectedAccountsTable =
         "fst_max_score_evidence_affected_accounts";
     internal const string RegisteredAccountsTable =
@@ -32,9 +32,9 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
 
     internal static readonly IReadOnlyList<string> SelectorTableNames =
     [
+        PublicationTable,
         MaximaTable,
         SourcesTable,
-        CandidatesTable,
         AffectedAccountsTable,
         RegisteredAccountsTable,
         FallbackScopesTable,
@@ -44,6 +44,11 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         "complete-score-history-evidence";
 
     private const string PrepareSelectorsSql = """
+        CREATE TEMP TABLE fst_max_score_evidence_publication (
+            publication_id BIGINT PRIMARY KEY,
+            published_scrape_id BIGINT NOT NULL UNIQUE
+        ) ON COMMIT DROP;
+
         CREATE TEMP TABLE fst_max_score_evidence_maxima (
             song_id TEXT NOT NULL,
             instrument TEXT NOT NULL,
@@ -55,22 +60,14 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         ) ON COMMIT DROP;
 
         CREATE TEMP TABLE fst_max_score_evidence_sources (
+            published_scrape_id BIGINT NOT NULL,
             song_id TEXT NOT NULL,
             instrument TEXT NOT NULL,
             source_kind TEXT NOT NULL,
             source_snapshot_id BIGINT,
+            source_scrape_id BIGINT NOT NULL,
+            is_complete BOOLEAN NOT NULL,
             PRIMARY KEY (song_id, instrument)
-        ) ON COMMIT DROP;
-
-        CREATE TEMP TABLE fst_max_score_evidence_candidates (
-            song_id TEXT NOT NULL,
-            instrument TEXT NOT NULL,
-            account_id TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            origin_precedence SMALLINT NOT NULL,
-            source_priority INTEGER NOT NULL,
-            has_snapshot BOOLEAN NOT NULL,
-            PRIMARY KEY (song_id, instrument, account_id)
         ) ON COMMIT DROP;
 
         CREATE TEMP TABLE fst_max_score_evidence_affected_accounts (
@@ -107,25 +104,45 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             @changed::BOOLEAN[],
             @affectedInstruments::BOOLEAN[]);
 
+        INSERT INTO fst_max_score_evidence_publication (
+            publication_id,
+            published_scrape_id)
+        SELECT state.current_publication_id,
+               state.published_scrape_id
+        FROM scrape_publication_state state
+        JOIN publication_generations generation
+          ON generation.publication_id =
+                 state.current_publication_id
+         AND generation.scrape_id =
+                 state.published_scrape_id
+         AND generation.status = 'current'
+        WHERE state.id = TRUE
+          AND state.current_publication_id =
+                  @publicationId
+          AND state.published_scrape_id =
+                  @publishedScrapeId
+          AND state.working_publication_id IS NULL;
+
         INSERT INTO fst_max_score_evidence_sources (
+            published_scrape_id,
             song_id,
             instrument,
             source_kind,
-            source_snapshot_id)
-        SELECT source.song_id,
+            source_snapshot_id,
+            source_scrape_id,
+            is_complete)
+        SELECT source.published_scrape_id,
+               source.song_id,
                source.instrument,
                source.source_kind,
-               source.source_snapshot_id
+               source.source_snapshot_id,
+               source.source_scrape_id,
+               source.is_complete
         FROM leaderboard_published_scope_source source
-        JOIN scrape_publication_state publication
-          ON publication.id = TRUE
-         AND publication.published_scrape_id =
+        JOIN fst_max_score_evidence_publication publication
+          ON publication.published_scrape_id =
              source.published_scrape_id
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = source.song_id
-         AND maxima.instrument = source.instrument
-        WHERE source.scope_kind = 'alltime'
-          AND source.is_complete;
+        WHERE source.scope_kind = 'alltime';
 
         INSERT INTO fst_max_score_evidence_registered_accounts (
             account_id)
@@ -140,215 +157,237 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         ANALYZE fst_max_score_evidence_maxima;
         ANALYZE fst_max_score_evidence_sources;
         ANALYZE fst_max_score_evidence_registered_accounts;
+        """;
 
-        INSERT INTO fst_max_score_evidence_candidates (
-            song_id,
-            instrument,
-            account_id,
-            score,
-            origin_precedence,
-            source_priority,
-            has_snapshot)
-        SELECT snapshot.song_id,
-               snapshot.instrument,
-               snapshot.account_id,
-               snapshot.score,
-               1,
-               0,
-               TRUE
+    private const string ValidateSelectorsSql = """
+        SELECT
+            (
+                SELECT COUNT(*)::INTEGER
+                FROM fst_max_score_evidence_publication
+            ) AS publication_count,
+            (
+                SELECT COUNT(*)::INTEGER
+                FROM fst_max_score_evidence_sources
+            ) AS source_count,
+            COALESCE(
+                (
+                    SELECT BOOL_AND(source.is_complete)
+                    FROM fst_max_score_evidence_sources source
+                ),
+                FALSE) AS sources_complete,
+            EXISTS (
+                SELECT 1
+                FROM fst_max_score_evidence_publication publication
+                JOIN publication_surface_bindings binding
+                  ON binding.publication_id =
+                         publication.publication_id
+                 AND binding.surface_name =
+                         'solo_scope_sources'
+                 AND binding.binding_kind = 'scrape_id'
+                 AND binding.status = 'ready'
+                 AND binding.binding_json ->> 'table' =
+                         'leaderboard_published_scope_source'
+                 AND binding.binding_json ->>
+                         'publicationId' =
+                         publication.publication_id::TEXT
+                 AND binding.binding_json ->>
+                         'publishedScrapeId' =
+                         publication.published_scrape_id::TEXT
+                 AND binding.row_count = (
+                         SELECT COUNT(*)::BIGINT
+                         FROM fst_max_score_evidence_sources
+                     )
+            ) AS source_binding_ready,
+            (
+                SELECT COUNT(*)::INTEGER
+                FROM fst_max_score_evidence_maxima maxima
+                WHERE maxima.is_changed
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM fst_max_score_evidence_sources source
+                      WHERE source.song_id = maxima.song_id
+                        AND source.instrument =
+                            maxima.instrument
+                  )
+            ) AS missing_changed_scope_count,
+            (
+                SELECT COUNT(*)::INTEGER
+                FROM fst_max_score_evidence_sources source
+                JOIN fst_max_score_evidence_maxima maxima
+                  ON maxima.song_id = source.song_id
+                 AND maxima.instrument = source.instrument
+            ) AS usable_scope_count;
+        """;
+
+    private const string LoadScopeSourcesSql = """
+        SELECT source.song_id,
+               source.instrument,
+               source.source_kind,
+               source.source_snapshot_id,
+               maxima.max_score,
+               maxima.max_threshold,
+               maxima.is_changed,
+               maxima.is_affected_instrument
         FROM fst_max_score_evidence_sources source
         JOIN fst_max_score_evidence_maxima maxima
           ON maxima.song_id = source.song_id
          AND maxima.instrument = source.instrument
-         AND maxima.is_affected_instrument
-        JOIN leaderboard_entries_snapshot snapshot
-          ON source.source_kind = 'snapshot'
-         AND source.source_snapshot_id = snapshot.snapshot_id
-         AND source.song_id = snapshot.song_id
-         AND source.instrument = snapshot.instrument
-        ON CONFLICT (
-            song_id,
-            instrument,
-            account_id) DO NOTHING;
+        ORDER BY source.instrument,
+                 source.song_id;
+        """;
 
-        INSERT INTO fst_max_score_evidence_candidates AS existing (
-            song_id,
-            instrument,
-            account_id,
-            score,
-            origin_precedence,
-            source_priority,
-            has_snapshot)
-        SELECT overlay.song_id,
-               overlay.instrument,
-               overlay.account_id,
-               overlay.score,
-               0,
-               overlay.source_priority,
-               FALSE
-        FROM fst_max_score_evidence_sources source
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = source.song_id
-         AND maxima.instrument = source.instrument
-         AND maxima.is_affected_instrument
-        JOIN leaderboard_entries_overlay overlay
-          ON source.song_id = overlay.song_id
-         AND source.instrument = overlay.instrument
-        ON CONFLICT (
-            song_id,
-            instrument,
-            account_id) DO UPDATE
-        SET score = EXCLUDED.score,
-            origin_precedence =
-                EXCLUDED.origin_precedence,
-            source_priority = EXCLUDED.source_priority,
-            has_snapshot =
-                existing.has_snapshot
-                OR EXCLUDED.has_snapshot
-        WHERE EXCLUDED.origin_precedence
-                  < existing.origin_precedence
-           OR (
-               EXCLUDED.origin_precedence
-                   = existing.origin_precedence
-               AND EXCLUDED.source_priority
-                   > existing.source_priority);
-
+    internal const string ChangedSnapshotAccountsProbeSql = """
         INSERT INTO fst_max_score_evidence_affected_accounts (
-            account_id)
-        SELECT candidate.account_id
-        FROM fst_max_score_evidence_candidates candidate
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = candidate.song_id
-         AND maxima.instrument = candidate.instrument
-         AND maxima.is_changed
-        ON CONFLICT (account_id) DO NOTHING;
-
-        ANALYZE fst_max_score_evidence_affected_accounts;
-
-        INSERT INTO fst_max_score_evidence_candidates (
-            song_id,
-            instrument,
             account_id,
-            score,
-            origin_precedence,
-            source_priority,
-            has_snapshot)
-        SELECT snapshot.song_id,
-               snapshot.instrument,
-               snapshot.account_id,
-               snapshot.score,
-               1,
-               0,
-               TRUE
-        FROM fst_max_score_evidence_sources source
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = source.song_id
-         AND maxima.instrument = source.instrument
-         AND NOT maxima.is_affected_instrument
-        CROSS JOIN fst_max_score_evidence_affected_accounts affected
-        JOIN leaderboard_entries_snapshot snapshot
-          ON source.source_kind = 'snapshot'
-         AND source.source_snapshot_id = snapshot.snapshot_id
-         AND source.song_id = snapshot.song_id
-         AND source.instrument = snapshot.instrument
-         AND affected.account_id = snapshot.account_id
-        ON CONFLICT (
-            song_id,
-            instrument,
-            account_id) DO NOTHING;
-
-        INSERT INTO fst_max_score_evidence_candidates AS existing (
-            song_id,
-            instrument,
-            account_id,
-            score,
-            origin_precedence,
-            source_priority,
-            has_snapshot)
-        SELECT overlay.song_id,
-               overlay.instrument,
-               overlay.account_id,
-               overlay.score,
-               0,
-               overlay.source_priority,
+            is_overlay_only)
+        SELECT snapshot.account_id,
                FALSE
-        FROM fst_max_score_evidence_sources source
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = source.song_id
-         AND maxima.instrument = source.instrument
-         AND NOT maxima.is_affected_instrument
-        CROSS JOIN fst_max_score_evidence_affected_accounts affected
-        JOIN leaderboard_entries_overlay overlay
-          ON source.song_id = overlay.song_id
-         AND source.instrument = overlay.instrument
-         AND affected.account_id = overlay.account_id
-        ON CONFLICT (
-            song_id,
-            instrument,
-            account_id) DO UPDATE
-        SET score = EXCLUDED.score,
-            origin_precedence =
-                EXCLUDED.origin_precedence,
-            source_priority = EXCLUDED.source_priority,
-            has_snapshot =
-                existing.has_snapshot
-                OR EXCLUDED.has_snapshot
-        WHERE EXCLUDED.origin_precedence
-                  < existing.origin_precedence
-           OR (
-               EXCLUDED.origin_precedence
-                   = existing.origin_precedence
-               AND EXCLUDED.source_priority
-                   > existing.source_priority);
+        FROM leaderboard_entries_snapshot snapshot
+        WHERE snapshot.snapshot_id = @sourceSnapshotId
+          AND snapshot.song_id = @songId
+          AND snapshot.instrument = @instrument
+        ON CONFLICT (account_id) DO NOTHING;
+        """;
 
-        UPDATE fst_max_score_evidence_affected_accounts affected
-        SET is_registered = TRUE
-        FROM fst_max_score_evidence_registered_accounts registered
-        WHERE registered.account_id = affected.account_id;
+    internal const string ChangedOverlayAccountsProbeSql = """
+        INSERT INTO fst_max_score_evidence_affected_accounts
+            AS affected (
+            account_id,
+            is_overlay_only)
+        SELECT overlay.account_id,
+               NOT EXISTS (
+                   SELECT 1
+                   FROM leaderboard_entries_snapshot snapshot
+                   WHERE snapshot.snapshot_id =
+                             @sourceSnapshotId
+                     AND snapshot.song_id = @songId
+                     AND snapshot.instrument = @instrument
+                     AND snapshot.account_id =
+                             overlay.account_id
+               )
+        FROM leaderboard_entries_overlay overlay
+        WHERE overlay.song_id = @songId
+          AND overlay.instrument = @instrument
+        ON CONFLICT (account_id) DO UPDATE
+        SET is_overlay_only =
+                affected.is_overlay_only
+                OR EXCLUDED.is_overlay_only;
+        """;
 
-        UPDATE fst_max_score_evidence_affected_accounts affected
-        SET is_overlay_only = TRUE
-        WHERE EXISTS (
-            SELECT 1
-            FROM fst_max_score_evidence_candidates candidate
-            JOIN fst_max_score_evidence_maxima maxima
-              ON maxima.song_id = candidate.song_id
-             AND maxima.instrument = candidate.instrument
-             AND maxima.is_changed
-            WHERE candidate.account_id = affected.account_id
-              AND candidate.origin_precedence = 0
-              AND NOT candidate.has_snapshot);
-
-        ANALYZE fst_max_score_evidence_candidates;
-
+    internal const string RankingSnapshotProbeSql = """
         INSERT INTO fst_max_score_evidence_fallback_scopes (
             song_id,
             instrument,
             account_id,
             max_threshold)
-        SELECT candidate.song_id,
-               candidate.instrument,
-               candidate.account_id,
-               maxima.max_threshold
-        FROM fst_max_score_evidence_candidates candidate
-        JOIN fst_max_score_evidence_maxima maxima
-          ON maxima.song_id = candidate.song_id
-         AND maxima.instrument = candidate.instrument
-        LEFT JOIN fst_max_score_evidence_affected_accounts affected
-          ON affected.account_id = candidate.account_id
-        WHERE (
-                  affected.account_id IS NOT NULL
-                  AND candidate.score > maxima.max_score
-              )
-           OR (
-                  maxima.is_affected_instrument
-                  AND candidate.score > maxima.max_threshold
-              )
+        SELECT @songId,
+               @instrument,
+               snapshot.account_id,
+               @maxThreshold
+        FROM leaderboard_entries_snapshot snapshot
+        WHERE snapshot.snapshot_id = @sourceSnapshotId
+          AND snapshot.song_id = @songId
+          AND snapshot.instrument = @instrument
+          AND snapshot.score > @scoreThreshold
+          AND NOT EXISTS (
+              SELECT 1
+              FROM leaderboard_entries_overlay overlay
+              WHERE overlay.song_id = @songId
+                AND overlay.instrument = @instrument
+                AND overlay.account_id =
+                        snapshot.account_id
+          )
+        ORDER BY snapshot.score DESC
         ON CONFLICT (
             song_id,
             instrument,
             account_id) DO NOTHING;
+        """;
 
+    internal const string RankingOverlayProbeSql = """
+        INSERT INTO fst_max_score_evidence_fallback_scopes (
+            song_id,
+            instrument,
+            account_id,
+            max_threshold)
+        SELECT @songId,
+               @instrument,
+               overlay.account_id,
+               @maxThreshold
+        FROM leaderboard_entries_overlay overlay
+        WHERE overlay.song_id = @songId
+          AND overlay.instrument = @instrument
+          AND overlay.score > @scoreThreshold
+        ON CONFLICT (
+            song_id,
+            instrument,
+            account_id) DO NOTHING;
+        """;
+
+    internal const string PlayerSnapshotProbeSql = """
+        INSERT INTO fst_max_score_evidence_fallback_scopes (
+            song_id,
+            instrument,
+            account_id,
+            max_threshold)
+        SELECT @songId,
+               @instrument,
+               snapshot.account_id,
+               @maxThreshold
+        FROM leaderboard_entries_snapshot snapshot
+        JOIN fst_max_score_evidence_affected_accounts affected
+          ON affected.account_id = snapshot.account_id
+        WHERE snapshot.snapshot_id = @sourceSnapshotId
+          AND snapshot.song_id = @songId
+          AND snapshot.instrument = @instrument
+          AND snapshot.score > @scoreThreshold
+          AND NOT EXISTS (
+              SELECT 1
+              FROM leaderboard_entries_overlay overlay
+              WHERE overlay.song_id = @songId
+                AND overlay.instrument = @instrument
+                AND overlay.account_id =
+                        snapshot.account_id
+          )
+        ORDER BY snapshot.score DESC
+        ON CONFLICT (
+            song_id,
+            instrument,
+            account_id) DO NOTHING;
+        """;
+
+    internal const string PlayerOverlayProbeSql = """
+        INSERT INTO fst_max_score_evidence_fallback_scopes (
+            song_id,
+            instrument,
+            account_id,
+            max_threshold)
+        SELECT @songId,
+               @instrument,
+               overlay.account_id,
+               @maxThreshold
+        FROM leaderboard_entries_overlay overlay
+        JOIN fst_max_score_evidence_affected_accounts affected
+          ON affected.account_id = overlay.account_id
+        WHERE overlay.song_id = @songId
+          AND overlay.instrument = @instrument
+          AND overlay.score > @scoreThreshold
+        ON CONFLICT (
+            song_id,
+            instrument,
+            account_id) DO NOTHING;
+        """;
+
+    private const string FinalizeAffectedAccountsSql = """
+        UPDATE fst_max_score_evidence_affected_accounts affected
+        SET is_registered = TRUE
+        FROM fst_max_score_evidence_registered_accounts registered
+        WHERE registered.account_id = affected.account_id;
+
+        ANALYZE fst_max_score_evidence_affected_accounts;
+        """;
+
+    private const string AnalyzeFallbackScopesSql = """
         ANALYZE fst_max_score_evidence_fallback_scopes;
         """;
 
@@ -478,9 +517,9 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             fst_max_score_evidence_fallback_scopes,
             fst_max_score_evidence_affected_accounts,
             fst_max_score_evidence_registered_accounts,
-            fst_max_score_evidence_candidates,
             fst_max_score_evidence_sources,
-            fst_max_score_evidence_maxima;
+            fst_max_score_evidence_maxima,
+            fst_max_score_evidence_publication;
         """;
 
     internal static async Task<MaxScoreMaintenanceScoreHistorySnapshot>
@@ -540,6 +579,14 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             throw new InvalidOperationException(
                 "Score-history evidence requires post-promotion maxima.");
         }
+        var maximumPairs = maxima
+            .Select(item => (item.SongId, item.Instrument))
+            .ToHashSet();
+        if (!changedPairs.IsSubsetOf(maximumPairs))
+        {
+            throw new InvalidOperationException(
+                "Score-history evidence requires a positive post-promotion maximum for every changed scope.");
+        }
 
         var savepointName =
             $"fst_score_history_evidence_{Guid.NewGuid():N}";
@@ -554,6 +601,44 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             {
                 await PrepareSelectorsAsync(
                     maxima,
+                    manifest.ExpectedPublicationId,
+                    manifest.ExpectedPublishedScrapeId,
+                    connection,
+                    transaction,
+                    deadline);
+                var scopeSources = await LoadScopeSourcesAsync(
+                    connection,
+                    transaction,
+                    deadline);
+                await PopulateAffectedAccountsAsync(
+                    scopeSources,
+                    connection,
+                    transaction,
+                    deadline);
+                await ExecuteSelectorNonQueryAsync(
+                    FinalizeAffectedAccountsSql,
+                    connection,
+                    transaction,
+                    deadline);
+                await PopulateFallbackScopesAsync(
+                    scopeSources.Where(scope =>
+                        scope.AffectedInstrument),
+                    RankingSnapshotProbeSql,
+                    RankingOverlayProbeSql,
+                    static scope => scope.MaximumThreshold,
+                    connection,
+                    transaction,
+                    deadline);
+                await PopulateFallbackScopesAsync(
+                    scopeSources,
+                    PlayerSnapshotProbeSql,
+                    PlayerOverlayProbeSql,
+                    static scope => scope.Maximum,
+                    connection,
+                    transaction,
+                    deadline);
+                await ExecuteSelectorNonQueryAsync(
+                    AnalyzeFallbackScopesSql,
                     connection,
                     transaction,
                     deadline);
@@ -624,6 +709,8 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             int Threshold,
             bool Changed,
             bool AffectedInstrument)> maxima,
+        long publicationId,
+        long publishedScrapeId,
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         SharedCommandDeadline deadline)
@@ -656,6 +743,386 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             "affectedInstruments",
             NpgsqlDbType.Array | NpgsqlDbType.Boolean).Value =
             maxima.Select(item => item.AffectedInstrument).ToArray();
+        command.Parameters.Add(
+            "publicationId",
+            NpgsqlDbType.Bigint).Value = publicationId;
+        command.Parameters.Add(
+            "publishedScrapeId",
+            NpgsqlDbType.Bigint).Value = publishedScrapeId;
+        await command.ExecuteNonQueryAsync(deadline.Token);
+        await ValidateSelectorsAsync(
+            publicationId,
+            publishedScrapeId,
+            connection,
+            transaction,
+            deadline);
+    }
+
+    private static async Task ValidateSelectorsAsync(
+        long publicationId,
+        long publishedScrapeId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SharedCommandDeadline deadline)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        deadline.Configure(command);
+        command.CommandText = ValidateSelectorsSql;
+        await using var reader =
+            await command.ExecuteReaderAsync(deadline.Token);
+        if (!await reader.ReadAsync(deadline.Token))
+        {
+            throw new InvalidOperationException(
+                "Score-history publication/source validation was unavailable.");
+        }
+
+        var publicationCount = reader.GetInt32(0);
+        var sourceCount = reader.GetInt32(1);
+        var sourcesComplete = reader.GetBoolean(2);
+        var bindingReady = reader.GetBoolean(3);
+        var missingChangedScopeCount = reader.GetInt32(4);
+        var usableScopeCount = reader.GetInt32(5);
+        if (publicationCount != 1)
+        {
+            throw new InvalidOperationException(
+                $"Score-history evidence requires current publication {publicationId} " +
+                $"to be bound to published scrape {publishedScrapeId} with no working publication.");
+        }
+        if (sourceCount == 0)
+        {
+            throw new InvalidOperationException(
+                $"Score-history evidence found no all-time sources for published scrape {publishedScrapeId}.");
+        }
+        if (!sourcesComplete)
+        {
+            throw new InvalidOperationException(
+                $"Score-history evidence requires every selected source for published scrape {publishedScrapeId} to be complete.");
+        }
+        if (!bindingReady)
+        {
+            throw new InvalidOperationException(
+                $"Score-history evidence requires publication {publicationId} to have a ready solo_scope_sources scrape-id binding for published scrape {publishedScrapeId}.");
+        }
+        if (missingChangedScopeCount != 0)
+        {
+            throw new InvalidOperationException(
+                $"Score-history evidence is missing {missingChangedScopeCount} changed publication scope source(s).");
+        }
+        if (usableScopeCount == 0)
+        {
+            throw new InvalidOperationException(
+                "Score-history evidence found no published scopes with post-promotion maxima.");
+        }
+    }
+
+    private static async Task<IReadOnlyList<ScopeSource>>
+        LoadScopeSourcesAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            SharedCommandDeadline deadline)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        deadline.Configure(command);
+        command.CommandText = LoadScopeSourcesSql;
+        var sources = new List<ScopeSource>();
+        await using var reader =
+            await command.ExecuteReaderAsync(deadline.Token);
+        while (await reader.ReadAsync(deadline.Token))
+        {
+            var sourceKind = reader.GetString(2);
+            var snapshotId = reader.IsDBNull(3)
+                ? (long?)null
+                : reader.GetInt64(3);
+            if (sourceKind == "snapshot")
+            {
+                if (snapshotId is null)
+                {
+                    throw new InvalidOperationException(
+                        "A selected snapshot source is missing its snapshot ID.");
+                }
+            }
+            else if (sourceKind != "empty" || snapshotId is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Selected score-history source kind '{sourceKind}' is invalid.");
+            }
+
+            sources.Add(new ScopeSource(
+                reader.GetString(0),
+                reader.GetString(1),
+                snapshotId,
+                reader.GetInt32(4),
+                reader.GetInt32(5),
+                reader.GetBoolean(6),
+                reader.GetBoolean(7)));
+        }
+        if (sources.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Score-history evidence found no usable publication sources.");
+        }
+        return sources;
+    }
+
+    private static async Task PopulateAffectedAccountsAsync(
+        IReadOnlyList<ScopeSource> scopeSources,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SharedCommandDeadline deadline)
+    {
+        foreach (var group in scopeSources
+                     .Where(scope => scope.Changed)
+                     .GroupBy(scope => scope.Instrument)
+                     .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            await using var snapshotCommand =
+                CreateChangedSnapshotProbeCommand(
+                    group.Key,
+                    connection,
+                    transaction);
+            await using var overlayCommand =
+                CreateChangedOverlayProbeCommand(
+                    group.Key,
+                    connection,
+                    transaction);
+            await PrepareProbeCommandAsync(
+                snapshotCommand,
+                deadline);
+            await PrepareProbeCommandAsync(
+                overlayCommand,
+                deadline);
+
+            foreach (var scope in group.OrderBy(
+                         item => item.SongId,
+                         StringComparer.Ordinal))
+            {
+                if (scope.SourceSnapshotId is long snapshotId)
+                {
+                    SetChangedSnapshotProbeParameters(
+                        snapshotCommand,
+                        scope.SongId,
+                        snapshotId);
+                    await ExecuteProbeCommandAsync(
+                        snapshotCommand,
+                        deadline);
+                }
+
+                SetChangedOverlayProbeParameters(
+                    overlayCommand,
+                    scope.SongId,
+                    scope.SourceSnapshotId);
+                await ExecuteProbeCommandAsync(
+                    overlayCommand,
+                    deadline);
+            }
+        }
+    }
+
+    private static async Task PopulateFallbackScopesAsync(
+        IEnumerable<ScopeSource> scopeSources,
+        string snapshotSql,
+        string overlaySql,
+        Func<ScopeSource, int> scoreThreshold,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SharedCommandDeadline deadline)
+    {
+        foreach (var group in scopeSources
+                     .GroupBy(scope => scope.Instrument)
+                     .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            await using var snapshotCommand =
+                CreateFallbackProbeCommand(
+                    snapshotSql,
+                    group.Key,
+                    includeSnapshotId: true,
+                    connection,
+                    transaction);
+            await using var overlayCommand =
+                CreateFallbackProbeCommand(
+                    overlaySql,
+                    group.Key,
+                    includeSnapshotId: false,
+                    connection,
+                    transaction);
+            await PrepareProbeCommandAsync(
+                snapshotCommand,
+                deadline);
+            await PrepareProbeCommandAsync(
+                overlayCommand,
+                deadline);
+
+            foreach (var scope in group.OrderBy(
+                         item => item.SongId,
+                         StringComparer.Ordinal))
+            {
+                var threshold = scoreThreshold(scope);
+                if (scope.SourceSnapshotId is long snapshotId)
+                {
+                    SetFallbackProbeParameters(
+                        snapshotCommand,
+                        scope.SongId,
+                        snapshotId,
+                        threshold,
+                        scope.MaximumThreshold);
+                    await ExecuteProbeCommandAsync(
+                        snapshotCommand,
+                        deadline);
+                }
+
+                SetFallbackProbeParameters(
+                    overlayCommand,
+                    scope.SongId,
+                    null,
+                    threshold,
+                    scope.MaximumThreshold);
+                await ExecuteProbeCommandAsync(
+                    overlayCommand,
+                    deadline);
+            }
+        }
+    }
+
+    private static NpgsqlCommand CreateChangedSnapshotProbeCommand(
+        string instrument,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = ChangedSnapshotAccountsProbeSql;
+        command.Parameters.Add(
+            "sourceSnapshotId",
+            NpgsqlDbType.Bigint).Value = 0L;
+        command.Parameters.Add(
+            "songId",
+            NpgsqlDbType.Text).Value = string.Empty;
+        command.Parameters.Add(
+            "instrument",
+            NpgsqlDbType.Text).Value = instrument;
+        return command;
+    }
+
+    private static NpgsqlCommand CreateChangedOverlayProbeCommand(
+        string instrument,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = ChangedOverlayAccountsProbeSql;
+        command.Parameters.Add(
+            "sourceSnapshotId",
+            NpgsqlDbType.Bigint).Value = DBNull.Value;
+        command.Parameters.Add(
+            "songId",
+            NpgsqlDbType.Text).Value = string.Empty;
+        command.Parameters.Add(
+            "instrument",
+            NpgsqlDbType.Text).Value = instrument;
+        return command;
+    }
+
+    private static NpgsqlCommand CreateFallbackProbeCommand(
+        string sql,
+        string instrument,
+        bool includeSnapshotId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        if (includeSnapshotId)
+        {
+            command.Parameters.Add(
+                "sourceSnapshotId",
+                NpgsqlDbType.Bigint).Value = 0L;
+        }
+        command.Parameters.Add(
+            "songId",
+            NpgsqlDbType.Text).Value = string.Empty;
+        command.Parameters.Add(
+            "instrument",
+            NpgsqlDbType.Text).Value = instrument;
+        command.Parameters.Add(
+            "scoreThreshold",
+            NpgsqlDbType.Integer).Value = 0;
+        command.Parameters.Add(
+            "maxThreshold",
+            NpgsqlDbType.Integer).Value = 0;
+        return command;
+    }
+
+    private static async Task PrepareProbeCommandAsync(
+        NpgsqlCommand command,
+        SharedCommandDeadline deadline)
+    {
+        deadline.Configure(command);
+        await command.PrepareAsync(deadline.Token);
+    }
+
+    private static async Task ExecuteProbeCommandAsync(
+        NpgsqlCommand command,
+        SharedCommandDeadline deadline)
+    {
+        deadline.Configure(command);
+        await command.ExecuteNonQueryAsync(deadline.Token);
+    }
+
+    private static void SetChangedSnapshotProbeParameters(
+        NpgsqlCommand command,
+        string songId,
+        long sourceSnapshotId)
+    {
+        command.Parameters["songId"].Value = songId;
+        command.Parameters["sourceSnapshotId"].Value =
+            sourceSnapshotId;
+    }
+
+    private static void SetChangedOverlayProbeParameters(
+        NpgsqlCommand command,
+        string songId,
+        long? sourceSnapshotId)
+    {
+        command.Parameters["songId"].Value = songId;
+        command.Parameters["sourceSnapshotId"].Value =
+            sourceSnapshotId is long value
+                ? value
+                : DBNull.Value;
+    }
+
+    private static void SetFallbackProbeParameters(
+        NpgsqlCommand command,
+        string songId,
+        long? sourceSnapshotId,
+        int scoreThreshold,
+        int maxThreshold)
+    {
+        command.Parameters["songId"].Value = songId;
+        if (sourceSnapshotId is long value)
+        {
+            command.Parameters["sourceSnapshotId"].Value =
+                value;
+        }
+        command.Parameters["scoreThreshold"].Value =
+            scoreThreshold;
+        command.Parameters["maxThreshold"].Value =
+            maxThreshold;
+    }
+
+    private static async Task ExecuteSelectorNonQueryAsync(
+        string sql,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SharedCommandDeadline deadline)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        deadline.Configure(command);
+        command.CommandText = sql;
         await command.ExecuteNonQueryAsync(deadline.Token);
     }
 
@@ -936,6 +1403,15 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         IReadOnlyList<string> Affected,
         IReadOnlyList<string> Registered,
         IReadOnlyList<string> OverlayOnly);
+
+    private sealed record ScopeSource(
+        string SongId,
+        string Instrument,
+        long? SourceSnapshotId,
+        int Maximum,
+        int MaximumThreshold,
+        bool Changed,
+        bool AffectedInstrument);
 
     private sealed record BranchEvidence(
         long RowCount,

@@ -2030,19 +2030,37 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     content_hash,
                     status,
                     built_at)
-                VALUES (
-                    @publicationId,
-                    'song_catalog',
-                    'generation_catalog_snapshot',
-                    jsonb_build_object(
-                        'table',
-                        'publication_song_catalog',
-                        'publicationId',
-                        @publicationId),
-                    @catalogSongCount,
-                    @catalogHash,
-                    'ready',
-                    now() - interval '1 hour');
+                VALUES
+                    (
+                        @publicationId,
+                        'song_catalog',
+                        'generation_catalog_snapshot',
+                        jsonb_build_object(
+                            'table',
+                            'publication_song_catalog',
+                            'publicationId',
+                            @publicationId),
+                        @catalogSongCount,
+                        @catalogHash,
+                        'ready',
+                        now() - interval '1 hour'
+                    ),
+                    (
+                        @publicationId,
+                        'solo_scope_sources',
+                        'scrape_id',
+                        jsonb_build_object(
+                            'publicationId',
+                            @publicationId,
+                            'table',
+                            'leaderboard_published_scope_source',
+                            'publishedScrapeId',
+                            @publishedScrapeId),
+                        1,
+                        NULL,
+                        'ready',
+                        now() - interval '1 hour'
+                    );
 
                 INSERT INTO scrape_publication_state (
                     id,
@@ -2861,6 +2879,23 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     @instrument,
                     300,
                     now());
+
+                UPDATE publication_surface_bindings binding
+                SET row_count = (
+                    SELECT COUNT(*)
+                    FROM leaderboard_published_scope_source source
+                    WHERE source.published_scrape_id =
+                              @publishedScrapeId
+                      AND source.scope_kind = 'alltime'
+                )
+                FROM scrape_publication_state state
+                WHERE state.id = TRUE
+                  AND state.published_scrape_id =
+                          @publishedScrapeId
+                  AND binding.publication_id =
+                          state.current_publication_id
+                  AND binding.surface_name =
+                          'solo_scope_sources';
                 """;
             command.Parameters.AddWithValue(
                 "publishedScrapeId",

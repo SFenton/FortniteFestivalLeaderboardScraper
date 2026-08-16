@@ -664,10 +664,23 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     TRUE,
                     now(),
                     now());
+
+                UPDATE publication_surface_bindings
+                SET row_count = (
+                    SELECT COUNT(*)
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                      AND scope_kind = 'alltime'
+                )
+                WHERE publication_id = @publicationId
+                  AND surface_name = 'solo_scope_sources';
                 """;
             seedUnrelated.Parameters.AddWithValue(
                 "scrapeId",
                 manifest.ExpectedPublishedScrapeId);
+            seedUnrelated.Parameters.AddWithValue(
+                "publicationId",
+                manifest.ExpectedPublicationId);
             seedUnrelated.ExecuteNonQuery();
         }
         var postPromotionMaxScores =
@@ -4196,17 +4209,51 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         using var connection = dataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
+            UPDATE scrape_publication_state
+            SET current_publication_id = NULL,
+                previous_publication_id = NULL,
+                working_publication_id = NULL
+            WHERE id = TRUE;
+
+            DELETE FROM publication_generations
+            WHERE scrape_id = @scrapeId
+              AND publication_id <> @publicationId;
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                created_at,
+                published_at)
+            VALUES (
+                @publicationId,
+                @scrapeId,
+                'current',
+                now(),
+                now())
+            ON CONFLICT (publication_id) DO UPDATE SET
+                scrape_id = EXCLUDED.scrape_id,
+                status = EXCLUDED.status,
+                published_at = EXCLUDED.published_at;
+
             INSERT INTO scrape_publication_state (
                 id,
+                current_publication_id,
+                working_publication_id,
                 published_scrape_id,
                 published_at,
                 updated_at)
             VALUES (
                 TRUE,
+                @publicationId,
+                NULL,
                 @scrapeId,
                 now(),
                 now())
             ON CONFLICT (id) DO UPDATE SET
+                current_publication_id =
+                    EXCLUDED.current_publication_id,
+                working_publication_id = NULL,
                 published_scrape_id =
                     EXCLUDED.published_scrape_id,
                 published_at = EXCLUDED.published_at,
@@ -4265,6 +4312,42 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 TRUE,
                 now(),
                 now());
+
+            INSERT INTO publication_surface_bindings (
+                publication_id,
+                surface_name,
+                binding_kind,
+                binding_json,
+                row_count,
+                content_hash,
+                status,
+                built_at)
+            VALUES (
+                @publicationId,
+                'solo_scope_sources',
+                'scrape_id',
+                jsonb_build_object(
+                    'publicationId', @publicationId,
+                    'table',
+                        'leaderboard_published_scope_source',
+                    'publishedScrapeId', @scrapeId),
+                (
+                    SELECT COUNT(*)
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                      AND scope_kind = 'alltime'
+                ),
+                NULL,
+                'ready',
+                now())
+            ON CONFLICT (
+                publication_id,
+                surface_name) DO UPDATE SET
+                binding_kind = EXCLUDED.binding_kind,
+                binding_json = EXCLUDED.binding_json,
+                row_count = EXCLUDED.row_count,
+                status = EXCLUDED.status,
+                built_at = EXCLUDED.built_at;
 
             INSERT INTO leaderboard_entries_overlay (
                 song_id,
@@ -4332,6 +4415,9 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         command.Parameters.AddWithValue(
             "scrapeId",
             manifest.ExpectedPublishedScrapeId);
+        command.Parameters.AddWithValue(
+            "publicationId",
+            manifest.ExpectedPublicationId);
         command.Parameters.AddWithValue(
             "overlayScore",
             overlayScore);
