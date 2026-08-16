@@ -344,6 +344,89 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void Online_writer_drain_pages_publish_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "draining_solo_writes");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "draining_solo_writes",
+                Detail = new SubOperationDetail
+                {
+                    OnlineWriterPagesCompleted = 6,
+                    OnlineWriterPagesTotal = 8,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("pages", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(75, view.SubphaseProgress?.Percent);
+    }
+
+    [Theory]
+    [InlineData("dropping_solo_indexes")]
+    [InlineData("creating_solo_indexes")]
+    [InlineData("dropping_band_indexes")]
+    public void Active_index_work_publishes_exact_subphase_progress(
+        string subphaseId)
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0], subphaseId);
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = subphaseId,
+                Detail = new SubOperationDetail
+                {
+                    IndexesCompleted = 3,
+                    IndexesTotal = 6,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("indexes", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(50, view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Empty_band_index_creation_is_not_applicable()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "creating_band_indexes");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "creating_band_indexes",
+                Detail = new SubOperationDetail
+                {
+                    IndexesCompleted = 0,
+                    IndexesTotal = 0,
+                },
+            }));
+
+        Assert.Equal(
+            "not_applicable",
+            view.SubphaseProgress?.Kind);
+    }
+
+    [Fact]
     public void Band_fetch_pages_publish_exact_subphase_progress()
     {
         var (sink, _, clock) = CreateSink();

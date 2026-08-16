@@ -963,6 +963,38 @@ public sealed class DurablePhaseProgressSink
                 snapshot.Detail.FlushPagesTotal.Value);
         }
 
+        if (id == "draining_solo_writes"
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.OnlineWriterPagesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "pages",
+                snapshot.Detail.OnlineWriterPagesCompleted ?? 0,
+                snapshot.Detail.OnlineWriterPagesTotal.Value);
+        }
+
+        if ((id is "dropping_solo_indexes"
+                or "creating_solo_indexes"
+                or "dropping_band_indexes")
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.IndexesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "indexes",
+                snapshot.Detail.IndexesCompleted ?? 0,
+                snapshot.Detail.IndexesTotal.Value);
+        }
+
+        if (id == "creating_band_indexes"
+            && descriptor.Id == "scrape.leaderboards")
+        {
+            return new SubphaseProgressObservation(
+                id,
+                "not_applicable");
+        }
+
         if (id == "rank_history_snapshots"
             && descriptor.Id == "post.compute_rankings"
             && snapshot.Detail?.BandRankHistoryChunksTotal is > 0)

@@ -382,6 +382,12 @@ public sealed class ScrapeProgressTracker
     private long _deepJobsCompleted;
     private long _deepJobsTotal;
 
+    // Online solo-writer drain progress
+    private long _onlineWriterPagesCompleted;
+    private long _onlineWriterPagesTotal;
+    private long _onlineWriterEntriesCompleted;
+    private long _onlineWriterEntriesTotal;
+
     // Solo vs band completion
     private volatile bool _soloFetchComplete;
     private volatile bool _bandFetchComplete;
@@ -458,10 +464,33 @@ public sealed class ScrapeProgressTracker
     /// <summary>Report index drop/create progress.</summary>
     public void ReportIndexProgress(string operation, string indexName, int completed, int total)
     {
-        _indexOperation = operation;
+        if (!string.Equals(
+                _indexOperation,
+                operation,
+                StringComparison.Ordinal))
+        {
+            _indexOperation = operation;
+            Interlocked.Exchange(
+                ref _indexesCompleted,
+                Math.Max(0, completed));
+        }
+        else
+        {
+            var normalizedCompleted = Math.Max(0, completed);
+            int observed;
+            do
+            {
+                observed = Volatile.Read(ref _indexesCompleted);
+                if (normalizedCompleted <= observed)
+                    break;
+            }
+            while (Interlocked.CompareExchange(
+                       ref _indexesCompleted,
+                       normalizedCompleted,
+                       observed) != observed);
+        }
         _currentIndex = indexName;
-        _indexesCompleted = completed;
-        _indexesTotal = total;
+        Interlocked.Exchange(ref _indexesTotal, Math.Max(0, total));
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -492,6 +521,28 @@ public sealed class ScrapeProgressTracker
     {
         Interlocked.Exchange(ref _deepJobsCompleted, Math.Max(0, completed));
         Interlocked.Exchange(ref _deepJobsTotal, Math.Max(0, total));
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Update bounded online-writer drain progress.</summary>
+    public void SetOnlineWriterDrainProgress(
+        long pagesCompleted,
+        long pagesTotal,
+        long entriesCompleted,
+        long entriesTotal)
+    {
+        Interlocked.Exchange(
+            ref _onlineWriterPagesCompleted,
+            Math.Max(0, pagesCompleted));
+        Interlocked.Exchange(
+            ref _onlineWriterPagesTotal,
+            Math.Max(0, pagesTotal));
+        Interlocked.Exchange(
+            ref _onlineWriterEntriesCompleted,
+            Math.Max(0, entriesCompleted));
+        Interlocked.Exchange(
+            ref _onlineWriterEntriesTotal,
+            Math.Max(0, entriesTotal));
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -558,6 +609,10 @@ public sealed class ScrapeProgressTracker
         Interlocked.Exchange(ref _bandFetchEpoch, 0);
         Interlocked.Exchange(ref _deepJobsCompleted, 0);
         Interlocked.Exchange(ref _deepJobsTotal, 0);
+        Interlocked.Exchange(ref _onlineWriterPagesCompleted, 0);
+        Interlocked.Exchange(ref _onlineWriterPagesTotal, 0);
+        Interlocked.Exchange(ref _onlineWriterEntriesCompleted, 0);
+        Interlocked.Exchange(ref _onlineWriterEntriesTotal, 0);
         _soloFetchComplete = false;
         _bandFetchComplete = false;
         _bandRankHistoryMode = null;
@@ -581,6 +636,8 @@ public sealed class ScrapeProgressTracker
         var indexOp = _indexOperation;
         var bandPh = _bandPhase;
         var deepJobsTotal = Interlocked.Read(ref _deepJobsTotal);
+        var onlineWriterPagesTotal = Interlocked.Read(
+            ref _onlineWriterPagesTotal);
         var soloComplete = _soloFetchComplete;
         var bandComplete = _bandFetchComplete;
         var historyStatus = _bandRankHistoryStatus;
@@ -590,6 +647,7 @@ public sealed class ScrapeProgressTracker
             && indexOp is null
             && bandPh is null
             && deepJobsTotal == 0
+            && onlineWriterPagesTotal == 0
             && !soloComplete
             && !bandComplete
             && historyStatus is null)
@@ -637,6 +695,18 @@ public sealed class ScrapeProgressTracker
                 ? Interlocked.Read(ref _deepJobsCompleted)
                 : null,
             DeepJobsTotal = deepJobsTotal > 0 ? deepJobsTotal : null,
+            OnlineWriterPagesCompleted = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterPagesCompleted)
+                : null,
+            OnlineWriterPagesTotal = onlineWriterPagesTotal > 0
+                ? onlineWriterPagesTotal
+                : null,
+            OnlineWriterEntriesCompleted = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterEntriesCompleted)
+                : null,
+            OnlineWriterEntriesTotal = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterEntriesTotal)
+                : null,
             SoloFetchComplete = soloComplete,
             BandFetchComplete = bandComplete,
             BandRankHistoryMode = historyStatus is not null ? _bandRankHistoryMode : null,
@@ -1476,6 +1546,12 @@ public sealed class SubOperationDetail
     // Coordinated deep scrape
     public long? DeepJobsCompleted { get; init; }
     public long? DeepJobsTotal { get; init; }
+
+    // Online bounded writer drain
+    public long? OnlineWriterPagesCompleted { get; init; }
+    public long? OnlineWriterPagesTotal { get; init; }
+    public long? OnlineWriterEntriesCompleted { get; init; }
+    public long? OnlineWriterEntriesTotal { get; init; }
 
     // Solo vs band completion
     public bool SoloFetchComplete { get; init; }

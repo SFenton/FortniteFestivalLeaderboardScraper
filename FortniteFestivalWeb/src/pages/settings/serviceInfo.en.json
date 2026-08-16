@@ -67,7 +67,8 @@
     "deep_jobs": "deep-scrape jobs",
     "band_pages": "band pages",
     "pages": "pages",
-    "chunks": "chunks"
+    "chunks": "chunks",
+    "indexes": "indexes"
   },
   "phaseLabels": {
     "scrape_leaderboards": "Scraping Leaderboard Scores",

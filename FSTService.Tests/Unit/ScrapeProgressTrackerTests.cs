@@ -220,6 +220,55 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void Online_writer_drain_progress_exposes_final_page_and_entry_totals()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.SetOnlineWriterDrainProgress(
+            pagesCompleted: 3,
+            pagesTotal: 8,
+            entriesCompleted: 300,
+            entriesTotal: 800);
+
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.NotNull(detail);
+        Assert.Equal(3, detail!.OnlineWriterPagesCompleted);
+        Assert.Equal(8, detail.OnlineWriterPagesTotal);
+        Assert.Equal(300, detail.OnlineWriterEntriesCompleted);
+        Assert.Equal(800, detail.OnlineWriterEntriesTotal);
+    }
+
+    [Fact]
+    public void Index_progress_is_monotonic_within_a_stage_and_resets_between_stages()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.ReportIndexProgress(
+            "dropping_solo",
+            "index-3",
+            completed: 3,
+            total: 6);
+        _tracker.ReportIndexProgress(
+            "dropping_solo",
+            "index-2",
+            completed: 2,
+            total: 6);
+        Assert.Equal(
+            3,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.IndexesCompleted);
+
+        _tracker.ReportIndexProgress(
+            "creating_solo",
+            "index-1",
+            completed: 0,
+            total: 4);
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.Equal(0, detail?.IndexesCompleted);
+        Assert.Equal(4, detail?.IndexesTotal);
+    }
+
+    [Fact]
     public void ReportSongComplete_IncrementsSongCounter()
     {
         _tracker.BeginPass(2, 2, 0);

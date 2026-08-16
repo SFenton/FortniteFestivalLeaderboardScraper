@@ -1663,6 +1663,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     public async Task OnlineSoloWriter_when_legacy_live_writes_disabled_writes_snapshot_only()
     {
         using var glp = CreatePersistence(new FeatureOptions { WriteLegacyLiveLeaderboardDuringScrape = false });
+        var progress = new ScrapeProgressTracker();
+        progress.BeginPass(1, 1, 0);
 
         glp.StartOnlineSoloWriter(42, channelCapacity: 2, maxBatchPages: 2, writerCount: 1);
         await glp.EnqueueOnlineSoloPageAsync("song_1", "Solo_Guitar",
@@ -1681,7 +1683,13 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
                 Source = "scrape",
             }
         ]);
-        await glp.DrainOnlineSoloWriterAsync();
+        await glp.DrainOnlineSoloWriterAsync(progress);
+        var drain = progress.GetProgressResponse()
+            .Current?.Detail;
+        Assert.Equal(1, drain?.OnlineWriterPagesCompleted);
+        Assert.Equal(1, drain?.OnlineWriterPagesTotal);
+        Assert.Equal(1, drain?.OnlineWriterEntriesCompleted);
+        Assert.Equal(1, drain?.OnlineWriterEntriesTotal);
         var activated = glp.FinalizeShadowSnapshots(42);
         var currentState = glp.GetCurrentStateLeaderboard("song_1", "Solo_Guitar", top: 10);
 
@@ -1691,6 +1699,21 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         var entry = Assert.Single(currentState!);
         Assert.Equal("acct_1", entry.AccountId);
         Assert.Equal(100_000, entry.Score);
+    }
+
+    [Fact]
+    public void DropBandIndexes_reports_completed_index_work()
+    {
+        using var glp = CreatePersistence();
+        var progress = new ScrapeProgressTracker();
+        progress.BeginPass(1, 1, 0);
+
+        glp.DropBandIndexes(progress);
+
+        var detail = progress.GetProgressResponse()
+            .Current?.Detail;
+        Assert.Equal(5, detail?.IndexesCompleted);
+        Assert.Equal(5, detail?.IndexesTotal);
     }
 
     [Fact]

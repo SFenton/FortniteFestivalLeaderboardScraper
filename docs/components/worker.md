@@ -385,14 +385,16 @@ moving to remaining-page fetch. Persistence rejects a different worker
 instance or a non-increasing sequence.
 
 Exact subphase producers currently include leaderboard retrieval, band-page
-fetching, solo/band spool-page flushing, coordinated deep-scrape jobs, band
-extraction and membership rebuild, registered-player band discovery,
-registered-band processing, player rivals, player-stat account chunks, early
-snapshot activation, and state-level leaderboard-rival accounts. Operations
-without a final denominator, including monolithic SQL, publication gates,
-retries, and retention work, remain explicitly indeterminate. Timeout/cancel
-transition states are `not_applicable`; parent phase progress is never relabeled
-as subphase progress.
+fetching, bounded online-writer drain, solo/band spool-page flushing,
+coordinated deep-scrape jobs, active solo/band index work, band extraction and
+membership rebuild, registered-player band discovery, registered-band
+processing, player rivals, player-stat account chunks, early snapshot
+activation, and state-level leaderboard-rival accounts. Empty band-index
+creation is `not_applicable`. Operations without a final denominator,
+including monolithic SQL, publication gates, retries, and retention work,
+remain explicitly indeterminate. Timeout/cancel transition states are also
+`not_applicable`; parent phase progress is never relabeled as subphase
+progress.
 
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
