@@ -465,7 +465,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task MaxScoreMaintenanceFreeze_ServesStableSongsAndLeaderboardCachesAndBlocksColdReads()
     {
-        const string songId = "maxScoreGateSong";
+        const string songId = "testSong1";
+        const string unavailableSongId = "testSongNoMic";
+        const string cachedGenerationId = "generation-before-promotion";
+        const string currentGenerationId = "generation-after-promotion";
+        const string unavailableGenerationId = "generation-without-artifacts";
         using var factory =
             _factory.WithWebHostBuilder(_ => { });
         using var client = factory.CreateClient();
@@ -478,30 +482,61 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var songsCache =
             factory.Services
                 .GetRequiredService<SongsCacheService>();
-        songsCache.Invalidate();
-        var warmSongsJson =
-            Encoding.UTF8.GetBytes(
-                "{\"source\":\"stable-songs-cache\"}");
-        songsCache.Set(warmSongsJson);
-        var pathDirectory = Path.Combine(
+        var pathStore =
+            factory.Services
+                .GetRequiredService<PathDataStore>();
+        var dataDirectory =
             factory.Services
                 .GetRequiredService<
                     IOptions<ScraperOptions>>()
-                .Value.DataDirectory,
-            "paths",
+                .Value.DataDirectory;
+
+        SetPathGeneration(
+            pathStore,
             songId,
-            "Solo_Guitar");
-        Directory.CreateDirectory(pathDirectory);
-        await File.WriteAllBytesAsync(
-            Path.Combine(
-                pathDirectory,
-                "expert.png"),
-            [1, 2, 3]);
-        await File.WriteAllTextAsync(
-            Path.Combine(
-                pathDirectory,
-                "expert.json"),
-            "{\"path\":\"stable\"}");
+            cachedGenerationId,
+            100_000,
+            "cached-generation-hash");
+        songsCache.Invalidate();
+        using var prePromotionSongs =
+            await client.GetAsync("/api/songs");
+        Assert.Equal(
+            HttpStatusCode.OK,
+            prePromotionSongs.StatusCode);
+        var warmSongsJson =
+            await prePromotionSongs.Content
+                .ReadAsByteArrayAsync();
+        using var prePromotionSongsJson =
+            JsonDocument.Parse(warmSongsJson);
+        Assert.Equal(
+            cachedGenerationId,
+            prePromotionSongsJson.RootElement
+                .GetProperty("songs")
+                .EnumerateArray()
+                .Single(song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId)
+                .GetProperty("pathArtifactGenerationId")
+                .GetString());
+
+        SetPathGeneration(
+            pathStore,
+            songId,
+            currentGenerationId,
+            100_001,
+            "current-generation-hash");
+        SetPathGeneration(
+            pathStore,
+            unavailableSongId,
+            unavailableGenerationId,
+            90_000,
+            "unavailable-generation-hash");
+        await WritePathArtifactsAsync(
+            dataDirectory,
+            songId,
+            currentGenerationId,
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
 
         var cachedLeaderboard =
             $"/api/leaderboard/{songId}/Solo_Guitar?leeway=1";
@@ -546,16 +581,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(
                 warmSongsJson,
                 await songs.Content.ReadAsByteArrayAsync());
-            songsCache.Invalidate();
-            var coldSongs = await client
-                .GetAsync("/api/songs")
-                .WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(
-                HttpStatusCode.ServiceUnavailable,
-                coldSongs.StatusCode);
-            Assert.Equal(
-                TimeSpan.FromSeconds(30),
-                coldSongs.Headers.RetryAfter?.Delta);
 
             var leaderboard =
                 await client.GetAsync(cachedLeaderboard)
@@ -587,50 +612,48 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 coldLeaderboard.Headers
                     .RetryAfter?.Delta);
 
-            var warmPath = await client
-                .GetAsync(
-                    $"/api/paths/{songId}/Solo_Guitar/expert")
-                .WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(
-                HttpStatusCode.OK,
-                warmPath.StatusCode);
-            Assert.Equal(
+            await AssertPathStatusAsync(
+                client,
+                songId,
+                GenerationQuery(cachedGenerationId),
+                HttpStatusCode.ServiceUnavailable,
+                TimeSpan.FromSeconds(30),
+                "Published path unavailable");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                string.Empty,
                 [1, 2, 3],
-                await warmPath.Content
-                    .ReadAsByteArrayAsync());
-            var warmPathData = await client
-                .GetAsync(
-                    $"/api/paths/{songId}/Solo_Guitar/expert/data")
-                .WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(
-                HttpStatusCode.OK,
-                warmPathData.StatusCode);
-            Assert.Equal(
-                "{\"path\":\"stable\"}",
-                await warmPathData.Content
-                    .ReadAsStringAsync());
+                "{\"path\":\"current\"}");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                GenerationQuery(currentGenerationId),
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                string.Empty,
+                HttpStatusCode.ServiceUnavailable,
+                TimeSpan.FromSeconds(30));
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                GenerationQuery(unavailableGenerationId),
+                HttpStatusCode.ServiceUnavailable,
+                TimeSpan.FromSeconds(30));
 
-            var coldPath = await client
-                .GetAsync(
-                    "/api/paths/testSong1/Solo_Guitar/expert")
+            songsCache.Invalidate();
+            var coldSongs = await client
+                .GetAsync("/api/songs")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
-                coldPath.StatusCode);
+                coldSongs.StatusCode);
             Assert.Equal(
                 TimeSpan.FromSeconds(30),
-                coldPath.Headers.RetryAfter?.Delta);
-            var coldPathData = await client
-                .GetAsync(
-                    "/api/paths/testSong1/Solo_Guitar/expert/data")
-                .WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(
-                HttpStatusCode.ServiceUnavailable,
-                coldPathData.StatusCode);
-            Assert.Equal(
-                TimeSpan.FromSeconds(30),
-                coldPathData.Headers
-                    .RetryAfter?.Delta);
+                coldSongs.Headers.RetryAfter?.Delta);
 
             var serviceInfo = await client
                 .GetAsync("/api/service-info")
@@ -646,7 +669,93 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 factory.Services
                     .GetRequiredService<NpgsqlDataSource>());
             gate.Invalidate();
-            songsCache.Invalidate();
+        }
+
+        await AssertPathStatusAsync(
+            client,
+            songId,
+            GenerationQuery(cachedGenerationId),
+            HttpStatusCode.BadRequest);
+        await AssertPathContentsAsync(
+            client,
+            songId,
+            string.Empty,
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
+        await AssertPathContentsAsync(
+            client,
+            songId,
+            GenerationQuery(currentGenerationId),
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
+        await AssertPathStatusAsync(
+            client,
+            unavailableSongId,
+            string.Empty,
+            HttpStatusCode.NotFound);
+        await AssertPathStatusAsync(
+            client,
+            unavailableSongId,
+            GenerationQuery(unavailableGenerationId),
+            HttpStatusCode.NotFound);
+
+        songsCache.Invalidate();
+        var refreshedSongs =
+            await client.GetFromJsonAsync<JsonElement>(
+                "/api/songs");
+        Assert.Equal(
+            currentGenerationId,
+            refreshedSongs
+                .GetProperty("songs")
+                .EnumerateArray()
+                .Single(song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId)
+                .GetProperty("pathArtifactGenerationId")
+                .GetString());
+
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            "publish");
+        gate.Invalidate();
+
+        try
+        {
+            await AssertPathStatusAsync(
+                client,
+                songId,
+                GenerationQuery(cachedGenerationId),
+                HttpStatusCode.BadRequest);
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                string.Empty,
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                GenerationQuery(currentGenerationId),
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                string.Empty,
+                HttpStatusCode.NotFound);
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                GenerationQuery(unavailableGenerationId),
+                HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(
+                factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
         }
     }
 
@@ -5245,6 +5354,118 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(2, json.GetProperty("count").GetInt32());
         Assert.Equal(3, json.GetProperty("localEntries").GetInt32());
         Assert.True(json.GetProperty("totalEntries").GetInt32() >= 3);
+    }
+
+    private static void SetPathGeneration(
+        PathDataStore pathStore,
+        string songId,
+        string generationId,
+        int maxLeadScore,
+        string datFileHash)
+    {
+        EnsureSongRow(pathStore, songId);
+        pathStore.UpdateMaxScores(
+            songId,
+            new SongMaxScores
+            {
+                MaxLeadScore = maxLeadScore,
+                ArtifactGenerationId = generationId,
+                ExpectedInstruments = ["Solo_Guitar"],
+            },
+            datFileHash);
+    }
+
+    private static async Task WritePathArtifactsAsync(
+        string dataDirectory,
+        string songId,
+        string generationId,
+        byte[] png,
+        string json)
+    {
+        var pathDirectory = Path.Combine(
+            PathArtifactResolver.GetGenerationDirectory(
+                dataDirectory,
+                songId,
+                generationId),
+            "Solo_Guitar");
+        Directory.CreateDirectory(pathDirectory);
+        await File.WriteAllBytesAsync(
+            Path.Combine(pathDirectory, "expert.png"),
+            png);
+        await File.WriteAllTextAsync(
+            Path.Combine(pathDirectory, "expert.json"),
+            json);
+    }
+
+    private static string GenerationQuery(string generationId)
+        => "?generationId=" + Uri.EscapeDataString(generationId);
+
+    private static async Task AssertPathStatusAsync(
+        HttpClient client,
+        string songId,
+        string query,
+        HttpStatusCode expectedStatus,
+        TimeSpan? retryAfter = null,
+        string? problemTitle = null)
+    {
+        foreach (var route in new[]
+                 {
+                     $"/api/paths/{songId}/Solo_Guitar/expert",
+                     $"/api/paths/{songId}/Solo_Guitar/expert/data",
+                 })
+        {
+            using var response = await client
+                .GetAsync(route + query)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(expectedStatus, response.StatusCode);
+            if (retryAfter.HasValue)
+            {
+                Assert.Equal(
+                    retryAfter,
+                    response.Headers.RetryAfter?.Delta);
+            }
+
+            if (problemTitle is not null)
+            {
+                Assert.Equal(
+                    "no-store",
+                    response.Headers.CacheControl?.ToString());
+                Assert.Equal(
+                    problemTitle,
+                    (await response.Content
+                        .ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("title")
+                    .GetString());
+            }
+        }
+    }
+
+    private static async Task AssertPathContentsAsync(
+        HttpClient client,
+        string songId,
+        string query,
+        byte[] expectedPng,
+        string expectedJson)
+    {
+        using var png = await client
+            .GetAsync(
+                $"/api/paths/{songId}/Solo_Guitar/expert"
+                + query)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(HttpStatusCode.OK, png.StatusCode);
+        Assert.Equal(
+            expectedPng,
+            await png.Content.ReadAsByteArrayAsync());
+
+        using var json = await client
+            .GetAsync(
+                $"/api/paths/{songId}/Solo_Guitar/expert/data"
+                + query)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(HttpStatusCode.OK, json.StatusCode);
+        Assert.Equal(
+            expectedJson,
+            await json.Content.ReadAsStringAsync());
     }
 
     /// <summary>

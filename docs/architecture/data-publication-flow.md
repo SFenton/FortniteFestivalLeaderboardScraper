@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified_commit: bf770d49
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -253,11 +253,15 @@ derived rows while retaining the same published scrape/publication ID.
 
 During this maintenance freeze, `/api/songs` may serve its stable process
 cache, immutable current-generation path PNG/JSON files may be served when
-present, and outer-cache exact solo leaderboards may be served. Cold dependent
-reads return `503` with `Retry-After` before publication read-context or
-boundary-lease acquisition, so maintenance lock waits cannot surface as
-`500`. Ordinary publication transitions still acquire and hold their existing
-read leases. Cacheable ranking/player/band routes otherwise serve the prior
+present, and outer-cache exact solo leaderboards may be served. When the songs
+cache was warmed before path promotion, its prior generation ID is temporary
+skew rather than an invalid client path: PNG and JSON requests carrying that
+valid stale ID return `503` with `Retry-After: 30` and never read the old
+immutable directory. Other cold dependent reads use the same `503` path before
+publication read-context or boundary-lease acquisition, so maintenance lock
+waits cannot surface as `500`. Ordinary publication transitions still acquire
+and hold their existing read leases and retain stale-ID `400`/missing-artifact
+`404` behavior. Cacheable ranking/player/band routes otherwise serve the prior
 published cache or return `503`; exact solo leaderboards never fall through to
 current max-score/leeway reads. Player tracking, selected-profile registration
 activity, manual `POST /api/backfill/{accountId}`, and band sync registration

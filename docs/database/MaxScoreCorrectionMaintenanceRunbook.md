@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified_commit: bf770d49
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -37,6 +37,7 @@ sources:
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
 update_triggers:
   - Max-score stage, plan, apply, resume, freeze, notification, cache, validation, or rollback-evidence behavior changes.
 ---
@@ -135,6 +136,15 @@ acquisition to the cache/route gate, so the exclusive maintenance lock cannot
 turn a cache hit or intentional `503` into a statement-timeout `500`.
 Ordinary publication commit/freeze read leases retain their existing order and
 behavior.
+
+After `paths_promoted`, a process-local `/api/songs` cache warmed before
+promotion can still advertise the previous generation ID. Treat that as an
+expected temporary skew: both path PNG and JSON requests with the old valid ID
+must return `503`/`Retry-After: 30`, never `400`, `500`, or the old immutable
+artifact. Requests with no generation ID or the current ID may serve only an
+already-present current artifact. Keep the freeze intact; final release
+invalidates songs/path caches, exposes the current ID, and restores the
+ordinary stale-ID `400` and missing-artifact `404` behavior.
 
 The same freeze rejects `POST /api/player/{accountId}/track`,
 `POST /api/backfill/{accountId}`, and the registration-changing band

@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified_commit: bf770d49
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -14,6 +14,7 @@ sources:
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
@@ -78,6 +79,16 @@ Appending `/data` serves the matching structured JSON. Both routes are
 publication-bound, accept an optional current `generationId`, and return an
 explicit error for invalid instruments, difficulties, generation IDs, or
 missing artifacts.
+
+Outside digest-owned max-score maintenance, a syntactically valid
+`generationId` that differs from the current pointer returns `400`, and a
+missing artifact for the current pointer returns `404`. During the maintenance
+freeze, a warm pre-promotion `/api/songs` response may still contain the prior
+generation ID after path promotion. Both the PNG and JSON routes return
+`503` with `Retry-After: 30` for that stale ID rather than serving the old
+immutable generation or reporting an invalid path. Omitting `generationId` or
+supplying the current value may serve only the current artifact when it
+already exists.
 
 Path JSON schema v2 is represented by `PathDataResponse` in
 `packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
@@ -159,8 +170,10 @@ Aggregate player scopes intentionally use different formulas:
   `Retry-After`; path and `/api/songs` are explicitly included even though
   they normally use live endpoint code. `/api/songs` may serve its existing
   stable process cache. A current-generation immutable path PNG or JSON file
-  may be served when it already exists; a missing artifact returns
-  `503`/`Retry-After: 30` for the duration of maintenance. Exact solo
+  may be served when it already exists. A stale but syntactically valid
+  generation ID from a warm pre-promotion songs cache and any unavailable
+  current path return `503`/`Retry-After: 30` for the duration of maintenance;
+  the resolver never falls back to the requested old generation. Exact solo
   leaderboard routes, especially leeway queries, use the outer published cache
   or return `503`. These dependent routes bypass publication read-context and
   boundary-lease acquisition only for the digest-owned max-score freeze, so a

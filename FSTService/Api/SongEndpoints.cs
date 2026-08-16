@@ -272,13 +272,15 @@ public static partial class ApiEndpoints
             instrument,
             difficulty,
             extension,
-            generationId);
+            generationId,
+            out var resolutionFailure);
         if (artifact is null)
         {
-            if (resolver.IsUnavailableInCurrentGeneration(
-                    songId,
-                    instrument,
-                    generationId))
+            if (resolutionFailure is
+                PathArtifactResolutionFailure
+                    .RequestedGenerationUnavailable or
+                PathArtifactResolutionFailure
+                    .UnavailableInCurrentGeneration)
             {
                 var unavailable =
                     ServePathUnavailableDuringMaxScoreMaintenance(
@@ -287,12 +289,17 @@ public static partial class ApiEndpoints
                 if (unavailable is not null)
                     return unavailable;
 
-                return Results.NotFound(new
+                if (resolutionFailure ==
+                    PathArtifactResolutionFailure
+                        .UnavailableInCurrentGeneration)
                 {
-                    error = extension == "png"
-                        ? "Path image not yet generated for this song/instrument/difficulty."
-                        : "Path data not yet generated for this song/instrument/difficulty.",
-                });
+                    return Results.NotFound(new
+                    {
+                        error = extension == "png"
+                            ? "Path image not yet generated for this song/instrument/difficulty."
+                            : "Path data not yet generated for this song/instrument/difficulty.",
+                    });
+                }
             }
 
             return Results.BadRequest(new { error = "Invalid path." });

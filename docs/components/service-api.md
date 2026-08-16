@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: 937868e0
+last_verified: 2026-08-16
+last_verified_commit: bf770d49
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -16,6 +16,7 @@ sources:
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -110,9 +111,11 @@ A digest-owned max-score maintenance freeze requires published cache hits or
 forms are included even though they are normally live endpoint code. A warm
 `SongsCacheService` response may serve the prior publication; an existing
 immutable current-generation path PNG/JSON may also be served. Missing path
-artifacts and cold exact solo leaderboard reads, including leeway requests,
-return `503`/`Retry-After: 30`. Outer-cache exact leaderboard hits remain
-available.
+artifacts, syntactically valid stale generation IDs retained by a warm
+pre-promotion songs cache, and cold exact solo leaderboard reads, including
+leeway requests, return `503`/`Retry-After: 30`. Path endpoints never serve
+the requested old immutable generation. Outer-cache exact leaderboard hits
+remain available.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the
