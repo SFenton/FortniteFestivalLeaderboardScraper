@@ -154,13 +154,11 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
-    public async Task Plan_apply_and_resume_revalidate_observed_score_evidence_above_denominator()
+    public async Task Plan_apply_and_resume_revalidate_exact_observed_outlier_evidence()
     {
         await using var fixture =
             await WorkflowFixture.CreateAsync(
-                publishedOverlayScore: 62_000);
-        var originalUpdatedAt =
-            fixture.ReadPublishedOverlayLastUpdatedAt();
+                publishedOverlayScore: 70_000);
         var approved = await fixture.PlanAsync();
 
         Assert.True(approved.CanApply);
@@ -171,46 +169,42 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             Assert.Single(approved.ObservedScoreChecks);
         Assert.Equal(60_000, approvedCheck.NewMaximum);
         Assert.Equal(63_000, approvedCheck.ValidCutoff);
-        Assert.Equal(62_000, approvedCheck.HighestObservedScore);
+        Assert.Equal(70_000, approvedCheck.HighestObservedScore);
+        Assert.Equal(
+            40_000,
+            approvedCheck.HighestEligibleObservedScore);
+        Assert.Equal(1, approvedCheck.AboveValidCutoffCount);
         Assert.True(approvedCheck.SourceMapped);
         Assert.True(approvedCheck.Passed);
+        var approvedDetail = Assert.Single(
+            approved.Checks,
+            check => check.Name == "observed-scores").Detail;
+        Assert.Contains(
+            "rawHighest=70000",
+            approvedDetail,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "eligibleHighest=40000",
+            approvedDetail,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "aboveValidCutoffCount=1",
+            approvedDetail,
+            StringComparison.Ordinal);
 
-        fixture.UpdatePublishedOverlayScore(
-            62_500,
-            originalUpdatedAt);
+        fixture.UpdatePublishedSnapshotScore(65_000);
         var changed = await fixture.PlanAsync();
-        Assert.True(
-            Assert.Single(changed.ObservedScoreChecks).Passed);
+        Assert.True(changed.CanApply);
+        var changedCheck =
+            Assert.Single(changed.ObservedScoreChecks);
+        Assert.True(changedCheck.Passed);
+        Assert.Equal(70_000, changedCheck.HighestObservedScore);
+        Assert.Null(changedCheck.HighestEligibleObservedScore);
+        Assert.Equal(2, changedCheck.AboveValidCutoffCount);
         Assert.NotEqual(
             approved.PlanDigest,
             changed.PlanDigest);
-        fixture.UpdatePublishedOverlayScore(
-            63_001,
-            originalUpdatedAt);
-        var aboveCutoff = await fixture.PlanAsync();
-        Assert.False(aboveCutoff.CanApply);
-        Assert.False(
-            Assert.Single(
-                aboveCutoff.ObservedScoreChecks).Passed);
-        var observedCheck = Assert.Single(
-            aboveCutoff.Checks,
-            check => check.Name == "observed-scores");
-        Assert.Contains(
-            "observed=63001",
-            observedCheck.Detail,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "newMaximum=60000",
-            observedCheck.Detail,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "validCutoff=63000",
-            observedCheck.Detail,
-            StringComparison.Ordinal);
 
-        fixture.UpdatePublishedOverlayScore(
-            62_500,
-            originalUpdatedAt);
         var rejectedApply = await fixture.ApplyAsync(
             resume: false,
             approved.PlanDigest,
@@ -223,9 +217,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             fixture.LastFailure?.Message,
             StringComparison.Ordinal);
 
-        fixture.UpdatePublishedOverlayScore(
-            62_000,
-            originalUpdatedAt);
+        fixture.UpdatePublishedSnapshotScore(40_000);
         var restored = await fixture.PlanAsync();
         Assert.True(restored.CanApply);
         Assert.Equal(
@@ -256,7 +248,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 stage == "apply-resume"
                     ? checks.Select(check => check with
                         {
-                            HighestObservedScore = 62_500,
+                            AboveValidCutoffCount =
+                                check.AboveValidCutoffCount + 1,
                             Passed = true,
                         })
                         .ToArray()
@@ -1164,57 +1157,17 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 CancellationToken.None);
         }
 
-        internal DateTime ReadPublishedOverlayLastUpdatedAt()
+        internal void UpdatePublishedSnapshotScore(
+            int score)
         {
             using var connection =
                 _dataSource.OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT last_updated_at
-                FROM leaderboard_entries_overlay
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND account_id = @accountId
-                """;
-            command.Parameters.AddWithValue(
-                "songId",
-                SongId);
-            command.Parameters.AddWithValue(
-                "instrument",
-                Instrument);
-            command.Parameters.AddWithValue(
-                "accountId",
-                OverlayAccount);
-            return Convert.ToDateTime(
-                command.ExecuteScalar());
-        }
-
-        internal void UpdatePublishedOverlayScore(
-            int score,
-            DateTime lastUpdatedAt)
-        {
-            using var connection =
-                _dataSource.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                UPDATE leaderboard_entries_overlay
-                SET score = @score,
-                    last_updated_at = @lastUpdatedAt
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND account_id = @accountId;
-
-                UPDATE leaderboard_entries
-                SET score = @score,
-                    last_updated_at = @lastUpdatedAt
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND account_id = @accountId;
-
-                UPDATE current_leaderboard_entries
-                SET score = @score,
-                    last_updated_at = @lastUpdatedAt
-                WHERE song_id = @songId
+                UPDATE leaderboard_entries_snapshot
+                SET score = @score
+                WHERE snapshot_id = @snapshotId
+                  AND song_id = @songId
                   AND instrument = @instrument
                   AND account_id = @accountId;
                 """;
@@ -1222,8 +1175,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 "score",
                 score);
             command.Parameters.AddWithValue(
-                "lastUpdatedAt",
-                lastUpdatedAt);
+                "snapshotId",
+                PublishedScrapeId);
             command.Parameters.AddWithValue(
                 "songId",
                 SongId);
@@ -1232,8 +1185,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 Instrument);
             command.Parameters.AddWithValue(
                 "accountId",
-                OverlayAccount);
-            Assert.Equal(3, command.ExecuteNonQuery());
+                BaseAccount);
+            Assert.Equal(1, command.ExecuteNonQuery());
         }
 
         internal long InsertRelevantHistoryMutation()

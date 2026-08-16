@@ -1312,14 +1312,9 @@ public sealed class MaxScoreMaintenanceService
                 new(
                     "observed-scores",
                     observedScoresClear,
-                    observedScoresClear
-                        ? $"{observedScoreChecks.Count} changed song/instrument maxima have mapped authoritative sources and no observed score above the ranking validity cutoff"
-                        : string.Join(
-                            "; ",
-                            observedScoreChecks
-                                .Where(check => !check.Passed)
-                                .Select(
-                                    FormatObservedScoreFailure))),
+                    FormatObservedScoreSummary(
+                        observedScoreChecks,
+                        observedScoresClear)),
                 new(
                     "notifications",
                     routineCandidatesClear,
@@ -3155,6 +3150,13 @@ public sealed class MaxScoreMaintenanceService
                     Instrument: instrument,
                     NewMaximum: song.StagedPath.Maxima
                         .GetByInstrument(instrument)!.Value)))
+            .Select(pair => (
+                pair.SongId,
+                pair.Instrument,
+                pair.NewMaximum,
+                ValidCutoff:
+                    RankingsCalculator.ComputeMaxScoreThreshold(
+                        pair.NewMaximum)))
             .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
             .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
             .ToArray();
@@ -3162,12 +3164,17 @@ public sealed class MaxScoreMaintenanceService
         command.Transaction = transaction;
         command.CommandTimeout = 60;
         command.CommandText = $"""
-            WITH expected(song_id, instrument, new_maximum) AS (
+            WITH expected(
+                song_id,
+                instrument,
+                new_maximum,
+                valid_cutoff) AS (
                 SELECT *
                 FROM unnest(
                     @songIds::TEXT[],
                     @instruments::TEXT[],
-                    @newMaximums::INTEGER[])
+                    @newMaximums::INTEGER[],
+                    @validCutoffs::INTEGER[])
             ), affected AS (
                 SELECT song_id, instrument
                 FROM expected
@@ -3176,6 +3183,7 @@ public sealed class MaxScoreMaintenanceService
             SELECT expected.song_id,
                    expected.instrument,
                    expected.new_maximum,
+                   expected.valid_cutoff,
                    EXISTS (
                        SELECT 1
                        FROM selected_sources selected
@@ -3183,14 +3191,21 @@ public sealed class MaxScoreMaintenanceService
                            expected.song_id
                          AND selected.instrument =
                            expected.instrument),
-                   MAX(resolved.score)::INTEGER
+                   MAX(resolved.score)::INTEGER,
+                   MAX(resolved.score) FILTER (
+                       WHERE resolved.score
+                           <= expected.valid_cutoff)::INTEGER,
+                   COUNT(resolved.score) FILTER (
+                       WHERE resolved.score
+                           > expected.valid_cutoff)
             FROM expected
             LEFT JOIN resolved_rows resolved
               ON resolved.song_id = expected.song_id
              AND resolved.instrument = expected.instrument
             GROUP BY expected.song_id,
                      expected.instrument,
-                     expected.new_maximum
+                     expected.new_maximum,
+                     expected.valid_cutoff
             ORDER BY expected.song_id,
                      expected.instrument
             """;
@@ -3206,6 +3221,10 @@ public sealed class MaxScoreMaintenanceService
             "newMaximums",
             NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
             changedPairs.Select(pair => pair.NewMaximum).ToArray();
+        command.Parameters.Add(
+            "validCutoffs",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            changedPairs.Select(pair => pair.ValidCutoff).ToArray();
 
         var checks =
             new List<MaxScoreMaintenanceObservedScoreCheck>(
@@ -3215,16 +3234,23 @@ public sealed class MaxScoreMaintenanceService
         while (await reader.ReadAsync(ct))
         {
             var newMaximum = reader.GetInt32(2);
-            var sourceMapped = reader.GetBoolean(3);
-            var highestObservedScore = reader.IsDBNull(4)
+            var validCutoff = reader.GetInt32(3);
+            var sourceMapped = reader.GetBoolean(4);
+            var highestObservedScore = reader.IsDBNull(5)
                 ? (int?)null
-                : reader.GetInt32(4);
+                : reader.GetInt32(5);
+            var highestEligibleObservedScore = reader.IsDBNull(6)
+                ? (int?)null
+                : reader.GetInt32(6);
             checks.Add(MaxScoreMaintenanceObservedScoreCheck.Create(
                 reader.GetString(0),
                 reader.GetString(1),
                 newMaximum,
+                validCutoff,
                 sourceMapped,
-                highestObservedScore));
+                highestObservedScore,
+                highestEligibleObservedScore,
+                reader.GetInt64(7)));
         }
         if (checks.Count != changedPairs.Length)
         {
@@ -3237,19 +3263,42 @@ public sealed class MaxScoreMaintenanceService
 
     internal static bool IsObservedScoreCompatible(
         int newMaximum,
+        int validCutoff,
         bool sourceMapped,
-        int? highestObservedScore)
+        int? highestEligibleObservedScore)
         => MaxScoreMaintenanceObservedScoreCheck
             .IsCompatible(
                 newMaximum,
+                validCutoff,
                 sourceMapped,
-                highestObservedScore);
+                highestEligibleObservedScore);
 
     private static string FormatObservedScoreFailure(
         MaxScoreMaintenanceObservedScoreCheck check)
         => check.SourceMapped
-            ? $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore?.ToString() ?? "none"}, newMaximum={check.NewMaximum}, validCutoff={check.ValidCutoff}"
-            : $"{check.SongId}/{check.Instrument}: authoritative published source is missing, newMaximum={check.NewMaximum}, validCutoff={check.ValidCutoff}";
+            ? "eligible observed-score evidence is incompatible; "
+              + FormatObservedScoreEvidence(check)
+            : "authoritative published source is missing; "
+              + FormatObservedScoreEvidence(check);
+
+    private static string FormatObservedScoreSummary(
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> checks,
+        bool passed)
+    {
+        var evidence = string.Join(
+            "; ",
+            checks.Select(check =>
+                check.Passed
+                    ? FormatObservedScoreEvidence(check)
+                    : FormatObservedScoreFailure(check)));
+        return passed
+            ? $"{checks.Count} changed song/instrument maxima have mapped authoritative sources and eligible scores within the exact 105% ranking cutoff; ranking-invalid rows above cutoff={checks.Sum(check => check.AboveValidCutoffCount):N0}; {evidence}"
+            : $"{checks.Count(check => !check.Passed)} observed-score checks failed compatibility; {evidence}";
+    }
+
+    private static string FormatObservedScoreEvidence(
+        MaxScoreMaintenanceObservedScoreCheck check)
+        => $"{check.SongId}/{check.Instrument}: sourceMapped={check.SourceMapped.ToString().ToLowerInvariant()}, rawHighest={check.HighestObservedScore?.ToString() ?? "none"}, eligibleHighest={check.HighestEligibleObservedScore?.ToString() ?? "none"}, aboveValidCutoffCount={check.AboveValidCutoffCount}, newMaximum={check.NewMaximum}, validCutoff={check.ValidCutoff}";
 
     internal static async Task<MaxScoreMaintenanceScoreHistoryEvidence>
         ComputeScoreHistoryEvidenceAsync(
@@ -3967,7 +4016,7 @@ public sealed class MaxScoreMaintenanceService
         if (failedObservedScore is not null)
         {
             throw new InvalidOperationException(
-                "Observed-score evidence no longer satisfies the approved ranking validity cutoff: "
+                "Observed-score evidence no longer satisfies the approved eligibility contract: "
                 + FormatObservedScoreFailure(
                     failedObservedScore));
         }

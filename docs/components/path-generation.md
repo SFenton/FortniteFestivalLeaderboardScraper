@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -155,10 +155,11 @@ SHA-256 identities, then rejects:
 - any non-null target current, staged, or request maximum above
   `RankingsCalculator.MaximumScoreWithRepresentableRankingCutoff`
   (`2,045,222,521`);
-- a missing authoritative published score source or an observed score above
-  `floor(newMaximum × 21 / 20)`, the exact `1.05` integer ranking validity
-  cutoff (a score above the CHOpt denominator but within that cutoff remains
-  valid);
+- a missing authoritative published score source, invalid maximum/cutoff, or
+  eligible observed score above `floor(newMaximum × 21 / 20)`, the exact
+  `1.05` integer ranking eligibility cutoff. Raw rows above that cutoff remain
+  visible in the plan as ranking-invalid outliers and do not block
+  compatibility;
 - a plastic-drums cymbal mode below no-cymbal mode, empty authored activation
   windows, or a plastic note inventory matching `Solo_Drums`;
 - a maximum difference omitted from `changedInstruments`; or
@@ -170,6 +171,10 @@ computation saturates such a cutoff at `int.MaxValue`, preserving the exact
 result over the PostgreSQL `INTEGER` score domain and preventing an overflowing
 SQL parameter. A target value at the same boundary still fails request,
 actual-path, manifest, and report validation.
+
+This plan-time outlier contract does not change the stage/canary
+plastic-drums gate. Plastic-drums canaries still require their observed
+leaderboard scores to remain below the applicable CHOpt maximum.
 
 Apply promotes every manifest generation in one PostgreSQL transaction. It
 does not expose the new path pointer until a digest-owned maintenance freeze is

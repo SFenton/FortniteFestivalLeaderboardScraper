@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -103,12 +103,17 @@ production meanings:
 - FC Rate is `fullComboCount / totalChartedSongs`; unplayed charts remain in
   the denominator and no Bayesian adjustment is applied;
 - Total Score is the sum of eligible scores;
-- Max Score % uses the CHOpt maximum as its ratio denominator, but validity is
-  a separate integer threshold:
-  `floor(CHOpt maximum × 21 / 20)`, the exact `1.05` contract. Scores above
-  that threshold are excluded. Max-score maintenance admits target maxima only
-  through `2,045,222,521`, whose cutoff is `int.MaxValue`; the next target
-  value is rejected before publication because its cutoff cannot fit
+- Max Score % uses the CHOpt maximum as its ratio denominator, but eligibility
+  is a separate integer threshold:
+  `floor(CHOpt maximum × 21 / 20)`, the exact 105% contract. Scores above that
+  threshold are ranking-invalid and excluded. Max-score maintenance reports
+  the raw highest resolved score, highest eligible score, and raw
+  above-threshold count for each changed pair. Those outliers do not block a
+  plan; score-history/ranking fallback evidence owns the eligible historical
+  input used when a current row is invalid. Max-score maintenance admits
+  target maxima only through `2,045,222,521`, whose cutoff is `int.MaxValue`;
+  the next target value is rejected before publication because its cutoff
+  cannot fit
   PostgreSQL `INTEGER`. An unrelated catalog maximum above that bound uses an
   `int.MaxValue` cutoff for representable score evaluation and does not become
   an admitted maintenance target. Scores above the denominator but at or below
