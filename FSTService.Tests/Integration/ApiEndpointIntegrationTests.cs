@@ -466,20 +466,42 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task MaxScoreMaintenanceFreeze_ServesStableSongsAndLeaderboardCachesAndBlocksColdReads()
     {
         const string songId = "maxScoreGateSong";
+        using var factory =
+            _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
         var metaDb =
-            _factory.Services.GetRequiredService<MetaDatabase>();
+            factory.Services.GetRequiredService<MetaDatabase>();
         var pointers = EnsureCurrentPublication(metaDb);
         var gate =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<PublicReadGateService>();
         var songsCache =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<SongsCacheService>();
         songsCache.Invalidate();
-        var warmSongs = await _client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, warmSongs.StatusCode);
         var warmSongsJson =
-            await warmSongs.Content.ReadAsByteArrayAsync();
+            Encoding.UTF8.GetBytes(
+                "{\"source\":\"stable-songs-cache\"}");
+        songsCache.Set(warmSongsJson);
+        var pathDirectory = Path.Combine(
+            factory.Services
+                .GetRequiredService<
+                    IOptions<ScraperOptions>>()
+                .Value.DataDirectory,
+            "paths",
+            songId,
+            "Solo_Guitar");
+        Directory.CreateDirectory(pathDirectory);
+        await File.WriteAllBytesAsync(
+            Path.Combine(
+                pathDirectory,
+                "expert.png"),
+            [1, 2, 3]);
+        await File.WriteAllTextAsync(
+            Path.Combine(
+                pathDirectory,
+                "expert.json"),
+            "{\"path\":\"stable\"}");
 
         var cachedLeaderboard =
             $"/api/leaderboard/{songId}/Solo_Guitar?leeway=1";
@@ -495,22 +517,49 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             pointers.PublishedScrapeId,
             reason);
         gate.Invalidate();
+        using var lockConnection =
+            factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction =
+                lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
 
         try
         {
-            var songs = await _client.GetAsync("/api/songs");
+            var songs = await client
+                .GetAsync("/api/songs")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.OK, songs.StatusCode);
             Assert.Equal(
                 warmSongsJson,
                 await songs.Content.ReadAsByteArrayAsync());
             songsCache.Invalidate();
-            var coldSongs = await _client.GetAsync("/api/songs");
+            var coldSongs = await client
+                .GetAsync("/api/songs")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
                 coldSongs.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                coldSongs.Headers.RetryAfter?.Delta);
 
             var leaderboard =
-                await _client.GetAsync(cachedLeaderboard);
+                await client.GetAsync(cachedLeaderboard)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.OK,
                 leaderboard.StatusCode);
@@ -526,22 +575,75 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 .GetProperty("source")
                 .GetString());
 
-            var coldLeaderboard = await _client.GetAsync(
-                $"/api/leaderboard/{songId}/Solo_Guitar?leeway=2");
+            var coldLeaderboard = await client
+                .GetAsync(
+                    $"/api/leaderboard/{songId}/Solo_Guitar?leeway=2")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
                 coldLeaderboard.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                coldLeaderboard.Headers
+                    .RetryAfter?.Delta);
 
-            var coldPath = await _client.GetAsync(
-                $"/api/paths/{songId}/Solo_Guitar/expert");
+            var warmPath = await client
+                .GetAsync(
+                    $"/api/paths/{songId}/Solo_Guitar/expert")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                warmPath.StatusCode);
+            Assert.Equal(
+                [1, 2, 3],
+                await warmPath.Content
+                    .ReadAsByteArrayAsync());
+            var warmPathData = await client
+                .GetAsync(
+                    $"/api/paths/{songId}/Solo_Guitar/expert/data")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                warmPathData.StatusCode);
+            Assert.Equal(
+                "{\"path\":\"stable\"}",
+                await warmPathData.Content
+                    .ReadAsStringAsync());
+
+            var coldPath = await client
+                .GetAsync(
+                    "/api/paths/testSong1/Solo_Guitar/expert")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
                 coldPath.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                coldPath.Headers.RetryAfter?.Delta);
+            var coldPathData = await client
+                .GetAsync(
+                    "/api/paths/testSong1/Solo_Guitar/expert/data")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                coldPathData.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                coldPathData.Headers
+                    .RetryAfter?.Delta);
+
+            var serviceInfo = await client
+                .GetAsync("/api/service-info")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                serviceInfo.StatusCode);
         }
         finally
         {
+            lockTransaction.Rollback();
             ClearPublicReadFreezeForTest(
-                _factory.Services
+                factory.Services
                     .GetRequiredService<NpgsqlDataSource>());
             gate.Invalidate();
             songsCache.Invalidate();

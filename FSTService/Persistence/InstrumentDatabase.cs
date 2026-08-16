@@ -1462,10 +1462,15 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerScoresForAccounts(
         IReadOnlyCollection<string> accountIds,
-        string? songId = null)
+        string? songId = null,
+        bool includeBlankAccountIds = false)
     {
         var normalizedAccountIds = accountIds
-            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Where(accountId =>
+                accountId is not null
+                && (includeBlankAccountIds
+                    || !string.IsNullOrWhiteSpace(
+                        accountId)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (normalizedAccountIds.Length == 0)
@@ -2943,6 +2948,47 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             list.Add(ReadAccountRanking(r));
         return (list, total);
     }
+
+    public List<AccountRankingDto> GetAllAccountRankings()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT account_id,
+                   songs_played,
+                   total_charted_songs,
+                   coverage,
+                   raw_skill_rating,
+                   adjusted_skill_rating,
+                   adjusted_skill_rank,
+                   weighted_rating,
+                   weighted_rank,
+                   fc_rate,
+                   fc_rate_rank,
+                   total_score,
+                   total_score_rank,
+                   max_score_percent,
+                   max_score_percent_rank,
+                   avg_accuracy,
+                   full_combo_count,
+                   avg_stars,
+                   best_rank,
+                   avg_rank,
+                   computed_at,
+                   raw_max_score_percent,
+                   raw_weighted_rating
+            FROM account_rankings
+            WHERE instrument = @instrument
+            ORDER BY account_id
+            """;
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var rankings = new List<AccountRankingDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            rankings.Add(ReadAccountRanking(reader));
+        return rankings;
+    }
+
     public AccountRankingDto? GetAccountRanking(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at, raw_max_score_percent, raw_weighted_rating FROM account_rankings WHERE instrument = @instrument AND account_id = @accountId"; cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("accountId", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadAccountRanking(r) : null; }
 
     public (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore")

@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -18,6 +18,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -157,6 +158,13 @@ plus frozen publication instruments. It recalculates
 target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
+Blank affected account IDs are excluded consistently after maintenance proves
+that they have no score-history, registration, or account-cache identity; this
+does not version or alter plan-digest v6 inputs. Leaderboard rivals rebuild
+only manifest-changed instruments. Each changed instrument uses one
+authoritative profile batch for registered users plus deduplicated ranking
+neighbors, retains all five methods/directions/top-200 semantics, and persists
+each user/instrument atomically without touching unrelated rival state.
 Before any post-freeze mutation and again on resume, maintenance reloads each
 mapped raw highest score, highest score eligible at or below
 `floor(newMaximum × 21 / 20)`, and above-cutoff row count, then reconstructs

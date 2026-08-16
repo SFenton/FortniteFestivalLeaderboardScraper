@@ -2334,8 +2334,9 @@ public sealed class MaxScoreMaintenanceService
                 FROM (
                     SELECT DISTINCT account_id
                     FROM registered_users
+                    WHERE btrim(account_id) <> ''
                 ) registered
-                CROSS JOIN unnest(@allInstruments::TEXT[])
+                CROSS JOIN unnest(@affectedInstruments::TEXT[])
                     instrument(value)
                 CROSS JOIN unnest(@rankMethods::TEXT[])
                     method(value)
@@ -2484,10 +2485,6 @@ public sealed class MaxScoreMaintenanceService
         cmd.Parameters.AddWithValue(
             "publicationId",
             manifest.ExpectedPublicationId);
-        cmd.Parameters.Add(
-            "allInstruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            GlobalLeaderboardScraper.AllInstruments.ToArray();
         cmd.Parameters.Add(
             "rankMethods",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
@@ -3419,9 +3416,11 @@ public sealed class MaxScoreMaintenanceService
                   ON changed.song_id = resolved.song_id
                  AND changed.instrument =
                      resolved.instrument
+                WHERE btrim(resolved.account_id) <> ''
             ), registered_accounts AS MATERIALIZED (
                 SELECT account_id
                 FROM registered_users
+                WHERE btrim(account_id) <> ''
             ), player_stats_fallback_scopes AS MATERIALIZED (
                 SELECT resolved.song_id,
                        resolved.instrument,
@@ -3870,12 +3869,18 @@ public sealed class MaxScoreMaintenanceService
                     scoreHistory.Evidence,
                     observedScoreChecks,
                     publishedScopes,
-                    scoreHistory
-                        .AffectedPlayerStatsAccounts,
-                    scoreHistory
-                        .AffectedRegisteredAccounts,
-                    scoreHistory
-                        .OverlayOnlyRegisteredAccounts);
+                    MaxScoreMaintenanceAccountIdPolicy
+                        .NormalizeSet(
+                            scoreHistory
+                                .AffectedPlayerStatsAccounts),
+                    MaxScoreMaintenanceAccountIdPolicy
+                        .NormalizeSet(
+                            scoreHistory
+                                .AffectedRegisteredAccounts),
+                    MaxScoreMaintenanceAccountIdPolicy
+                        .NormalizeSet(
+                            scoreHistory
+                                .OverlayOnlyRegisteredAccounts));
             },
             IsolationLevel.RepeatableRead,
             ct);

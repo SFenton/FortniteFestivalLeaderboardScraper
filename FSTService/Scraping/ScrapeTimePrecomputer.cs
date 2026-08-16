@@ -304,7 +304,12 @@ public sealed class ScrapeTimePrecomputer
         var unfilteredPopulation = useExistingMaintenanceLease
             ? populationOverride!
             : _metaDb.GetAllLeaderboardPopulation();
-        var registeredIds = _metaDb.GetRegisteredAccountIds();
+        var registeredIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(
+                    _metaDb.GetRegisteredAccountIds())
+                .ToHashSet(
+                    StringComparer.OrdinalIgnoreCase);
 
         // ── Set up disk staging (shared across phases 2-7) ──────
         await using var staging = new DiskStagingWriter(

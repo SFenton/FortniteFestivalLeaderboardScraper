@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified: 2026-08-16
+last_verified_commit: 937868e0
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -11,6 +11,9 @@ sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/SongEndpoints.cs
   - docs/operations/deployment.md
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -156,6 +159,14 @@ generation from ordinary builders/writers; resume and the final locked
 transaction require exact key/ETag/JSON-hash parity with immutable database
 evidence. Never repair this by clearing the freeze or publishing a different
 staging generation.
+
+While that freeze owns the publication lock, max-score-dependent public
+requests resolve before publication read-lease acquisition: serve an existing
+outer cache, the stable songs cache, or an already-present immutable
+current-generation path artifact; otherwise return `503` with
+`Retry-After: 30`. A statement timeout or lock wait must never escape as a
+`500`. This exception is max-score-only; ordinary publication commit/freeze
+read leases are unchanged.
 
 For a reviewed long-running evidence scan, set the bounded per-command override
 documented in the runbook; production currently uses

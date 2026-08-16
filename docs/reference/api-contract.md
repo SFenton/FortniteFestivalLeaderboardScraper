@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 937868e0
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -12,6 +12,8 @@ sources:
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
@@ -156,8 +158,14 @@ Aggregate player scopes intentionally use different formulas:
   Otherwise affected song/path/ranking/player/band surfaces return `503` with
   `Retry-After`; path and `/api/songs` are explicitly included even though
   they normally use live endpoint code. `/api/songs` may serve its existing
-  stable process cache; exact solo leaderboard routes, especially leeway
-  queries, use the outer published cache or return `503`.
+  stable process cache. A current-generation immutable path PNG or JSON file
+  may be served when it already exists; a missing artifact returns
+  `503`/`Retry-After: 30` for the duration of maintenance. Exact solo
+  leaderboard routes, especially leeway queries, use the outer published cache
+  or return `503`. These dependent routes bypass publication read-context and
+  boundary-lease acquisition only for the digest-owned max-score freeze, so a
+  maintenance lock timeout cannot become a `500`; ordinary publication
+  freezes and commit read leases are unchanged.
 - While the exclusive max-score mutation gate or its exact freeze is active,
   `POST /api/player/{accountId}/track`,
   `POST /api/backfill/{accountId}`, and
