@@ -1,78 +1,48 @@
 .card,
 .liveSummary,
-.progressBlock,
-.timingList {
+.progressBlock {
   display: flex;
   min-width: 0;
   flex-direction: column;
 }
 
-.card {
-  gap: var(--gap-md);
-}
-
+.card,
 .liveSummary {
   gap: var(--gap-md);
 }
 
-.phaseBlock {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.statusLine {
+.processState {
   display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
   align-items: center;
-  gap: var(--gap-sm);
-  color: var(--settings-progress-muted);
-}
-
-.statusValue {
-  font-weight: 700;
-  color: inherit;
-}
-
-.statusSeparator {
-  color: var(--settings-progress-tertiary);
-}
-
-.workerStatus {
-  min-width: 0;
-  overflow-wrap: anywhere;
+  gap: var(--gap-md);
+  font-weight: 600;
 }
 
 .spinner {
   flex: 0 0 auto;
 }
 
-.progressLabel {
-  color: var(--settings-progress-tertiary);
-  font-weight: 650;
-}
-
 .progressBlock {
-  gap: var(--gap-md);
+  gap: var(--gap-sm);
+  margin-top: var(--gap-xs);
 }
 
-.progressHeader {
+.progressRail {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--gap-sm);
+  align-items: center;
+  gap: var(--gap-xl);
 }
 
 .progressValue {
-  min-width: 0;
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
 }
 
 .progressTrack {
   position: relative;
+  flex: 1 1 auto;
   height: 0.65rem;
   overflow: hidden;
   border-radius: var(--radius-full);
@@ -101,7 +71,6 @@
   min-width: 0;
   flex-wrap: wrap;
   gap: var(--gap-sm) var(--gap-xl);
-  color: var(--settings-progress-muted);
   line-height: 1.45;
 }
 
@@ -110,46 +79,10 @@
   overflow-wrap: anywhere;
 }
 
-.statusSupporting {
-  margin: 0;
-  color: var(--settings-progress-muted);
-  line-height: 1.45;
-}
-
 .warning {
-  margin: 0;
+  margin-top: var(--gap-xs);
   color: var(--settings-progress-warning);
   line-height: 1.45;
-}
-
-.timingList {
-  margin: 0;
-  padding-top: var(--gap-sm);
-  border-top: 1px solid var(--settings-progress-divider);
-}
-
-.timingItem {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--gap-xl);
-  padding: var(--gap-sm) 0;
-  font-size: var(--font-md);
-}
-
-.timingLabel {
-  min-width: 0;
-}
-
-.timingValue {
-  min-width: 0;
-  margin: 0;
-  color: var(--settings-progress-muted);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-  text-align: right;
 }
 
 @keyframes settings-progress-indeterminate {
@@ -163,18 +96,6 @@
 
   100% {
     transform: translateX(300%);
-  }
-}
-
-@media (width <= 480px) {
-  .timingItem {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--gap-xs);
-  }
-
-  .timingValue {
-    text-align: left;
   }
 }
 

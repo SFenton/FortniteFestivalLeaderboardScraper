@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import type { ServiceInfoResponse } from '@festival/core/api';
 import { Colors, Layout, Radius, padding } from '@festival/theme';
 import { FrostedCard } from '../../components/common/FrostedCard';
 import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
-import SectionHeader from '../../components/common/SectionHeader';
+import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import {
   reduceServiceProgress,
   type ServiceProgressDisplay,
@@ -14,15 +14,20 @@ import {
 import styles from './SettingsServiceProgress.module.css';
 import './settingsEnglish';
 
-type TimingRow = {
-  id: string;
-  label: string;
-  value: string;
-};
-
 type ServiceProgressCardProps = {
   serviceInfo: ServiceInfoResponse | null;
   loadFailed: boolean;
+};
+
+type ProcessState = 'loading' | 'updating' | 'idle' | 'stopped';
+
+type ServiceInfoRowProps = {
+  label: ReactNode;
+  description?: string;
+  descriptionTestId?: string;
+  trailing?: ReactNode;
+  testId?: string;
+  children?: ReactNode;
 };
 
 const SECONDS_PER_MINUTE = 60;
@@ -32,17 +37,30 @@ const cardStyle: CSSProperties = {
   borderRadius: Radius.md,
   padding: padding(Layout.paddingTop),
   '--settings-progress-muted': Colors.textSecondary,
-  '--settings-progress-tertiary': Colors.textTertiary,
   '--settings-progress-warning': Colors.gold,
   '--settings-progress-track': Colors.surfaceMuted,
   '--settings-progress-fill': Colors.accentPurple,
-  '--settings-progress-divider': Colors.borderSubtle,
 } as CSSProperties;
+
+const serviceRowStyle: CSSProperties = {
+  ...modalCss.toggleRow,
+  cursor: 'default',
+  transition: 'none',
+};
 
 function formatDateTime(value: string | null | undefined, fallback: string): string {
   if (!value) return fallback;
   const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? fallback : parsed.toLocaleString();
+  return Number.isNaN(parsed.valueOf())
+    ? fallback
+    : parsed.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -76,46 +94,32 @@ function translatedStableLabel(
   });
 }
 
-function workerStatusText(t: TFunction, serviceInfo: ServiceInfoResponse): string {
-  const status = serviceInfo.workerStatus?.status;
-  return t(`settings.serviceInfo.workerStates.${status || 'unknown'}`, {
-    defaultValue: status || t('settings.serviceInfo.workerStates.unknown'),
+function processState(serviceInfo: ServiceInfoResponse): ProcessState {
+  const workerStatus = serviceInfo.workerStatus?.status;
+  if (!workerStatus || workerStatus === 'offline' || workerStatus === 'stale' || workerStatus === 'stopping') {
+    return 'stopped';
+  }
+  return serviceInfo.currentUpdate.status === 'updating' ? 'updating' : 'idle';
+}
+
+function processStateText(t: TFunction, state: ProcessState): string {
+  return t(`settings.serviceInfo.processStates.${state}`, {
+    defaultValue: fallbackLabel(state),
   });
 }
 
-function updateStatusText(t: TFunction, serviceInfo: ServiceInfoResponse): string {
+function serviceStateText(
+  t: TFunction,
+  serviceInfo: ServiceInfoResponse,
+  state: ProcessState,
+): string {
   const status = serviceInfo.currentUpdate.status;
-  return t(`settings.serviceInfo.updateStates.${status}`, {
+  if (state === 'stopped' && status !== 'failed' && status !== 'stalled') {
+    return t('settings.serviceInfo.serviceStates.unavailable');
+  }
+  return t(`settings.serviceInfo.serviceStates.${status}`, {
     defaultValue: fallbackLabel(status),
   });
-}
-
-function healthMessage(t: TFunction, serviceInfo: ServiceInfoResponse): string {
-  const status = serviceInfo.currentUpdate.status;
-  const hasPublication = serviceInfo.publishedScrapeId != null;
-  if (status === 'failed') {
-    return t(hasPublication
-      ? 'settings.serviceInfo.healthFailedPublished'
-      : 'settings.serviceInfo.healthFailedUnavailable');
-  }
-  if (status === 'stalled') {
-    return t(hasPublication
-      ? 'settings.serviceInfo.healthStalledPublished'
-      : 'settings.serviceInfo.healthStalledUnavailable');
-  }
-  if (serviceInfo.workerStatus?.status === 'stale') {
-    return t(hasPublication
-      ? 'settings.serviceInfo.healthWorkerStalePublished'
-      : 'settings.serviceInfo.healthWorkerStaleUnavailable');
-  }
-  if (status === 'updating') {
-    return t(hasPublication
-      ? 'settings.serviceInfo.healthUpdatingPublished'
-      : 'settings.serviceInfo.healthUpdatingUnavailable');
-  }
-  return t(hasPublication
-    ? 'settings.serviceInfo.healthIdlePublished'
-    : 'settings.serviceInfo.healthIdleUnavailable');
 }
 
 function phaseStatusText(t: TFunction, status: string | null | undefined): string | null {
@@ -140,7 +144,7 @@ function servicePhaseLabel(
     'phaseLabels',
     display.phaseId,
     descriptor?.label ?? current.phase,
-  ) ?? updateStatusText(t, serviceInfo);
+  ) ?? t('settings.serviceInfo.progressWaiting');
 }
 
 function serviceSubphaseLabel(
@@ -189,20 +193,40 @@ function unitsText(
   });
 }
 
-function TimingRows({ rows, label }: { rows: TimingRow[]; label: string }) {
+function ServiceInfoRow({
+  label,
+  description,
+  descriptionTestId,
+  trailing,
+  testId,
+  children,
+}: ServiceInfoRowProps) {
   return (
-    <dl className={styles.timingList} aria-label={label}>
-      {rows.map(row => (
-        <div
-          key={row.id}
-          className={styles.timingItem}
-          data-testid={`settings-service-info-row-${row.id}`}
-        >
-          <dt className={styles.timingLabel}>{row.label}</dt>
-          <dd className={styles.timingValue}>{row.value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div style={serviceRowStyle} data-testid={testId}>
+      <div style={modalCss.toggleContent}>
+        <div style={modalCss.toggleLabel}>{label}</div>
+        {description ? (
+          <div style={modalCss.toggleDesc} data-testid={descriptionTestId}>
+            {description}
+          </div>
+        ) : null}
+        {children}
+      </div>
+      {trailing}
+    </div>
+  );
+}
+
+function ProcessStateDisplay({ state }: { state: ProcessState }) {
+  const { t } = useTranslation(['translation', 'settings'], { nsMode: 'fallback' });
+  const showSpinner = state === 'loading' || state === 'updating';
+  return (
+    <div className={styles.processState} data-testid="settings-service-info-row-update-status">
+      <span>{processStateText(t, state)}</span>
+      {showSpinner ? (
+        <ArcSpinner className={styles.spinner} size={SpinnerSize.SM} />
+      ) : null}
+    </div>
   );
 }
 
@@ -226,10 +250,16 @@ export function SettingsServiceProgressCard({
   }, [reduction]);
 
   if (!serviceInfo || !reduction) {
+    const state: ProcessState = loadFailed ? 'stopped' : 'loading';
     return (
       <div data-testid="settings-service-info-list">
         <FrostedCard className={styles.card} style={cardStyle}>
-          <p className={styles.statusSupporting}>{fallback}</p>
+          <ServiceInfoRow
+            label={t('settings.serviceInfo.serviceStateTitle')}
+            description={fallback}
+            descriptionTestId="settings-service-info-row-update-sub-status"
+            trailing={<ProcessStateDisplay state={state} />}
+          />
         </FrostedCard>
       </div>
     );
@@ -238,11 +268,14 @@ export function SettingsServiceProgressCard({
   const display = reduction.display;
   const current = serviceInfo.currentUpdate;
   const isUpdating = current.status === 'updating';
+  const currentProcessState = processState(serviceInfo);
   const phaseLabel = servicePhaseLabel(t, serviceInfo, display);
   const translatedSubphaseLabel = serviceSubphaseLabel(t, serviceInfo, display);
   const subphaseLabel = translatedSubphaseLabel?.trim() === phaseLabel.trim()
     ? null
     : translatedSubphaseLabel;
+  const phaseTitle = subphaseLabel ? `${phaseLabel} · ${subphaseLabel}` : phaseLabel;
+  const showPhaseRow = isUpdating || Boolean(display.phaseId || current.phase);
   const phaseState = phaseStatusText(t, display.phaseStatus);
   const units = unitsText(t, display);
   const eta = display.eta;
@@ -266,141 +299,114 @@ export function SettingsServiceProgressCard({
     display.isDeterminate ? progressText : t('settings.serviceInfo.progressUnknownTotal'),
     units,
   ].filter(Boolean).join('. ');
+  const showProgressFacts = !display.isDeterminate
+    || units != null
+    || phaseState != null
+    || display.overallPercent != null
+    || etaText != null;
   const warnings = serviceInfo.lastCompletedUpdate?.bestEffortFailureCount ?? 0;
   const publishedAt = serviceInfo.lastCompletedUpdate?.publishedAt
     ?? serviceInfo.publication?.publishedAt;
-  const timingRows: TimingRow[] = [
-    {
-      id: 'last-published-at',
-      label: t('settings.serviceInfo.lastPublishedAt'),
-      value: formatDateTime(publishedAt, t('settings.serviceInfo.publicationUnavailable')),
-    },
-    ...(current.status !== 'idle' && current.startedAt
-      ? [{
-        id: 'current-update-start',
-        label: t('settings.serviceInfo.currentUpdateStart'),
-        value: formatDateTime(current.startedAt, fallback),
-      }]
-      : []),
-    ...(serviceInfo.nextScheduledUpdateAt
-      ? [{
-        id: 'next-scheduled-update',
-        label: t('settings.serviceInfo.nextScheduledUpdate'),
-        value: formatDateTime(serviceInfo.nextScheduledUpdateAt, fallback),
-      }]
-      : []),
-  ];
+  const publicationText = formatDateTime(
+    publishedAt,
+    t('settings.serviceInfo.publicationUnavailable'),
+  );
 
   return (
     <div data-testid="settings-service-info-list">
       <FrostedCard className={styles.card} style={cardStyle}>
         <section aria-label={t('settings.serviceInfo.title')}>
           <div className={styles.liveSummary} aria-live="polite">
-            <div
-              className={styles.phaseBlock}
-              data-testid="settings-service-info-row-update-step-position"
+            <ServiceInfoRow
+              label={t('settings.serviceInfo.serviceStateTitle')}
+              description={serviceStateText(t, serviceInfo, currentProcessState)}
+              descriptionTestId="settings-service-info-row-update-sub-status"
+              trailing={<ProcessStateDisplay state={currentProcessState} />}
             >
-              <SectionHeader
-                title={phaseLabel}
-                description={subphaseLabel ?? undefined}
-                flush
-              />
-            </div>
+              {warnings > 0 ? (
+                <div className={styles.warning}>
+                  {t('settings.serviceInfo.completedWithWarnings', {
+                    count: warnings,
+                  })}
+                </div>
+              ) : null}
+            </ServiceInfoRow>
 
-            <div
-              className={styles.statusLine}
-              data-testid="settings-service-info-row-update-status"
-            >
-              {isUpdating ? <ArcSpinner className={styles.spinner} size={SpinnerSize.SM} /> : null}
-              <span className={styles.statusValue}>
-                {updateStatusText(t, serviceInfo)}
-              </span>
-              <span className={styles.statusSeparator} aria-hidden="true">·</span>
-              <span
-                className={styles.workerStatus}
-                data-testid="settings-service-info-row-worker-status"
+            {showPhaseRow ? (
+              <ServiceInfoRow
+                label={phaseTitle}
+                testId="settings-service-info-row-update-step-position"
               >
-                {t('settings.serviceInfo.workerSummary', {
-                  status: workerStatusText(t, serviceInfo),
-                })}
-              </span>
-            </div>
-
-            {isUpdating ? (
-              <div className={styles.progressBlock}>
-                <div className={styles.progressHeader}>
-                  <span className={styles.progressLabel}>
-                    {t('settings.serviceInfo.phaseProgressLabel')}
-                  </span>
-                  <strong
-                    className={styles.progressValue}
-                    data-testid="settings-service-info-row-update-phase-progress"
-                  >
-                    {progressText}
-                  </strong>
-                </div>
-                <div
-                  className={`${styles.progressTrack} ${display.isDeterminate ? '' : styles.progressIndeterminate}`}
-                  role="progressbar"
-                  aria-label={t('settings.serviceInfo.phaseProgressAria')}
-                  aria-valuemin={display.isDeterminate ? 0 : undefined}
-                  aria-valuemax={display.isDeterminate ? 100 : undefined}
-                  aria-valuenow={display.phasePercent ?? undefined}
-                  aria-valuetext={progressAriaText}
-                  data-testid="settings-service-phase-progress"
-                  data-progress-kind={display.isDeterminate ? 'determinate' : 'indeterminate'}
-                >
-                  {display.isDeterminate ? (
-                    <div
-                      className={styles.progressFill}
-                      style={{ width: `${display.phasePercent}%` }}
-                    />
-                  ) : null}
-                </div>
-                <div className={styles.progressFacts}>
-                  {units ? <span>{units}</span> : null}
-                  {phaseState ? (
-                    <span>{t('settings.serviceInfo.phaseState', { state: phaseState })}</span>
-                  ) : null}
-                  {display.overallPercent != null ? (
-                    <span data-testid="settings-service-info-row-update-overall-progress">
-                      {t('settings.serviceInfo.overallEstimate', {
-                        percent: display.overallPercent.toFixed(1),
-                      })}
-                    </span>
-                  ) : null}
-                  {etaText ? (
-                    <span data-testid="settings-service-info-row-update-eta">
-                      {etaText}
-                    </span>
-                  ) : null}
-                </div>
-                {display.restarted ? (
-                  <span className={styles.warning}>{t('settings.serviceInfo.progressRestarted')}</span>
+                {isUpdating ? (
+                  <div className={styles.progressBlock}>
+                    <div className={styles.progressRail}>
+                      <div
+                        className={`${styles.progressTrack} ${display.isDeterminate ? '' : styles.progressIndeterminate}`}
+                        role="progressbar"
+                        aria-label={t('settings.serviceInfo.phaseProgressAria')}
+                        aria-valuemin={display.isDeterminate ? 0 : undefined}
+                        aria-valuemax={display.isDeterminate ? 100 : undefined}
+                        aria-valuenow={display.phasePercent ?? undefined}
+                        aria-valuetext={progressAriaText}
+                        data-testid="settings-service-phase-progress"
+                        data-progress-kind={display.isDeterminate ? 'determinate' : 'indeterminate'}
+                      >
+                        {display.isDeterminate ? (
+                          <div
+                            className={styles.progressFill}
+                            style={{ width: `${display.phasePercent}%` }}
+                          />
+                        ) : null}
+                      </div>
+                      {display.isDeterminate ? (
+                        <strong
+                          className={styles.progressValue}
+                          data-testid="settings-service-info-row-update-phase-progress"
+                        >
+                          {progressText}
+                        </strong>
+                      ) : null}
+                    </div>
+                    {showProgressFacts ? (
+                      <div className={styles.progressFacts} style={modalCss.toggleDesc}>
+                        {!display.isDeterminate ? (
+                          <span data-testid="settings-service-info-row-update-phase-progress">
+                            {progressText}
+                          </span>
+                        ) : null}
+                        {units ? <span>{units}</span> : null}
+                        {phaseState ? (
+                          <span>{t('settings.serviceInfo.phaseState', { state: phaseState })}</span>
+                        ) : null}
+                        {display.overallPercent != null ? (
+                          <span data-testid="settings-service-info-row-update-overall-progress">
+                            {t('settings.serviceInfo.overallEstimate', {
+                              percent: display.overallPercent.toFixed(1),
+                            })}
+                          </span>
+                        ) : null}
+                        {etaText ? (
+                          <span data-testid="settings-service-info-row-update-eta">
+                            {etaText}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {display.restarted ? (
+                      <span className={styles.warning}>{t('settings.serviceInfo.progressRestarted')}</span>
+                    ) : null}
+                  </div>
                 ) : null}
-              </div>
-            ) : null}
-
-            <p
-              className={styles.statusSupporting}
-              data-testid="settings-service-info-row-update-sub-status"
-            >
-              {healthMessage(t, serviceInfo)}
-            </p>
-            {warnings > 0 ? (
-              <p className={styles.warning}>
-                {t('settings.serviceInfo.completedWithWarnings', {
-                  count: warnings,
-                })}
-              </p>
+              </ServiceInfoRow>
             ) : null}
           </div>
-        </section>
 
-        <TimingRows
-          rows={timingRows}
-          label={t('settings.serviceInfo.timingLabel')}
-        />
+          <ServiceInfoRow
+            label={t('settings.serviceInfo.lastPublishedAt')}
+            description={publicationText}
+            testId="settings-service-info-row-last-published-at"
+          />
+        </section>
       </FrostedCard>
     </div>
   );

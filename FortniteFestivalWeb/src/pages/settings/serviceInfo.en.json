@@ -1,21 +1,21 @@
 {
   "title": "Service Info",
   "hint": "Live leaderboard update status, exact phase progress when available, and publication timing.",
-  "workerSummary": "Worker {{status}}",
-  "lastPublishedAt": "Last successful publication",
-  "currentUpdateStart": "Current leaderboard update start",
-  "nextScheduledUpdate": "Next leaderboard scheduled update",
-  "timingLabel": "Publication timing",
-  "healthFailedPublished": "The update failed. Previously published leaderboard data remains available.",
-  "healthFailedUnavailable": "The update failed and no prior publication is available.",
-  "healthStalledPublished": "The update appears stalled. Previously published leaderboard data remains available.",
-  "healthStalledUnavailable": "The update appears stalled and no prior publication is available.",
-  "healthWorkerStalePublished": "The worker heartbeat is stale. Previously published leaderboard data remains available.",
-  "healthWorkerStaleUnavailable": "The worker heartbeat is stale and no prior publication is available.",
-  "healthUpdatingPublished": "Previously published leaderboard data remains available while this update runs.",
-  "healthUpdatingUnavailable": "The first update is running; published leaderboard data is not available yet.",
-  "healthIdlePublished": "Published leaderboard data is available.",
-  "healthIdleUnavailable": "The service is idle and awaiting its first successful publication.",
+  "serviceStateTitle": "Leaderboard Service State",
+  "lastPublishedAt": "Last Successful Publication",
+  "processStates": {
+    "loading": "Loading",
+    "updating": "Updating",
+    "idle": "Idle",
+    "stopped": "Stopped"
+  },
+  "serviceStates": {
+    "idle": "Waiting for the next update",
+    "updating": "Leaderboard update in progress",
+    "failed": "Last leaderboard update failed",
+    "stalled": "Leaderboard update stalled",
+    "unavailable": "Leaderboard updater unavailable"
+  },
   "completedWithWarnings_one": "The last completed update reported {{count}} non-critical warning.",
   "completedWithWarnings_other": "The last completed update reported {{count}} non-critical warnings.",
   "publicationUnavailable": "No successful publication yet",
@@ -24,7 +24,6 @@
   "progressPercent": "{{percent}}%",
   "progressIndeterminate": "In progress — total not yet known",
   "progressUnknownTotal": "Total not yet known",
-  "phaseProgressLabel": "Phase progress",
   "phaseProgressAria": "Current phase progress",
   "overallEstimate": "Estimated overall {{percent}}%",
   "progressRestarted": "This phase restarted with a new attempt.",
@@ -35,20 +34,6 @@
   "unitsCompletedOfTotal": "{{completed}} of {{total}} {{unit}} completed",
   "unitsCompletedDiscovering": "{{completed}} {{unit}} completed; {{total}} discovered so far",
   "unavailable": "Unavailable",
-  "workerStates": {
-    "online": "Online",
-    "offline": "Offline",
-    "stale": "Stale",
-    "starting": "Starting",
-    "stopping": "Stopping",
-    "unknown": "Unknown"
-  },
-  "updateStates": {
-    "idle": "Idle",
-    "updating": "Updating",
-    "failed": "Failed",
-    "stalled": "Stalled"
-  },
   "phaseStates": {
     "pending": "Pending",
     "running": "Running",

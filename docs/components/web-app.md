@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-14
-last_verified_commit: afc475f6
+last_verified: 2026-08-16
+last_verified_commit: 937868e0
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -235,13 +235,20 @@ polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
 is added, and publication-boundary cache/reset ownership is unchanged.
 
 The service area uses one flat `FrostedCard` with no tinted or bordered
-subcards. Its specific translated phase and any distinct subphase use the same
-shared `SectionHeader` title/description treatment as the other Settings
-sections and appear first inside the card. Identical phase/subphase labels
-collapse to one line. Card padding, spacing, and publication rows follow the
-same Settings card and label/value-row patterns instead of defining a parallel
-typography or layout system. Idle state uses the title position to say that the
-service is waiting for the next update.
+subcards. Its content reuses the exact `ToggleRow` label/description styles in
+three summary rows rather than defining separate Settings typography:
+
+1. **Leaderboard Service State** shows a friendly overall state below the
+   fixed label. The right side shows `Updating` with one spinner while the
+   end-to-end update is active, `Idle` while the updater is available but not
+   running, or `Stopped` when the updater is unavailable.
+2. The current translated phase and any distinct subphase form one
+   `Phase · Subphase` label. Identical labels collapse to one. Exact or
+   indeterminate progress, units, exceptional phase state, overall estimate,
+   and ETA remain directly below as the row description.
+3. **Last Successful Publication** shows the publication date/time as its
+   description. The browser formats it for the viewer's locale and timezone
+   and includes the local short timezone name; the UI never hard-codes PST.
 
 The browser uses stable phase/subphase IDs for localization with safe label
 fallbacks. A phase bar is determinate only when service-info v2 reports a final
@@ -254,14 +261,11 @@ ETA sample count remains part of the trust gate but is not user-facing.
 Display memory rejects older payload regressions while allowing a new phase
 attempt to reset and announce itself.
 
-One concise availability sentence distinguishes an existing publication from a
-first publication still in progress without exposing scrape IDs. A flat
-definition-list footer shows last publication, current update start when
-applicable, and next scheduled update behind one subtle divider. Operational
-IDs, raw heartbeat/progress timestamps, attempts, model diagnostics, technical
-disclosures, and selected-profile rival/sync status are not rendered. Settings
-therefore does not add a selected-profile sync polling loop; profile-name
-refresh and export controls keep their existing selected-profile ownership.
+Operational IDs, raw heartbeat/progress timestamps, attempts, model
+diagnostics, technical disclosures, current-start/next-schedule rows, and
+selected-profile rival/sync status are not rendered. Settings therefore does
+not add a selected-profile sync polling loop; profile-name refresh and export
+controls keep their existing selected-profile ownership.
 
 English shell/common/Songs resources remain eager in the i18next `translation`
 namespace. App Manual, Settings, and First Run resources use named namespaces

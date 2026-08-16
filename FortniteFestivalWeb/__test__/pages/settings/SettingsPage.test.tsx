@@ -81,6 +81,17 @@ const defaultServiceInfo = {
   nextScheduledUpdateAt: '2026-04-20T16:30:00Z',
 };
 
+function formatExpectedDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
@@ -835,22 +846,22 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Service Version')).toBeDefined();
   });
 
-  it('renders one consolidated service card with the current step first', async () => {
+  it('renders ToggleRow-style service state and publication rows', async () => {
     renderSettings();
 
     expect(screen.getByText('Service Info')).toBeDefined();
-    const step = await screen.findByTestId('settings-service-info-row-update-step-position');
-    expect(within(step).getByText('Waiting for the next update')).toBeDefined();
-    expect(screen.queryByText('Current step')).toBeNull();
-    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Online');
+    expect(await screen.findByText('Leaderboard Service State')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+      'Waiting for the next update',
+    );
     expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
-    expect(screen.getAllByText('Published leaderboard data is available.')).toHaveLength(1);
+    expect(screen.queryByTestId('settings-service-info-row-worker-status')).toBeNull();
+    expect(screen.queryByTestId('settings-service-info-row-update-step-position')).toBeNull();
     expect(within(screen.getByTestId('settings-service-info-row-last-published-at')).getByText(
-      new Date(defaultServiceInfo.lastCompletedUpdate.publishedAt).toLocaleString(),
+      formatExpectedDateTime(defaultServiceInfo.lastCompletedUpdate.publishedAt),
     )).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(
-      new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString(),
-    )).toBeDefined();
+    expect(screen.queryByTestId('settings-service-info-row-next-scheduled-update')).toBeNull();
+    expect(screen.queryByTestId('settings-service-info-row-current-update-start')).toBeNull();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-overall-progress')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
@@ -868,7 +879,7 @@ describe('SettingsPage', () => {
     renderSettings({ queryClient });
 
     await waitFor(() => {
-      expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Online');
+      expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
     });
     const serviceInfoCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([url]) => typeof url === 'string' && url.includes('/api/service-info'));
@@ -893,10 +904,15 @@ describe('SettingsPage', () => {
 
     renderSettings();
 
-    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
     await waitFor(() => {
-      expect(within(statusRow).getByTestId('arc-spinner')).toBeDefined();
+      expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Updating');
     });
+    const statusRow = screen.getByTestId('settings-service-info-row-update-status');
+    expect(within(statusRow).getByTestId('arc-spinner')).toBeDefined();
+    expect(statusRow).toHaveTextContent('Updating');
+    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+      'Leaderboard update in progress',
+    );
     expect(screen.getAllByTestId('arc-spinner')).toHaveLength(1);
     const progress = screen.getByRole('progressbar', { name: 'Current phase progress' });
     expect(progress).toHaveAttribute('data-progress-kind', 'indeterminate');
@@ -967,8 +983,7 @@ describe('SettingsPage', () => {
     expect(progress).toHaveAttribute('aria-valuenow', '37.5');
     expect(progress).toHaveAttribute('aria-valuetext', expect.stringContaining('3 of 8 instruments completed'));
     const step = screen.getByTestId('settings-service-info-row-update-step-position');
-    expect(within(step).getByText('Computing rankings')).toBeDefined();
-    expect(within(step).getByText('Computing rankings by instrument')).toBeDefined();
+    expect(step).toHaveTextContent('Computing rankings · Computing rankings by instrument');
     expect(screen.getByText('Phase state: Retrying')).toBeDefined();
     expect(screen.getByTestId('settings-service-info-row-update-phase-progress')).toHaveTextContent('37.5%');
     expect(screen.getByText('3 of 8 instruments completed')).toBeDefined();
@@ -1070,6 +1085,29 @@ describe('SettingsPage', () => {
     expect(within(step).getAllByText('Maintaining band projections')).toHaveLength(1);
   });
 
+  it('shows a stalled service state with an idle process status', async () => {
+    mockServiceInfoResponse({
+      ...defaultServiceInfo,
+      currentUpdate: {
+        ...defaultServiceInfo.currentUpdate,
+        status: 'stalled',
+        phase: 'Scraping',
+        subOperation: 'fetching_leaderboards',
+      },
+    });
+
+    renderSettings();
+
+    expect(await screen.findByText('Leaderboard Service State')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+      'Leaderboard update stalled',
+    );
+    expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
+    expect(screen.getByTestId('settings-service-info-row-update-step-position')).toHaveTextContent(
+      'Scraping · Fetching leaderboards',
+    );
+  });
+
   it('shows failure, stale worker, and warning states without masking published data', async () => {
     const failedServiceInfo = {
       ...defaultServiceInfo,
@@ -1094,14 +1132,17 @@ describe('SettingsPage', () => {
 
     renderSettings();
 
-    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
-    expect(within(statusRow).getByText('Failed')).toBeDefined();
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Stopped');
+    });
+    const statusRow = screen.getByTestId('settings-service-info-row-update-status');
+    expect(statusRow).toHaveTextContent('Stopped');
     expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
-      'The update failed. Previously published leaderboard data remains available.',
+      'Last leaderboard update failed',
     );
-    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Stale');
+    expect(screen.queryByTestId('settings-service-info-row-worker-status')).toBeNull();
     expect(screen.getByText('The last completed update reported 2 non-critical warnings.')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-status')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
   });
 
   it('holds displayed progress against stale payloads and resets for a new attempt', async () => {
@@ -1157,7 +1198,7 @@ describe('SettingsPage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
     renderSettings({ withQuickLinksHarness: true });
 
-    await screen.findByTestId('settings-service-info-row-worker-status');
+    await screen.findByTestId('settings-service-info-row-update-status');
     expect(screen.queryByText('Selected profile sync')).toBeNull();
     expect(screen.queryByTestId('settings-selected-profile-sync')).toBeNull();
     expect(screen.getByRole('button', { name: 'Refresh Profile Name' })).toBeDefined();
@@ -1188,6 +1229,7 @@ describe('SettingsPage', () => {
     expect(screen.getByText('App Settings')).toBeDefined();
     await waitFor(() => {
       expect(screen.getByText('Loading…')).toBeDefined();
+      expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Stopped');
     });
   });
 
