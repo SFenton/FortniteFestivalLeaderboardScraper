@@ -1533,12 +1533,19 @@ public sealed class PostScrapeOrchestrator
         if (scopes.Count == 0)
             return BandMaintenanceTimingMetrics.NoWork;
 
-        _log.LogInformation("Refreshing band current projection for {ScopeCount:N0} impacted scope(s).", scopes.Count);
-
+        var rebuildOptions =
+            CreateBandCurrentProjectionRebuildOptions(_options.Value);
+        _log.LogInformation(
+            "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
+            scopes.Count,
+            rebuildOptions.UseBatchedMemberStatsAggregation);
         BandCurrentProjectionIncrementalRefreshResult result;
         try
         {
-            result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(scopes, ct: ct);
+            result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(
+                scopes,
+                rebuildOptions,
+                ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1546,6 +1553,7 @@ public sealed class PostScrapeOrchestrator
             return await RefreshBandCurrentProjectionScopesInChunksAsync(
                 scopes,
                 FallbackChunkSize,
+                rebuildOptions,
                 ct);
         }
 
@@ -1566,9 +1574,20 @@ public sealed class PostScrapeOrchestrator
         return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
     }
 
+    internal static BandCurrentProjectionRebuildOptions
+        CreateBandCurrentProjectionRebuildOptions(
+            ScraperOptions options) =>
+        new()
+        {
+            UseBatchedMemberStatsAggregation =
+                options
+                    .BandCurrentProjectionUseBatchedMemberStatsAggregation,
+        };
+
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         int chunkSize,
+        BandCurrentProjectionRebuildOptions rebuildOptions,
         CancellationToken ct)
     {
         var scopeChunks = scopes
@@ -1594,7 +1613,11 @@ public sealed class PostScrapeOrchestrator
             ct.ThrowIfCancellationRequested();
             try
             {
-                var result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(chunk, ct: ct);
+                var result = await _bandCurrentProjectionBuilder!
+                    .RefreshScopesAsync(
+                        chunk,
+                        rebuildOptions,
+                        ct);
                 refreshedScopes += result.ScopeCount;
                 successfulScopes += result.SuccessfulScopes;
                 failedScopes += result.FailedScopes;

@@ -709,6 +709,14 @@ public sealed class ScraperOptions
     public int BandMembershipRebuildBatchSize { get; set; } = 500;
 
     /// <summary>
+    /// Candidate-only query shape that aggregates all per-member projection
+    /// arrays with one lateral <c>band_member_stats</c> pass instead of seven
+    /// correlated aggregate passes. Default false until a live full-scrape A/B
+    /// is capacity-safe.
+    /// </summary>
+    public bool BandCurrentProjectionUseBatchedMemberStatsAggregation { get; set; }
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

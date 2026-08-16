@@ -38,6 +38,8 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.SetupOnly);
         Assert.False(opts.RunOnce);
         Assert.False(opts.ResolveOnly);
+        Assert.False(
+            opts.BandCurrentProjectionUseBatchedMemberStatsAggregation);
         Assert.True(opts.EnablePathGeneration);
         Assert.False(opts.EnableAutomaticPathGeneration);
         Assert.Equal(4, opts.PathGenerationParallelism);
@@ -56,6 +58,23 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
+    public void TrackedAppsettingsKeepsCurrentProjectionCandidateDisabled()
+    {
+        using var document = JsonDocument.Parse(
+            File.ReadAllText(
+                Path.Combine(
+                    AppContext.BaseDirectory,
+                    "appsettings.json")));
+
+        Assert.False(
+            document.RootElement
+                .GetProperty(ScraperOptions.Section)
+                .GetProperty(
+                    "BandCurrentProjectionUseBatchedMemberStatsAggregation")
+                .GetBoolean());
+    }
+
+    [Fact]
     public void ScraperOptions_CanSetProperties()
     {
         var opts = new ScraperOptions
@@ -70,6 +89,7 @@ public class ScraperOptionsAndModelsTests
             DisableScraperWorker = true,
             RegistrationSyncWorkerOnly = true,
             RegistrationBackfillMode = RegistrationBackfillMode.ForegroundEpicExclusive,
+            BandCurrentProjectionUseBatchedMemberStatsAggregation = true,
             TestSongQuery = "Test Song",
         };
 
@@ -82,6 +102,8 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.RolloutPostgresReadOnly);
         Assert.True(opts.DisableScraperWorker);
         Assert.True(opts.RegistrationSyncWorkerOnly);
+        Assert.True(
+            opts.BandCurrentProjectionUseBatchedMemberStatsAggregation);
         Assert.Equal(RegistrationBackfillMode.ForegroundEpicExclusive, opts.RegistrationBackfillMode);
         Assert.Equal("Test Song", opts.TestSongQuery);
     }

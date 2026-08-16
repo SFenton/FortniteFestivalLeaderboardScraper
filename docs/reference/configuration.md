@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-15
-last_verified_commit: fca22bbb
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -88,6 +88,22 @@ the cache swap, completed checkpoint, verification, and unfreeze. A validation
 or timeout-transition failure rolls back the transaction and leaves the freeze
 and durable mutation gate intact. Cancellation still aborts fail-closed, and
 invalid/non-positive values prevent startup.
+
+## Band current-projection candidate
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
+
+The Compose form is
+`Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
+changes only the current-projection query shape; scope filtering, concurrency,
+transactions, generation/state writes, publication, cleanup, and ordering
+remain unchanged. It is intentionally absent from production role overrides
+and therefore remains off. Set it back to `false` for immediate code-path
+rollback. Enabling it in production requires a capacity-safe matched full
+scrape A/B and exact publication/data parity; isolated replay timing is not
+promotion evidence.
 
 ## Role differences
 

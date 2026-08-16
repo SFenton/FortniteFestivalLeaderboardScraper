@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-15
-last_verified_commit: b7ce5d3a
+last_verified: 2026-08-16
+last_verified_commit: 90e00726
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -14,6 +14,7 @@ sources:
   - FSTService.Tests/Unit/MaxScoreMaintenanceScoreHistoryEvidenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
+  - FSTService.Tests/Unit/BandCurrentProjectionOptimizationTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
@@ -161,15 +162,32 @@ bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
 
+Focused Band current-projection candidate validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~BandCurrentProjectionOptimizationTests|FullyQualifiedName~ReplayContractTests|FullyQualifiedName~TierOneReplayIntegrationTests|FullyQualifiedName~DurablePhaseProgressSinkTests|FullyQualifiedName~ScraperOptionsAndModelsTests|FullyQualifiedName~PostScrapeOrchestratorTests.CurrentProjectionCandidateOptionIsForwarded'
+```
+
+This matrix covers default-off binding and durable configuration identity;
+normal/fallback option forwarding; SQL shape; zero, all-unchanged, one-changed,
+mixed, missing-member, nullable-stat, and large bounded scope sets; primary-key
+enforcement of member-index uniqueness within the projection correlation key;
+the whitespace-insensitive seven-subquery legacy SQL golden shape; exact
+projection/scope/global-state hashes; failure rollback, retry, and
+cancellation; unchanged successful transaction and derived command/round-trip
+counts; and the exact seven-to-one measured plan plus derived aggregation-pass
+reduction.
+
 The replay integration suite uses fresh test-container databases to prove
 source/production target refusal, canonical marker/object inventory, typed
 bounded import, direct production-builder reuse, no publication tables,
 deterministic output parity, corrupt/parent mismatch rejection, stale-attempt
 refusal, cancellation evidence, and incomplete-output comparison failure.
-Tests also require output/comparison version `2`,
-`productionComparableTiming=false`, the exact deterministic-override reason,
-canonical hash sensitivity to the field, and rejection of a relabeled
-production-comparable package.
+Tests also require output/comparison version `3`, explicit deterministic and
+option-parity profiles, profile-specific timing reasons, operation metrics,
+`productionComparableTiming=false`, canonical hash sensitivity, and rejection
+of relabeled production-comparable or unknown-profile packages.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

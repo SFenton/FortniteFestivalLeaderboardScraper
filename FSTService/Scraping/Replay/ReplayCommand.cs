@@ -33,7 +33,9 @@ public sealed record ReplayCommand(
     string? BaselinePath,
     string? CandidatePath,
     string? ComparisonOutputPath,
-    ReplayComparisonExpectations? ComparisonExpectations = null)
+    ReplayComparisonExpectations? ComparisonExpectations = null,
+    string ExecutionProfile =
+        ReplayExecutionProfileCatalog.DeterministicProfileId)
 {
     public const string ReplayPackageFlag = "--replay-package";
     public const string ReplayParentPackageFlag = "--replay-parent-package";
@@ -42,6 +44,7 @@ public sealed record ReplayCommand(
     public const string ReplayOutputFlag = "--replay-output";
     public const string ReplayIdFlag = "--replay-id";
     public const string ReplayAttemptFlag = "--replay-attempt";
+    public const string ReplayProfileFlag = "--replay-profile";
     public const string NoPublicationFlag = "--no-publication";
     public const string CompareBaselineFlag = "--replay-compare-baseline";
     public const string CompareCandidateFlag = "--replay-compare-candidate";
@@ -72,6 +75,7 @@ public sealed record ReplayCommand(
         ReplayOutputFlag,
         ReplayIdFlag,
         ReplayAttemptFlag,
+        ReplayProfileFlag,
         CompareBaselineFlag,
         CompareCandidateFlag,
         ComparisonOutputFlag,
@@ -234,7 +238,8 @@ public sealed record ReplayCommand(
             ReplaySubphaseFlag,
             ReplayOutputFlag,
             ReplayIdFlag,
-            ReplayAttemptFlag);
+            ReplayAttemptFlag,
+            ReplayProfileFlag);
         var attemptText = Required(values, ReplayAttemptFlag);
         if (!int.TryParse(attemptText, out var attempt) ||
             attempt <= 0)
@@ -254,7 +259,11 @@ public sealed record ReplayCommand(
             attempt,
             null,
             null,
-            null);
+            null,
+            null,
+            ReplayExecutionProfileCatalog.Resolve(
+                values.GetValueOrDefault(
+                    ReplayProfileFlag)).Id);
     }
 
     private static string CanonicalFlag(string argument) =>

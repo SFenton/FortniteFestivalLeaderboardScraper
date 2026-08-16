@@ -7,8 +7,8 @@ public static class TierOneReplayFormat
     public const string InputFormatId = "fst.tier1.phase-input";
     public const string OutputFormatId = "fst.tier1.phase-output";
     public const int InputVersion = 1;
-    public const int OutputVersion = 2;
-    public const int ComparisonVersion = 2;
+    public const int OutputVersion = 3;
+    public const int ComparisonVersion = 3;
     public const string InputManifestPath = "tier1/phase-input.json";
     public const string OutputManifestPath = "replay/output-manifest.json";
     public const string ScopesDatasetId = "band-current.requested-scopes";
@@ -134,6 +134,76 @@ public sealed record ReplayPhaseDescriptor(
     bool SupportsProviderNetwork,
     bool SupportsPublication);
 
+public sealed record ReplayExecutionProfile(
+    string Id,
+    bool DisableSynchronousCommit,
+    bool SkipUnchangedScopes,
+    int MaxParallelBandTypes,
+    int CandidateCleanupBatchSize,
+    int CandidateCleanupMaxBatches,
+    bool UseBatchedMemberStatsAggregation,
+    string TimingComparisonReason);
+
+public static class ReplayExecutionProfileCatalog
+{
+    public const string DeterministicProfileId = "deterministic-v1";
+    public const string ProductionOptionParityProfileId =
+        "production-option-parity-v1";
+    public const string BatchedMemberStatsCandidateProfileId =
+        "production-option-parity-batched-member-stats-v1";
+
+    public static ReplayExecutionProfile Deterministic { get; } =
+        new(
+            DeterministicProfileId,
+            DisableSynchronousCommit: false,
+            SkipUnchangedScopes: false,
+            MaxParallelBandTypes: 1,
+            CandidateCleanupBatchSize: 0,
+            CandidateCleanupMaxBatches: 0,
+            UseBatchedMemberStatsAggregation: false,
+            ReplayTimingSemantics.DeterministicTimingComparisonReason);
+
+    public static ReplayExecutionProfile ProductionOptionParity { get; } =
+        new(
+            ProductionOptionParityProfileId,
+            DisableSynchronousCommit: true,
+            SkipUnchangedScopes: true,
+            MaxParallelBandTypes: 2,
+            CandidateCleanupBatchSize: 100_000,
+            CandidateCleanupMaxBatches: 100,
+            UseBatchedMemberStatsAggregation: false,
+            ReplayTimingSemantics.OptionParityTimingComparisonReason);
+
+    public static ReplayExecutionProfile BatchedMemberStatsCandidate { get; } =
+        ProductionOptionParity with
+        {
+            Id = BatchedMemberStatsCandidateProfileId,
+            UseBatchedMemberStatsAggregation = true,
+            TimingComparisonReason =
+                ReplayTimingSemantics
+                    .BatchedMemberStatsTimingComparisonReason,
+        };
+
+    public static ReplayExecutionProfile Resolve(string? id)
+    {
+        var normalized = string.IsNullOrWhiteSpace(id)
+            ? DeterministicProfileId
+            : id.Trim();
+        return normalized switch
+        {
+            DeterministicProfileId => Deterministic,
+            ProductionOptionParityProfileId =>
+                ProductionOptionParity,
+            BatchedMemberStatsCandidateProfileId =>
+                BatchedMemberStatsCandidate,
+            _ => throw new ReplayException(
+                ReplayFailureKind.Usage,
+                ReplayExitCode.Usage,
+                $"Unknown replay execution profile '{id}'."),
+        };
+    }
+}
+
 public static class ReplayPhaseCatalog
 {
     public const string BandMaintenancePhaseId = "post.band_maintenance";
@@ -208,7 +278,11 @@ public sealed record ReplayPhaseMetrics(
     int RefreshedScopes,
     int FailedScopes,
     long InsertedRows,
-    long DeletedRows);
+    long DeletedRows,
+    long SuccessfulScopeTransactions,
+    long DerivedSuccessfulScopeCommandExecutions,
+    long DerivedSuccessfulScopeRoundTrips,
+    long DerivedMemberStatsAggregationPasses);
 
 public sealed record TierOneOutputDatasetReference(
     string DatasetId,
@@ -232,6 +306,7 @@ public sealed record TierOnePhaseOutputManifest(
     TierZeroBuildIdentity Implementation,
     ReplayDatabaseIdentity Database,
     IReadOnlyList<TierOneOutputDatasetReference> Outputs,
+    string ExecutionProfile,
     bool ProductionComparableTiming,
     string TimingComparisonReason,
     ReplayPhaseMetrics Metrics,
@@ -313,6 +388,8 @@ public sealed record ReplayComparisonReport(
     string TierOneInputRootHash,
     string PhaseId,
     string SubphaseId,
+    string BaselineExecutionProfile,
+    string CandidateExecutionProfile,
     IReadOnlyList<ReplayDatasetComparison> Datasets,
     bool ExactParity,
     bool ProductionComparableTiming,
@@ -326,15 +403,42 @@ public sealed record ReplayComparisonReport(
     long WalDeltaBytes,
     long BaselinePeakWorkingSetBytes,
     long CandidatePeakWorkingSetBytes,
-    long PeakWorkingSetDeltaBytes);
+    long PeakWorkingSetDeltaBytes,
+    long BaselineScopeTransactions,
+    long CandidateScopeTransactions,
+    long BaselineDerivedScopeCommandExecutions,
+    long CandidateDerivedScopeCommandExecutions,
+    long BaselineDerivedScopeRoundTrips,
+    long CandidateDerivedScopeRoundTrips,
+    long BaselineDerivedMemberStatsAggregationPasses,
+    long CandidateDerivedMemberStatsAggregationPasses,
+    long DerivedMemberStatsAggregationPassDelta,
+    double DerivedMemberStatsAggregationPassDeltaPercent);
 
 public static class ReplayTimingSemantics
 {
     public const bool ProductionComparableTiming = false;
-    public const string TimingComparisonReason =
+    public const string DeterministicTimingComparisonReason =
         "Deterministic replay overrides differ from production: " +
         "SkipUnchangedScopes=false, one band-type worker, " +
         "synchronous commit enabled, and candidate cleanup disabled.";
+    public const string OptionParityTimingComparisonReason =
+        "Option-parity replay uses production skip, commit, DOP, and cleanup " +
+        "options within Tier-1 replay bounds, but overall-only synthetic " +
+        "data, hardware, cache state, and concurrent load differ from " +
+        "production.";
+    public const string BatchedMemberStatsTimingComparisonReason =
+        "Option-parity replay enables the default-off batched member-stats " +
+        "candidate within Tier-1 replay bounds, but overall-only synthetic " +
+        "data, hardware, cache state, and concurrent load differ from " +
+        "production.";
+    public const string ComparisonTimingReason =
+        "Replay timing is not production-comparable: execution profiles are " +
+        "explicit, but isolated synthetic data, hardware, cache state, and " +
+        "concurrent load differ from production.";
+
+    public const string TimingComparisonReason =
+        DeterministicTimingComparisonReason;
 }
 
 public sealed record ReplayComparisonExpectations(

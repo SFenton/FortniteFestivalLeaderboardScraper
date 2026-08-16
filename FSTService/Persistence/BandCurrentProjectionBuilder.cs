@@ -8,6 +8,7 @@ namespace FSTService.Persistence;
 
 public sealed class BandCurrentProjectionBuilder
 {
+    internal const int LegacyMemberStatsAggregateSubqueriesPerRow = 7;
     public const string ProjectionTable = "current_band_leaderboard_entries";
     public const string StateTable = "band_current_projection_state";
     public const string ScopeTable = "band_current_projection_scope";
@@ -300,7 +301,8 @@ public sealed class BandCurrentProjectionBuilder
                 0,
                 BandCurrentProjectionPublishResult.NotPublished(0, 0, 0, 0, 0, 0),
                 0,
-                []);
+                [],
+                BandCurrentProjectionOperationMetrics.Empty);
 
         var sw = Stopwatch.StartNew();
         var generation = await NextGenerationAsync(ct);
@@ -324,7 +326,8 @@ public sealed class BandCurrentProjectionBuilder
                 0,
                 BandCurrentProjectionPublishResult.NotPublished(generation, 0, 0, 0, 0, 0),
                 Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-                []);
+                [],
+                BandCurrentProjectionOperationMetrics.Empty);
         }
 
         var results = new ConcurrentBag<BandCurrentProjectionScopeResult>();
@@ -375,11 +378,20 @@ public sealed class BandCurrentProjectionBuilder
 
         sw.Stop();
 
+        var operationMetrics =
+            CreateOperationMetrics(
+                orderedResults,
+                options);
         _log.LogInformation(
-            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}.",
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
             scopesToRefresh.Length,
             normalizedScopes.Length,
-            maxParallelBandTypes);
+            maxParallelBandTypes,
+            options.UseBatchedMemberStatsAggregation,
+            operationMetrics.SuccessfulScopeTransactions,
+            operationMetrics.DerivedSuccessfulScopeCommandExecutions,
+            operationMetrics.DerivedSuccessfulScopeRoundTrips,
+            operationMetrics.DerivedMemberStatsAggregationPasses);
 
         return new BandCurrentProjectionIncrementalRefreshResult(
             scopesToRefresh.Length,
@@ -390,7 +402,8 @@ public sealed class BandCurrentProjectionBuilder
             candidateRowsDeleted,
             publishResult,
             Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-            orderedResults);
+            orderedResults,
+            operationMetrics);
     }
 
     internal async Task<BandCurrentProjectionIncrementalRefreshResult>
@@ -432,7 +445,8 @@ public sealed class BandCurrentProjectionBuilder
                     0,
                     0),
                 0,
-                []);
+                [],
+                BandCurrentProjectionOperationMetrics.Empty);
         }
 
         var sw = Stopwatch.StartNew();
@@ -458,7 +472,8 @@ public sealed class BandCurrentProjectionBuilder
                     0,
                     0),
                 Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-                []);
+                [],
+                BandCurrentProjectionOperationMetrics.Empty);
         }
 
         var generation =
@@ -557,7 +572,10 @@ public sealed class BandCurrentProjectionBuilder
             candidateRowsDeleted,
             publishResult,
             Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-            results);
+            results,
+            CreateOperationMetrics(
+                results,
+                options));
     }
 
     private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
@@ -740,7 +758,9 @@ public sealed class BandCurrentProjectionBuilder
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         ApplyCommandOptions(cmd, options);
-        cmd.CommandText = RebuildScopeSql;
+        cmd.CommandText = options.UseBatchedMemberStatsAggregation
+            ? RebuildScopeBatchedMemberStatsSql
+            : RebuildScopeSql;
         AddScopeParameters(cmd, scope);
         cmd.Parameters.AddWithValue(
             "expectedMembers",
@@ -770,7 +790,30 @@ public sealed class BandCurrentProjectionBuilder
             insertedRows,
             deletedRows,
             sourceScopeExists,
+            insertedRows * (
+                options.UseBatchedMemberStatsAggregation
+                    ? 1
+                    : LegacyMemberStatsAggregateSubqueriesPerRow),
             ElapsedMs: 0);
+    }
+
+    private static BandCurrentProjectionOperationMetrics
+        CreateOperationMetrics(
+            IReadOnlyCollection<BandCurrentProjectionScopeResult> results,
+            BandCurrentProjectionRebuildOptions options)
+    {
+        var successfulScopes = results.Count;
+        var commandsPerScope =
+            2 + (options.DisableSynchronousCommit ? 1 : 0);
+        return new BandCurrentProjectionOperationMetrics(
+            SuccessfulScopeTransactions: successfulScopes,
+            DerivedSuccessfulScopeCommandExecutions:
+                successfulScopes * commandsPerScope,
+            DerivedSuccessfulScopeRoundTrips:
+                successfulScopes * (commandsPerScope + 2),
+            DerivedMemberStatsAggregationPasses:
+                results.Sum(static result =>
+                    result.DerivedMemberStatsAggregationPasses));
     }
 
     private async Task<long> NextGenerationAsync(CancellationToken ct)
@@ -1679,7 +1722,7 @@ public sealed class BandCurrentProjectionBuilder
             WHERE mapped.instrument IS NOT NULL
         ), '')";
 
-    private const string RebuildScopeSql = $"""
+    private const string RebuildScopeSqlTemplate = $"""
         WITH NormalizedEntries AS (
             SELECT
                 be.song_id,
@@ -1735,68 +1778,7 @@ public sealed class BandCurrentProjectionBuilder
                 combo_id AS entry_combo_id,
                 instrument_combo AS entry_instrument_combo,
                 team_members,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(bms.account_id ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::TEXT[]) AS member_account_ids,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(COALESCE(bms.instrument_id, -1) ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_instrument_ids,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(COALESCE(bms.score, -1) ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_scores,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(COALESCE(bms.accuracy, -1) ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_accuracies,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(
-                                                CASE
-                                                        WHEN bms.is_full_combo IS TRUE THEN 1
-                                                        WHEN bms.is_full_combo IS FALSE THEN 0
-                                                        ELSE -1
-                                                END
-                                                ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_full_combos,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(COALESCE(bms.stars, -1) ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_stars,
-                                COALESCE((
-                                        SELECT ARRAY_AGG(COALESCE(bms.difficulty, -1) ORDER BY bms.member_index)
-                                        FROM band_member_stats bms
-                                        WHERE bms.song_id = ChosenEntries.song_id
-                                            AND bms.band_type = ChosenEntries.band_type
-                                            AND bms.team_key = ChosenEntries.team_key
-                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
-                                ), ARRAY[]::INTEGER[]) AS member_difficulties,
+                __MEMBER_STATS_PROJECTION__
                 score,
                 accuracy,
                 is_full_combo,
@@ -1809,6 +1791,7 @@ public sealed class BandCurrentProjectionBuilder
                 first_seen_at,
                 last_updated_at
             FROM ChosenEntries
+            __MEMBER_STATS_JOIN__
         ), Inserted AS (
             INSERT INTO current_band_leaderboard_entries
             (song_id, band_type, ranking_scope, scope_combo_id, team_key, entry_combo_id, entry_instrument_combo,
@@ -1848,6 +1831,148 @@ public sealed class BandCurrentProjectionBuilder
         SELECT (SELECT COUNT(*)::BIGINT FROM Inserted),
                (SELECT exists FROM SourceScope)
         """;
+
+    private const string LegacyMemberStatsProjectionSql = """
+        COALESCE((
+            SELECT ARRAY_AGG(bms.account_id ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::TEXT[]) AS member_account_ids,
+        COALESCE((
+            SELECT ARRAY_AGG(COALESCE(bms.instrument_id, -1) ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_instrument_ids,
+        COALESCE((
+            SELECT ARRAY_AGG(COALESCE(bms.score, -1) ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_scores,
+        COALESCE((
+            SELECT ARRAY_AGG(COALESCE(bms.accuracy, -1) ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_accuracies,
+        COALESCE((
+            SELECT ARRAY_AGG(
+                CASE
+                    WHEN bms.is_full_combo IS TRUE THEN 1
+                    WHEN bms.is_full_combo IS FALSE THEN 0
+                    ELSE -1
+                END
+                ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_full_combos,
+        COALESCE((
+            SELECT ARRAY_AGG(COALESCE(bms.stars, -1) ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_stars,
+        COALESCE((
+            SELECT ARRAY_AGG(COALESCE(bms.difficulty, -1) ORDER BY bms.member_index)
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ), ARRAY[]::INTEGER[]) AS member_difficulties,
+        """;
+
+    private const string BatchedMemberStatsProjectionSql = """
+        member_stats.member_account_ids,
+        member_stats.member_instrument_ids,
+        member_stats.member_scores,
+        member_stats.member_accuracies,
+        member_stats.member_full_combos,
+        member_stats.member_stars,
+        member_stats.member_difficulties,
+        """;
+
+    private const string BatchedMemberStatsJoinSql = """
+        LEFT JOIN LATERAL (
+            SELECT
+                COALESCE(
+                    ARRAY_AGG(bms.account_id ORDER BY bms.member_index),
+                    ARRAY[]::TEXT[]) AS member_account_ids,
+                COALESCE(
+                    ARRAY_AGG(COALESCE(bms.instrument_id, -1) ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_instrument_ids,
+                COALESCE(
+                    ARRAY_AGG(COALESCE(bms.score, -1) ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_scores,
+                COALESCE(
+                    ARRAY_AGG(COALESCE(bms.accuracy, -1) ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_accuracies,
+                COALESCE(
+                    ARRAY_AGG(
+                        CASE
+                            WHEN bms.is_full_combo IS TRUE THEN 1
+                            WHEN bms.is_full_combo IS FALSE THEN 0
+                            ELSE -1
+                        END
+                        ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_full_combos,
+                COALESCE(
+                    ARRAY_AGG(COALESCE(bms.stars, -1) ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_stars,
+                COALESCE(
+                    ARRAY_AGG(COALESCE(bms.difficulty, -1) ORDER BY bms.member_index),
+                    ARRAY[]::INTEGER[]) AS member_difficulties
+            FROM band_member_stats bms
+            WHERE bms.song_id = ChosenEntries.song_id
+              AND bms.band_type = ChosenEntries.band_type
+              AND bms.team_key = ChosenEntries.team_key
+              AND bms.instrument_combo = ChosenEntries.instrument_combo
+        ) member_stats ON TRUE
+        """;
+
+    private static readonly string RebuildScopeSql =
+        BuildRebuildScopeSql(
+            LegacyMemberStatsProjectionSql,
+            string.Empty);
+
+    private static readonly string RebuildScopeBatchedMemberStatsSql =
+        BuildRebuildScopeSql(
+            BatchedMemberStatsProjectionSql,
+            BatchedMemberStatsJoinSql);
+
+    internal static string GetRebuildScopeSqlForTesting(
+        bool useBatchedMemberStatsAggregation) =>
+        useBatchedMemberStatsAggregation
+            ? RebuildScopeBatchedMemberStatsSql
+            : RebuildScopeSql;
+
+    private static string BuildRebuildScopeSql(
+        string memberStatsProjection,
+        string memberStatsJoin) =>
+        RebuildScopeSqlTemplate
+            .Replace(
+                "__MEMBER_STATS_PROJECTION__",
+                memberStatsProjection,
+                StringComparison.Ordinal)
+            .Replace(
+                "__MEMBER_STATS_JOIN__",
+                memberStatsJoin,
+                StringComparison.Ordinal);
 
     private const string ProjectionSchemaSql = """
         CREATE SEQUENCE IF NOT EXISTS band_current_projection_generation_seq;
@@ -1993,6 +2118,7 @@ public sealed class BandCurrentProjectionRebuildOptions
     public int CommandTimeoutSeconds { get; init; }
     public bool DisableSynchronousCommit { get; init; } = true;
     public bool SkipUnchangedScopes { get; init; } = true;
+    public bool UseBatchedMemberStatsAggregation { get; init; }
     public int MaxParallelBandTypes { get; init; } = 2;
     public int CandidateCleanupBatchSize { get; init; } = 100_000;
     public int CandidateCleanupMaxBatches { get; init; } = 100;
@@ -2042,6 +2168,7 @@ public sealed record BandCurrentProjectionScopeResult(
     long InsertedRows,
     long DeletedRows,
     bool SourceScopeExists,
+    long DerivedMemberStatsAggregationPasses,
     double ElapsedMs);
 
 public sealed record BandCurrentProjectionRebuildResult(
@@ -2065,7 +2192,18 @@ public sealed record BandCurrentProjectionIncrementalRefreshResult(
     long CandidateRowsDeleted,
     BandCurrentProjectionPublishResult PublishResult,
     double TotalElapsedMs,
-    IReadOnlyList<BandCurrentProjectionScopeResult> Scopes);
+    IReadOnlyList<BandCurrentProjectionScopeResult> Scopes,
+    BandCurrentProjectionOperationMetrics? OperationMetrics = null);
+
+public sealed record BandCurrentProjectionOperationMetrics(
+    long SuccessfulScopeTransactions,
+    long DerivedSuccessfulScopeCommandExecutions,
+    long DerivedSuccessfulScopeRoundTrips,
+    long DerivedMemberStatsAggregationPasses)
+{
+    public static BandCurrentProjectionOperationMetrics Empty { get; } =
+        new(0, 0, 0, 0);
+}
 
 public sealed record BandCurrentProjectionPublishResult(
     long Generation,

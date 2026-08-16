@@ -10,7 +10,8 @@ public sealed record ReplayPhaseExecutionResult(
     int RefreshedScopes,
     int FailedScopes,
     long InsertedRows,
-    long DeletedRows);
+    long DeletedRows,
+    BandCurrentProjectionOperationMetrics OperationMetrics);
 
 public sealed record ReplayExecutionResult(
     string OutputPath,
@@ -24,6 +25,7 @@ public interface IReplayPhaseAdapter
     Task<ReplayPhaseExecutionResult> ExecuteAsync(
         NpgsqlDataSource dataSource,
         TierOneReplayInput input,
+        ReplayExecutionProfile executionProfile,
         CancellationToken cancellationToken);
 }
 
@@ -36,6 +38,7 @@ public sealed class BandCurrentProjectionReplayAdapter(
     public async Task<ReplayPhaseExecutionResult> ExecuteAsync(
         NpgsqlDataSource dataSource,
         TierOneReplayInput input,
+        ReplayExecutionProfile executionProfile,
         CancellationToken cancellationToken)
     {
         var builder = new BandCurrentProjectionBuilder(
@@ -56,11 +59,19 @@ public sealed class BandCurrentProjectionReplayAdapter(
             {
                 CommandTimeoutSeconds =
                     input.InputManifest.Bounds.StatementTimeoutSeconds,
-                DisableSynchronousCommit = false,
-                SkipUnchangedScopes = false,
-                MaxParallelBandTypes = 1,
-                CandidateCleanupBatchSize = 0,
-                CandidateCleanupMaxBatches = 0,
+                DisableSynchronousCommit =
+                    executionProfile.DisableSynchronousCommit,
+                SkipUnchangedScopes =
+                    executionProfile.SkipUnchangedScopes,
+                MaxParallelBandTypes =
+                    executionProfile.MaxParallelBandTypes,
+                CandidateCleanupBatchSize =
+                    executionProfile.CandidateCleanupBatchSize,
+                CandidateCleanupMaxBatches =
+                    executionProfile.CandidateCleanupMaxBatches,
+                UseBatchedMemberStatsAggregation =
+                    executionProfile
+                        .UseBatchedMemberStatsAggregation,
                 ClearExisting = false,
                 PublishOnSuccess = true,
                 BandTypes = scopes
@@ -84,7 +95,9 @@ public sealed class BandCurrentProjectionReplayAdapter(
             result.ScopeCount,
             result.FailedScopes,
             result.InsertedRows,
-            result.DeletedRows);
+            result.DeletedRows,
+            result.OperationMetrics
+                ?? BandCurrentProjectionOperationMetrics.Empty);
     }
 }
 
@@ -349,6 +362,9 @@ public sealed class TierOneReplayRunner(
         var descriptor = ReplayPhaseCatalog.Resolve(
             command.PhaseId!,
             command.SubphaseId!);
+        var executionProfile =
+            ReplayExecutionProfileCatalog.Resolve(
+                command.ExecutionProfile);
         if (!_adapters.TryGetValue(
                 (descriptor.PhaseId, descriptor.SubphaseId),
                 out var adapter))
@@ -436,6 +452,7 @@ public sealed class TierOneReplayRunner(
             var phaseResult = await adapter.ExecuteAsync(
                 dataSource,
                 input,
+                executionProfile,
                 cancellationToken);
             stopwatch.Stop();
             var databaseAfter = await CaptureDatabaseMetricsAsync(
@@ -460,7 +477,15 @@ public sealed class TierOneReplayRunner(
                 phaseResult.RefreshedScopes,
                 phaseResult.FailedScopes,
                 phaseResult.InsertedRows,
-                phaseResult.DeletedRows);
+                phaseResult.DeletedRows,
+                phaseResult.OperationMetrics
+                    .SuccessfulScopeTransactions,
+                phaseResult.OperationMetrics
+                    .DerivedSuccessfulScopeCommandExecutions,
+                phaseResult.OperationMetrics
+                    .DerivedSuccessfulScopeRoundTrips,
+                phaseResult.OperationMetrics
+                    .DerivedMemberStatsAggregationPasses);
 
             _ = await targetGuard.ValidateAsync(
                 dataSource,
@@ -485,6 +510,7 @@ public sealed class TierOneReplayRunner(
                 database,
                 exported,
                 metrics,
+                executionProfile,
                 startedAt,
                 completedAt);
             var outputManifestBytes =
@@ -611,6 +637,8 @@ public sealed class TierOneReplayRunner(
                     ["Replay:NoPublication"] = "true",
                     ["Replay:Phase"] =
                         "post_band_maintenance",
+                    ["Replay:ExecutionProfile"] =
+                        command.ExecutionProfile,
                     ["Replay:ProtocolVersion"] =
                         TierOneReplayFormat.OutputVersion.ToString(),
                 },
@@ -618,6 +646,7 @@ public sealed class TierOneReplayRunner(
                     "Replay:Adapter",
                     "Replay:NoPublication",
                     "Replay:Phase",
+                    "Replay:ExecutionProfile",
                     "Replay:ProtocolVersion",
                 ]);
         return new TierZeroPackageDraft(
@@ -649,6 +678,7 @@ public sealed class TierOneReplayRunner(
         ReplayDatabaseIdentity database,
         IReadOnlyList<ReplayExportedArtifact> exported,
         ReplayPhaseMetrics metrics,
+        ReplayExecutionProfile executionProfile,
         DateTimeOffset startedAt,
         DateTimeOffset completedAt) =>
         new(
@@ -676,8 +706,9 @@ public sealed class TierOneReplayRunner(
                     static artifact => artifact.DatasetId,
                     StringComparer.Ordinal)
                 .ToArray(),
+            executionProfile.Id,
             ReplayTimingSemantics.ProductionComparableTiming,
-            ReplayTimingSemantics.TimingComparisonReason,
+            executionProfile.TimingComparisonReason,
             metrics,
             startedAt,
             completedAt,
@@ -865,10 +896,12 @@ public sealed class ReplayComparisonService(
             baseline.Manifest.TierOneInputRootHash,
             baseline.Manifest.PhaseId,
             baseline.Manifest.SubphaseId,
+            baseline.Manifest.ExecutionProfile,
+            candidate.Manifest.ExecutionProfile,
             datasets,
             datasets.All(static dataset => dataset.ExactParity),
             ReplayTimingSemantics.ProductionComparableTiming,
-            ReplayTimingSemantics.TimingComparisonReason,
+            ReplayTimingSemantics.ComparisonTimingReason,
             baseline.Manifest.Metrics.ElapsedMilliseconds,
             candidate.Manifest.Metrics.ElapsedMilliseconds,
             Math.Round(elapsedDelta, 3),
@@ -885,7 +918,38 @@ public sealed class ReplayComparisonService(
             baseline.Manifest.Metrics.PeakWorkingSetBytes,
             candidate.Manifest.Metrics.PeakWorkingSetBytes,
             candidate.Manifest.Metrics.PeakWorkingSetBytes -
-            baseline.Manifest.Metrics.PeakWorkingSetBytes);
+            baseline.Manifest.Metrics.PeakWorkingSetBytes,
+            baseline.Manifest.Metrics.SuccessfulScopeTransactions,
+            candidate.Manifest.Metrics.SuccessfulScopeTransactions,
+            baseline.Manifest.Metrics
+                .DerivedSuccessfulScopeCommandExecutions,
+            candidate.Manifest.Metrics
+                .DerivedSuccessfulScopeCommandExecutions,
+            baseline.Manifest.Metrics
+                .DerivedSuccessfulScopeRoundTrips,
+            candidate.Manifest.Metrics
+                .DerivedSuccessfulScopeRoundTrips,
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            candidate.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            candidate.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses -
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses <= 0
+                ? 0
+                : Math.Round(
+                    (
+                        candidate.Manifest.Metrics
+                            .DerivedMemberStatsAggregationPasses -
+                        baseline.Manifest.Metrics
+                            .DerivedMemberStatsAggregationPasses
+                    ) /
+                    (double)baseline.Manifest.Metrics
+                        .DerivedMemberStatsAggregationPasses * 100,
+                    3));
         var bytes = TierZeroCanonicalJson.Serialize(report);
         await AtomicWriteAsync(
             reportPath,
@@ -936,6 +1000,18 @@ public sealed class ReplayComparisonService(
                 exception);
         }
         TierOneReplayCanonical.RequireValidOutputRoot(manifest);
+        ReplayExecutionProfile executionProfile;
+        try
+        {
+            executionProfile =
+                ReplayExecutionProfileCatalog.Resolve(
+                    manifest.ExecutionProfile);
+        }
+        catch (ReplayException)
+        {
+            throw ComparisonRejected(
+                "Replay output execution profile is invalid.");
+        }
         if (!bytes.AsSpan().SequenceEqual(
                 TierOneReplayCanonical.SerializeOutput(manifest)) ||
             !manifest.NoPublication ||
@@ -959,7 +1035,7 @@ public sealed class ReplayComparisonService(
             manifest.ProductionComparableTiming ||
             !string.Equals(
                 manifest.TimingComparisonReason,
-                ReplayTimingSemantics.TimingComparisonReason,
+                executionProfile.TimingComparisonReason,
                 StringComparison.Ordinal))
         {
             throw ComparisonRejected("Replay output manifest is invalid.");

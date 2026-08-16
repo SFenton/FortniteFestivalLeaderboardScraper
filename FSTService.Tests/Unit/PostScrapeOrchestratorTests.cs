@@ -200,6 +200,30 @@ public class PostScrapeOrchestratorTests : IDisposable
         return new SongProcessingMachine.MachineResult();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CurrentProjectionCandidateOptionIsForwarded(
+        bool enabled)
+    {
+        var options = new ScraperOptions
+        {
+            BandCurrentProjectionUseBatchedMemberStatsAggregation =
+                enabled,
+        };
+
+        var rebuildOptions =
+            PostScrapeOrchestrator
+                .CreateBandCurrentProjectionRebuildOptions(options);
+
+        Assert.Equal(
+            enabled,
+            rebuildOptions.UseBatchedMemberStatsAggregation);
+        Assert.True(rebuildOptions.SkipUnchangedScopes);
+        Assert.True(rebuildOptions.DisableSynchronousCommit);
+        Assert.Equal(2, rebuildOptions.MaxParallelBandTypes);
+    }
+
     private static async Task<IReadOnlyList<Persistence.SeasonWindowInfo>> WaitUntilCancelledSeasonWindowsAsync(CancellationToken ct)
     {
         await Task.Delay(Timeout.InfiniteTimeSpan, ct);

@@ -20,6 +20,11 @@ test("Tier-1 replay drill keeps Docker and storage isolated", async () => {
   assert.match(source, /FST_REPLAY_APPROVED_ROOT/);
   assert.match(source, /FST_REPLAY_APPROVED_DEVICE/);
   assert.match(source, /--no-publication/);
+  assert.match(source, /--replay-profile "\$profile"/);
+  assert.match(source, /baseline_profile="deterministic-v1"/);
+  assert.match(source, /candidate_profile="deterministic-v1"/);
+  assert.match(source, /production-option-parity-v1/);
+  assert.match(source, /production-option-parity-batched-member-stats-v1/);
   assert.match(source, /-v "\$view:\$root:ro"/);
   assert.match(source, /-v "\$input_root:\$input_root:ro"/);
   assert.match(source, /-v "\$baseline_work:\$baseline_work:ro"/);
@@ -28,7 +33,19 @@ test("Tier-1 replay drill keeps Docker and storage isolated", async () => {
   assert.match(source, /pgdata="\$scratch_root\//);
   assert.match(source, /NOSUPERUSER/);
   assert.match(source, /productionComparableTiming == false/);
-  assert.match(source, /SkipUnchangedScopes=false/);
+  assert.match(source, /\.version == 3/);
+  assert.match(source, /successfulScopeTransactions/);
+  assert.match(source, /derivedSuccessfulScopeCommandExecutions/);
+  assert.match(source, /derivedSuccessfulScopeRoundTrips/);
+  assert.match(source, /derivedMemberStatsAggregationPasses/);
+  assert.match(source, /derivedMemberStatsAggregationPassDeltaPercent/);
+  assert.match(source, /baselineScopeTransactions/);
+  assert.match(source, /candidateDerivedScopeRoundTrips/);
+  assert.match(
+    source,
+    /candidateDerivedMemberStatsAggregationPasses </,
+  );
+  assert.doesNotMatch(source, /productionComparableTiming == true/);
   assert.doesNotMatch(source, /(?:^|\s)-p\s+[0-9]/m);
   assert.doesNotMatch(source, /--publish/);
   assert.doesNotMatch(source, /docker\.sock/);
