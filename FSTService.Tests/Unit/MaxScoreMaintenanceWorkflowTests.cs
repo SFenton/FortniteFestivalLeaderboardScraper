@@ -332,6 +332,78 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
+    public async Task Resume_from_paths_promoted_with_complete_tiers_ignores_blank_accounts_and_rebuilds_only_changed_instrument_rivals()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true,
+                includeBlankAffectedAccount: true);
+        var planWithBlank = await fixture.PlanAsync();
+        Assert.True(planWithBlank.CanApply);
+        Assert.Equal(
+            6,
+            MaxScoreMaintenancePlanReport
+                .CurrentPlanDigestContractVersion);
+        Assert.Equal(
+            0,
+            fixture.ReadBlankAccountIdentityCount());
+        var repeatedPlan = await fixture.PlanAsync();
+        Assert.True(repeatedPlan.CanApply);
+        Assert.Equal(
+            repeatedPlan.PlanDigest,
+            planWithBlank.PlanDigest);
+
+        fixture.SeedUnrelatedLeaderboardRivalState();
+        var unrelatedRivalsBefore =
+            fixture.ReadUnrelatedLeaderboardRivalState();
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .PathsPromoted)
+                {
+                    throw new InvalidOperationException(
+                        "Stop after path promotion.");
+                }
+            };
+        var interrupted = await fixture.ApplyAsync(
+            resume: false,
+            planWithBlank.PlanDigest,
+            rollbackPath: "rollback.json");
+        Assert.False(interrupted.Succeeded);
+        Assert.True(interrupted.Resumable);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.PathsPromoted,
+            interrupted.Phase);
+
+        fixture.SeedCompleteAffectedPlayerTiers();
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            null;
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            planWithBlank.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            resumed.Phase);
+        Assert.Equal(
+            unrelatedRivalsBefore,
+            fixture.ReadUnrelatedLeaderboardRivalState());
+        Assert.Equal(
+            0,
+            fixture.ReadBlankAccountIdentityCount());
+        Assert.Equal(
+            2 * LeaderboardRivalsCalculator
+                .RankMethods.Length,
+            fixture.ReadChangedInstrumentRivalStateCount());
+    }
+
+    [Fact]
     public async Task ApplyOrResume_builds_cache_inventory_and_completion_from_publication_owned_scopes()
     {
         await using var fixture =
@@ -680,7 +752,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 ScraperOptions
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
             int publishedOverlayScore = 50_000,
-            int publishedOnlyMaximum = 70_000)
+            int publishedOnlyMaximum = 70_000,
+            bool includeBlankAffectedAccount = false)
         {
             var dataDirectory = Path.Combine(
                 Directory.GetCurrentDirectory(),
@@ -960,6 +1033,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 catalogCapturedAt,
                 currentIdentity,
                 publishedOverlayScore);
+            if (includeBlankAffectedAccount)
+            {
+                SetBlankAffectedSourceRow(
+                    dataSource,
+                    present: true);
+            }
             if (includeScopeDivergence)
             {
                 SeedScopeDivergence(
@@ -1155,6 +1234,281 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 NextReportPath(
                     resume ? "resume" : "apply"),
                 CancellationToken.None);
+        }
+
+        internal void SetBlankAffectedSourceRow(
+            bool present)
+            => SetBlankAffectedSourceRow(
+                _dataSource,
+                present);
+
+        internal void SeedCompleteAffectedPlayerTiers()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                DELETE FROM player_stats_tiers
+                WHERE account_id = ANY(@accountIds);
+
+                INSERT INTO player_stats_tiers (
+                    account_id,
+                    instrument,
+                    tiers_json,
+                    updated_at)
+                SELECT account_id,
+                       instrument,
+                       '[]'::JSONB,
+                       now()
+                FROM unnest(
+                    @tierAccountIds::TEXT[],
+                    @tierInstruments::TEXT[])
+                    tier(account_id, instrument);
+                """;
+            command.Parameters.Add(
+                "accountIds",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                new[]
+                {
+                    BaseAccount,
+                    OverlayAccount,
+                };
+            command.Parameters.Add(
+                "tierAccountIds",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                new[]
+                {
+                    BaseAccount,
+                    BaseAccount,
+                    OverlayAccount,
+                    OverlayAccount,
+                };
+            command.Parameters.Add(
+                "tierInstruments",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                new[]
+                {
+                    "Overall",
+                    Instrument,
+                    "Overall",
+                    Instrument,
+                };
+            command.ExecuteNonQuery();
+        }
+
+        internal void SeedUnrelatedLeaderboardRivalState()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO leaderboard_rivals (
+                    user_id,
+                    rival_account_id,
+                    instrument,
+                    rank_method,
+                    direction,
+                    user_rank,
+                    rival_rank,
+                    shared_song_count,
+                    ahead_count,
+                    behind_count,
+                    avg_signed_delta,
+                    computed_at)
+                VALUES (
+                    @userId,
+                    'sentinel-rival',
+                    @instrument,
+                    'totalscore',
+                    'above',
+                    2,
+                    1,
+                    1,
+                    1,
+                    0,
+                    -1,
+                    '2026-08-01T00:00:00Z');
+
+                INSERT INTO leaderboard_rivals_state (
+                    user_id,
+                    instrument,
+                    rank_method,
+                    user_rank,
+                    computed_at)
+                VALUES (
+                    @userId,
+                    @instrument,
+                    'totalscore',
+                    2,
+                    '2026-08-01T00:00:00Z');
+
+                INSERT INTO leaderboard_rival_song_samples (
+                    user_id,
+                    rival_account_id,
+                    instrument,
+                    rank_method,
+                    song_id,
+                    user_rank,
+                    rival_rank,
+                    rank_delta,
+                    user_score,
+                    rival_score)
+                VALUES (
+                    @userId,
+                    'sentinel-rival',
+                    @instrument,
+                    'totalscore',
+                    @songId,
+                    2,
+                    1,
+                    -1,
+                    50,
+                    60);
+                """;
+            command.Parameters.AddWithValue(
+                "userId",
+                UnrelatedTierAccount);
+            command.Parameters.AddWithValue(
+                "instrument",
+                PublishedOnlyInstrument);
+            command.Parameters.AddWithValue(
+                "songId",
+                PublishedOnlySongId);
+            command.ExecuteNonQuery();
+        }
+
+        internal string
+            ReadUnrelatedLeaderboardRivalState()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT jsonb_build_object(
+                    'rivals',
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(
+                                to_jsonb(rival)
+                                ORDER BY
+                                    rival.user_id,
+                                    rival.rival_account_id,
+                                    rival.rank_method)
+                            FROM leaderboard_rivals rival
+                            WHERE rival.instrument =
+                                @instrument
+                        ),
+                        '[]'::JSONB),
+                    'state',
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(
+                                to_jsonb(state)
+                                ORDER BY
+                                    state.user_id,
+                                    state.rank_method)
+                            FROM leaderboard_rivals_state state
+                            WHERE state.instrument =
+                                @instrument
+                        ),
+                        '[]'::JSONB),
+                    'samples',
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(
+                                to_jsonb(sample)
+                                ORDER BY
+                                    sample.user_id,
+                                    sample.rival_account_id,
+                                    sample.rank_method,
+                                    sample.song_id)
+                            FROM leaderboard_rival_song_samples
+                                sample
+                            WHERE sample.instrument =
+                                @instrument
+                        ),
+                        '[]'::JSONB))::TEXT
+                """;
+            command.Parameters.AddWithValue(
+                "instrument",
+                PublishedOnlyInstrument);
+            return Convert.ToString(
+                       command.ExecuteScalar())
+                   ?? throw new InvalidOperationException(
+                       "Unrelated leaderboard-rivals state was unavailable.");
+        }
+
+        internal long ReadBlankAccountIdentityCount()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    (SELECT COUNT(*)
+                     FROM score_history
+                     WHERE btrim(account_id) = '')
+                  + (SELECT COUNT(*)
+                     FROM registered_users
+                     WHERE btrim(account_id) = '')
+                  + (SELECT COUNT(*)
+                     FROM player_stats_tiers
+                     WHERE btrim(account_id) = '')
+                  + (SELECT COUNT(*)
+                     FROM publication_api_response_cache
+                     WHERE cache_key IN (
+                         'player::::',
+                         'playerstats:',
+                         'history:v2:',
+                         'syncstatus:',
+                         'rivals-overview:',
+                         'rivals-all:')
+                        OR cache_key LIKE
+                            'rivals-list::%'
+                        OR cache_key LIKE
+                            'lb-rivals::%'
+                        OR cache_key LIKE
+                            'neighborhood:%::5')
+                """;
+            return Convert.ToInt64(
+                command.ExecuteScalar());
+        }
+
+        internal long
+            ReadChangedInstrumentRivalStateCount()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM leaderboard_rivals_state
+                WHERE instrument = @instrument
+                  AND user_id = ANY(@accountIds)
+                  AND rank_method = ANY(@rankMethods)
+                """;
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.Parameters.Add(
+                "accountIds",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                new[]
+                {
+                    OverlayAccount,
+                    UnrelatedTierAccount,
+                };
+            command.Parameters.Add(
+                "rankMethods",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                LeaderboardRivalsCalculator.RankMethods;
+            return Convert.ToInt64(
+                command.ExecuteScalar());
         }
 
         internal void UpdatePublishedSnapshotScore(
@@ -1896,6 +2250,52 @@ public sealed class MaxScoreMaintenanceWorkflowTests
 
         private string NextReportPath(string prefix)
             => $"{prefix}-{Interlocked.Increment(ref _reportNumber)}.json";
+
+        private static void SetBlankAffectedSourceRow(
+            NpgsqlDataSource dataSource,
+            bool present)
+        {
+            using var connection =
+                dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = present
+                ? """
+                  INSERT INTO leaderboard_entries_snapshot (
+                      snapshot_id,
+                      song_id,
+                      instrument,
+                      account_id,
+                      score,
+                      first_seen_at,
+                      last_updated_at)
+                  VALUES (
+                      @snapshotId,
+                      @songId,
+                      @instrument,
+                      '',
+                      1,
+                      now(),
+                      now())
+                  ON CONFLICT DO NOTHING
+                  """
+                : """
+                  DELETE FROM leaderboard_entries_snapshot
+                  WHERE snapshot_id = @snapshotId
+                    AND song_id = @songId
+                    AND instrument = @instrument
+                    AND account_id = ''
+                  """;
+            command.Parameters.AddWithValue(
+                "snapshotId",
+                PublishedScrapeId);
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.ExecuteNonQuery();
+        }
 
         private static void SeedDatabase(
             NpgsqlDataSource dataSource,

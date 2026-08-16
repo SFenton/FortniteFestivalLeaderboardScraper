@@ -292,6 +292,20 @@ public static class PublicationReadContextHttpContextExtensions
             : null;
 }
 
+internal static class MaxScoreMaintenanceReadLeasePolicy
+{
+    internal static bool DeferToCacheOrRouteGate(
+        HttpContext context,
+        PublicReadFreezeState state)
+        => state.MaxScoreMaintenance
+           && state.RequiresCachedReads
+           && context.GetEndpoint()?.Metadata
+               .GetMetadata<PublicationBound>() is not null
+           && PublicReadGateMiddleware
+               .RequiresMaxScoreMaintenanceData(
+                   context.Request);
+}
+
 /// <summary>
 /// Holds the shared publication lock for publication-bound reads during a
 /// frozen transition even while full request pinning remains disabled.
@@ -319,9 +333,19 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
             return;
         }
 
-        if (publicReadGate.GetState().PublicationCommitPending)
+        var gateState = publicReadGate.GetState();
+        if (gateState.PublicationCommitPending)
         {
             await PublicationCommitHttpResults.Unavailable(context);
+            return;
+        }
+
+        if (MaxScoreMaintenanceReadLeasePolicy
+            .DeferToCacheOrRouteGate(
+                context,
+                gateState))
+        {
+            await _next(context);
             return;
         }
 
@@ -392,9 +416,19 @@ public sealed class PublicationReadContextMiddleware
             return;
         }
 
-        if (publicReadGate.GetState().PublicationCommitPending)
+        var gateState = publicReadGate.GetState();
+        if (gateState.PublicationCommitPending)
         {
             await PublicationCommitHttpResults.Unavailable(context);
+            return;
+        }
+
+        if (MaxScoreMaintenanceReadLeasePolicy
+            .DeferToCacheOrRouteGate(
+                context,
+                gateState))
+        {
+            await _next(context);
             return;
         }
 

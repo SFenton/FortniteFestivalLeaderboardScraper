@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: bf770d49
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
@@ -193,7 +194,13 @@ derived rows while retaining the same published scrape/publication ID.
    instruments when provider metadata omitted the real MIDI chart. Affected
    accounts' complete player-stat tier sets are atomically replaced, removing
    stale active-only instruments while preserving unrelated accounts;
-   registered-player leaderboard rivals follow.
+   blank affected account IDs are excluded only after proving that they have no
+   history, registration, or account-cache identity. Registered-player
+   leaderboard rivals then rebuild only the changed instruments. One
+   authoritative profile batch per changed instrument covers all registered
+   users and deduplicated ranking neighbors; the existing five methods,
+   directions, and top-200 C# sample semantics are retained, while unrelated
+   instrument rival rows/state are untouched.
 7. Routine notification dry-run candidates are accepted only for player ranks
    in changed instruments, target-song band rows, and their dependent band
    ranks. Parity uses routine delivery grouping: player ranks per
@@ -244,11 +251,19 @@ derived rows while retaining the same published scrape/publication ID.
    Registration lease acquisition independently refreshes path/instrument
    support before lookup work, closing the interval before the monitor pass.
 
-During this maintenance freeze, publication-bound path and song routes that
-have no safe published response cache return `503`; cacheable ranking/player/
-band routes serve the prior published cache or return `503`. Exact solo
-leaderboards follow this rule rather than falling through to current
-max-score/leeway reads. Player tracking, selected-profile registration
+During this maintenance freeze, `/api/songs` may serve its stable process
+cache, immutable current-generation path PNG/JSON files may be served when
+present, and outer-cache exact solo leaderboards may be served. When the songs
+cache was warmed before path promotion, its prior generation ID is temporary
+skew rather than an invalid client path: PNG and JSON requests carrying that
+valid stale ID return `503` with `Retry-After: 30` and never read the old
+immutable directory. Other cold dependent reads use the same `503` path before
+publication read-context or boundary-lease acquisition, so maintenance lock
+waits cannot surface as `500`. Ordinary publication transitions still acquire
+and hold their existing read leases and retain stale-ID `400`/missing-artifact
+`404` behavior. Cacheable ranking/player/band routes otherwise serve the prior
+published cache or return `503`; exact solo leaderboards never fall through to
+current max-score/leeway reads. Player tracking, selected-profile registration
 activity, manual `POST /api/backfill/{accountId}`, and band sync registration
 are paused across resume attempts. Database triggers reject
 registration/backfill scope writes, while registration-only workers and the

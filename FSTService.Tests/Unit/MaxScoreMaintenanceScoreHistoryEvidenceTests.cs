@@ -889,6 +889,179 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public async Task Score_history_evidence_excludes_blank_source_rows_and_rejects_blank_identity()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        using (var connection = dataSource.OpenConnection())
+        using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    @scrapeId,
+                    'song-a',
+                    'Solo_Guitar',
+                    '',
+                    1,
+                    now(),
+                    now())
+                """;
+            seed.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            Assert.Equal(1, seed.ExecuteNonQuery());
+        }
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+            };
+
+        var optimized = await ComputeOptimizedSnapshotAsync(
+            dataSource,
+            manifest,
+            maxima);
+        await using var referenceConnection =
+            await dataSource.OpenConnectionAsync();
+        await using var referenceTransaction =
+            await referenceConnection.BeginTransactionAsync(
+                System.Data.IsolationLevel.RepeatableRead);
+        var reference =
+            await MaxScoreMaintenanceService
+                .ComputeScoreHistoryEvidenceReferenceAsync(
+                    manifest,
+                    maxima,
+                    referenceConnection,
+                    referenceTransaction,
+                    CancellationToken.None);
+
+        Assert.Equal(reference, optimized.Evidence);
+        Assert.DoesNotContain(
+            optimized.AffectedPlayerStatsAccounts,
+            string.IsNullOrWhiteSpace);
+        Assert.DoesNotContain(
+            optimized.AffectedRegisteredAccounts,
+            string.IsNullOrWhiteSpace);
+        Assert.DoesNotContain(
+            optimized.OverlayOnlyRegisteredAccounts,
+            string.IsNullOrWhiteSpace);
+
+        using (var connection = dataSource.OpenConnection())
+        using (var seedIdentity = connection.CreateCommand())
+        {
+            seedIdentity.CommandText = """
+                INSERT INTO registered_users (
+                    device_id,
+                    account_id,
+                    registered_at)
+                VALUES (
+                    'blank-device',
+                    '',
+                    now())
+                """;
+            Assert.Equal(
+                1,
+                seedIdentity.ExecuteNonQuery());
+        }
+
+        var identityError =
+            await Assert.ThrowsAsync<
+                InvalidOperationException>(
+                () => ComputeOptimizedSnapshotAsync(
+                    dataSource,
+                    manifest,
+                    maxima));
+        Assert.Contains(
+            "Blank affected-account source rows cannot be ignored",
+            identityError.Message,
+            StringComparison.Ordinal);
+
+        using (var connection = dataSource.OpenConnection())
+        using (var replaceIdentity = connection.CreateCommand())
+        {
+            replaceIdentity.CommandText = """
+                DELETE FROM registered_users
+                WHERE account_id = '';
+
+                INSERT INTO api_response_cache (
+                    cache_key,
+                    json_data,
+                    etag,
+                    cached_at)
+                VALUES (
+                    'player::::',
+                    convert_to('{}', 'UTF8'),
+                    '"blank-cache"',
+                    now());
+                """;
+            replaceIdentity.ExecuteNonQuery();
+        }
+        var cacheIdentityError =
+            await Assert.ThrowsAsync<
+                InvalidOperationException>(
+                () => ComputeOptimizedSnapshotAsync(
+                    dataSource,
+                    manifest,
+                    maxima));
+        Assert.Contains(
+            "cacheRows=1",
+            cacheIdentityError.Message,
+            StringComparison.Ordinal);
+
+        using (var connection = dataSource.OpenConnection())
+        using (var replaceIdentity = connection.CreateCommand())
+        {
+            replaceIdentity.CommandText = """
+                DELETE FROM api_response_cache
+                WHERE cache_key = 'player::::';
+
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    new_score,
+                    new_rank,
+                    changed_at)
+                VALUES (
+                    'song-a',
+                    'Solo_Guitar',
+                    '',
+                    1,
+                    1,
+                    now());
+                """;
+            replaceIdentity.ExecuteNonQuery();
+        }
+        var historyIdentityError =
+            await Assert.ThrowsAsync<
+                InvalidOperationException>(
+                () => ComputeOptimizedSnapshotAsync(
+                    dataSource,
+                    manifest,
+                    maxima));
+        Assert.Contains(
+            "historyRows=1",
+            historyIdentityError.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Score_history_evidence_preserves_overlay_only_classification_and_duplicate_registrations()
     {
         using var dataSource =
