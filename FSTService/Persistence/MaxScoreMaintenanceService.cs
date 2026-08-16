@@ -2971,10 +2971,6 @@ public sealed class MaxScoreMaintenanceService
         {
             var scores = _persistence
                 .GetCurrentStatePlayerProfile(accountId)
-                .OrderBy(score => score.SongId, StringComparer.Ordinal)
-                .ThenBy(
-                    score => score.Instrument,
-                    StringComparer.Ordinal)
                 .Select(score =>
                 {
                     if (!population.TryGetValue(
@@ -2994,6 +2990,10 @@ public sealed class MaxScoreMaintenanceService
                             : score.Rank,
                         totalEntries);
                 })
+                .OrderBy(score => score.SongId, StringComparer.Ordinal)
+                .ThenBy(
+                    score => score.Instrument,
+                    StringComparer.Ordinal)
                 .ToArray();
             rows.Add(new CacheAccountFingerprintRow(
                 accountId,

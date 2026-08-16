@@ -724,8 +724,11 @@ Apply:
   requires the exact solo base/leeway/rank-offset key inventory derived from
   the frozen catalog and publication scopes. It records a bounded whole-cache
   fingerprint plus semantic target-scope, affected-account, and
-  overlay-only-account fingerprints, and persists every cache key, ETag, and
-  JSON SHA-256 in immutable database evidence; and
+  overlay-only-account fingerprints. Affected-account score rows are
+  canonicalized by song ID and single-instrument combo ID before semantic
+  hashing, so equivalent payload ordering is not treated as a content change.
+  The workflow also persists every cache key, ETag, and JSON SHA-256 in
+  immutable database evidence; and
 - validates paths, maxima, rankings, exact rollback file/database identity,
   rank-history and complete consumed score-history evidence, immutable
   publication population, the full zero-inclusive `song_stats` inventory,

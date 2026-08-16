@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Tests.Unit;
 
@@ -329,6 +330,36 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.Equal(
             [50_000],
             state.OverlayAccountCacheScores);
+    }
+
+    [Fact]
+    public async Task ApplyOrResume_canonicalizes_multi_instrument_player_cache_evidence()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeMultiInstrumentAffectedProfile: true);
+        var plan = await fixture.PlanAsync();
+        Assert.True(plan.CanApply);
+
+        var result = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            result.Succeeded,
+            $"phase={result.Phase}, stage={result.FailureStage}, detail={result.Detail}, exception={fixture.LastFailure}");
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            result.Phase);
+        Assert.NotNull(result.CacheEvidence);
+        Assert.Equal(
+            1,
+            result.CacheEvidence!.AffectedAccountCount);
+        Assert.Equal(
+            [45_000, 50_000],
+            fixture.ReadWorkflowState()
+                .OverlayAccountCacheScores);
     }
 
     [Fact]
@@ -753,7 +784,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
             int publishedOverlayScore = 50_000,
             int publishedOnlyMaximum = 70_000,
-            bool includeBlankAffectedAccount = false)
+            bool includeBlankAffectedAccount = false,
+            bool includeMultiInstrumentAffectedProfile = false)
         {
             var dataDirectory = Path.Combine(
                 Directory.GetCurrentDirectory(),
@@ -802,19 +834,34 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 0,
                 DateTimeKind.Utc);
             using var providerDocument = JsonDocument.Parse(
-                """
-                {
-                  "lastModified": "2026-08-01T00:00:00Z",
-                  "track": {
-                    "su": "workflow-song",
-                    "tt": "Workflow Song",
-                    "an": "Workflow Artist",
-                    "in": {
-                      "gr": 3
-                    }
-                  }
-                }
-                """);
+                includeMultiInstrumentAffectedProfile
+                    ? """
+                      {
+                        "lastModified": "2026-08-01T00:00:00Z",
+                        "track": {
+                          "su": "workflow-song",
+                          "tt": "Workflow Song",
+                          "an": "Workflow Artist",
+                          "in": {
+                            "gr": 3,
+                            "ba": 3
+                          }
+                        }
+                      }
+                      """
+                    : """
+                      {
+                        "lastModified": "2026-08-01T00:00:00Z",
+                        "track": {
+                          "su": "workflow-song",
+                          "tt": "Workflow Song",
+                          "an": "Workflow Artist",
+                          "in": {
+                            "gr": 3
+                          }
+                        }
+                      }
+                      """);
             var song = new Song
             {
                 track = new Track
@@ -822,7 +869,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     su = SongId,
                     tt = "Workflow Song",
                     an = "Workflow Artist",
-                    @in = new In { gr = 3 },
+                    @in = includeMultiInstrumentAffectedProfile
+                        ? new In { gr = 3, ba = 3 }
+                        : new In { gr = 3 },
                 },
                 providerJson =
                     providerDocument.RootElement.Clone(),
@@ -888,6 +937,14 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             var catalog =
                 SongCatalogSnapshotBuilder.Create(
                     catalogSongs);
+            var expectedInstruments =
+                includeMultiInstrumentAffectedProfile
+                    ? new[]
+                    {
+                        Instrument,
+                        PublishedOnlyInstrument,
+                    }
+                    : [Instrument];
 
             var currentIdentity =
                 new MaxScoreMaintenancePathIdentity(
@@ -909,10 +966,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     GenerationProfile: "profile-v2",
                     ArtifactGenerationId:
                         "workflow-current",
-                    ExpectedInstruments: [Instrument],
+                    ExpectedInstruments: expectedInstruments,
                     Maxima: new MaxScoreMaintenanceMaxima(
                         55_000,
-                        null,
+                        includeMultiInstrumentAffectedProfile
+                            ? 70_000
+                            : null,
                         null,
                         null,
                         null,
@@ -1013,7 +1072,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                             MaxScoreMaintenanceStagePurposes
                                 .Promotion,
                             new string('8', 64),
-                            [Instrument],
+                            expectedInstruments,
                             [Instrument]),
                     Runtime: runtime,
                     Songs:
@@ -1033,6 +1092,10 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 catalogCapturedAt,
                 currentIdentity,
                 publishedOverlayScore);
+            if (includeMultiInstrumentAffectedProfile)
+            {
+                SeedMultiInstrumentAffectedProfile(dataSource);
+            }
             if (includeBlankAffectedAccount)
             {
                 SetBlankAffectedSourceRow(
@@ -2491,6 +2554,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     title,
                     last_modified,
                     max_lead_score,
+                    max_bass_score,
                     dat_file_hash,
                     song_last_modified,
                     paths_generated_at,
@@ -2506,6 +2570,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     'Workflow Song',
                     @lastModified,
                     @currentMaxScore,
+                    @currentMaxBassScore,
                     @currentDatHash,
                     @lastModified,
                     @currentGeneratedAt,
@@ -2513,7 +2578,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     @currentBinaryHash,
                     @currentProfile,
                     @currentGenerationId,
-                    ARRAY[@instrument]::TEXT[],
+                    @currentExpectedInstruments,
                     @currentRevision,
                     FALSE);
 
@@ -2919,6 +2984,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.Parameters.AddWithValue(
                 "currentMaxScore",
                 currentPath.Maxima.Lead!.Value);
+            command.Parameters.Add(
+                "currentMaxBassScore",
+                NpgsqlDbType.Integer).Value =
+                currentPath.Maxima.Bass.HasValue
+                    ? currentPath.Maxima.Bass.Value
+                    : DBNull.Value;
             command.Parameters.AddWithValue(
                 "currentDatHash",
                 currentPath.DatFileHash!);
@@ -2937,9 +3008,113 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.Parameters.AddWithValue(
                 "currentGenerationId",
                 currentPath.ArtifactGenerationId!);
+            command.Parameters.Add(
+                "currentExpectedInstruments",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                currentPath.ExpectedInstruments.ToArray();
             command.Parameters.AddWithValue(
                 "currentRevision",
                 currentPath.Revision);
+            command.ExecuteNonQuery();
+        }
+
+        private static void SeedMultiInstrumentAffectedProfile(
+            NpgsqlDataSource dataSource)
+        {
+            using var connection =
+                dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @publishedScrapeId,
+                    @songId,
+                    @additionalInstrument,
+                    'alltime',
+                    'empty',
+                    NULL,
+                    @publishedScrapeId,
+                    0,
+                    md5('workflow-additional-source'),
+                    md5('workflow-additional-coverage'),
+                    0,
+                    0,
+                    TRUE,
+                    now() - interval '1 hour',
+                    now() - interval '1 hour');
+
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at,
+                    source_priority,
+                    overlay_reason)
+                VALUES (
+                    @songId,
+                    @additionalInstrument,
+                    @overlayAccount,
+                    45000,
+                    960000,
+                    TRUE,
+                    5,
+                    3,
+                    3,
+                    0.2,
+                    1,
+                    1,
+                    'backfill',
+                    now() - interval '1 day',
+                    now() - interval '30 minutes',
+                    200,
+                    'workflow-multi-instrument-test');
+
+                UPDATE publication_surface_bindings
+                SET row_count = 2
+                WHERE publication_id = @publicationId
+                  AND surface_name = 'solo_scope_sources';
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                PublishedScrapeId);
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "additionalInstrument",
+                PublishedOnlyInstrument);
+            command.Parameters.AddWithValue(
+                "overlayAccount",
+                OverlayAccount);
             command.ExecuteNonQuery();
         }
 
