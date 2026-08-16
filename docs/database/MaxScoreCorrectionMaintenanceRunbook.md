@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified_commit: b7ce5d3a
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -204,12 +204,12 @@ overflowing threshold without allowing the value through target admission.
 
 Run from the production-owned Compose directory. Host-side request/report
 files belong below the mounted FST data directory; command paths below are
-relative to `Scraper:DataDirectory`. Replace `1298` only with the exact current
+relative to `Scraper:DataDirectory`. Replace `1301` only with the exact current
 published scrape confirmed during preflight.
 
 ```bash
 FST_DATA=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data
-PUBLISHED_SCRAPE_ID=1298
+PUBLISHED_SCRAPE_ID=1301
 MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS=1800
 EVIDENCE_REL="maintenance/max-score-${PUBLISHED_SCRAPE_ID}-v4-canary"
 EVIDENCE="$FST_DATA/$EVIDENCE_REL"
@@ -479,19 +479,31 @@ evidence visits each current published scope and its resolved overlay rows.
 Score-history evidence now prepares narrow `ON COMMIT DROP` selectors under the
 existing repeatable-read/source-lock transaction:
 
-- post-promotion maxima and current published source bindings;
-- resolved current candidates for every row in an affected instrument, plus
-  exact snapshot/overlay primary-key lookups for affected accounts on other
-  instruments;
-- one deduplicated affected-account set, including registered and
-  overlay-only cache subsets;
+- the exact current publication, post-promotion maxima, complete all-time
+  source rows, and captured registration rows;
+- one deduplicated affected-account set enumerated from only the changed
+  scopes, independent of score, including registered and overlay-only cache
+  subsets;
+- direct ranking fallback keys from each affected-instrument scope above its
+  exact integer cutoff;
+- direct player fallback keys for affected accounts across published scopes
+  above each exact maximum;
 - unique nonregistered fallback scopes.
 
-Published snapshot rows are inserted first and supplemental overlay rows use
-deterministic `ON CONFLICT` precedence identical to the authoritative
-`InstrumentDatabase` resolver. The selector path has no publication-wide
-`DISTINCT ON` sort. It reuses the affected/cache account sets for downstream
-player-stat and cache work instead of resolving them again.
+The selector rejects a mismatched publication/scrape, any working publication,
+a non-current generation, a missing/non-ready/non-`scrape_id`
+`solo_scope_sources` binding, an incomplete source, a missing changed scope,
+or zero sources. Snapshot probes are parameterized per scope and prepared in
+instrument groups. Their predicates are the existing
+`(snapshot_id, song_id, instrument, score DESC)` index prefix plus
+`score > threshold`; runtime partition pruning removes the other eight
+instrument partitions. The score order keeps the score-bearing index
+available even for a generic prepared plan. Supplemental overlay probes are
+separate and authoritative: the snapshot probe excludes an account whenever
+an overlay exists for that scope, even when the overlay score is lower and
+does not itself qualify. `ON CONFLICT DO NOTHING` unifies player/ranking
+overlap without a publication-wide current-row materialization or
+`DISTINCT ON` sort.
 
 The registered branch reads all history once by joining the captured
 registration rows, preserving the established per-device multiplicity in the
@@ -518,17 +530,23 @@ Expected work is:
 
 ```text
 selector I/O =
-  affected-instrument current rows
-  + affected-account exact lookups on other instruments
+  complete account enumeration for exact changed scopes
+  + per-scope score-index probes above ranking cutoffs
+  + per-scope score-index probes above maxima for affected accounts
+  + indexed supplemental-overlay probes
 history I/O =
   one registered-history semi-join
   + indexed rows for unique nonregistered fallback scopes
 temporary space =
-  narrow current selectors and fallback keys, never score_history rows
+  publication/source/maxima/account/fallback keys, never current candidates
+  or score_history rows
 ```
 
-No new index is part of this optimization; differential fixtures exercise the
-existing snapshot/overlay primary keys and `ix_sh_valid_lookup`.
+No new index is part of this optimization. PostgreSQL 17 test evidence forces
+a generic prepared plan and verifies `Subplans Removed: 8`, no snapshot
+sequential scan, and an index definition of
+`(snapshot_id, song_id, instrument, score DESC)`. Differential fixtures also
+exercise overlay primary keys and `ix_sh_valid_lookup`.
 
 The configured timeout is one shared wall-clock deadline across selector
 preparation and both aggregates, not a fresh allowance per command. A
@@ -542,23 +560,18 @@ connection data.
 
 ### 2026-08-15 production evidence
 
-Publication `1300` is authoritative and unfrozen, notifications are complete,
-and the worker is stopped. After the score-history query optimization, the
-two-song plan completed within the reviewed maintenance window but returned
-`canApply=false` only because plan report v4 compared observed scores with the
-CHOpt denominator instead of the ranking validity cutoff:
+Publication `1301` is authoritative and unfrozen, notifications are complete,
+the worker is stopped, and final maintenance staging exists. The current
+1,800-second plan still times out in `complete-score-history-evidence`.
+Removing temporary spill was insufficient: the active broad candidate insert
+still scanned approximately `407 GB` of the `Solo_Guitar` snapshot partition
+and `543 GB` of `Solo_PeripheralGuitar` before applying thresholds. That plan
+produced no new approved digest. No freeze, apply, path promotion, database
+mutation, merge, or deployment occurred.
 
-| Song/instrument | New maximum | Highest observed | Exact ranking cutoff | Result under v5 contract |
-|---|---:|---:|---:|---|
-| Show Them Who We Are / Lead | `63750` | `63764` | `66937` | valid |
-| Run It / Lead | `51573` | `52809` | `54151` | valid; `4/43` rows exceed the denominator and none exceed the cutoff |
-| Run It / Pro Lead | `51573` | `51588` | `54151` | valid; `1/21` row exceeds the denominator and none exceed the cutoff |
-| Show Them Who We Are / Pro Lead | `65367` | `65228` | `68635` | valid |
-
-The old report and digest are not applicable to plan report/digest contract
-v5. No freeze, apply, path promotion, database mutation, merge, or deployment
-occurred. Generate a fresh v5 plan only after this change is reviewed and
-deployed.
+This direct selective implementation is repository-only until reviewed,
+merged, and deployed. Generate a fresh plan after deployment; do not reuse an
+older report or digest.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete

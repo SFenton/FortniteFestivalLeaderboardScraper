@@ -2,6 +2,7 @@ using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text.Json;
 
 namespace FSTService.Tests.Unit;
 
@@ -687,6 +688,630 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         Assert.True(optimized.RowCount > 0);
     }
 
+    [Theory]
+    [InlineData(11_000, 9_000, 0)]
+    [InlineData(9_000, 11_000, 1)]
+    public async Task Score_history_evidence_applies_overlay_precedence_before_ranking_threshold(
+        int snapshotScore,
+        int overlayScore,
+        long expectedRowCount)
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        SeedEvidenceScope(
+            dataSource,
+            manifest.ExpectedPublishedScrapeId,
+            "precedence-song",
+            "Solo_Guitar",
+            [
+                new(
+                    "precedence-account",
+                    snapshotScore,
+                    overlayScore),
+            ]);
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+                ["precedence-song"] =
+                    CreateMaxScores(("Solo_Guitar", 10_000)),
+            };
+        InsertEvidenceHistory(
+            dataSource,
+            "precedence-song",
+            "Solo_Guitar",
+            "precedence-account",
+            10_000,
+            new DateTime(
+                2026,
+                8,
+                15,
+                14,
+                0,
+                0,
+                DateTimeKind.Utc));
+
+        var (optimized, reference) =
+            await ComputeEvidencePairAsync(
+                dataSource,
+                manifest,
+                maxima);
+
+        Assert.Equal(reference, optimized);
+        Assert.Equal(expectedRowCount, optimized.RowCount);
+    }
+
+    [Fact]
+    public async Task Score_history_evidence_excludes_current_scores_equal_to_maximum_or_cutoff()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        SeedEvidenceScope(
+            dataSource,
+            manifest.ExpectedPublishedScrapeId,
+            "player-equality-song",
+            "Solo_Bass",
+            [
+                new("account-base", 10_000, null),
+            ]);
+        SeedEvidenceScope(
+            dataSource,
+            manifest.ExpectedPublishedScrapeId,
+            "ranking-equality-song",
+            "Solo_Guitar",
+            [
+                new("ranking-equality-account", 10_500, null),
+            ]);
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+                ["player-equality-song"] =
+                    CreateMaxScores(("Solo_Bass", 10_000)),
+                ["ranking-equality-song"] =
+                    CreateMaxScores(("Solo_Guitar", 10_000)),
+            };
+        var changedAt = new DateTime(
+            2026,
+            8,
+            15,
+            14,
+            5,
+            0,
+            DateTimeKind.Utc);
+        InsertEvidenceHistory(
+            dataSource,
+            "player-equality-song",
+            "Solo_Bass",
+            "account-base",
+            9_000,
+            changedAt);
+        InsertEvidenceHistory(
+            dataSource,
+            "ranking-equality-song",
+            "Solo_Guitar",
+            "ranking-equality-account",
+            9_000,
+            changedAt.AddSeconds(1));
+
+        var (optimized, reference) =
+            await ComputeEvidencePairAsync(
+                dataSource,
+                manifest,
+                maxima);
+
+        Assert.Equal(reference, optimized);
+        Assert.Equal(0, optimized.RowCount);
+    }
+
+    [Fact]
+    public async Task Score_history_evidence_low_changed_score_marks_account_for_other_scope_player_fallback()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        SeedEvidenceScope(
+            dataSource,
+            manifest.ExpectedPublishedScrapeId,
+            "player-fallback-song",
+            "Solo_Bass",
+            [
+                new("account-base", 10_001, null),
+            ]);
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+                ["player-fallback-song"] =
+                    CreateMaxScores(("Solo_Bass", 10_000)),
+            };
+        InsertEvidenceHistory(
+            dataSource,
+            "player-fallback-song",
+            "Solo_Bass",
+            "account-base",
+            10_000,
+            new DateTime(
+                2026,
+                8,
+                15,
+                14,
+                10,
+                0,
+                DateTimeKind.Utc));
+
+        var optimized = await ComputeOptimizedSnapshotAsync(
+            dataSource,
+            manifest,
+            maxima);
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.RepeatableRead);
+        var reference =
+            await MaxScoreMaintenanceService
+                .ComputeScoreHistoryEvidenceReferenceAsync(
+                    manifest,
+                    maxima,
+                    connection,
+                    transaction,
+                    CancellationToken.None);
+
+        Assert.Equal(reference, optimized.Evidence);
+        Assert.Equal(1, optimized.Evidence.RowCount);
+        Assert.Contains(
+            "account-base",
+            optimized.AffectedPlayerStatsAccounts);
+    }
+
+    [Fact]
+    public async Task Score_history_evidence_preserves_overlay_only_classification_and_duplicate_registrations()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+            };
+        using (var connection = dataSource.OpenConnection())
+        using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO registered_users (
+                    device_id,
+                    account_id,
+                    registered_at)
+                VALUES
+                    ('overlay-device-a', 'account-overlay', now()),
+                    ('overlay-device-b', 'account-overlay', now());
+
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    new_score,
+                    new_rank,
+                    changed_at)
+                VALUES (
+                    'registered-history-song',
+                    'Solo_Drums',
+                    'account-overlay',
+                    1,
+                    1,
+                    now());
+                """;
+            seed.ExecuteNonQuery();
+        }
+
+        var optimized = await ComputeOptimizedSnapshotAsync(
+            dataSource,
+            manifest,
+            maxima);
+
+        Assert.Equal(2, optimized.Evidence.RowCount);
+        Assert.Equal(
+            ["account-overlay"],
+            optimized.AffectedRegisteredAccounts);
+        Assert.Equal(
+            ["account-overlay"],
+            optimized.OverlayOnlyRegisteredAccounts);
+    }
+
+    [Theory]
+    [InlineData("unpublished")]
+    [InlineData("wrong-publication")]
+    [InlineData("working-publication")]
+    [InlineData("non-current-generation")]
+    [InlineData("incomplete-source")]
+    [InlineData("missing-binding")]
+    [InlineData("wrong-binding")]
+    [InlineData("zero-sources")]
+    public async Task Score_history_evidence_rejects_invalid_publication_source_fences(
+        string invalidState)
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        var effectiveManifest = manifest;
+        if (invalidState == "wrong-publication")
+        {
+            effectiveManifest = manifest with
+            {
+                ExpectedPublicationId =
+                    manifest.ExpectedPublicationId + 1,
+            };
+        }
+        else
+        {
+            using var connection = dataSource.OpenConnection();
+            using var mutation = connection.CreateCommand();
+            mutation.CommandText = invalidState switch
+            {
+                "unpublished" => """
+                    UPDATE scrape_publication_state
+                    SET published_scrape_id = NULL
+                    WHERE id = TRUE;
+                    """,
+                "working-publication" => """
+                    INSERT INTO scrape_log (
+                        id,
+                        started_at,
+                        status)
+                    VALUES (
+                        @workingScrapeId,
+                        now(),
+                        'running');
+                    INSERT INTO publication_generations (
+                        publication_id,
+                        scrape_id,
+                        status,
+                        created_at)
+                    VALUES (
+                        @workingPublicationId,
+                        @workingScrapeId,
+                        'building',
+                        now());
+                    UPDATE scrape_publication_state
+                    SET working_publication_id =
+                            @workingPublicationId
+                    WHERE id = TRUE;
+                    """,
+                "non-current-generation" => """
+                    UPDATE publication_generations
+                    SET status = 'retained'
+                    WHERE publication_id =
+                              @publicationId;
+                    """,
+                "incomplete-source" => """
+                    UPDATE leaderboard_published_scope_source
+                    SET is_complete = FALSE
+                    WHERE published_scrape_id = @scrapeId;
+                    """,
+                "missing-binding" => """
+                    DELETE FROM publication_surface_bindings
+                    WHERE publication_id = @publicationId
+                      AND surface_name =
+                              'solo_scope_sources';
+                    """,
+                "wrong-binding" => """
+                    UPDATE publication_surface_bindings
+                    SET binding_json = jsonb_set(
+                            binding_json,
+                            '{publishedScrapeId}',
+                            to_jsonb(
+                                (@scrapeId + 1)::BIGINT))
+                    WHERE publication_id = @publicationId
+                      AND surface_name =
+                              'solo_scope_sources';
+                    """,
+                "zero-sources" => """
+                    DELETE FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId;
+                    UPDATE publication_surface_bindings
+                    SET row_count = 0
+                    WHERE publication_id = @publicationId
+                      AND surface_name =
+                              'solo_scope_sources';
+                    """,
+                _ => throw new InvalidOperationException(
+                    $"Unknown invalid state '{invalidState}'."),
+            };
+            mutation.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            mutation.Parameters.AddWithValue(
+                "publicationId",
+                manifest.ExpectedPublicationId);
+            mutation.Parameters.AddWithValue(
+                "workingScrapeId",
+                manifest.ExpectedPublishedScrapeId + 1);
+            mutation.Parameters.AddWithValue(
+                "workingPublicationId",
+                manifest.ExpectedPublicationId + 1);
+            mutation.ExecuteNonQuery();
+        }
+        var maxima =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+            };
+
+        await using var evidenceConnection =
+            await dataSource.OpenConnectionAsync();
+        await using var evidenceTransaction =
+            await evidenceConnection.BeginTransactionAsync(
+                System.Data.IsolationLevel.RepeatableRead);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
+                    effectiveManifest,
+                    maxima,
+                    evidenceConnection,
+                    evidenceTransaction,
+                    CancellationToken.None,
+                    ScraperOptions
+                        .DefaultMaxScoreMaintenanceCommandTimeoutSeconds));
+    }
+
+    [Fact]
+    public async Task Score_history_snapshot_probe_plan_uses_partition_score_index_without_broad_scan()
+    {
+        Assert.DoesNotContain(
+            "fst_max_score_evidence_candidates",
+            MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .SelectorTableNames);
+        foreach (var probeSql in new[]
+                 {
+                     MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                         .RankingSnapshotProbeSql,
+                     MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                         .PlayerSnapshotProbeSql,
+                 })
+        {
+            Assert.DoesNotContain(
+                "LATERAL",
+                probeSql,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                "snapshot.snapshot_id = @sourceSnapshotId",
+                probeSql,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "snapshot.score > @scoreThreshold",
+                probeSql,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "ORDER BY snapshot.score DESC",
+                probeSql,
+                StringComparison.Ordinal);
+        }
+
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.Transaction = transaction;
+            setup.CommandText = """
+                CREATE TEMP TABLE
+                    fst_max_score_evidence_fallback_scopes (
+                        song_id TEXT NOT NULL,
+                        instrument TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        max_threshold INTEGER NOT NULL,
+                        PRIMARY KEY (
+                            song_id,
+                            instrument,
+                            account_id)
+                    ) ON COMMIT DROP;
+
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                SELECT 1296,
+                       'probe-song',
+                       'Solo_Guitar',
+                       'probe-account-' || value,
+                       CASE
+                           WHEN value = 1 THEN 11_000
+                           ELSE 9_000
+                       END,
+                       value,
+                       'scrape',
+                       now(),
+                       now()
+                FROM generate_series(1, 2000) value;
+                ANALYZE
+                    leaderboard_entries_snapshot_solo_guitar;
+                SET LOCAL enable_seqscan = off;
+                SET LOCAL enable_bitmapscan = off;
+                SET LOCAL plan_cache_mode =
+                    force_generic_plan;
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        var preparedProbeSql =
+            MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .RankingSnapshotProbeSql
+                .Replace(
+                    "@sourceSnapshotId",
+                    "$1",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "@songId",
+                    "$2",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "@instrument",
+                    "$3",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "@scoreThreshold",
+                    "$4",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "@maxThreshold",
+                    "$5",
+                    StringComparison.Ordinal);
+        await using (var prepare = connection.CreateCommand())
+        {
+            prepare.Transaction = transaction;
+            prepare.CommandText = """
+                PREPARE fst_score_history_probe(
+                    BIGINT,
+                    TEXT,
+                    TEXT,
+                    INTEGER,
+                    INTEGER) AS
+                """
+                + "\n"
+                + preparedProbeSql;
+            await prepare.ExecuteNonQueryAsync();
+        }
+
+        await using var explain = connection.CreateCommand();
+        explain.Transaction = transaction;
+        explain.CommandText = """
+            EXPLAIN (FORMAT JSON, COSTS OFF)
+            EXECUTE fst_score_history_probe(
+                1296,
+                'probe-song',
+                'Solo_Guitar',
+                10500,
+                10500);
+            """;
+        var planJson =
+            (string)(await explain.ExecuteScalarAsync())!;
+        using var plan = JsonDocument.Parse(planJson);
+        var nodes = EnumeratePlanNodes(
+                plan.RootElement)
+            .ToArray();
+        var snapshotNodes = nodes
+            .Where(node =>
+                node.TryGetProperty(
+                    "Relation Name",
+                    out var relation)
+                && relation.GetString()?
+                    .StartsWith(
+                        "leaderboard_entries_snapshot",
+                        StringComparison.Ordinal)
+                    == true)
+            .ToArray();
+
+        Assert.NotEmpty(snapshotNodes);
+        Assert.All(
+            snapshotNodes,
+            node => Assert.DoesNotContain(
+                "Seq Scan",
+                node.GetProperty("Node Type").GetString(),
+                StringComparison.Ordinal));
+        Assert.All(
+            snapshotNodes,
+            node => Assert.Contains(
+                "solo_guitar",
+                node.GetProperty("Relation Name").GetString(),
+                StringComparison.Ordinal));
+        var scoreIndexNode = Assert.Single(
+            nodes
+                .Where(node =>
+                    node.TryGetProperty(
+                        "Index Name",
+                        out _)
+                    && node.TryGetProperty(
+                        "Index Cond",
+                        out var condition)
+                    && condition.GetString()?
+                        .Contains(
+                            "snapshot_id",
+                            StringComparison.Ordinal)
+                        == true
+                    && condition.GetString()?
+                        .Contains(
+                            "song_id",
+                            StringComparison.Ordinal)
+                        == true
+                    && condition.GetString()?
+                        .Contains(
+                            "score",
+                            StringComparison.Ordinal)
+                        == true)
+                .DistinctBy(node =>
+                    node.GetProperty(
+                        "Index Name").GetString()));
+        await using var indexDefinition =
+            connection.CreateCommand();
+        indexDefinition.Transaction = transaction;
+        indexDefinition.CommandText = """
+            SELECT pg_get_indexdef(indexrelid)
+            FROM pg_index
+            JOIN pg_class
+              ON pg_class.oid = indexrelid
+            WHERE pg_class.relname = @indexName;
+            """;
+        indexDefinition.Parameters.AddWithValue(
+            "indexName",
+            scoreIndexNode.GetProperty(
+                "Index Name").GetString()!);
+        var definition =
+            (string)(await indexDefinition
+                .ExecuteScalarAsync())!;
+        Assert.Contains(
+            "(snapshot_id, song_id, instrument, score DESC)",
+            definition,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Score_history_evidence_timeout_and_cancellation_cleanup_support_repeated_invocation()
     {
@@ -843,6 +1468,57 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         return (optimized, reference);
     }
 
+    private static async Task<
+        MaxScoreMaintenanceScoreHistorySnapshot>
+        ComputeOptimizedSnapshotAsync(
+            NpgsqlDataSource dataSource,
+            MaxScoreMaintenanceManifest manifest,
+            IReadOnlyDictionary<string, SongMaxScores> maxima)
+    {
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.RepeatableRead);
+        return await
+            MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
+                    manifest,
+                    maxima,
+                    connection,
+                    transaction,
+                    CancellationToken.None,
+                    ScraperOptions
+                        .DefaultMaxScoreMaintenanceCommandTimeoutSeconds);
+    }
+
+    private static IEnumerable<JsonElement> EnumeratePlanNodes(
+        JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("Node Type", out _))
+                yield return element;
+            foreach (var property in element
+                         .EnumerateObject())
+            {
+                foreach (var nested in EnumeratePlanNodes(
+                             property.Value))
+                {
+                    yield return nested;
+                }
+            }
+            yield break;
+        }
+        if (element.ValueKind != JsonValueKind.Array)
+            yield break;
+        foreach (var item in element.EnumerateArray())
+        {
+            foreach (var nested in EnumeratePlanNodes(item))
+                yield return nested;
+        }
+    }
+
     private static SongMaxScores CreateMaxScores(
         params (string Instrument, int Maximum)[] maxima)
     {
@@ -898,6 +1574,22 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     TRUE,
                     now(),
                     now());
+
+                UPDATE publication_surface_bindings binding
+                SET row_count = (
+                    SELECT COUNT(*)
+                    FROM leaderboard_published_scope_source source
+                    WHERE source.published_scrape_id =
+                              @scrapeId
+                      AND source.scope_kind = 'alltime'
+                )
+                FROM scrape_publication_state state
+                WHERE state.id = TRUE
+                  AND state.published_scrape_id = @scrapeId
+                  AND binding.publication_id =
+                          state.current_publication_id
+                  AND binding.surface_name =
+                          'solo_scope_sources';
                 """;
             source.Parameters.AddWithValue(
                 "scrapeId",
