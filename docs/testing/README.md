@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 90e00726
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -171,9 +171,12 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
 
 This matrix covers default-off binding and durable configuration identity;
 normal/fallback option forwarding; SQL shape; zero, all-unchanged, one-changed,
-mixed, and large bounded scope sets; exact projection/scope/global-state hashes;
-failure rollback, retry, and cancellation; unchanged transaction/command/
-round-trip counts; and the exact seven-to-one member-stat aggregation-pass
+mixed, missing-member, nullable-stat, and large bounded scope sets; primary-key
+enforcement of member-index uniqueness within the projection correlation key;
+the whitespace-insensitive seven-subquery legacy SQL golden shape; exact
+projection/scope/global-state hashes; failure rollback, retry, and
+cancellation; unchanged successful transaction and derived command/round-trip
+counts; and the exact seven-to-one measured plan plus derived aggregation-pass
 reduction.
 
 The replay integration suite uses fresh test-container databases to prove

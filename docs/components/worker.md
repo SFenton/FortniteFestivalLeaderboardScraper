@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 90e00726
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -307,28 +307,33 @@ BandMaintenance cost: `6,495,632 ms` of `8,217,883 ms` (`79.043%`), with
 
 The current projection row query derives seven ordered member arrays through
 seven correlated `band_member_stats` aggregate subqueries with identical scope
-predicates. The unaccepted code candidate replaces only those aggregates with
-one `LEFT JOIN LATERAL` pass that produces the same seven arrays in
-`member_index` order. It does not change scope discovery, per-scope
-transactions, candidate deletion, generation publication, cleanup, ordering,
-or failure handling.
+predicates. PR #47 merges a default-off implementation that replaces only
+those aggregates with one `LEFT JOIN LATERAL` pass that produces the same
+seven arrays in `member_index` order. It does not change scope discovery,
+per-scope transactions, candidate deletion, generation publication, cleanup,
+ordering, or failure handling.
 
 `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` controls the
 candidate and defaults to `false`. Normal and chunk-fallback refreshes receive
 the same option, and durable phase configuration identity includes it.
 Structured refresh logs record the selected query shape and successful scope
-transaction, command, round-trip, and logical aggregate-pass counts. Setting
-the switch back to `false` is the code-path rollback.
+transaction count. Command, round-trip, and logical aggregate-pass fields are
+explicitly labeled `derived`; they are formulas from the current query and
+transaction structure, not runtime instrumentation. Setting the switch back
+to `false` is the code-path rollback.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
-global-state hashes for zero, all-unchanged, one-changed, mixed, and 64-scope/
-2,048-row fixtures, plus failure, retry, and cancellation cases. The large
-fixture keeps 64 transactions, 192 commands, and 320 scope round trips while
-reducing logical member-stat aggregate passes from `14,336` to `2,048`
-(`-85.714%`). Local elapsed reductions are diagnostic only; no production
-improvement is accepted. A matched full-scrape A/B remains blocked until the
-FST capacity guard again has at least one `60.4 GB` scrape window, preferably
-two (`120.8 GB`).
+global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
+nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and
+cancellation cases. Schema tests lock the primary-key uniqueness that makes
+`member_index` ties impossible for a projection source key. The large fixture
+keeps 64 successful transactions and derives the same 192 commands and 320
+round trips while reducing derived logical member-stat aggregate passes from
+`14,336` to `2,048` (`-85.714%`). Independent PostgreSQL `EXPLAIN` evidence
+still measures seven baseline scans versus one candidate scan. Local elapsed
+reductions are diagnostic only; no production improvement is accepted. A
+matched full-scrape A/B remains blocked until the FST capacity guard again has
+at least one `60.4 GB` scrape window, preferably two (`120.8 GB`).
 
 ## Durable phase progress
 

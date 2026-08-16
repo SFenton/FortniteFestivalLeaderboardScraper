@@ -338,9 +338,9 @@ SQL
      and .productionComparableTiming == false
      and (.timingComparisonReason | type == "string" and length > 0)
      and .metrics.successfulScopeTransactions >= 0
-     and .metrics.successfulScopeCommandExecutions >= 0
-     and .metrics.successfulScopeRoundTrips >= 0
-     and .metrics.memberStatsAggregationPasses >= 0' \
+     and .metrics.derivedSuccessfulScopeCommandExecutions >= 0
+     and .metrics.derivedSuccessfulScopeRoundTrips >= 0
+     and .metrics.derivedMemberStatsAggregationPasses >= 0' \
     "$output/replay/output-manifest.json" >/dev/null
 }
 
@@ -386,21 +386,23 @@ jq -e \
    and (.timingComparisonReason | type == "string" and length > 0)
    and .baselineScopeTransactions >= 0
    and .candidateScopeTransactions >= 0
-   and .baselineScopeCommandExecutions >= 0
-   and .candidateScopeCommandExecutions >= 0
-   and .baselineScopeRoundTrips >= 0
-   and .candidateScopeRoundTrips >= 0
-   and .baselineMemberStatsAggregationPasses >= 0
-   and .candidateMemberStatsAggregationPasses >= 0' \
+   and .baselineDerivedScopeCommandExecutions >= 0
+   and .candidateDerivedScopeCommandExecutions >= 0
+   and .baselineDerivedScopeRoundTrips >= 0
+   and .candidateDerivedScopeRoundTrips >= 0
+   and .baselineDerivedMemberStatsAggregationPasses >= 0
+   and .candidateDerivedMemberStatsAggregationPasses >= 0' \
   "$comparison_work/comparison.json" >/dev/null
 if [[ "$baseline_profile" = "production-option-parity-v1" &&
       "$candidate_profile" = "production-option-parity-batched-member-stats-v1" ]]; then
   jq -e \
     '.baselineScopeTransactions == .candidateScopeTransactions
-     and .baselineScopeCommandExecutions == .candidateScopeCommandExecutions
-     and .baselineScopeRoundTrips == .candidateScopeRoundTrips
-     and .candidateMemberStatsAggregationPasses <
-         .baselineMemberStatsAggregationPasses' \
+     and .baselineDerivedScopeCommandExecutions ==
+         .candidateDerivedScopeCommandExecutions
+     and .baselineDerivedScopeRoundTrips ==
+         .candidateDerivedScopeRoundTrips
+     and .candidateDerivedMemberStatsAggregationPasses <
+         .baselineDerivedMemberStatsAggregationPasses' \
     "$comparison_work/comparison.json" >/dev/null
 fi
 timing_reason=$(jq -er '.timingComparisonReason' \
@@ -411,22 +413,26 @@ baseline_scope_transactions=$(jq -er '.baselineScopeTransactions' \
   "$comparison_work/comparison.json")
 candidate_scope_transactions=$(jq -er '.candidateScopeTransactions' \
   "$comparison_work/comparison.json")
-baseline_scope_commands=$(jq -er '.baselineScopeCommandExecutions' \
+baseline_derived_scope_commands=$(jq -er \
+  '.baselineDerivedScopeCommandExecutions' \
   "$comparison_work/comparison.json")
-candidate_scope_commands=$(jq -er '.candidateScopeCommandExecutions' \
+candidate_derived_scope_commands=$(jq -er \
+  '.candidateDerivedScopeCommandExecutions' \
   "$comparison_work/comparison.json")
-baseline_scope_round_trips=$(jq -er '.baselineScopeRoundTrips' \
+baseline_derived_scope_round_trips=$(jq -er \
+  '.baselineDerivedScopeRoundTrips' \
   "$comparison_work/comparison.json")
-candidate_scope_round_trips=$(jq -er '.candidateScopeRoundTrips' \
+candidate_derived_scope_round_trips=$(jq -er \
+  '.candidateDerivedScopeRoundTrips' \
   "$comparison_work/comparison.json")
-baseline_member_stats_passes=$(jq -er \
-  '.baselineMemberStatsAggregationPasses' \
+baseline_derived_member_stats_passes=$(jq -er \
+  '.baselineDerivedMemberStatsAggregationPasses' \
   "$comparison_work/comparison.json")
-candidate_member_stats_passes=$(jq -er \
-  '.candidateMemberStatsAggregationPasses' \
+candidate_derived_member_stats_passes=$(jq -er \
+  '.candidateDerivedMemberStatsAggregationPasses' \
   "$comparison_work/comparison.json")
-member_stats_pass_delta_percent=$(jq -er \
-  '.memberStatsAggregationPassDeltaPercent' \
+derived_member_stats_pass_delta_percent=$(jq -er \
+  '.derivedMemberStatsAggregationPassDeltaPercent' \
   "$comparison_work/comparison.json")
 cp "$comparison_work/comparison.json" "$root/comparison.json"
 rm -rf "$baseline_view" "$candidate_view" "$comparison_view"
@@ -451,13 +457,13 @@ jq -n \
   --argjson elapsedDeltaPercent "$elapsed_delta_percent" \
   --argjson baselineScopeTransactions "$baseline_scope_transactions" \
   --argjson candidateScopeTransactions "$candidate_scope_transactions" \
-  --argjson baselineScopeCommands "$baseline_scope_commands" \
-  --argjson candidateScopeCommands "$candidate_scope_commands" \
-  --argjson baselineScopeRoundTrips "$baseline_scope_round_trips" \
-  --argjson candidateScopeRoundTrips "$candidate_scope_round_trips" \
-  --argjson baselineMemberStatsPasses "$baseline_member_stats_passes" \
-  --argjson candidateMemberStatsPasses "$candidate_member_stats_passes" \
-  --argjson memberStatsPassDeltaPercent "$member_stats_pass_delta_percent" \
+  --argjson baselineDerivedScopeCommands "$baseline_derived_scope_commands" \
+  --argjson candidateDerivedScopeCommands "$candidate_derived_scope_commands" \
+  --argjson baselineDerivedScopeRoundTrips "$baseline_derived_scope_round_trips" \
+  --argjson candidateDerivedScopeRoundTrips "$candidate_derived_scope_round_trips" \
+  --argjson baselineDerivedMemberStatsPasses "$baseline_derived_member_stats_passes" \
+  --argjson candidateDerivedMemberStatsPasses "$candidate_derived_member_stats_passes" \
+  --argjson derivedMemberStatsPassDeltaPercent "$derived_member_stats_pass_delta_percent" \
   '{
     format: "fst.tier1.replay-drill",
     version: 3,
@@ -482,16 +488,18 @@ jq -n \
       elapsedDeltaPercent: $elapsedDeltaPercent,
       baselineScopeTransactions: $baselineScopeTransactions,
       candidateScopeTransactions: $candidateScopeTransactions,
-      baselineScopeCommands: $baselineScopeCommands,
-      candidateScopeCommands: $candidateScopeCommands,
-      baselineScopeRoundTrips: $baselineScopeRoundTrips,
-      candidateScopeRoundTrips: $candidateScopeRoundTrips,
-      baselineMemberStatsAggregationPasses:
-        $baselineMemberStatsPasses,
-      candidateMemberStatsAggregationPasses:
-        $candidateMemberStatsPasses,
-      memberStatsAggregationPassDeltaPercent:
-        $memberStatsPassDeltaPercent
+      baselineDerivedScopeCommands: $baselineDerivedScopeCommands,
+      candidateDerivedScopeCommands: $candidateDerivedScopeCommands,
+      baselineDerivedScopeRoundTrips:
+        $baselineDerivedScopeRoundTrips,
+      candidateDerivedScopeRoundTrips:
+        $candidateDerivedScopeRoundTrips,
+      baselineDerivedMemberStatsAggregationPasses:
+        $baselineDerivedMemberStatsPasses,
+      candidateDerivedMemberStatsAggregationPasses:
+        $candidateDerivedMemberStatsPasses,
+      derivedMemberStatsAggregationPassDeltaPercent:
+        $derivedMemberStatsPassDeltaPercent
     },
     networkMode: "isolated-container-namespace",
     publishedPorts: false,
@@ -511,9 +519,9 @@ cat >"$root/report.md" <<EOF
 - Exact output parity: accepted
 - Diagnostic elapsed delta: \`$elapsed_delta_percent%\`
 - Scope transactions: \`$baseline_scope_transactions\` baseline / \`$candidate_scope_transactions\` candidate
-- Scope commands: \`$baseline_scope_commands\` baseline / \`$candidate_scope_commands\` candidate
-- Scope round trips: \`$baseline_scope_round_trips\` baseline / \`$candidate_scope_round_trips\` candidate
-- Member-stat aggregate passes: \`$baseline_member_stats_passes\` baseline / \`$candidate_member_stats_passes\` candidate (\`$member_stats_pass_delta_percent%\`)
+- Derived scope commands: \`$baseline_derived_scope_commands\` baseline / \`$candidate_derived_scope_commands\` candidate
+- Derived scope round trips: \`$baseline_derived_scope_round_trips\` baseline / \`$candidate_derived_scope_round_trips\` candidate
+- Derived member-stat aggregate passes: \`$baseline_derived_member_stats_passes\` baseline / \`$candidate_derived_member_stats_passes\` candidate (\`$derived_member_stats_pass_delta_percent%\`)
 - Production-comparable timing: false
 - Timing reason: $timing_reason
 - PostgreSQL: two fresh PostgreSQL 17 containers, no published ports, network-none namespaces

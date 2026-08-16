@@ -35,13 +35,16 @@ test("Tier-1 replay drill keeps Docker and storage isolated", async () => {
   assert.match(source, /productionComparableTiming == false/);
   assert.match(source, /\.version == 3/);
   assert.match(source, /successfulScopeTransactions/);
-  assert.match(source, /successfulScopeCommandExecutions/);
-  assert.match(source, /successfulScopeRoundTrips/);
-  assert.match(source, /memberStatsAggregationPasses/);
-  assert.match(source, /memberStatsAggregationPassDeltaPercent/);
+  assert.match(source, /derivedSuccessfulScopeCommandExecutions/);
+  assert.match(source, /derivedSuccessfulScopeRoundTrips/);
+  assert.match(source, /derivedMemberStatsAggregationPasses/);
+  assert.match(source, /derivedMemberStatsAggregationPassDeltaPercent/);
   assert.match(source, /baselineScopeTransactions/);
-  assert.match(source, /candidateScopeRoundTrips/);
-  assert.match(source, /candidateMemberStatsAggregationPasses </);
+  assert.match(source, /candidateDerivedScopeRoundTrips/);
+  assert.match(
+    source,
+    /candidateDerivedMemberStatsAggregationPasses </,
+  );
   assert.doesNotMatch(source, /productionComparableTiming == true/);
   assert.doesNotMatch(source, /(?:^|\s)-p\s+[0-9]/m);
   assert.doesNotMatch(source, /--publish/);

@@ -354,22 +354,22 @@ public sealed class TierOneReplayIntegrationTests(
             baseline.Metrics.SuccessfulScopeTransactions,
             candidate.Metrics.SuccessfulScopeTransactions);
         Assert.Equal(
-            baseline.Metrics.SuccessfulScopeCommandExecutions,
-            candidate.Metrics.SuccessfulScopeCommandExecutions);
+            baseline.Metrics.DerivedSuccessfulScopeCommandExecutions,
+            candidate.Metrics.DerivedSuccessfulScopeCommandExecutions);
         Assert.Equal(
-            baseline.Metrics.SuccessfulScopeRoundTrips,
-            candidate.Metrics.SuccessfulScopeRoundTrips);
+            baseline.Metrics.DerivedSuccessfulScopeRoundTrips,
+            candidate.Metrics.DerivedSuccessfulScopeRoundTrips);
         Assert.Equal(
             baseline.Metrics.InsertedRows *
             BandCurrentProjectionBuilder
-                .LegacyMemberStatsAggregationPassesPerRow,
-            baseline.Metrics.MemberStatsAggregationPasses);
+                .LegacyMemberStatsAggregateSubqueriesPerRow,
+            baseline.Metrics.DerivedMemberStatsAggregationPasses);
         Assert.Equal(
             candidate.Metrics.InsertedRows,
-            candidate.Metrics.MemberStatsAggregationPasses);
+            candidate.Metrics.DerivedMemberStatsAggregationPasses);
         Assert.Equal(
             -85.714,
-            comparison.MemberStatsAggregationPassDeltaPercent,
+            comparison.DerivedMemberStatsAggregationPassDeltaPercent,
             3);
         Assert.Equal(
             ReplayTimingSemantics.ComparisonTimingReason,
@@ -418,9 +418,9 @@ public sealed class TierOneReplayIntegrationTests(
                         comparison.WalDeltaBytes,
                     peakWorkingSetDeltaBytes =
                         comparison.PeakWorkingSetDeltaBytes,
-                    memberStatsAggregationPassDeltaPercent =
+                    derivedMemberStatsAggregationPassDeltaPercent =
                         comparison
-                            .MemberStatsAggregationPassDeltaPercent,
+                            .DerivedMemberStatsAggregationPassDeltaPercent,
                 }));
     }
 

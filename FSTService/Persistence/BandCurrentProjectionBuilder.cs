@@ -8,7 +8,7 @@ namespace FSTService.Persistence;
 
 public sealed class BandCurrentProjectionBuilder
 {
-    internal const int LegacyMemberStatsAggregationPassesPerRow = 7;
+    internal const int LegacyMemberStatsAggregateSubqueriesPerRow = 7;
     public const string ProjectionTable = "current_band_leaderboard_entries";
     public const string StateTable = "band_current_projection_state";
     public const string ScopeTable = "band_current_projection_scope";
@@ -383,15 +383,15 @@ public sealed class BandCurrentProjectionBuilder
                 orderedResults,
                 options);
         _log.LogInformation(
-            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, scopeCommands={ScopeCommands:N0}, scopeRoundTrips={ScopeRoundTrips:N0}, memberStatsAggregationPasses={MemberStatsAggregationPasses:N0}.",
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
             scopesToRefresh.Length,
             normalizedScopes.Length,
             maxParallelBandTypes,
             options.UseBatchedMemberStatsAggregation,
             operationMetrics.SuccessfulScopeTransactions,
-            operationMetrics.SuccessfulScopeCommandExecutions,
-            operationMetrics.SuccessfulScopeRoundTrips,
-            operationMetrics.MemberStatsAggregationPasses);
+            operationMetrics.DerivedSuccessfulScopeCommandExecutions,
+            operationMetrics.DerivedSuccessfulScopeRoundTrips,
+            operationMetrics.DerivedMemberStatsAggregationPasses);
 
         return new BandCurrentProjectionIncrementalRefreshResult(
             scopesToRefresh.Length,
@@ -793,7 +793,7 @@ public sealed class BandCurrentProjectionBuilder
             insertedRows * (
                 options.UseBatchedMemberStatsAggregation
                     ? 1
-                    : LegacyMemberStatsAggregationPassesPerRow),
+                    : LegacyMemberStatsAggregateSubqueriesPerRow),
             ElapsedMs: 0);
     }
 
@@ -807,13 +807,13 @@ public sealed class BandCurrentProjectionBuilder
             2 + (options.DisableSynchronousCommit ? 1 : 0);
         return new BandCurrentProjectionOperationMetrics(
             SuccessfulScopeTransactions: successfulScopes,
-            SuccessfulScopeCommandExecutions:
+            DerivedSuccessfulScopeCommandExecutions:
                 successfulScopes * commandsPerScope,
-            SuccessfulScopeRoundTrips:
+            DerivedSuccessfulScopeRoundTrips:
                 successfulScopes * (commandsPerScope + 2),
-            MemberStatsAggregationPasses:
+            DerivedMemberStatsAggregationPasses:
                 results.Sum(static result =>
-                    result.MemberStatsAggregationPasses));
+                    result.DerivedMemberStatsAggregationPasses));
     }
 
     private async Task<long> NextGenerationAsync(CancellationToken ct)
@@ -2168,7 +2168,7 @@ public sealed record BandCurrentProjectionScopeResult(
     long InsertedRows,
     long DeletedRows,
     bool SourceScopeExists,
-    long MemberStatsAggregationPasses,
+    long DerivedMemberStatsAggregationPasses,
     double ElapsedMs);
 
 public sealed record BandCurrentProjectionRebuildResult(
@@ -2197,9 +2197,9 @@ public sealed record BandCurrentProjectionIncrementalRefreshResult(
 
 public sealed record BandCurrentProjectionOperationMetrics(
     long SuccessfulScopeTransactions,
-    long SuccessfulScopeCommandExecutions,
-    long SuccessfulScopeRoundTrips,
-    long MemberStatsAggregationPasses)
+    long DerivedSuccessfulScopeCommandExecutions,
+    long DerivedSuccessfulScopeRoundTrips,
+    long DerivedMemberStatsAggregationPasses)
 {
     public static BandCurrentProjectionOperationMetrics Empty { get; } =
         new(0, 0, 0, 0);

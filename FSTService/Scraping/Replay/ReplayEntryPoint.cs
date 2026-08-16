@@ -54,8 +54,9 @@ public static class ReplayEntryPoint
                         report.CandidateExecutionProfile,
                     elapsedDeltaPercent =
                         report.ElapsedDeltaPercent,
-                    memberStatsAggregationPassDeltaPercent =
-                        report.MemberStatsAggregationPassDeltaPercent,
+                    derivedMemberStatsAggregationPassDeltaPercent =
+                        report
+                            .DerivedMemberStatsAggregationPassDeltaPercent,
                 });
                 return (int)ReplayExitCode.Success;
             }
@@ -102,12 +103,15 @@ public static class ReplayEntryPoint
                 deletedRows = result.Metrics.DeletedRows,
                 scopeTransactions =
                     result.Metrics.SuccessfulScopeTransactions,
-                scopeCommands =
-                    result.Metrics.SuccessfulScopeCommandExecutions,
-                scopeRoundTrips =
-                    result.Metrics.SuccessfulScopeRoundTrips,
-                memberStatsAggregationPasses =
-                    result.Metrics.MemberStatsAggregationPasses,
+                derivedScopeCommands =
+                    result.Metrics
+                        .DerivedSuccessfulScopeCommandExecutions,
+                derivedScopeRoundTrips =
+                    result.Metrics
+                        .DerivedSuccessfulScopeRoundTrips,
+                derivedMemberStatsAggregationPasses =
+                    result.Metrics
+                        .DerivedMemberStatsAggregationPasses,
                 noPublication = true,
             });
             return (int)ReplayExitCode.Success;

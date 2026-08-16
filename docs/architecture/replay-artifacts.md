@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 90e00726
 sources:
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
@@ -116,8 +116,9 @@ prune, search projection refresh, global publication, freeze, cache,
 notifications, and provider behavior remain unsupported.
 
 Output and comparison format version `3` canonically bind the profile,
-profile-specific non-production timing reason, successful scope transaction/
-command/round-trip counts, and logical member-stat aggregation passes.
+profile-specific non-production timing reason, successful scope transaction
+counts, and explicitly derived command/round-trip/logical aggregate-pass
+counts.
 `productionComparableTiming` remains `false` for every profile. Replay elapsed,
 CPU, RSS, WAL, and temp deltas are drill diagnostics only and cannot be cited
 as production wall-clock evidence.
@@ -166,8 +167,9 @@ preserving only sealed evidence.
 
 The drill defaults both lanes to `deterministic-v1`. Operators may explicitly
 pass `--baseline-profile` and `--candidate-profile`; an option-parity/batched
-comparison additionally requires unchanged transaction, command, and
-round-trip counts plus a lower candidate member-stat aggregation-pass count.
+comparison additionally requires unchanged successful transaction counts and
+derived command/round-trip counts plus a lower derived candidate member-stat
+aggregation-pass count.
 
 ## Package layout
 

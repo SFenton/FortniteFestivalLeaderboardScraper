@@ -481,11 +481,11 @@ public sealed class TierOneReplayRunner(
                 phaseResult.OperationMetrics
                     .SuccessfulScopeTransactions,
                 phaseResult.OperationMetrics
-                    .SuccessfulScopeCommandExecutions,
+                    .DerivedSuccessfulScopeCommandExecutions,
                 phaseResult.OperationMetrics
-                    .SuccessfulScopeRoundTrips,
+                    .DerivedSuccessfulScopeRoundTrips,
                 phaseResult.OperationMetrics
-                    .MemberStatsAggregationPasses);
+                    .DerivedMemberStatsAggregationPasses);
 
             _ = await targetGuard.ValidateAsync(
                 dataSource,
@@ -921,25 +921,34 @@ public sealed class ReplayComparisonService(
             baseline.Manifest.Metrics.PeakWorkingSetBytes,
             baseline.Manifest.Metrics.SuccessfulScopeTransactions,
             candidate.Manifest.Metrics.SuccessfulScopeTransactions,
-            baseline.Manifest.Metrics.SuccessfulScopeCommandExecutions,
-            candidate.Manifest.Metrics.SuccessfulScopeCommandExecutions,
-            baseline.Manifest.Metrics.SuccessfulScopeRoundTrips,
-            candidate.Manifest.Metrics.SuccessfulScopeRoundTrips,
-            baseline.Manifest.Metrics.MemberStatsAggregationPasses,
-            candidate.Manifest.Metrics.MemberStatsAggregationPasses,
-            candidate.Manifest.Metrics.MemberStatsAggregationPasses -
-            baseline.Manifest.Metrics.MemberStatsAggregationPasses,
-            baseline.Manifest.Metrics.MemberStatsAggregationPasses <= 0
+            baseline.Manifest.Metrics
+                .DerivedSuccessfulScopeCommandExecutions,
+            candidate.Manifest.Metrics
+                .DerivedSuccessfulScopeCommandExecutions,
+            baseline.Manifest.Metrics
+                .DerivedSuccessfulScopeRoundTrips,
+            candidate.Manifest.Metrics
+                .DerivedSuccessfulScopeRoundTrips,
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            candidate.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            candidate.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses -
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses,
+            baseline.Manifest.Metrics
+                .DerivedMemberStatsAggregationPasses <= 0
                 ? 0
                 : Math.Round(
                     (
                         candidate.Manifest.Metrics
-                            .MemberStatsAggregationPasses -
+                            .DerivedMemberStatsAggregationPasses -
                         baseline.Manifest.Metrics
-                            .MemberStatsAggregationPasses
+                            .DerivedMemberStatsAggregationPasses
                     ) /
                     (double)baseline.Manifest.Metrics
-                        .MemberStatsAggregationPasses * 100,
+                        .DerivedMemberStatsAggregationPasses * 100,
                     3));
         var bytes = TierZeroCanonicalJson.Serialize(report);
         await AtomicWriteAsync(

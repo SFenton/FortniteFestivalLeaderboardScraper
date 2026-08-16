@@ -280,9 +280,9 @@ public sealed record ReplayPhaseMetrics(
     long InsertedRows,
     long DeletedRows,
     long SuccessfulScopeTransactions,
-    long SuccessfulScopeCommandExecutions,
-    long SuccessfulScopeRoundTrips,
-    long MemberStatsAggregationPasses);
+    long DerivedSuccessfulScopeCommandExecutions,
+    long DerivedSuccessfulScopeRoundTrips,
+    long DerivedMemberStatsAggregationPasses);
 
 public sealed record TierOneOutputDatasetReference(
     string DatasetId,
@@ -406,14 +406,14 @@ public sealed record ReplayComparisonReport(
     long PeakWorkingSetDeltaBytes,
     long BaselineScopeTransactions,
     long CandidateScopeTransactions,
-    long BaselineScopeCommandExecutions,
-    long CandidateScopeCommandExecutions,
-    long BaselineScopeRoundTrips,
-    long CandidateScopeRoundTrips,
-    long BaselineMemberStatsAggregationPasses,
-    long CandidateMemberStatsAggregationPasses,
-    long MemberStatsAggregationPassDelta,
-    double MemberStatsAggregationPassDeltaPercent);
+    long BaselineDerivedScopeCommandExecutions,
+    long CandidateDerivedScopeCommandExecutions,
+    long BaselineDerivedScopeRoundTrips,
+    long CandidateDerivedScopeRoundTrips,
+    long BaselineDerivedMemberStatsAggregationPasses,
+    long CandidateDerivedMemberStatsAggregationPasses,
+    long DerivedMemberStatsAggregationPassDelta,
+    double DerivedMemberStatsAggregationPassDeltaPercent);
 
 public static class ReplayTimingSemantics
 {

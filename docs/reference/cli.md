@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 90e00726
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -97,7 +97,9 @@ revision, attempt number for both lanes, and `--no-publication`:
 Exit codes distinguish usage, root, package, target, import, phase, output,
 comparison, cancellation, and unexpected failures. Output/comparison format
 version `3` binds each lane's profile and operation counts and always emits
-`productionComparableTiming=false` with a profile-specific reason. CLI
+`productionComparableTiming=false` with a profile-specific reason. Command,
+round-trip, and member-stat aggregation-pass counts are named `derived`; only
+scope transactions are observed from successful results. CLI
 availability does not authorize
 production-derived capture, full BandMaintenance, provider access, live
 replay, or deployment.

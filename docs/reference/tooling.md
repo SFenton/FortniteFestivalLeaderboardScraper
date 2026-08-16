@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 90e00726
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -102,10 +102,11 @@ are diagnostic only.
 Both lanes default to `deterministic-v1`. Optional `--baseline-profile` and
 `--candidate-profile` accept only the three replay profile IDs documented in
 [FSTService CLI](cli.md). Drill/report format version `3` records both profiles
-and successful scope transaction, command, round-trip, and member-stat
-aggregation-pass metrics. The option-parity/batched candidate pair must keep
-the first three counts equal and reduce the final count before the drill
-succeeds. A profile-only query-shape A/B should pass the same v3-capable
+and successful scope transaction metrics plus explicitly derived command,
+round-trip, and member-stat aggregation-pass estimates. The
+option-parity/batched candidate pair must keep the first three values equal and
+reduce the final derived estimate before the drill succeeds. A profile-only
+query-shape A/B should pass the same v3-capable
 immutable image for both lane image arguments so the profile is the only
 implementation variable. Exact output hashes remain mandatory regardless of
 timing.

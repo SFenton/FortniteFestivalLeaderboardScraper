@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -26,7 +27,7 @@ public sealed class BandCurrentProjectionOptimizationTests(
 
         Assert.Equal(
             BandCurrentProjectionBuilder
-                .LegacyMemberStatsAggregationPassesPerRow,
+                .LegacyMemberStatsAggregateSubqueriesPerRow,
             CountOccurrences(
                 baseline,
                 "FROM band_member_stats bms"));
@@ -42,6 +43,62 @@ public sealed class BandCurrentProjectionOptimizationTests(
         Assert.Contains(
             "LEFT JOIN LATERAL",
             candidate,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DefaultOffLegacySqlMatchesPriorSevenSubqueryGoldenShape()
+    {
+        var sql = NormalizeSql(
+            BandCurrentProjectionBuilder
+                .GetRebuildScopeSqlForTesting(false));
+        var matches = Regex.Matches(
+                sql,
+                @"COALESCE\(\( SELECT ARRAY_AGG\((?<value>.*?) ORDER BY bms\.member_index\) FROM band_member_stats bms WHERE bms\.song_id = ChosenEntries\.song_id AND bms\.band_type = ChosenEntries\.band_type AND bms\.team_key = ChosenEntries\.team_key AND bms\.instrument_combo = ChosenEntries\.instrument_combo \), (?<empty>ARRAY\[\]::(?:TEXT|INTEGER)\[\])\) AS (?<alias>member_[a-z_]+),",
+                RegexOptions.CultureInvariant)
+            .Cast<Match>()
+            .Select(static match => (
+                Value: match.Groups["value"].Value.Trim(),
+                Empty: match.Groups["empty"].Value,
+                Alias: match.Groups["alias"].Value))
+            .ToArray();
+        var expected = new[]
+        {
+            (
+                Value: "bms.account_id",
+                Empty: "ARRAY[]::TEXT[]",
+                Alias: "member_account_ids"),
+            (
+                Value: "COALESCE(bms.instrument_id, -1)",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_instrument_ids"),
+            (
+                Value: "COALESCE(bms.score, -1)",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_scores"),
+            (
+                Value: "COALESCE(bms.accuracy, -1)",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_accuracies"),
+            (
+                Value: "CASE WHEN bms.is_full_combo IS TRUE THEN 1 " +
+                    "WHEN bms.is_full_combo IS FALSE THEN 0 ELSE -1 END",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_full_combos"),
+            (
+                Value: "COALESCE(bms.stars, -1)",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_stars"),
+            (
+                Value: "COALESCE(bms.difficulty, -1)",
+                Empty: "ARRAY[]::INTEGER[]",
+                Alias: "member_difficulties"),
+        };
+
+        Assert.Equal(expected, matches);
+        Assert.DoesNotContain(
+            "__MEMBER_STATS_",
+            sql,
             StringComparison.Ordinal);
     }
 
@@ -62,7 +119,7 @@ public sealed class BandCurrentProjectionOptimizationTests(
 
         Assert.Equal(
             BandCurrentProjectionBuilder
-                .LegacyMemberStatsAggregationPassesPerRow,
+                .LegacyMemberStatsAggregateSubqueriesPerRow,
             CountRelationScans(
                 baselinePlan.RootElement,
                 "band_member_stats"));
@@ -71,6 +128,68 @@ public sealed class BandCurrentProjectionOptimizationTests(
             CountRelationScans(
                 candidatePlan.RootElement,
                 "band_member_stats"));
+    }
+
+    [Fact]
+    public async Task MemberIndexIsUniqueWithinProjectionCorrelationKey()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        _ = Seed(fixture, 1, 1);
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using (var constraint = connection.CreateCommand())
+        {
+            constraint.CommandText = """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid =
+                      'public.band_member_stats'::regclass
+                  AND contype = 'p'
+                """;
+            Assert.Equal(
+                "PRIMARY KEY (song_id, band_type, team_key, " +
+                "instrument_combo, member_index)",
+                await constraint.ExecuteScalarAsync());
+        }
+
+        await using var duplicate = connection.CreateCommand();
+        duplicate.CommandText = """
+            INSERT INTO band_member_stats (
+                song_id,
+                band_type,
+                team_key,
+                instrument_combo,
+                member_index,
+                account_id,
+                instrument_id,
+                score,
+                accuracy,
+                is_full_combo,
+                stars,
+                difficulty
+            )
+            SELECT song_id,
+                   band_type,
+                   team_key,
+                   instrument_combo,
+                   member_index,
+                   account_id,
+                   instrument_id,
+                   score,
+                   accuracy,
+                   is_full_combo,
+                   stars,
+                   difficulty
+            FROM band_member_stats
+            LIMIT 1
+            """;
+        var exception =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => duplicate.ExecuteNonQueryAsync());
+
+        Assert.Equal(
+            PostgresErrorCodes.UniqueViolation,
+            exception.SqlState);
     }
 
     [Fact]
@@ -111,10 +230,6 @@ public sealed class BandCurrentProjectionOptimizationTests(
             candidateFixture,
             songCount,
             teamsPerSong);
-        await PrepareMemberStatEdgeCasesAsync(
-            baselineFixture);
-        await PrepareMemberStatEdgeCasesAsync(
-            candidateFixture);
 
         var baseline = await CreateBuilder(baselineFixture)
             .RefreshScopesAsync(
@@ -139,19 +254,25 @@ public sealed class BandCurrentProjectionOptimizationTests(
             baseline.OperationMetrics!.SuccessfulScopeTransactions,
             candidate.OperationMetrics!.SuccessfulScopeTransactions);
         Assert.Equal(
-            baseline.OperationMetrics.SuccessfulScopeCommandExecutions,
-            candidate.OperationMetrics.SuccessfulScopeCommandExecutions);
+            baseline.OperationMetrics
+                .DerivedSuccessfulScopeCommandExecutions,
+            candidate.OperationMetrics
+                .DerivedSuccessfulScopeCommandExecutions);
         Assert.Equal(
-            baseline.OperationMetrics.SuccessfulScopeRoundTrips,
-            candidate.OperationMetrics.SuccessfulScopeRoundTrips);
+            baseline.OperationMetrics
+                .DerivedSuccessfulScopeRoundTrips,
+            candidate.OperationMetrics
+                .DerivedSuccessfulScopeRoundTrips);
         Assert.Equal(
             baseline.InsertedRows *
             BandCurrentProjectionBuilder
-                .LegacyMemberStatsAggregationPassesPerRow,
-            baseline.OperationMetrics.MemberStatsAggregationPasses);
+                .LegacyMemberStatsAggregateSubqueriesPerRow,
+            baseline.OperationMetrics
+                .DerivedMemberStatsAggregationPasses);
         Assert.Equal(
             candidate.InsertedRows,
-            candidate.OperationMetrics.MemberStatsAggregationPasses);
+            candidate.OperationMetrics
+                .DerivedMemberStatsAggregationPasses);
 
         output.WriteLine(
             JsonSerializer.Serialize(
@@ -183,37 +304,134 @@ public sealed class BandCurrentProjectionOptimizationTests(
                     candidateTransactions =
                         candidate.OperationMetrics
                             .SuccessfulScopeTransactions,
-                    baselineCommands =
+                    baselineDerivedCommands =
                         baseline.OperationMetrics
-                            .SuccessfulScopeCommandExecutions,
-                    candidateCommands =
+                            .DerivedSuccessfulScopeCommandExecutions,
+                    candidateDerivedCommands =
                         candidate.OperationMetrics
-                            .SuccessfulScopeCommandExecutions,
-                    baselineRoundTrips =
+                            .DerivedSuccessfulScopeCommandExecutions,
+                    baselineDerivedRoundTrips =
                         baseline.OperationMetrics
-                            .SuccessfulScopeRoundTrips,
-                    candidateRoundTrips =
+                            .DerivedSuccessfulScopeRoundTrips,
+                    candidateDerivedRoundTrips =
                         candidate.OperationMetrics
-                            .SuccessfulScopeRoundTrips,
-                    baselineMemberStatsPasses =
+                            .DerivedSuccessfulScopeRoundTrips,
+                    baselineDerivedMemberStatsPasses =
                         baseline.OperationMetrics
-                            .MemberStatsAggregationPasses,
-                    candidateMemberStatsPasses =
+                            .DerivedMemberStatsAggregationPasses,
+                    candidateDerivedMemberStatsPasses =
                         candidate.OperationMetrics
-                            .MemberStatsAggregationPasses,
-                    memberStatsPassDeltaPercent =
+                            .DerivedMemberStatsAggregationPasses,
+                    derivedMemberStatsPassDeltaPercent =
                         Math.Round(
                             (
                                 candidate.OperationMetrics
-                                    .MemberStatsAggregationPasses -
+                                    .DerivedMemberStatsAggregationPasses -
                                 baseline.OperationMetrics
-                                    .MemberStatsAggregationPasses
+                                    .DerivedMemberStatsAggregationPasses
                             ) /
                             (double)baseline.OperationMetrics
-                                .MemberStatsAggregationPasses *
+                                .DerivedMemberStatsAggregationPasses *
                             100,
                             3),
                 }));
+    }
+
+    [Fact]
+    public async Task MissingMemberRowsPreserveBaselineCandidateParity()
+    {
+        using var baselineFixture = new InMemoryMetaDatabase();
+        using var candidateFixture = new InMemoryMetaDatabase();
+        var scopes = Seed(baselineFixture, 1, 2);
+        _ = Seed(candidateFixture, 1, 2);
+        await RemoveMemberRowsAsync(baselineFixture);
+        await RemoveMemberRowsAsync(candidateFixture);
+
+        _ = await CreateBuilder(baselineFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate: false));
+        _ = await CreateBuilder(candidateFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate: true));
+
+        Assert.Equal(
+            await StateHashAsync(baselineFixture),
+            await StateHashAsync(candidateFixture));
+        var baselinePartial = await ReadMemberProjectionAsync(
+            baselineFixture,
+            "account-000-000-a:account-000-000-b");
+        var candidatePartial = await ReadMemberProjectionAsync(
+            candidateFixture,
+            "account-000-000-a:account-000-000-b");
+        AssertMemberProjectionEqual(
+            baselinePartial,
+            candidatePartial);
+        Assert.Equal(
+            ["account-000-000-a"],
+            baselinePartial.AccountIds);
+        Assert.Equal([0], baselinePartial.InstrumentIds);
+
+        var baselineMissing = await ReadMemberProjectionAsync(
+            baselineFixture,
+            "account-000-001-a:account-000-001-b");
+        var candidateMissing = await ReadMemberProjectionAsync(
+            candidateFixture,
+            "account-000-001-a:account-000-001-b");
+        AssertMemberProjectionEqual(
+            baselineMissing,
+            candidateMissing);
+        Assert.Empty(baselineMissing.AccountIds);
+        Assert.Empty(baselineMissing.InstrumentIds);
+        Assert.Empty(baselineMissing.Scores);
+        Assert.Empty(baselineMissing.Accuracies);
+        Assert.Empty(baselineMissing.FullCombos);
+        Assert.Empty(baselineMissing.Stars);
+        Assert.Empty(baselineMissing.Difficulties);
+    }
+
+    [Fact]
+    public async Task NullMemberStatColumnsPreserveBaselineCandidateParity()
+    {
+        using var baselineFixture = new InMemoryMetaDatabase();
+        using var candidateFixture = new InMemoryMetaDatabase();
+        var scopes = Seed(baselineFixture, 1, 1);
+        _ = Seed(candidateFixture, 1, 1);
+        await NullMemberStatColumnsAsync(baselineFixture);
+        await NullMemberStatColumnsAsync(candidateFixture);
+
+        _ = await CreateBuilder(baselineFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate: false));
+        _ = await CreateBuilder(candidateFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate: true));
+
+        Assert.Equal(
+            await StateHashAsync(baselineFixture),
+            await StateHashAsync(candidateFixture));
+        var baseline = await ReadMemberProjectionAsync(
+            baselineFixture,
+            "account-000-000-a:account-000-000-b");
+        var candidate = await ReadMemberProjectionAsync(
+            candidateFixture,
+            "account-000-000-a:account-000-000-b");
+        AssertMemberProjectionEqual(baseline, candidate);
+        Assert.Equal(
+            [
+                "account-000-000-a",
+                "account-000-000-b",
+            ],
+            baseline.AccountIds);
+        Assert.Equal([-1, 1], baseline.InstrumentIds);
+        Assert.Equal([-1, 499_999], baseline.Scores);
+        Assert.Equal([-1, 979_999], baseline.Accuracies);
+        Assert.Equal([-1, 0], baseline.FullCombos);
+        Assert.Equal([-1, 4], baseline.Stars);
+        Assert.Equal([-1, 3], baseline.Difficulties);
     }
 
     [Fact]
@@ -297,11 +515,11 @@ public sealed class BandCurrentProjectionOptimizationTests(
             await StateHashAsync(candidateFixture));
         Assert.Equal(
             baseline.OperationMetrics!
-                .MemberStatsAggregationPasses,
+                .DerivedMemberStatsAggregationPasses,
             candidate.OperationMetrics!
-                .MemberStatsAggregationPasses *
+                .DerivedMemberStatsAggregationPasses *
             BandCurrentProjectionBuilder
-                .LegacyMemberStatsAggregationPassesPerRow);
+                .LegacyMemberStatsAggregateSubqueriesPerRow);
     }
 
     [Fact]
@@ -488,7 +706,30 @@ public sealed class BandCurrentProjectionOptimizationTests(
         return scopes;
     }
 
-    private static async Task PrepareMemberStatEdgeCasesAsync(
+    private static async Task RemoveMemberRowsAsync(
+        InMemoryMetaDatabase fixture)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM band_member_stats
+            WHERE song_id = 'song-000'
+              AND team_key =
+                  'account-000-000-a:account-000-000-b'
+              AND instrument_combo = '0:1'
+              AND member_index = 1;
+
+            DELETE FROM band_member_stats
+            WHERE song_id = 'song-000'
+              AND team_key =
+                  'account-000-001-a:account-000-001-b'
+              AND instrument_combo = '0:3';
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task NullMemberStatColumnsAsync(
         InMemoryMetaDatabase fixture)
     {
         await using var connection =
@@ -506,15 +747,65 @@ public sealed class BandCurrentProjectionOptimizationTests(
               AND team_key =
                   'account-000-000-a:account-000-000-b'
               AND instrument_combo = '0:1'
-              AND member_index = 0;
-
-            DELETE FROM band_member_stats
-            WHERE song_id = 'song-000'
-              AND team_key =
-                  'account-000-001-a:account-000-001-b'
-              AND instrument_combo = '0:3';
+              AND member_index = 0
             """;
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<MemberProjectionArrays>
+        ReadMemberProjectionAsync(
+            InMemoryMetaDatabase fixture,
+            string teamKey)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT member_account_ids,
+                   member_instrument_ids,
+                   member_scores,
+                   member_accuracies,
+                   member_full_combos,
+                   member_stars,
+                   member_difficulties
+            FROM current_band_leaderboard_entries
+            WHERE song_id = 'song-000'
+              AND band_type = 'Band_Duets'
+              AND ranking_scope = 'overall'
+              AND scope_combo_id = ''
+              AND team_key = @teamKey
+            ORDER BY projection_generation DESC
+            LIMIT 1
+            """;
+        command.Parameters.AddWithValue("teamKey", teamKey);
+        await using var reader =
+            await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new MemberProjectionArrays(
+            reader.GetFieldValue<string[]>(0),
+            reader.GetFieldValue<int[]>(1),
+            reader.GetFieldValue<int[]>(2),
+            reader.GetFieldValue<int[]>(3),
+            reader.GetFieldValue<int[]>(4),
+            reader.GetFieldValue<int[]>(5),
+            reader.GetFieldValue<int[]>(6));
+    }
+
+    private static void AssertMemberProjectionEqual(
+        MemberProjectionArrays expected,
+        MemberProjectionArrays actual)
+    {
+        Assert.Equal(expected.AccountIds, actual.AccountIds);
+        Assert.Equal(
+            expected.InstrumentIds,
+            actual.InstrumentIds);
+        Assert.Equal(expected.Scores, actual.Scores);
+        Assert.Equal(expected.Accuracies, actual.Accuracies);
+        Assert.Equal(expected.FullCombos, actual.FullCombos);
+        Assert.Equal(expected.Stars, actual.Stars);
+        Assert.Equal(
+            expected.Difficulties,
+            actual.Difficulties);
     }
 
     private static BandLeaderboardEntry Entry(
@@ -798,4 +1089,21 @@ public sealed class BandCurrentProjectionOptimizationTests(
         }
         return count;
     }
+
+    private static string NormalizeSql(string sql) =>
+        Regex.Replace(
+            sql,
+            @"\s+",
+            " ",
+            RegexOptions.CultureInvariant)
+        .Trim();
+
+    private sealed record MemberProjectionArrays(
+        string[] AccountIds,
+        int[] InstrumentIds,
+        int[] Scores,
+        int[] Accuracies,
+        int[] FullCombos,
+        int[] Stars,
+        int[] Difficulties);
 }
