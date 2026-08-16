@@ -6,8 +6,8 @@ namespace FSTService.Scraping;
 /// Interface for targeted leaderboard queries — lookup individual accounts
 /// on specific songs/instruments. Separated from bulk scrape operations
 /// to decouple consumers like <see cref="ScoreBackfiller"/>,
-/// <see cref="PostScrapeRefresher"/>, <see cref="HistoryReconstructor"/>,
-/// and <see cref="FirstSeenSeasonCalculator"/> from the concrete scraper.
+/// <see cref="HistoryReconstructor"/>, and
+/// <see cref="FirstSeenSeasonCalculator"/> from the concrete scraper.
 /// </summary>
 public interface ILeaderboardQuerier
 {

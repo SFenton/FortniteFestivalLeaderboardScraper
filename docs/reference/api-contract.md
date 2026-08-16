@@ -2,11 +2,14 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 354f87eb
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
+  - FSTService/Api/HealthEndpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
@@ -169,13 +172,23 @@ Aggregate player scopes intentionally use different formulas:
 version-1 field. Contract version 2 adds:
 
 - `phasePlan.version` and ordered descriptors (`id`, label, legacy phase,
-  ordinal, default units kind);
+  ordinal, default units kind, additive `reserved`);
 - stable operation, phase, and subphase IDs plus attempt/ordinal/plan version;
 - units kind/completed/total and `unitsTotalFinal`;
 - exact `phasePercent` only with a final denominator;
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
+historical compatibility. `post.checkpoint` and
+`post.deferred_registration_sync` are reserved descriptors and are not current
+worker execution policies. They emit `reserved: true`; active descriptors emit
+`false`, allowing counts to exclude retired IDs without changing the ordered
+list or plan version. Only best-effort phases may use `phaseStatus=skipped`
+with a warning reason. Critical skipped rows are invalid and fail closed
+regardless of the critical-failure rollout switch.
+Absence alone is not evidence that a best-effort phase starved.
 
 Weak overall or ETA evidence is omitted, not serialized as false precision.
 Initial overall progress is normally `indeterminate`. Existing `phase`,
@@ -201,6 +214,14 @@ diagnostics. The measured evidence is under
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
 backward-compatible operation JSON for rolling upgrades.
+
+Matched candidate scrape `1300` accepted the reserved-descriptor projection:
+the v2 plan remained 28 ordered descriptors, exactly
+`post.checkpoint` and `post.deferred_registration_sync` reported
+`reserved: true`, the other 26 reported `false`, and neither retired ID
+created an attempt or outcome. All 355 candidate monitor samples returned HTTP
+200 for readiness, the web shell, and the representative API probe while the
+candidate published and unfroze.
 
 Matched scrape `1296` accepted this additive contract with complete
 publication parity and `0.0696%` end-to-end wall-clock overhead. Null-valued

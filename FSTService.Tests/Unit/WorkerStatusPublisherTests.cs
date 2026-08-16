@@ -62,16 +62,16 @@ public sealed class WorkerStatusPublisherTests
 
         publisher.UpdateOperation(
             "scrape.post_process",
-            subOperation: "DeferredRegistrationSync",
-            detail: "Computing deferred rivals 1/2",
+            subOperation: "RefreshRegisteredUsers",
+            detail: "Refreshing registered users 1/2",
             progressPercent: 50);
 
         metaDb.Received(1).UpdateWorkerActivity(
             WorkerStatusPublisher.ScraperWorkerKey,
             Arg.Is<WorkerOperationInfo>(operation =>
                 operation.OperationKey == "scrape.post_process"
-                && operation.SubOperation == "DeferredRegistrationSync"
-                && operation.Detail == "Computing deferred rivals 1/2"
+                && operation.SubOperation == "RefreshRegisteredUsers"
+                && operation.Detail == "Refreshing registered users 1/2"
                 && operation.ProgressPercent == 50
                 && operation.UpdatedAtUtc >= operation.StartedAtUtc),
             Arg.Any<WorkerOperationInfo?>(),

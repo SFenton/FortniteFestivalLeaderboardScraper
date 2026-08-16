@@ -27,6 +27,14 @@ describe('server API runtime helpers', () => {
           legacyPhase: 'BandMaintenance',
           ordinal: 300,
           defaultUnitsKind: 'scopes',
+          reserved: false,
+        }, {
+          id: 'post.checkpoint',
+          label: 'Checkpointing candidate data',
+          legacyPhase: 'Checkpoint',
+          ordinal: 360,
+          defaultUnitsKind: 'steps',
+          reserved: true,
         }],
       },
       lastCompletedUpdate: null,
@@ -55,6 +63,8 @@ describe('server API runtime helpers', () => {
 
     expect(response.currentUpdate.phasePercent).toBe(50);
     expect(response.phasePlan?.phases[0].id).toBe('post.band_maintenance');
+    expect(response.phasePlan?.phases.filter(phase => phase.reserved !== true))
+      .toHaveLength(1);
   });
 
   test('formats known labels and preserves unknown values', () => {

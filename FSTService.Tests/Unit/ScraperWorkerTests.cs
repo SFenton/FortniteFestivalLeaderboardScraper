@@ -266,4 +266,42 @@ public class ScraperWorkerTests : IDisposable
 
         Assert.Contains("manifests=8207/8208", error.Message);
     }
+
+    [Theory]
+    [InlineData("completed", PostScrapePhaseCriticality.PublicationCritical, true)]
+    [InlineData("skipped", PostScrapePhaseCriticality.PublicationCritical, false)]
+    [InlineData("skipped", PostScrapePhaseCriticality.BestEffort, true)]
+    [InlineData("failed", PostScrapePhaseCriticality.BestEffort, false)]
+    [InlineData("cancelled", PostScrapePhaseCriticality.PublicationCritical, false)]
+    public void Resume_phase_status_is_criticality_aware(
+        string status,
+        PostScrapePhaseCriticality criticality,
+        bool expectedSuccess)
+    {
+        Assert.Equal(
+            expectedSuccess,
+            ScraperWorker.IsSuccessfulPhaseOutcomeStatus(
+                status,
+                criticality));
+    }
+
+    [Fact]
+    public void Resume_phase_outcome_rejects_unknown_criticality()
+    {
+        var now = DateTime.UtcNow;
+        var outcome = new ScrapePhaseOutcomeRecord(
+            42,
+            "RankRecompute",
+            "unknown",
+            "completed",
+            now,
+            now,
+            0,
+            null);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.RehydratePhaseOutcome(outcome));
+
+        Assert.Contains("unknown criticality 'unknown'", error.Message);
+    }
 }

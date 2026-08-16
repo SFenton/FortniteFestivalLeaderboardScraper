@@ -516,13 +516,6 @@ public sealed class ScraperOptions
     public TimeSpan? RegisteredBandTargetedProcessingTimeout { get; set; }
 
     /// <summary>
-    /// Maximum time deferred registration backfill and rivals work may delay the
-    /// publication boundary. This phase is best-effort and retries on a later pass.
-    /// Set to <see cref="TimeSpan.Zero"/> to wait indefinitely.
-    /// </summary>
-    public TimeSpan DeferredRegistrationSyncTimeout { get; set; } = TimeSpan.FromMinutes(30);
-
-    /// <summary>
     /// Enables low-priority direct V2 lookups for registered bands. This is a
     /// parallel band lifecycle that reuses the song-machine DOP/CDN wrapper.
     /// </summary>

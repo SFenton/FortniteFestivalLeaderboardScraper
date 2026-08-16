@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 354f87eb
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -225,11 +225,37 @@ The pipeline has two useful abstractions:
 `ScrapePhaseResolver` expands `--solo-scrape`, `--solo-leaderboards`, and
 `--band-scrape`, and fills intermediate solo phases. Selective flags affect the
 first launch pass only; later scheduled cycles use the full pipeline.
+`--band-post-scrape` is the supported direct legacy `BandScrapePhase` mode.
+Normal full and `--band-scrape` passes already fetch band data through
+`BandScrape` and therefore do not launch the legacy fetcher.
 
 ## Post-scrape timing
 
 Terminal phase names and publication criticality remain recorded through
-`scrape_phase_outcomes`.
+`scrape_phase_outcomes`. Only explicitly best-effort phases may record
+`status=skipped`, with the reason in durable progress. Pressure-gated history
+cleanup, notification gating, and service-level retention use that contract.
+Publication-critical phases may never be skipped: snapshot-only legacy rank
+recompute completes its critical contract without running the legacy update,
+and any persisted critical `skipped` row is invalid and blocks resume or
+publication regardless of the critical-failure rollout switch.
+
+PostgreSQL has no per-wrapper cache warm or manual checkpoint implementation.
+The worker no longer schedules those retired calls at startup, after network
+writes, or during finalization.
+
+Matched production scrapes `1299` (control) and `1300` (candidate) accepted
+this cleanup. Both covered 702 songs, 8,424 complete scope manifests, and 6,318
+complete published solo-source mappings; both published, unfroze, completed
+notification recovery, and had zero writer, critical-phase, or best-effort
+failures. Candidate `1300` created no `Checkpoint` or
+`DeferredRegistrationSync` attempt/outcome and no critical skipped row. Its
+three pressure-gated retention skips were best-effort, carried durable reasons,
+and did not block publication. End-to-end publication time changed by
+`-0.117%`; this is correctness acceptance only, not a speed claim. The matched
+800/32/4 network configuration remains a control because its network wall clock
+varied by `+30.16%`. Evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr38-matched-candidate-20260815T162415Z`.
 
 Band maintenance additionally records three stable timing subphases under the
 `BandMaintenance` phase:
@@ -270,6 +296,14 @@ Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
 leaderboard scrape, named post-scrape phases, and publication commit. The
 catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
 carry both the stable ID and the current human-readable phase name.
+`post.checkpoint` and `post.deferred_registration_sync` remain reserved for
+historical manifests and persisted progress rows but have no current execution
+policy. Service-info descriptors expose `reserved: true`; the active catalog
+and durable progress sink exclude/reject those descriptors so retired phases
+cannot contribute to active phase counts or future overall-progress models.
+Registration backlog/history work is owned by the dedicated recurring and
+run-once drain paths; recurring registered-user refresh remains in
+`RefreshRegisteredUsers`.
 
 The worker writes additive `scrape_phase_attempts` rows:
 

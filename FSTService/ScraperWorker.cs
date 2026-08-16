@@ -249,16 +249,6 @@ public sealed class ScraperWorker : BackgroundService
         // track endpoint) can attach at any time.
         _cyclicalMachine.Start(stoppingToken);
 
-        // Pre-warm the rankings cache for registered users before the scrape loop
-        // starts. The cache TTL is 5 min, so the worst case for API requests is a
-        // single on-demand CTE query.
-        if (_persistence.GetInstrumentKeys().Count > 0)
-        {
-            var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
-            if (registeredIds.Count > 0)
-                await _persistence.PreWarmRankingsCacheAsync(registeredIds, stoppingToken);
-        }
-
         // Precomputed API responses are now served from PostgreSQL.
         // No disk load needed — data persists across restarts in the api_response_cache table.
         {
@@ -717,6 +707,36 @@ public sealed class ScraperWorker : BackgroundService
     private static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
         => ScrapeOrchestrator.GetEnabledInstruments(opts);
 
+    internal static bool IsSuccessfulPhaseOutcomeStatus(
+        string status,
+        PostScrapePhaseCriticality criticality) =>
+        PostScrapePhasePolicy.IsSuccessfulStatus(status, criticality);
+
+    internal static PostScrapePhaseOutcome RehydratePhaseOutcome(
+        ScrapePhaseOutcomeRecord outcome)
+    {
+        var criticality = outcome.Criticality switch
+        {
+            "publication_critical" =>
+                PostScrapePhaseCriticality.PublicationCritical,
+            "best_effort" =>
+                PostScrapePhaseCriticality.BestEffort,
+            _ => throw new InvalidOperationException(
+                $"Persisted post-scrape phase '{outcome.Phase}' has unknown " +
+                $"criticality '{outcome.Criticality}'."),
+        };
+        return new PostScrapePhaseOutcome(
+            outcome.Phase,
+            criticality,
+            IsSuccessfulPhaseOutcomeStatus(
+                outcome.Status,
+                criticality),
+            outcome.ErrorMessage)
+        {
+            Status = outcome.Status,
+        };
+    }
+
     // ─── Scrape pass (V1 alltime global) ────────────────────────
 
     /// <summary>
@@ -927,13 +947,8 @@ public sealed class ScraperWorker : BackgroundService
             {
                 foreach (var outcome in resumeState.PhaseOutcomes)
                 {
-                    ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
-                        outcome.Phase,
-                        string.Equals(outcome.Criticality, "publication_critical", StringComparison.Ordinal)
-                            ? PostScrapePhaseCriticality.PublicationCritical
-                            : PostScrapePhaseCriticality.BestEffort,
-                        string.Equals(outcome.Status, "completed", StringComparison.Ordinal),
-                        outcome.ErrorMessage));
+                    ctx.PostScrapeOutcomes.Record(
+                        RehydratePhaseOutcome(outcome));
                 }
 
                 result = new ScrapePassResult

@@ -1782,12 +1782,23 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 requireSourceLocks: true);
             queuedRegistration = Task.Run(async () =>
             {
-                await using var registrationLease =
-                    await meta
-                        .AcquireRegistrationMutationLeaseAsync();
-                meta.RegisterUser(
-                    "post-cache-device",
-                    "post-cache-account");
+                while (true)
+                {
+                    try
+                    {
+                        await using var registrationLease =
+                            await meta
+                                .AcquireRegistrationMutationLeaseAsync();
+                        meta.RegisterUser(
+                            "post-cache-device",
+                            "post-cache-account");
+                        return;
+                    }
+                    catch (RegistrationMutationBlockedException)
+                    {
+                        await Task.Delay(25);
+                    }
+                }
             });
             await Task.Delay(150);
             Assert.False(queuedRegistration.IsCompleted);

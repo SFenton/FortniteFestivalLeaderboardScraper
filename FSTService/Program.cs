@@ -506,7 +506,6 @@ builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
 builder.Services.AddSingleton<BackfillQueue>();
 builder.Services.AddSingleton<AccountNameRefreshService>();
 builder.Services.AddSingleton<ScoreBackfiller>();
-builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<BatchResultProcessor>();
 builder.Services.AddSingleton<SongProcessingMachine>();
 builder.Services.AddSingleton<CyclicalSongMachine>();

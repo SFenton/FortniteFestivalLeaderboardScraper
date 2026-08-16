@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-08-15
+last_verified_commit: fca22bbb
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -41,13 +41,14 @@ update_triggers:
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
-- Use the accepted timing foundation to optimize measured bottlenecks rather
-  than inferred phase cost. The first BandMaintenance target is current
-  projection refresh.
-- Treat storage capacity as an urgent independent safety lane. The existing
+- Treat storage capacity as the next active safety lane before another
+  post-scrape optimization. The existing
   report-only snapshot-retention planner must fail closed on incomplete
   statistics, and exact reclaim/workspace evidence must pass the current gate
   before any rewrite proposal.
+- After a safe capacity window exists, use the accepted timing foundation to
+  optimize measured bottlenecks rather than inferred phase cost. The first
+  BandMaintenance target remains current projection refresh.
 
 Implementation is approved after this plan is rendered to the local autonomous
 agent outbox. All implementation, evaluation, deployment, and promotion
@@ -94,7 +95,7 @@ resolved through repository and bounded runtime evidence.
 |---|---|---:|
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
-| Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
+| Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
@@ -312,13 +313,13 @@ Exact catalog selection
 
 | Phase | Owner | Primary inputs | Primary outputs | Criticality |
 |---|---|---|---|---|
-| `RankRecompute` | `GlobalLeaderboardPersistence` | Changed songs and legacy live rows | Legacy stored ranks | Publication-critical, but production no-op while legacy writes are off |
+| `RankRecompute` | `GlobalLeaderboardPersistence` | Changed songs and legacy live rows | Legacy stored ranks | Publication-critical rollback path; completes without update while legacy writes are off and may never be skipped |
 | `FirstSeenSeason` | `FirstSeenSeasonCalculator` | Catalog, season windows, Epic history | First-seen season rows | Best effort |
 | `AccountNameResolution` | `AccountNameResolver` | Unresolved account IDs | Display-name state | Best effort |
 | `RefreshRegisteredUsers` | `CyclicalSongMachine` | Registered accounts, catalog, seasons, Epic lookups | Overlays, session history, scope checkpoints | Publication-critical |
 | `ActivateShadowSnapshotsEarly` | `GlobalLeaderboardPersistence` | Candidate snapshot rows and expected scopes | Active snapshot state | Publication-critical |
 | `BandExtraction` | `PostScrapeBandExtractor` | Band context, max scores | Band entries/member rows, team membership/configuration summaries, and impacted scopes | Publication-critical |
-| `LegacyBandScrape` | `BandScrapePhase` | Legacy band network path | Band entries | Publication-critical, unreachable in a normal `BandAll` pass |
+| `LegacyBandScrape` | `BandScrapePhase` | Legacy band network path | Band entries | Publication-critical; reachable only through direct `--band-post-scrape`, suppressed by normal `BandScrape` |
 | `RegisteredPlayerBandDiscovery` | Discovery orchestrator | Registered accounts, season windows, Epic | Discovered teams/scopes | Best effort |
 | `RegisteredBandTargetedProcessing` | Targeted orchestrator | Registered teams, Epic | Targeted team rows/scopes | Best effort |
 | `BandMaintenance` | Band persistence/projection builders | Band entries/members and impacted teams/scopes | Pruned band state plus search and current projections | Publication-critical |
@@ -327,14 +328,14 @@ Exact catalog selection
 | `Rivals` | `RivalsOrchestrator` | Current scores/ranks and dirty fingerprints | Song-rival rows/samples | Publication-critical |
 | `LeaderboardRivals` | `LeaderboardRivalsCalculator` | Rankings and player scores | Ranking-neighbor rival rows/samples | Publication-critical |
 | `PlayerStatsTiers` | Post-scrape orchestrator | Player profiles, max scores, populations | Stats-tier rows | Publication-critical |
-| `Checkpoint` | Persistence wrappers | None in PostgreSQL | None | Best effort, verified PostgreSQL no-op |
+| `Checkpoint` | Reserved progress/history descriptor | None | None | No execution policy; stable ID retained for plan-v2 evidence compatibility |
 | `ActivateShadowSnapshots` | `GlobalLeaderboardPersistence` | Same candidate snapshot state | Wave-two finalization marker | Publication-critical |
 | `SealSoloCurrentProjectionScopes` | Projection builder/context | Stale and notification scopes | Publication scope boundary | Publication-critical |
 | `Cleanup.SoloCurrentProjection` | Projection builder | Snapshots, overlays, sealed scopes | Candidate current projection | Publication-critical |
 | `Cleanup.PrecomputeAll` | `ScrapeTimePrecomputer` | All derived candidate state | Generation-staged API responses | Publication-critical |
 | Retention/legacy cleanup | Post-scrape and retention services | History/snapshot metadata | Bounded deletion or report | Best effort |
 | Publication | Worker and `MetaDatabase.Publication` | Complete candidate and required bindings | Current publication pointer | Publication-critical |
-| `ImprovementNotifications` | Notification recovery service | Published generation and projection plan | Notification state/events | Best effort, post-publication |
+| `ImprovementNotifications` | Notification recovery service | Published generation and projection plan | Notification state/events or explicit skip reason | Best effort, post-publication |
 
 ## BandExtraction, BandMaintenance, and rankings table/resource map
 
@@ -366,13 +367,13 @@ required before performance acceptance.
 
 | Phase | Candidate | Parallel/reorder/remove assessment | Smallest falsifying probe | Acceptance metrics | Rollback | Execution class |
 |---|---|---|---|---|---|---|
-| `RankRecompute` | Omit or record `skipped` when legacy live writes are disabled | Remove from active PostgreSQL plan; retain rollback behavior behind the flag until separate audit | Unit/integration tests with legacy flag on/off plus full scrape parity | Zero output difference; no missing legacy rollback behavior | Restore conditional call | `scrape-boundary-deploy` |
+| `RankRecompute` | Candidate completes the critical contract without legacy work when writes are disabled | Retains rollback behavior and criticality when the flag is on; critical skips fail closed | Unit/integration tests with legacy flag on/off plus full scrape parity | Zero output difference; no missing legacy rollback behavior | Revert conditional no-work path | `full-scrape-ab` |
 | `FirstSeenSeason` | Add song/request counts only | Already parallel; current cost too small for algorithm work | Three comparable scrape observations | No telemetry overhead above 1%; optimize only if >2% wall | Remove counters | `continuous-safe` |
 | `AccountNameResolution` | Add batch/account counts only | Already parallel; not a bottleneck | Three scrape observations | Same names and retries | Remove counters | `continuous-safe` |
 | `RefreshRegisteredUsers` | Measure planned scopes, skipped/fetched/update counts, and per-account tails; then evaluate freshness-driven reduction | Do not raise concurrency before provider/load evidence | Identical captured response replay on isolated inputs | Exact overlay/history/scope parity; lower requests or wall; no retry amplification | Feature flag to full recurring path | `full-scrape-ab` |
 | Early snapshot activation | Use expected/manifests rather than scanning candidate snapshot rows; evaluate one activation | Potential query rewrite; final activation removal requires separate proof | Bounded plan and isolated current-state checksums | At least 30% phase reduction; exact snapshot state and current reads | Restore existing SQL/calls | `full-scrape-ab` |
 | `BandExtraction` | Make impacted teams/scopes reflect actual changed rows | Already parallel; do not increase DOP first | Same input rows, compare impacted-key sets and band outputs | Exact band rows; fewer downstream scopes | Keep broad-impact mode | `full-scrape-ab` |
-| `LegacyBandScrape` | Retire unreachable normal-pass branch after mode audit | Remove only in a dedicated dead-path PR | CLI/config/reference search plus targeted tests | No supported mode loses band acquisition | Revert deletion | `scrape-boundary-deploy` |
+| `LegacyBandScrape` | Retain direct `--band-post-scrape`; remove only duplicate await | Mode audit proved the direct legacy launch remains supported | CLI/config matrix plus targeted tests | No supported mode loses band acquisition | Revert duplicate-await deletion | `full-scrape-ab` |
 | Band discovery/targeting | Add lookup budgets, results, retry, and checkpoint timings | Low priority; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase | Restore serial order | `full-scrape-ab` |
 | Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Secondary measured target: `1,144,264 ms` (`14.41%`) in scrape `1293` | Isolated changed-scope A/B after current projection analysis | Exact retained entries/members; ≥20% subphase reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
 | BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; separate from BandMaintenance timing and optimization | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
@@ -386,15 +387,15 @@ required before performance acceptance.
 | Song rivals | Bound account concurrency and persist skip/recompute/input counts | Potential overlap with player stats later; not before query/resource evidence | Registered-account slice replay | Exact rivals/samples; lower query count and p95 | Existing task fan-out | `full-scrape-ab` |
 | Leaderboard rivals | Bulk-load neighborhoods and selected neighbor scores; add input fingerprints | Recompute only users whose ranking neighborhood changed | One-account, then full registered-slice replay | Exact rows/samples; ≥25% query/wall reduction | Existing per-user algorithm | `full-scrape-ab` |
 | Player stats | Add per-chunk timing | Usually seconds; leave serial unless recurring tail appears | Three comparable scrapes | No output difference; optimize only if material | Remove counters | `continuous-safe` |
-| Checkpoint/cache warm | Remove verified PostgreSQL no-ops in a dedicated PR | Do not combine with progress or performance work | PostgreSQL and rollback-mode tests | Zero output/cache difference | Revert deletion | `scrape-boundary-deploy` |
+| Checkpoint/cache warm | Candidate removes verified PostgreSQL no-ops | Stable checkpoint ID remains reserved; no persistence contract remains | PostgreSQL API-absence and worker-flow tests plus full scrape parity | Zero output/cache difference | Revert deletion | `full-scrape-ab` |
 | Final snapshot activation | Prove whether wave-two marker has a current consumer; collapse only after parity | Candidate removal, not assumed redundancy | Source/reference tests and full current-state/public checksums | Exact resume, projection, publication, and API behavior | Restore second activation | `full-scrape-ab` |
 | Projection seal | Add exact scope count | Retain ordering boundary | Unit/integration coverage | Same sealed/deferred scope behavior | Remove counter | `continuous-safe` |
 | Solo projection refresh | Replace full delete/reinsert with adaptive merge at low diff ratio; batch by instrument | Must remain before precompute | 0%, 0.1%, 1%, 10%, and full-change isolated replay | Exact current rows/ranks; lower WAL/dead tuples and ≥10% wall on low-change data; no >10% full-change regression | Full-rebuild mode | `full-scrape-ab` |
 | Precompute | Add subphase timings, reuse leeway/band-score inputs, then test selective two-lane execution | Preserve API latency priority; do not enable all-phase parallelism first | Same phase inputs, cache fingerprint comparison | Exact cache keys/bytes/ETags; ≥10% wall reduction; public API p95 within gate | Serial mode/input rebuild | `full-scrape-ab` |
 | Best-effort cleanup | Move after publication under pressure admission | Correctness-of-intent fix; typical measured benefit near zero | Failure injection and API/resource observation | Publication unchanged; cleanup failure cannot block it; live-read p95 within gate | Restore pre-publication call | `full-scrape-ab` |
 | Publication | Persist scope-source, notification-plan, preparation, drain, exclusive, and cleanup timings | Ordering remains strict | Additive timing-only observation | Exact pointer/freeze/route parity; <1% overhead | Disable timing writes | `continuous-safe` |
-| Improvement notifications | Record skip reason and detection-stage/scope timing | Already post-publication | Inspect conditions and several published scrapes | No silent starvation; exact notification state | Remove counters | `continuous-safe` |
-| `PostScrapeRefresher` / deferred sync | Audit supported modes and retire or explicitly re-home | Verified no current production caller; removal is separate from timing/progress work | Reference/config/tests plus best-effort skip audit | No supported mode loses refresh/backfill/recovery | Revert deletion | `scrape-boundary-deploy` |
+| Improvement notifications | Candidate records skip reason; detection-stage/scope timing remains future work | Already post-publication | Inspect conditions and full candidate publication | No silent starvation; exact notification state | Revert skip telemetry | `full-scrape-ab` |
+| `PostScrapeRefresher` / deferred sync | Candidate removes both dead surfaces | Caller history and current recurring/run-once owners are explicit | Reference/config/DI/tests plus full scrape parity | No supported mode loses refresh/backfill/recovery | Revert deletion | `full-scrape-ab` |
 
 Default rejection is any correctness/publication difference or a sustained
 greater-than-10% regression in API p95, phase wall clock, CPU, memory, WAL,
@@ -638,40 +639,29 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-6: verified dead/no-op path cleanup
-
-**Class:** `scrape-boundary-deploy`
-
-**Starting note:** PR-5 accepted same-binary root confinement, isolated
-PostgreSQL refusal, typed Tier-1 manifests/import, the bounded current-
-projection adapter, and exact output comparison. Full BandMaintenance,
-provider capture, production-derived packages, live replay, and deployment
-remain unsupported and are not prerequisites or authorization for PR-6.
-
-- audit best-effort skip reasons/starvation first;
-- conditionally remove PostgreSQL checkpoint/cache warm and legacy rank work;
-- retire unreachable LegacyBandScrape, unused `PostScrapeRefresher`, and dormant
-  deferred sync only after supported-mode tests;
-- preserve rollback/reference evidence.
-
-### PR-7 and later: measured optimization iterations
+### Next iterations
 
 Order is evidence-driven:
 
-1. BandMaintenance current projection refresh, starting with the measured
+1. snapshot-capacity recovery investigation: refresh the read-only protected
+   generation, row-distribution, relation-size, and exact workspace evidence;
+   do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
+   existing parity/capacity contract passes;
+2. BandMaintenance current projection refresh, starting with the measured
    `53,543` considered / `8,020` refreshed scope and row-churn path. Current
    replay forces `SkipUnchangedScopes=false`, one band-type worker,
    synchronous commit, and cleanup disabled, so it cannot evaluate this
-   unchanged-scope hypothesis. PR-7 must add an option-parity replay mode or
+   unchanged-scope hypothesis. The next optimization must add an option-parity
+   replay mode or
    use a separate bounded probe before claiming skip-path evidence;
-2. solo current-projection write reduction;
-3. rank-history query path and one-variable concurrency/overlap experiment;
-4. leaderboard-rivals batching/fingerprints;
-5. precompute input reuse/selective concurrency;
-6. best-effort cleanup reorder;
-7. snapshot activation consolidation;
-8. storage-retention execution after parity/capacity gates;
-9. capture-only overlap research after architecture/storage redesign.
+3. solo current-projection write reduction;
+4. rank-history query path and one-variable concurrency/overlap experiment;
+5. leaderboard-rivals batching/fingerprints;
+6. precompute input reuse/selective concurrency;
+7. best-effort cleanup reorder;
+8. snapshot activation consolidation;
+9. storage-retention execution after parity/capacity gates;
+10. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 
@@ -775,8 +765,6 @@ metrics. Correctness/publication differences reject regardless of speed.
 |---|---|---|---|
 | Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
-| Improvement-notification gaps | Unknown | Record skip reasons and inspect markers/coverage on recent publications | Do not call the phase starved or removable without evidence |
-| Best-effort skip/starvation | Unknown | Compare requested phases, outcomes, skip reasons, pressure decisions, and feature conditions | Required before dead-path PR |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
 | Rival tail cause | Unknown | Per-account decisions/query counts/timing | No concurrency change before attribution |
 | Precompute subphase cost | Unknown | Stable subphase timing and cache counts | No parallel flag promotion |
@@ -796,8 +784,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-6 verified dead/no-op cleanup is the next implementation boundary.
-- Current-projection optimization is a separate future full-scrape A/B; it
-  cannot be combined with PR-3 Settings work.
+- Snapshot-capacity recovery evidence is the next active priority.
+- Current-projection optimization remains a separate later full-scrape A/B.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.

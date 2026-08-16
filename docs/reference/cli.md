@@ -2,11 +2,12 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 354f87eb
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
   - FSTService/ScrapePhase.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Persistence/PublishedScrapeIdArgument.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -119,7 +120,10 @@ Individual flags:
 
 `ScrapePhaseResolver` expands groups and fills intermediate solo phases. No
 phase flags means the full pipeline. Launch selections apply only to the first
-pass of a continuous worker.
+pass of a continuous worker. `--band-post-scrape` alone is the supported
+direct legacy band-fetch mode. `--band-scrape` includes the legacy phase flag
+for compatibility but the modern `BandScrape` result suppresses the duplicate
+legacy fetch.
 
 ## Schema, recovery, and maintenance
 

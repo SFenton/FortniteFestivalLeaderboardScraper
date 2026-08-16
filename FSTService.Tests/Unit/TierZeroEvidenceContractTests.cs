@@ -23,6 +23,13 @@ public sealed class TierZeroEvidenceContractTests
         Assert.Equal(
             PhaseProgressCatalog.All.Select(static phase => phase.DefaultUnitsKind),
             plan.Phases.Select(static phase => phase.DefaultUnitsKind));
+        Assert.Equal(
+            PhaseProgressCatalog.Reserved.Order(StringComparer.Ordinal),
+            plan.Phases
+                .Where(phase => PhaseProgressCatalog.IsReserved(phase.Id))
+                .Select(static phase => phase.Id)
+                .Order(StringComparer.Ordinal));
+        Assert.Null(typeof(TierZeroPhaseDescriptor).GetProperty("Reserved"));
     }
 
     [Fact]

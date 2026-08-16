@@ -22,14 +22,12 @@ public static class PostScrapePhasePolicy
             ["LegacyBandScrape"] = PostScrapePhaseCriticality.PublicationCritical,
             ["RegisteredPlayerBandDiscovery"] = PostScrapePhaseCriticality.BestEffort,
             ["RegisteredBandTargetedProcessing"] = PostScrapePhaseCriticality.BestEffort,
-            ["DeferredRegistrationSync"] = PostScrapePhaseCriticality.PublicationCritical,
             ["BandMaintenance"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PrepareSoloCurrentProjectionForDerived"] = PostScrapePhaseCriticality.PublicationCritical,
             ["ComputeRankings"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Rivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["LeaderboardRivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PlayerStatsTiers"] = PostScrapePhaseCriticality.PublicationCritical,
-            ["Checkpoint"] = PostScrapePhaseCriticality.BestEffort,
             ["ActivateShadowSnapshots"] = PostScrapePhaseCriticality.PublicationCritical,
             ["SealSoloCurrentProjectionScopes"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Cleanup.SoloCurrentProjection"] = PostScrapePhaseCriticality.PublicationCritical,
@@ -50,13 +48,29 @@ public static class PostScrapePhasePolicy
                 $"Post-scrape phase '{phase}' has no explicit publication criticality.");
         return criticality;
     }
+
+    public static bool IsSuccessfulStatus(
+        string status,
+        PostScrapePhaseCriticality criticality) =>
+        string.Equals(status, "completed", StringComparison.Ordinal)
+        || (criticality == PostScrapePhaseCriticality.BestEffort
+            && string.Equals(status, "skipped", StringComparison.Ordinal));
 }
 
 public sealed record PostScrapePhaseOutcome(
     string Phase,
     PostScrapePhaseCriticality Criticality,
     bool Success,
-    string? ErrorMessage);
+    string? ErrorMessage)
+{
+    public string Status { get; init; } = Success ? "completed" : "failed";
+
+    public bool IsSuccessfulForPublication =>
+        Status == "completed"
+            ? Success
+            : Status == "skipped"
+              && Criticality == PostScrapePhaseCriticality.BestEffort;
+}
 
 public sealed class PostScrapeExecutionLedger
 {
@@ -68,13 +82,18 @@ public sealed class PostScrapeExecutionLedger
 
     public IReadOnlyCollection<PostScrapePhaseOutcome> FailedPublicationCriticalPhases =>
         Outcomes.Where(static outcome =>
-            !outcome.Success
+            !outcome.IsSuccessfulForPublication
             && outcome.Criticality == PostScrapePhaseCriticality.PublicationCritical).ToArray();
 
     public IReadOnlyCollection<PostScrapePhaseOutcome> FailedBestEffortPhases =>
         Outcomes.Where(static outcome =>
-            !outcome.Success
+            !outcome.IsSuccessfulForPublication
             && outcome.Criticality == PostScrapePhaseCriticality.BestEffort).ToArray();
+
+    public IReadOnlyCollection<PostScrapePhaseOutcome> InvalidPublicationCriticalSkips =>
+        Outcomes.Where(static outcome =>
+            outcome.Criticality == PostScrapePhaseCriticality.PublicationCritical
+            && outcome.Status == "skipped").ToArray();
 
     public bool CanPublish => FailedPublicationCriticalPhases.Count == 0;
 
@@ -89,13 +108,23 @@ public static class ScrapePublicationGuard
         PostScrapeExecutionLedger ledger,
         bool enforcePublicationCriticalPhases)
     {
+        var invalidSkips = ledger.InvalidPublicationCriticalSkips;
+        if (invalidSkips.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Scrape {scrapeId} cannot be published because publication-critical " +
+                $"phase(s) were invalidly skipped: " +
+                $"{string.Join(", ", invalidSkips.Select(static failure => failure.Phase))}.");
+        }
+
         if (!enforcePublicationCriticalPhases || ledger.CanPublish)
             return;
 
         var failures = ledger.FailedPublicationCriticalPhases;
         throw new InvalidOperationException(
             $"Scrape {scrapeId} cannot be published because publication-critical " +
-            $"phase(s) failed: {string.Join(", ", failures.Select(static failure => failure.Phase))}.");
+            $"phase(s) did not complete successfully: " +
+            $"{string.Join(", ", failures.Select(static failure => $"{failure.Phase} ({failure.Status})"))}.");
     }
 }
 

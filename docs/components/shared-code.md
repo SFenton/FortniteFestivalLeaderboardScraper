@@ -2,13 +2,14 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: 86379374
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
   - packages/core/package.json
   - packages/core/src/index.ts
   - packages/core/src/api/serverTypes.ts
+  - packages/core/src/__tests__/serverTypes.test.ts
   - packages/core/src/suggestions/suggestionGenerator.ts
   - packages/theme/package.json
   - packages/theme/src/index.ts
@@ -75,7 +76,9 @@ lives in `FortniteFestivalWeb/src/api/client.ts`.
 `ServiceInfoResponse` includes the accepted durable-progress v2 phase plan,
 attempt, units, exact-phase-percent, conservative overall/ETA, heartbeat, and
 last-progress contract. Fields stay optional so an older service response
-remains consumable during rolling deployment.
+remains consumable during rolling deployment. Phase descriptors include the
+optional mirrored `reserved` boolean; consumers treat only `reserved === true`
+as retired so older payloads remain active-compatible.
 
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.
