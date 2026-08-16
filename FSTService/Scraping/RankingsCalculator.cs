@@ -55,21 +55,20 @@ public sealed class RankingsCalculator
 
     private const double RankingRateTolerance = 1e-9;
 
+    /// <summary>
+    /// Computes the exact ranking cutoff and saturates it to the score storage
+    /// range. Maintenance target admission applies the stricter bound above.
+    /// </summary>
     internal static int ComputeMaxScoreThreshold(int maxScore)
     {
-        if (maxScore is <= 0
-            or > MaximumScoreWithRepresentableRankingCutoff)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxScore),
-                maxScore,
-                $"Maximum score must be between 1 and {MaximumScoreWithRepresentableRankingCutoff} so its 1.05 ranking cutoff fits PostgreSQL INTEGER.");
-        }
-
-        var scaled = checked(
-            (long)maxScore * RankingValidityCutoffNumerator);
-        return checked(
-            (int)(scaled / RankingValidityCutoffDenominator));
+        var scaled =
+            (long)maxScore * RankingValidityCutoffNumerator;
+        var threshold =
+            scaled / RankingValidityCutoffDenominator;
+        return (int)Math.Clamp(
+            threshold,
+            int.MinValue,
+            int.MaxValue);
     }
 
     private readonly GlobalLeaderboardPersistence _persistence;

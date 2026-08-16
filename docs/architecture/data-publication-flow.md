@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 02c28ccd
+last_verified_commit: 739954f8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -141,14 +141,18 @@ derived rows while retaining the same published scrape/publication ID.
    bounds through the authoritative published snapshot/empty source plus
    supplemental overlay. Each mapped score may exceed the CHOpt denominator
    but not the exact ranking threshold
-   `floor(newMaximum × 21 / 20)`. All request and manifest maxima are bounded
-   at `2,045,222,521`, keeping the exact `1.05` cutoff representable as
-   PostgreSQL `INTEGER`. Plan report/digest contract v5 records that integer
-   cutoff and fingerprints published score sources, notification state, rank
-   history, publication-bound population, and the complete score-history input
-   consumed by registered caches, affected player stats, and all-song rankings
-   for rebuilt instruments. The bounded evidence includes counts/ranges/hashes
-   and never falls back to mutable population.
+   `floor(newMaximum × 21 / 20)`. All target request, actual current/staged,
+   manifest, and report maxima are bounded at `2,045,222,521`, keeping their
+   exact `1.05` cutoffs representable as PostgreSQL `INTEGER`. Unrelated
+   frozen-catalog maxima above that admission bound do not invalidate the
+   target plan; general threshold computation saturates them at `int.MaxValue`,
+   which is equivalent for the stored `INTEGER` score domain and keeps SQL
+   parameters representable. Plan report/digest contract v5 records each
+   target cutoff and fingerprints published score sources, notification state,
+   rank history, publication-bound population, and the complete score-history
+   input consumed by registered caches, affected player stats, and all-song
+   rankings for rebuilt instruments. The bounded evidence includes
+   counts/ranges/hashes and never falls back to mutable population.
 4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,

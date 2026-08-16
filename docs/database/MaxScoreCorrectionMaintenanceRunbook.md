@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: 02c28ccd
+last_verified_commit: 739954f8
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -191,11 +191,14 @@ are rejected.
 so this is the greatest integer maximum satisfying
 `floor(maximum × 21 / 20) <= 2,147,483,647`:
 `(((int.MaxValue + 1) × 20) - 1) / 21`. The boundary produces
-`int.MaxValue`; `2,045,222,522` would produce `2,147,483,648` and is rejected
-before staging, manifest emission, or plan. C# computes the cutoff with
-checked integer arithmetic. PostgreSQL selector tables and parameters retain
-`INTEGER` maxima/cutoffs and therefore rely on this admission bound rather
-than a saturated .NET conversion.
+`int.MaxValue`; a target value of `2,045,222,522` would produce
+`2,147,483,648` and is rejected in request constraints/complete maxima,
+actual current/staged path validation, manifest loading, and report
+validation. General cutoff computation for an unrelated frozen-catalog
+maximum uses exact `long` arithmetic and saturates at `int.MaxValue`. That is
+equivalent over the PostgreSQL `INTEGER` score domain, lets relevance
+selection proceed, and guarantees selector arrays never receive an
+overflowing threshold without allowing the value through target admission.
 
 ## Command sequence
 
@@ -460,6 +463,12 @@ this cutoff is valid evidence. A score above the cutoff, an unrepresentable
 maximum, or a missing authoritative source mapping fails closed. This contract
 does not use `Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to
 deep-scrape counting and pruning, not ranking or maintenance validity.
+
+The frozen catalog can contain an unrelated maximum above the target admission
+bound. Plan evidence must not reject that value before deciding whether its
+scope contributes to affected-player or rebuilt-ranking inputs. When selected,
+its general cutoff is `int.MaxValue`; all possible stored scores are therefore
+within the mathematical cutoff, and the SQL parameter remains an `INTEGER`.
 
 Snapshot rows and supplemental overlay-only rows use the same authoritative
 resolver as production `InstrumentDatabase` reads. Apply uses both approved

@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: 02c28ccd
+last_verified_commit: 739954f8
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -106,12 +106,15 @@ production meanings:
 - Max Score % uses the CHOpt maximum as its ratio denominator, but validity is
   a separate integer threshold:
   `floor(CHOpt maximum × 21 / 20)`, the exact `1.05` contract. Scores above
-  that threshold are excluded. Max-score maintenance admits maxima only
-  through `2,045,222,521`, whose cutoff is `int.MaxValue`; the next value is
-  rejected before publication because its cutoff cannot fit PostgreSQL
-  `INTEGER`. Scores above the denominator but at or below the threshold remain
-  valid; their ratios are capped at `1.05` before averaging. The score-count
-  credibility adjustment then produces the public value, while
+  that threshold are excluded. Max-score maintenance admits target maxima only
+  through `2,045,222,521`, whose cutoff is `int.MaxValue`; the next target
+  value is rejected before publication because its cutoff cannot fit
+  PostgreSQL `INTEGER`. An unrelated catalog maximum above that bound uses an
+  `int.MaxValue` cutoff for representable score evaluation and does not become
+  an admitted maintenance target. Scores above the denominator but at or below
+  the threshold remain valid; their ratios are capped at `1.05` before
+  averaging. The score-count credibility adjustment then produces the public
+  value, while
   `rawMaxScorePercent` retains the pre-adjustment average. A valid score on a
   chart without a computed maximum is omitted from that raw average but
   remains in the score count used by the credibility adjustment.

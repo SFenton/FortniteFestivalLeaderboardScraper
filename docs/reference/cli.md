@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: 02c28ccd
+last_verified_commit: 739954f8
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -177,10 +177,13 @@ Plan report version 5 includes `populationEvidence`, `scoreHistoryEvidence`,
 and `validCutoff` on every `observedScoreChecks` row. The cutoff is exactly
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
 `floor(newMaximum × 21 / 20)`: scores above the CHOpt denominator remain valid
-when they do not exceed this cutoff. Checked C# arithmetic rejects
-`newMaximum > 2,045,222,521` instead of saturating the cutoff. Missing source
-mappings and scores above the cutoff fail closed. Plan-digest contract version
-5 binds the same evidence. Apply rebuilds the plan before freeze; apply and
+when they do not exceed this cutoff. Target request, actual current/staged,
+manifest, and report validation rejects `newMaximum > 2,045,222,521`.
+Unrelated frozen-catalog maxima use the general exact computation saturated at
+`int.MaxValue`, so plan relevance selection and PostgreSQL `INTEGER` parameters
+remain safe without admitting an overflowing target. Missing source mappings
+and target scores above the cutoff fail closed. Plan-digest contract version 5
+binds the same evidence. Apply rebuilds the plan before freeze; apply and
 resume then reload the observed-score rows and reconstruct the approved digest
 before mutation.
 

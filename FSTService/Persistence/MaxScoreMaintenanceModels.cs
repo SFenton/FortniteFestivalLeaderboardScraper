@@ -1242,7 +1242,12 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
         int newMaximum,
         bool sourceMapped,
         int? highestObservedScore)
-        => new(
+    {
+        MaxScoreMaintenanceMaxima.ValidateMaximum(
+            newMaximum,
+            nameof(newMaximum),
+            "Observed-score maximum");
+        return new MaxScoreMaintenanceObservedScoreCheck(
             songId,
             instrument,
             newMaximum,
@@ -1254,13 +1259,16 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
                 newMaximum,
                 sourceMapped,
                 highestObservedScore));
+    }
 
     internal static bool IsCompatible(
         int newMaximum,
         bool sourceMapped,
         int? highestObservedScore)
         => sourceMapped
-           && newMaximum > 0
+           && newMaximum is > 0
+               and <= RankingsCalculator
+                   .MaximumScoreWithRepresentableRankingCutoff
            && (highestObservedScore is null
                || highestObservedScore
                   <= RankingsCalculator
@@ -1269,11 +1277,18 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
 
     internal MaxScoreMaintenanceObservedScoreCheck ValidateContract()
     {
+        if (NewMaximum is <= 0
+            or > RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff)
+        {
+            throw new ArgumentException(
+                "Observed-score evidence must use a maximum whose ranking validity cutoff fits PostgreSQL INTEGER.");
+        }
+
         var expectedCutoff =
             RankingsCalculator.ComputeMaxScoreThreshold(
                 NewMaximum);
-        if (NewMaximum <= 0
-            || ValidCutoff != expectedCutoff
+        if (ValidCutoff != expectedCutoff
             || Passed
                != IsCompatible(
                    NewMaximum,

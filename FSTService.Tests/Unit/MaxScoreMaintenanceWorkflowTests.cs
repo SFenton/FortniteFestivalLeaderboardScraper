@@ -53,6 +53,38 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
+    public async Task Plan_accepts_valid_target_with_unrelated_over_limit_catalog_maximum()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true,
+                publishedOnlyMaximum: checked(
+                    RankingsCalculator
+                        .MaximumScoreWithRepresentableRankingCutoff
+                    + 1));
+
+        var plan = await fixture.PlanAsync();
+
+        Assert.True(
+            plan.CanApply,
+            string.Join(
+                Environment.NewLine,
+                plan.Checks
+                    .Where(check => !check.Passed)
+                    .Select(check => check.Detail)));
+        Assert.Equal(
+            int.MaxValue,
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                checked(
+                    RankingsCalculator
+                        .MaximumScoreWithRepresentableRankingCutoff
+                    + 1)));
+        Assert.All(
+            plan.ObservedScoreChecks,
+            check => Assert.True(check.Passed));
+    }
+
+    [Fact]
     public async Task Plan_apply_and_resume_preserve_evidence_and_use_one_configured_deadline()
     {
         const int commandTimeoutSeconds = 1800;
@@ -654,7 +686,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             int maxScoreMaintenanceCommandTimeoutSeconds =
                 ScraperOptions
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
-            int publishedOverlayScore = 50_000)
+            int publishedOverlayScore = 50_000,
+            int publishedOnlyMaximum = 70_000)
         {
             var dataDirectory = Path.Combine(
                 Directory.GetCurrentDirectory(),
@@ -936,7 +969,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 publishedOverlayScore);
             if (includeScopeDivergence)
             {
-                SeedScopeDivergence(dataSource);
+                SeedScopeDivergence(
+                    dataSource,
+                    publishedOnlyMaximum);
             }
             meta.InsertAccountIds(
                 includeScopeDivergence
@@ -2538,7 +2573,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         }
 
         private static void SeedScopeDivergence(
-            NpgsqlDataSource dataSource)
+            NpgsqlDataSource dataSource,
+            int publishedOnlyMaximum)
         {
             using var connection =
                 dataSource.OpenConnection();
@@ -2555,7 +2591,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     @publishedOnlySongId,
                     'Published Only Song',
                     '2026-07-15T00:00:00Z',
-                    70000,
+                    @publishedOnlyMaximum,
                     0,
                     FALSE);
 
@@ -2835,6 +2871,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.Parameters.AddWithValue(
                 "publishedOnlyInstrument",
                 PublishedOnlyInstrument);
+            command.Parameters.AddWithValue(
+                "publishedOnlyMaximum",
+                publishedOnlyMaximum);
             command.Parameters.AddWithValue(
                 "publishedZeroSongId",
                 PublishedZeroSongId);

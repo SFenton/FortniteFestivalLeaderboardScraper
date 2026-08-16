@@ -680,6 +680,10 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 ["other-song"] = new SongMaxScores
                 {
                     MaxLeadScore = 50_000,
+                    MaxBassScore = checked(
+                        RankingsCalculator
+                            .MaximumScoreWithRepresentableRankingCutoff
+                        + 1),
                 },
             };
         var originalId = InsertHistory(

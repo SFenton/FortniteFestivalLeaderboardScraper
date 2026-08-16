@@ -650,7 +650,7 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
-    public void Ranking_cutoff_uses_the_largest_exact_int_boundary()
+    public void Ranking_cutoff_saturates_general_values_at_the_exact_int_boundary()
     {
         Assert.Equal(
             2_045_222_521,
@@ -661,7 +661,8 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             RankingsCalculator.ComputeMaxScoreThreshold(
                 RankingsCalculator
                     .MaximumScoreWithRepresentableRankingCutoff));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.Equal(
+            int.MaxValue,
             RankingsCalculator.ComputeMaxScoreThreshold(
                 checked(
                     RankingsCalculator
@@ -1061,6 +1062,39 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 highestObservedScore,
                 expected)
             .ValidateContract();
+    }
+
+    [Fact]
+    public void Observed_score_gate_rejects_an_unrepresentable_target_maximum()
+    {
+        var maximum = checked(
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff
+            + 1);
+        var check = new MaxScoreMaintenanceObservedScoreCheck(
+            "song",
+            "Solo_Guitar",
+            maximum,
+            RankingsCalculator.ComputeMaxScoreThreshold(maximum),
+            SourceMapped: true,
+            HighestObservedScore: int.MaxValue,
+            Passed: true);
+
+        Assert.False(
+            MaxScoreMaintenanceService
+                .IsObservedScoreCompatible(
+                    maximum,
+                    sourceMapped: true,
+                    highestObservedScore: int.MaxValue));
+        Assert.Throws<ArgumentException>(
+            check.ValidateContract);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MaxScoreMaintenanceObservedScoreCheck.Create(
+                "song",
+                "Solo_Guitar",
+                maximum,
+                sourceMapped: true,
+                highestObservedScore: int.MaxValue));
     }
 
     [Theory]

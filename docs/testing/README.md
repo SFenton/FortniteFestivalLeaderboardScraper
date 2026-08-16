@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: 02c28ccd
+last_verified_commit: 739954f8
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -109,8 +109,10 @@ apply/resume report version 3 compatibility/rejection, null/exact/boundary
 observed-score cases, integer-floor rounding, live-shaped promotion evidence,
 the `2,045,222,521` pass/`2,045,222,522` reject boundary for all eight maximum
 fields, discovery constraints, canonical promotion parsing, manifest
-admission, an exact `int.MaxValue` cutoff without .NET or PostgreSQL overflow,
-and plan/apply/resume digest consistency. It also covers the max-score timeout
+admission, strict observed-report validation, an exact `int.MaxValue` cutoff
+without .NET or PostgreSQL overflow, a valid target plan with an unrelated
+over-limit catalog maximum saturated to the representable score domain, and
+plan/apply/resume digest consistency. It also covers the max-score timeout
 default/environment binding/bounds, stage-specific timeout reporting, and
 identical configured evidence timeouts across plan, apply revalidation, and
 resume. Final-completion coverage verifies that PostgreSQL uses the configured
