@@ -1234,14 +1234,19 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
     int ValidCutoff,
     bool SourceMapped,
     int? HighestObservedScore,
+    int? HighestEligibleObservedScore,
+    long AboveValidCutoffCount,
     bool Passed)
 {
     internal static MaxScoreMaintenanceObservedScoreCheck Create(
         string songId,
         string instrument,
         int newMaximum,
+        int validCutoff,
         bool sourceMapped,
-        int? highestObservedScore)
+        int? highestObservedScore,
+        int? highestEligibleObservedScore,
+        long aboveValidCutoffCount)
     {
         MaxScoreMaintenanceMaxima.ValidateMaximum(
             newMaximum,
@@ -1251,29 +1256,33 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
             songId,
             instrument,
             newMaximum,
-            RankingsCalculator.ComputeMaxScoreThreshold(
-                newMaximum),
+            validCutoff,
             sourceMapped,
             highestObservedScore,
+            highestEligibleObservedScore,
+            aboveValidCutoffCount,
             IsCompatible(
                 newMaximum,
+                validCutoff,
                 sourceMapped,
-                highestObservedScore));
+                highestEligibleObservedScore))
+            .ValidateContract();
     }
 
     internal static bool IsCompatible(
         int newMaximum,
+        int validCutoff,
         bool sourceMapped,
-        int? highestObservedScore)
+        int? highestEligibleObservedScore)
         => sourceMapped
            && newMaximum is > 0
                and <= RankingsCalculator
                    .MaximumScoreWithRepresentableRankingCutoff
-           && (highestObservedScore is null
-               || highestObservedScore
-                  <= RankingsCalculator
-                      .ComputeMaxScoreThreshold(
-                          newMaximum));
+           && validCutoff
+              == RankingsCalculator.ComputeMaxScoreThreshold(
+                  newMaximum)
+           && (highestEligibleObservedScore is null
+               || highestEligibleObservedScore <= validCutoff);
 
     internal MaxScoreMaintenanceObservedScoreCheck ValidateContract()
     {
@@ -1282,21 +1291,72 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
                 .MaximumScoreWithRepresentableRankingCutoff)
         {
             throw new ArgumentException(
-                "Observed-score evidence must use a maximum whose ranking validity cutoff fits PostgreSQL INTEGER.");
+                "Observed-score evidence must use a maximum whose ranking eligibility cutoff fits PostgreSQL INTEGER.");
         }
 
         var expectedCutoff =
             RankingsCalculator.ComputeMaxScoreThreshold(
                 NewMaximum);
-        if (ValidCutoff != expectedCutoff
-            || Passed
-               != IsCompatible(
-                   NewMaximum,
-                   SourceMapped,
-                   HighestObservedScore))
+        if (ValidCutoff != expectedCutoff)
         {
             throw new ArgumentException(
-                "Observed-score evidence must use the ranking validity cutoff and a consistent pass result.");
+                "Observed-score evidence must use the exact ranking eligibility cutoff.");
+        }
+        if (AboveValidCutoffCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(AboveValidCutoffCount),
+                AboveValidCutoffCount,
+                "Observed-score above-cutoff count cannot be negative.");
+        }
+        if (!SourceMapped
+            && (HighestObservedScore is not null
+                || HighestEligibleObservedScore is not null
+                || AboveValidCutoffCount != 0))
+        {
+            throw new ArgumentException(
+                "Unmapped observed-score evidence cannot contain resolved rows.");
+        }
+        if (HighestEligibleObservedScore > ValidCutoff
+            || HighestEligibleObservedScore > HighestObservedScore)
+        {
+            throw new ArgumentException(
+                "Eligible observed-score evidence must remain within the ranking cutoff and raw maximum.");
+        }
+        if (HighestObservedScore is null)
+        {
+            if (HighestEligibleObservedScore is not null
+                || AboveValidCutoffCount != 0)
+            {
+                throw new ArgumentException(
+                    "Empty observed-score evidence must have no eligible maximum or above-cutoff rows.");
+            }
+        }
+        else if (HighestObservedScore <= ValidCutoff)
+        {
+            if (AboveValidCutoffCount != 0
+                || HighestEligibleObservedScore
+                   != HighestObservedScore)
+            {
+                throw new ArgumentException(
+                    "Observed-score evidence without outliers must expose the raw maximum as the eligible maximum.");
+            }
+        }
+        else if (AboveValidCutoffCount == 0)
+        {
+            throw new ArgumentException(
+                "A raw observed score above the ranking cutoff requires a positive outlier count.");
+        }
+
+        if (Passed
+            != IsCompatible(
+                NewMaximum,
+                ValidCutoff,
+                SourceMapped,
+                HighestEligibleObservedScore))
+        {
+            throw new ArgumentException(
+                "Observed-score evidence must use a consistent compatibility result.");
         }
 
         return this;
@@ -1350,8 +1410,8 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
     IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 5;
-    internal const int CurrentPlanDigestContractVersion = 5;
+    public const int CurrentReportVersion = 6;
+    internal const int CurrentPlanDigestContractVersion = 6;
 
     internal MaxScoreMaintenancePlanReport ValidateContract()
     {

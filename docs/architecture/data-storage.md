@@ -158,12 +158,16 @@ with unrelated frozen-catalog maxima by using exact `long` arithmetic and
 saturating the result to `int.MaxValue`; no PostgreSQL `INTEGER` score can
 exceed the unsaturated cutoff in that case. Score-history selectors therefore
 receive only representable `INTEGER` maximum/cutoff arrays without turning an
-unrelated catalog value into target admission. A mapped target score may
-exceed the denominator but not the cutoff. Plan report/digest contract v5
-binds the cutoff and highest observed score. Apply and every resumable
-continuation reload those rows and reconstruct the approved digest before
-mutation; a missing mapping, a score above the cutoff, or any evidence drift
-fails closed.
+unrelated catalog value into target admission. For every changed pair, plan
+report/digest contract v6 records the raw highest resolved score, the highest
+ranking-eligible score at or below the cutoff, and the count above the cutoff.
+A mapped empty source records two null maxima and a zero outlier count. Raw
+rows above the cutoff remain visible ranking-invalid evidence but do not block
+compatibility; ranking and score-history fallback evidence owns their
+exclusion and replacement. Apply and every resumable continuation reload the
+exact maxima/count evidence and reconstruct the approved digest before
+mutation. A missing mapping, invalid maximum/cutoff, eligible maximum above
+the cutoff, or any raw, eligible, or count drift fails closed.
 Maintenance population is resolved from the same complete source map,
 combining each source's reported population with its resolved overlay row
 count. It is snapshotted once under the exclusive fence and never falls back

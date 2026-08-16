@@ -9,6 +9,89 @@ namespace FSTService.Tests.Unit;
 
 public sealed partial class MaxScoreMaintenancePersistenceTests
 {
+    public static TheoryData<
+        string,
+        int,
+        int[],
+        int?,
+        int?,
+        long> ObservedScoreEvidenceCases { get; } =
+        new()
+        {
+            {
+                "no rows",
+                51_573,
+                Array.Empty<int>(),
+                null,
+                null,
+                0
+            },
+            {
+                "all below maximum",
+                51_573,
+                [40_000, 50_000],
+                50_000,
+                50_000,
+                0
+            },
+            {
+                "slight above maximum below cutoff",
+                51_573,
+                [40_000, 52_809],
+                52_809,
+                52_809,
+                0
+            },
+            {
+                "exact cutoff",
+                51_573,
+                [54_151],
+                54_151,
+                54_151,
+                0
+            },
+            {
+                "multiple outliers with eligible row",
+                51_573,
+                [50_000, 60_000, 66_030],
+                66_030,
+                50_000,
+                2
+            },
+            {
+                "multiple outliers without eligible row",
+                51_573,
+                [60_000, 66_030],
+                66_030,
+                null,
+                2
+            },
+            {
+                "only invalid outlier",
+                51_573,
+                [66_030],
+                66_030,
+                null,
+                1
+            },
+            {
+                "show them who we are live outlier",
+                63_750,
+                [63_750, 145_947],
+                145_947,
+                63_750,
+                1
+            },
+            {
+                "run it live outlier",
+                51_573,
+                [51_588, 66_030],
+                66_030,
+                51_588,
+                1
+            },
+        };
+
     [Fact]
     public void Notification_classification_quarantines_only_affected_rank_lanes()
     {
@@ -184,40 +267,62 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
     }
 
     [Theory]
-    [InlineData(52_809, true)]
-    [InlineData(54_151, true)]
-    [InlineData(54_152, false)]
-    [InlineData(60_000, false)]
-    public async Task Observed_score_validation_uses_resolved_ranking_cutoff(
-        int overlayScore,
-        bool expectedPassed)
+    [MemberData(nameof(ObservedScoreEvidenceCases))]
+    public async Task Observed_score_evidence_uses_resolved_ranking_eligibility(
+        string _,
+        int newMaximum,
+        int[] resolvedScores,
+        int? expectedHighestObservedScore,
+        int? expectedHighestEligibleObservedScore,
+        long expectedAboveValidCutoffCount)
     {
         using var dataSource =
             SharedPostgresContainer.CreateDatabase();
-        var manifest = CreateManifest();
+        var template = CreateManifest();
+        var manifest = (template with
+        {
+            Songs = template.Songs
+                .Select(song => song with
+                {
+                    StagedPath = song.StagedPath with
+                    {
+                        Maxima = song.StagedPath.Maxima with
+                        {
+                            Lead = newMaximum,
+                        },
+                    },
+                })
+                .ToArray(),
+        }).ValidateAndNormalize();
         SeedPublishedSoloCurrentState(
             dataSource,
             manifest,
-            overlayScore);
+            overlayScore: 1);
+        ReplacePublishedResolvedScores(
+            dataSource,
+            manifest,
+            resolvedScores);
 
-        await using var connection =
-            await dataSource.OpenConnectionAsync();
-        await using var transaction =
-            await connection.BeginTransactionAsync();
-        var checks =
-            await MaxScoreMaintenanceService
-                .LoadObservedScoreChecksAsync(
-                    manifest,
-                    connection,
-                    transaction,
-                    CancellationToken.None);
+        var check = await LoadObservedScoreCheckAsync(
+            dataSource,
+            manifest);
 
-        var check = Assert.Single(checks);
-        Assert.Equal(overlayScore, check.HighestObservedScore);
-        Assert.Equal(51_573, check.NewMaximum);
-        Assert.Equal(54_151, check.ValidCutoff);
+        Assert.Equal(
+            expectedHighestObservedScore,
+            check.HighestObservedScore);
+        Assert.Equal(
+            expectedHighestEligibleObservedScore,
+            check.HighestEligibleObservedScore);
+        Assert.Equal(
+            expectedAboveValidCutoffCount,
+            check.AboveValidCutoffCount);
+        Assert.Equal(newMaximum, check.NewMaximum);
+        Assert.Equal(
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                newMaximum),
+            check.ValidCutoff);
         Assert.True(check.SourceMapped);
-        Assert.Equal(expectedPassed, check.Passed);
+        Assert.True(check.Passed);
         check.ValidateContract();
     }
 
@@ -281,6 +386,10 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             check.NewMaximum);
         Assert.Equal(int.MaxValue, check.ValidCutoff);
         Assert.Equal(int.MaxValue, check.HighestObservedScore);
+        Assert.Equal(
+            int.MaxValue,
+            check.HighestEligibleObservedScore);
+        Assert.Equal(0, check.AboveValidCutoffCount);
         Assert.True(check.Passed);
         check.ValidateContract();
     }
@@ -326,6 +435,8 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
 
         Assert.False(check.SourceMapped);
         Assert.Null(check.HighestObservedScore);
+        Assert.Null(check.HighestEligibleObservedScore);
+        Assert.Equal(0, check.AboveValidCutoffCount);
         Assert.Equal(54_151, check.ValidCutoff);
         Assert.False(check.Passed);
         check.ValidateContract();
@@ -4422,6 +4533,100 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             "overlayScore",
             overlayScore);
         command.ExecuteNonQuery();
+    }
+
+    private static void ReplacePublishedResolvedScores(
+        NpgsqlDataSource dataSource,
+        MaxScoreMaintenanceManifest manifest,
+        int[] scores)
+    {
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM leaderboard_entries_snapshot
+            WHERE snapshot_id = @scrapeId
+              AND song_id = 'song-a'
+              AND instrument = 'Solo_Guitar';
+
+            DELETE FROM leaderboard_entries_overlay
+            WHERE song_id = 'song-a'
+              AND instrument = 'Solo_Guitar';
+
+            INSERT INTO leaderboard_entries_snapshot (
+                snapshot_id,
+                song_id,
+                instrument,
+                account_id,
+                score,
+                rank,
+                source,
+                first_seen_at,
+                last_updated_at)
+            SELECT @scrapeId,
+                   'song-a',
+                   'Solo_Guitar',
+                   'observed-account-' || score_row.ordinality,
+                   score_row.score,
+                   score_row.ordinality::INTEGER,
+                   'scrape',
+                   now(),
+                   now()
+            FROM unnest(@scores::INTEGER[])
+                WITH ORDINALITY AS score_row(score, ordinality);
+
+            UPDATE leaderboard_published_scope_source
+            SET source_kind =
+                    CASE
+                        WHEN @scoreCount = 0 THEN 'empty'
+                        ELSE 'snapshot'
+                    END,
+                source_snapshot_id =
+                    CASE
+                        WHEN @scoreCount = 0 THEN NULL
+                        ELSE @scrapeId
+                    END,
+                row_count = @scoreCount,
+                reported_total_entries = @scoreCount,
+                reported_total_pages =
+                    CASE
+                        WHEN @scoreCount = 0 THEN 0
+                        ELSE 1
+                    END
+            WHERE published_scrape_id = @scrapeId
+              AND song_id = 'song-a'
+              AND instrument = 'Solo_Guitar'
+              AND scope_kind = 'alltime';
+            """;
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            manifest.ExpectedPublishedScrapeId);
+        command.Parameters.Add(
+            "scores",
+            NpgsqlTypes.NpgsqlDbType.Array
+            | NpgsqlTypes.NpgsqlDbType.Integer).Value = scores;
+        command.Parameters.AddWithValue(
+            "scoreCount",
+            scores.Length);
+        command.ExecuteNonQuery();
+    }
+
+    private static async Task<
+            MaxScoreMaintenanceObservedScoreCheck>
+        LoadObservedScoreCheckAsync(
+            NpgsqlDataSource dataSource,
+            MaxScoreMaintenanceManifest manifest)
+    {
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        return Assert.Single(
+            await MaxScoreMaintenanceService
+                .LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
     }
 
     private static string CreateEvidenceDirectory()

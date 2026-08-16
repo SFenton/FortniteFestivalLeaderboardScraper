@@ -173,7 +173,7 @@ are rejected.
 | Action | Required flags | Behavior |
 |---|---|---|
 | `--max-score-maintenance-stage` | `--published-scrape-id`, `--max-score-maintenance-stage-request`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete immutable generations without pointer mutation; discovery permits explicit partial maximum constraints, while promotion requires complete old/new eight-field maxima |
-| `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes plus mapped observed scores against the exact integer ranking cutoff, records publication-population and complete consumed score-history count/range/hash evidence, and emits the deterministic `planDigest` |
+| `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes, records mapped raw/eligible/outlier observed-score evidence plus publication-population and complete consumed score-history count/range/hash evidence, and emits the deterministic `planDigest` |
 | `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
 | `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
 
@@ -184,19 +184,26 @@ rollback snapshot timestamp comes from the persisted maintenance run, so a
 crash after file creation but before its database checkpoint reproduces and
 validates the same canonical bytes.
 
-Plan report version 5 includes `populationEvidence`, `scoreHistoryEvidence`,
-and `validCutoff` on every `observedScoreChecks` row. The cutoff is exactly
+Plan report version 6 includes `populationEvidence`, `scoreHistoryEvidence`,
+and, on every `observedScoreChecks` row, `validCutoff`,
+`highestObservedScore`, `highestEligibleObservedScore`, and
+`aboveValidCutoffCount`. The CHOpt maximum is the score-percent denominator.
+The separate eligibility cutoff is exactly
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
-`floor(newMaximum × 21 / 20)`: scores above the CHOpt denominator remain valid
-when they do not exceed this cutoff. Target request, actual current/staged,
-manifest, and report validation rejects `newMaximum > 2,045,222,521`.
-Unrelated frozen-catalog maxima use the general exact computation saturated at
-`int.MaxValue`, so plan relevance selection and PostgreSQL `INTEGER` parameters
-remain safe without admitting an overflowing target. Missing source mappings
-and target scores above the cutoff fail closed. Plan-digest contract version 5
-binds the same evidence. Apply rebuilds the plan before freeze; apply and
-resume then reload the observed-score rows and reconstruct the approved digest
-before mutation.
+`floor(newMaximum × 21 / 20)`. Rows above the denominator but at or below the
+cutoff remain eligible. Rows above the cutoff remain visible in the raw maximum
+and count but are ranking-invalid evidence, not plan blockers; the eligible
+maximum is null when no resolved row qualifies. Target request, actual
+current/staged, manifest, and report validation rejects
+`newMaximum > 2,045,222,521`. Unrelated frozen-catalog maxima use the general
+exact computation saturated at `int.MaxValue`, so plan relevance selection
+and PostgreSQL `INTEGER` parameters remain safe without admitting an
+overflowing target. Missing source mappings, invalid maximum/cutoff evidence,
+and eligible scores above the cutoff fail closed. Plan-digest contract version
+6 binds the raw maximum, eligible maximum, and outlier count. Apply rebuilds
+the plan before freeze; apply and resume reload the exact observed evidence
+and reconstruct the approved digest before mutation, so outlier-population
+drift rejects apply.
 
 Apply/resume report version 3 includes
 `cacheEvidence` after cache staging, including the exact
