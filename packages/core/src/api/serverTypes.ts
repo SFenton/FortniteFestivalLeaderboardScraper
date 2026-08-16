@@ -743,6 +743,7 @@ export type ServiceInfoPhaseDescriptor = {
   legacyPhase: string;
   ordinal: number;
   defaultUnitsKind?: string | null;
+  reserved?: boolean;
 };
 
 export type ServiceInfoWorkerOperation = {

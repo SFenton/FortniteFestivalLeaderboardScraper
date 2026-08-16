@@ -1660,97 +1660,12 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
-        _refresher.RefreshAllAsync(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(0));
-
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
         var worker = CreateWorker(opts);
 
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
 
         Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
-    }
-
-    [Fact]
-    public async Task RunScrapePass_RefresherReturnsPositive_LogsUpdateCount()
-    {
-        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
-
-        _metaDb.RegisterUser("dev1", "regAcct");
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        _scraper.ScrapeManySongsAsync(
-            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
-            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<ScrapeAccessTokenProvider?>())
-            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
-
-        _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(0));
-
-        _refresher.RefreshAllAsync(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(5));
-
-        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
-        var worker = CreateWorker(opts);
-
-        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task RunScrapePass_RefresherFails_ContinuesGracefully()
-    {
-        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
-
-        _metaDb.RegisterUser("dev1", "regAcct");
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        _scraper.ScrapeManySongsAsync(
-            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
-            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<ScrapeAccessTokenProvider?>())
-            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
-
-        _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(0));
-
-        _refresher.RefreshAllAsync(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
-            .ThrowsAsync(new InvalidOperationException("Refresh crashed"));
-
-        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
-        var worker = CreateWorker(opts);
-
-        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
     }
 
     [Fact]

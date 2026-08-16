@@ -304,6 +304,23 @@ public sealed class DurablePhaseProgressSinkTests
         Assert.Null(exception);
     }
 
+    [Fact]
+    public void Reserved_phase_cannot_start_or_contribute_progress()
+    {
+        var (sink, metaDb, _) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        metaDb.ClearReceivedCalls();
+        var descriptor = Assert.IsType<PhaseProgressDescriptor>(
+            PhaseProgressCatalog.FindById("post.checkpoint"));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            sink.StartPhase(descriptor));
+
+        Assert.Contains("Reserved phase 'post.checkpoint'", error.Message);
+        metaDb.DidNotReceive()
+            .StartScrapePhaseAttempt(Arg.Any<ScrapePhaseAttemptStart>());
+    }
+
     [Theory]
     [InlineData("failed")]
     [InlineData("cancelled")]

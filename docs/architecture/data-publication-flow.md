@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 6071299d
+last_verified_commit: fca22bbb
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -61,6 +61,18 @@ diagnostic or replay data without becoming the published generation.
 6. **Post-processing**
    - `PostScrapeOrchestrator` owns enrichment, registered-user refresh,
      projections, rankings, rivals, statistics, precomputation, and cleanup.
+   - Snapshot-only production workers complete the publication-critical legacy
+     `RankRecompute` contract without executing the legacy update; enabling the
+     legacy-write rollback flag restores the existing recompute path.
+   - Only best-effort phases may persist `skipped`. Resume rejects every
+     non-completed critical outcome. Publication rejects corrupt critical
+     `skipped` rows regardless of the rollout enforcement switch; normal
+     critical failures retain the existing enforcement policy.
+   - PostgreSQL finalization does not schedule retired wrapper checkpoint or
+     rankings-cache-warm calls.
+   - Dedicated registration workers and the run-once drain own durable
+     registration backlog/history work; the retired deferred post-scrape sync
+     is not a publication phase.
    - Per-instrument validity, leeway, and ranking calculations consume the
      eight persisted CHOpt maxima, including distinct plastic-drums modes.
    - A missing provider difficulty remains scrape-eligible unless an explicit
@@ -78,7 +90,8 @@ diagnostic or replay data without becoming the published generation.
      zero-denominator instrument remains an explicit warn-and-skip, not a
      rebuilt partition.
    - Publication-critical outcomes can reject the candidate; best-effort
-     failures remain visible without silently changing their classification.
+     failures and intentional skips remain visible without silently changing
+     their classification.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
    - Build required published scope-source mappings and notification plans.
@@ -91,6 +104,17 @@ diagnostic or replay data without becoming the published generation.
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+
+Matched control scrape `1299` and candidate scrape `1300` accepted the retired
+post-scrape path cleanup. Their manifest and published-source key sets were
+exactly equal (8,424 and 6,318 respectively), every source contract validated,
+both publication generations became ready/current normally, and the
+publication cache retained the same 9,251-key surface. Live score movement
+changed values and ETags as expected, but the song-catalog hash, route/cache
+shape, critical outcomes, freeze/unfreeze behavior, and notification outbox
+shape remained exact. Candidate `1300` emitted no retired phase
+attempt/outcome and no critical skip; its three best-effort pressure skips were
+nonblocking and reasoned in durable progress.
 
 ## Failure behavior
 

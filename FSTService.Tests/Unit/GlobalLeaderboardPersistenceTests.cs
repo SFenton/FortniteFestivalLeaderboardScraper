@@ -2647,33 +2647,6 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         }
     }
 
-    // ═══ CheckpointAll ══════════════════════════════════════════
-
-    [Fact]
-    public void CheckpointAll_succeeds_after_writes()
-    {
-        using var glp = CreatePersistence();
-
-        glp.PersistResult(MakeResult("song_1", "Solo_Guitar",
-            ("acct_1", 100_000), ("acct_2", 90_000)));
-
-        // Should not throw — checkpoints all instrument DBs + meta DB
-        glp.CheckpointAll();
-
-        // Data should still be readable
-        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
-        Assert.Equal(2, db.GetLeaderboardCount("song_1"));
-    }
-
-    [Fact]
-    public void CheckpointAll_succeeds_on_empty_databases()
-    {
-        using var glp = CreatePersistence();
-
-        // Should not throw even with no data written
-        glp.CheckpointAll();
-    }
-
     // ═══ Deferred Account IDs ═══════════════════════════════════
 
     [Fact]
@@ -2685,6 +2658,17 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         agg.AddDeferredAccountIds(["acct_2", "acct_3", "acct_4"]);
 
         Assert.Equal(4, agg.DeferredAccountIds.Count);
+    }
+
+    [Fact]
+    public void PostgreSqlPersistence_does_not_expose_retired_checkpoint_or_cache_warm_contracts()
+    {
+        Assert.Null(typeof(GlobalLeaderboardPersistence).GetMethod("CheckpointAll"));
+        Assert.Null(typeof(GlobalLeaderboardPersistence).GetMethod("PreWarmRankingsCache"));
+        Assert.Null(typeof(GlobalLeaderboardPersistence).GetMethod("PreWarmRankingsCacheAsync"));
+        Assert.Null(typeof(IInstrumentDatabase).GetMethod("Checkpoint"));
+        Assert.Null(typeof(IInstrumentDatabase).GetMethod("PreWarmRankingsBatch"));
+        Assert.Null(typeof(IMetaDatabase).GetMethod("Checkpoint"));
     }
 
     [Fact]

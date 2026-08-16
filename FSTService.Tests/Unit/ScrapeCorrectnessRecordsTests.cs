@@ -25,7 +25,7 @@ public sealed class ScrapeCorrectnessRecordsTests
             "writer",
             "three rows retained",
             1,
-            ["Checkpoint"]);
+            ["FirstSeenSeason"]);
 
         Assert.Equal(42, summary.ScrapeId);
         Assert.Equal("failed", summary.Status);
@@ -33,6 +33,6 @@ public sealed class ScrapeCorrectnessRecordsTests
         Assert.Equal("writer", summary.FailurePhase);
         Assert.Equal("three rows retained", summary.FailureMessage);
         Assert.Equal(1, summary.BestEffortFailureCount);
-        Assert.Equal(["Checkpoint"], summary.BestEffortFailedPhases);
+        Assert.Equal(["FirstSeenSeason"], summary.BestEffortFailedPhases);
     }
 }

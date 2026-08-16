@@ -8,7 +8,8 @@ public sealed record PhaseProgressDescriptor(
     string? TrackerOperation = null,
     string? BranchId = null,
     string? OperationKey = null,
-    string? DefaultUnitsKind = null);
+    string? DefaultUnitsKind = null,
+    bool Reserved = false);
 
 public static class PhaseProgressCatalog
 {
@@ -38,7 +39,7 @@ public static class PhaseProgressCatalog
         new("post.registered_band_targeted_processing", "Processing registered bands", "RegisteredBandTargetedProcessing", 280,
             TrackerOperation: "SongMachine", DefaultUnitsKind: "bands"),
         new("post.deferred_registration_sync", "Synchronizing deferred registrations", "DeferredRegistrationSync", 290,
-            TrackerOperation: "RefreshingRegisteredUsers", DefaultUnitsKind: "accounts"),
+            TrackerOperation: "RefreshingRegisteredUsers", DefaultUnitsKind: "accounts", Reserved: true),
         new("post.band_maintenance", "Maintaining band projections", "BandMaintenance", 300,
             TrackerOperation: "BandScraping", DefaultUnitsKind: "scopes"),
         new("post.compute_rankings", "Computing rankings", "ComputeRankings", 310,
@@ -52,7 +53,7 @@ public static class PhaseProgressCatalog
         new("post.player_stats_tiers", "Computing player statistics", "PlayerStatsTiers", 350,
             TrackerOperation: "Precomputing", DefaultUnitsKind: "accounts"),
         new("post.checkpoint", "Checkpointing candidate data", "Checkpoint", 360,
-            TrackerOperation: "Finalizing", DefaultUnitsKind: "steps"),
+            TrackerOperation: "Finalizing", DefaultUnitsKind: "steps", Reserved: true),
         new("post.activate_shadow_snapshots", "Finalizing candidate snapshots", "ActivateShadowSnapshots", 370,
             TrackerOperation: "Finalizing", DefaultUnitsKind: "scopes"),
         new("post.seal_solo_current_projection", "Sealing solo projection scopes", "SealSoloCurrentProjectionScopes", 380,
@@ -90,6 +91,21 @@ public static class PhaseProgressCatalog
 
     public static IReadOnlyList<PhaseProgressDescriptor> All { get; } =
         Array.AsReadOnly(Descriptors);
+
+    public static IReadOnlyList<PhaseProgressDescriptor> Active { get; } =
+        Array.AsReadOnly(
+            Descriptors.Where(static descriptor => !descriptor.Reserved).ToArray());
+
+    public static IReadOnlySet<string> Reserved { get; } =
+        new HashSet<string>(
+            Descriptors
+                .Where(static descriptor => descriptor.Reserved)
+                .Select(static descriptor => descriptor.Id),
+            StringComparer.Ordinal);
+
+    public static bool IsReserved(string phaseId) =>
+        ById.TryGetValue(phaseId, out var descriptor)
+        && descriptor.Reserved;
 
     public static PhaseProgressDescriptor? FindPostScrape(string phaseName) =>
         ByPostScrapeName.GetValueOrDefault(phaseName);

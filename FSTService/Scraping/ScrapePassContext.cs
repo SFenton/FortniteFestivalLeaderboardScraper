@@ -21,7 +21,6 @@ public sealed class ScrapePassContext
     public DateTime? RankingsInputCutoffUtc { get; set; }
     public bool SoloCurrentProjectionRefreshedForPublication { get; set; }
     public bool SoloCurrentProjectionScopesSealedForPublication { get; set; }
-    public bool NotificationProjectionRequiresFullRefresh { get; set; }
     public HashSet<SoloCurrentProjectionScopeKey> NotificationProjectionScopes { get; } = [];
     public HashSet<SoloCurrentProjectionScopeKey> RefreshedProjectionScopes { get; } = [];
     public PostScrapeExecutionLedger PostScrapeOutcomes { get; } = new();

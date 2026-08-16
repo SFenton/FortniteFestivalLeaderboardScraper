@@ -466,9 +466,6 @@ public interface IMetaDatabase : IDisposable
     /// </summary>
     void SwapCachedResponsesFromStaging(long? publicationId = null);
 
-    // ── Maintenance ──────────────────────────────────────────────────
-    void Checkpoint();
-
     // ── Leaderboard staging ──────────────────────────────────────────
 
     /// <summary>Stage a chunk of leaderboard entries for later finalization.</summary>

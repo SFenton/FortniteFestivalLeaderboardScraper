@@ -156,6 +156,7 @@ public static partial class ApiEndpoints
                         legacyPhase = descriptor.LegacyPhase,
                         ordinal = descriptor.Ordinal,
                         defaultUnitsKind = descriptor.DefaultUnitsKind,
+                        reserved = descriptor.Reserved,
                     }),
                 },
                 lastCompletedUpdate = publishedScrape is null ? null : new

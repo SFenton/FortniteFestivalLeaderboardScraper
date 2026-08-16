@@ -2,10 +2,13 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: 68ae7e99
+last_verified_commit: fca22bbb
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
+  - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
+  - FSTService.Tests/Unit/ScrapePhaseResolverTests.cs
+  - FSTService.Tests/Unit/PhaseProgressCatalogTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceCommandTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenancePersistenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceScoreHistoryEvidenceTests.cs
@@ -52,6 +55,27 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+
+Focused dead/no-op phase cleanup validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~PostScrapeOrchestratorTests|FullyQualifiedName~ScrapePhaseResolverTests|FullyQualifiedName~PhaseProgressCatalogTests|FullyQualifiedName~ScraperWorkerTests|FullyQualifiedName~GlobalLeaderboardPersistenceTests'
+```
+
+This matrix locks legacy-write rank behavior on/off, intentional skip
+dispositions, reserved phase IDs, direct legacy band-mode reachability,
+PostgreSQL checkpoint/cache-warm contract absence, recurring refresh ownership,
+and criticality-aware resume/publication treatment. Focused API/shared tests
+also require `reserved: true` on the two retired v2 descriptors, exclude them
+from active counts, and prove Tier-0 phase manifests remain unchanged.
+
+The corresponding live acceptance used matched full scrapes `1299` and `1300`.
+The candidate retained exact manifest/source/cache key sets and publication
+behavior, produced zero critical skips or retired phase rows, and recorded
+three nonblocking best-effort retention skips with durable pressure reasons.
+No speed claim was made; the unchanged 800/32/4 network lane remained a
+control.
 
 The aggregate line denominator excludes long-running external/process/database
 orchestration already validated through focused contract and integration

@@ -2067,29 +2067,6 @@ public sealed class InstrumentDatabaseTests : IDisposable
             Assert.Equal(3, Db.GetLeaderboardCount($"song_{s}"));
     }
 
-    // ═══ Checkpoint ═════════════════════════════════════════════
-
-    [Fact]
-    public void Checkpoint_succeeds_after_writes()
-    {
-        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
-
-        // Should not throw
-        Db.Checkpoint();
-
-        // Data should still be readable after checkpoint
-        var entry = Db.GetEntry("song_1", "acct_1");
-        Assert.NotNull(entry);
-        Assert.Equal(100_000, entry.Score);
-    }
-
-    [Fact]
-    public void Checkpoint_succeeds_on_empty_database()
-    {
-        // Should not throw even when there's nothing to checkpoint
-        Db.Checkpoint();
-    }
-
     // ═══ GetAccountRankingNeighborhood ═══════════════════════
 
     private void SeedAccountRankings(params (string AccountId, long TotalScore, int TotalScoreRank)[] accounts)

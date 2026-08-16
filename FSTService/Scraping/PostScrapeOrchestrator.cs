@@ -5,7 +5,6 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -40,11 +39,14 @@ public sealed class PostScrapeOrchestrator
         public static BandMaintenanceTimingMetrics Unknown { get; } = new();
     }
 
+    private sealed record PhaseCompletion(string Status, string? WarningMessage = null)
+    {
+        public static PhaseCompletion Completed { get; } = new("completed");
+    }
+
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly AccountNameResolver _nameResolver;
-    private readonly PostScrapeRefresher _refresher;
-    private readonly IServiceProvider _serviceProvider;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly SharedDopPool _pool;
     private readonly CyclicalSongMachine _cyclicalMachine;
@@ -84,8 +86,6 @@ public sealed class PostScrapeOrchestrator
         GlobalLeaderboardPersistence persistence,
         FirstSeenSeasonCalculator firstSeenCalculator,
         AccountNameResolver nameResolver,
-        PostScrapeRefresher refresher,
-        IServiceProvider serviceProvider,
         HistoryReconstructor historyReconstructor,
         SharedDopPool pool,
         CyclicalSongMachine cyclicalMachine,
@@ -124,8 +124,6 @@ public sealed class PostScrapeOrchestrator
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
         _nameResolver = nameResolver;
-        _refresher = refresher;
-        _serviceProvider = serviceProvider;
         _historyReconstructor = historyReconstructor;
         _pool = pool;
         _cyclicalMachine = cyclicalMachine;
@@ -213,8 +211,7 @@ public sealed class PostScrapeOrchestrator
         // BandScrape (new) uses the shared DOP pool inside ScrapeOrchestrator;
         // BandScrapePhase (legacy) is the old per-song sequential fetcher.
         Task? bandScrapeTask = null;
-        bool bandAlreadyFetched = resolvedPhases.HasFlag(ScrapePhase.BandScrape);
-        if (resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) && !bandAlreadyFetched)
+        if (ShouldLaunchLegacyBandScrape(resolvedPhases))
         {
             var chartedSongs = service.Songs.Where(s => s.track?.su is not null).ToList();
             var bandAccessToken = await _tokenManager.GetAccessTokenAsync(ct);
@@ -397,11 +394,7 @@ public sealed class PostScrapeOrchestrator
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
                 await RunPhaseAsync(ctx, "Rivals", () => ComputeRivalsAsync(ctx, ct));
-                await RunPhaseAsync(
-                    ctx,
-                    "LeaderboardRivals",
-                    () => ComputeLeaderboardRivalsAsync(ctx, ct),
-                    alwaysPropagateFailure: true);
+                await RunLeaderboardRivalsPhaseAsync(ctx, ct);
             }
 
             // ── Solo player stats ──
@@ -415,25 +408,6 @@ public sealed class PostScrapeOrchestrator
             if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
             {
                 _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
-                _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
-                await RunPhaseAsync(ctx, "Checkpoint", () => Task.Run(() =>
-                {
-                    _progress.StartBranch("final_checkpoint");
-                    _progress.SetSubOperation("final_checkpoint");
-                    try
-                    {
-                        _persistence.CheckpointAll();
-                        _progress.CompleteBranch("final_checkpoint", "complete");
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
-                        throw;
-                    }
-                }, ct));
-
-                StartBestEffortCacheWarm(ctx.RegisteredIds);
-
                 if (ctx.ScrapeId > 0)
                 {
                     await RunPhaseAsync(ctx, "ActivateShadowSnapshots", () =>
@@ -457,21 +431,11 @@ public sealed class PostScrapeOrchestrator
                 alwaysPropagateFailure: true);
         }
 
-        // ── Await background band scrape for exception observation ──
-        if (bandScrapeTask is not null)
-        {
-            try
-            {
-                await bandScrapeTask;
-                _log.LogInformation("Background band scrape completed successfully.");
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
-            }
-        }
     }
+
+    internal static bool ShouldLaunchLegacyBandScrape(ScrapePhase resolvedPhases) =>
+        resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase)
+        && !resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
     /// <summary>
     /// Run publication-critical cleanup after snapshots have been finalized but before
@@ -525,282 +489,6 @@ public sealed class PostScrapeOrchestrator
     }
 
     /// <summary>
-    /// Process users who registered during an active scrape/update after the current
-    /// cycle's ranking and precompute publication has already run. Their raw scores
-    /// and song-rivals become visible, while global rank-derived outputs remain
-    /// flagged as pending until the next ranking pass includes them in ctx.RegisteredIds.
-    /// </summary>
-    public async Task RunDeferredRegistrationSyncAsync(
-        ScrapePassContext ctx,
-        FestivalService service,
-        ScrapePhase resolvedPhases,
-        CancellationToken ct)
-    {
-        try
-        {
-            await RunPhaseAsync(
-                ctx,
-                "DeferredRegistrationSync",
-                () => RunDeferredRegistrationSyncWithTimeoutAsync(
-                    phaseCt => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, phaseCt),
-                    ct,
-                    ctx),
-                alwaysPropagateFailure: true);
-        }
-        catch
-        {
-            ctx.NotificationProjectionRequiresFullRefresh = true;
-            throw;
-        }
-    }
-
-    private async Task RunDeferredRegistrationSyncWithTimeoutAsync(
-        Func<CancellationToken, Task> operation,
-        CancellationToken ct,
-        ScrapePassContext? ctx = null)
-    {
-        var timeout = _options.Value.DeferredRegistrationSyncTimeout;
-        using var timeoutCts = timeout > TimeSpan.Zero
-            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
-            : null;
-        if (timeoutCts is not null)
-            timeoutCts.CancelAfter(timeout);
-
-        try
-        {
-            await operation(timeoutCts?.Token ?? ct);
-        }
-        catch (OperationCanceledException) when (
-            timeoutCts?.IsCancellationRequested == true
-            && !ct.IsCancellationRequested)
-        {
-            if (ctx is not null)
-                ctx.NotificationProjectionRequiresFullRefresh = true;
-            _log.LogWarning(
-                "Deferred registration sync timed out after {Timeout}. The candidate will not publish and queued users will retry on a later pass.",
-                timeout);
-            throw new TimeoutException(
-                $"Deferred registration sync timed out after {timeout}.");
-        }
-    }
-
-    internal Task RunDeferredRegistrationSyncTimeoutForTestAsync(
-        Func<CancellationToken, Task> operation,
-        CancellationToken ct) =>
-        RunDeferredRegistrationSyncWithTimeoutAsync(operation, ct);
-
-    private async Task RunDeferredRegistrationSyncCoreAsync(
-        ScrapePassContext ctx,
-        FestivalService service,
-        ScrapePhase resolvedPhases,
-        CancellationToken ct)
-    {
-        if (ShouldSkipDeferredRegistrationSyncForIncompleteScrape(ctx, resolvedPhases))
-            return;
-
-        if (!resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
-            return;
-
-        var deferredBackfills = _persistence.Meta.GetDeferredBackfills();
-        if (deferredBackfills.Count == 0)
-            return;
-
-        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
-        if (accessToken is null)
-        {
-            _log.LogWarning("No access token for deferred registration sync. Will retry next pass.");
-            return;
-        }
-
-        if (service.Songs.Count == 0)
-            await service.InitializeAsync();
-
-        var chartedSongIds = service.Songs
-            .Select(static song => song.track?.su)
-            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
-            .Select(static songId => songId!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (chartedSongIds.Count == 0)
-        {
-            _log.LogWarning("Deferred registration sync skipped because no charted songs are loaded.");
-            return;
-        }
-
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
-        _progress.SetSubOperation("deferred_registration_sync");
-
-        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
-        try
-        {
-            seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
-                accessToken, _tokenManager.AccountId!, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Season window discovery failed during deferred registration sync. Using stored season windows.");
-            seasonWindows = _persistence.Meta.GetSeasonWindows();
-        }
-
-        var instrumentMaxSeason = _persistence.GetMaxSeasonAcrossInstruments();
-        if (instrumentMaxSeason is int floor)
-        {
-            var known = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
-            for (int s = 1; s <= floor; s++)
-            {
-                if (known.Contains(s)) continue;
-                _persistence.Meta.UpsertSeasonWindow(
-                    s,
-                    eventId: "",
-                    windowId: "",
-                    sourceKind: "synthetic");
-            }
-
-            if (floor > (seasonWindows.Count == 0 ? 0 : seasonWindows.Max(w => w.SeasonNumber)))
-                seasonWindows = _persistence.Meta.GetSeasonWindows();
-        }
-
-        var currentSeason = instrumentMaxSeason
-            ?? (seasonWindows.Count == 0 ? 1 : seasonWindows.Max(w => w.SeasonNumber));
-        var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
-        if (allSeasons.Count == 0)
-            allSeasons.Add(currentSeason);
-        var historyWindowFingerprint = HistoryReconstructor.ComputeWindowFingerprint(
-            seasonWindows);
-        var expectedHistoryPairs =
-            chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
-
-        var users = new List<UserWorkItem>(deferredBackfills.Count);
-        foreach (var backfill in deferredBackfills)
-        {
-            var totalPairs = backfill.TotalSongsToCheck > 0
-                ? backfill.TotalSongsToCheck
-                : chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
-            var historyStatus = _persistence.Meta.GetHistoryReconStatus(
-                backfill.AccountId);
-            var displayProgress = _persistence.Meta.GetBackfillSongProgress(
-                backfill.AccountId,
-                backfill.SongsChecked,
-                totalPairs);
-            var backgroundRefresh =
-                BackfillSyncClassification.IsBackgroundRefresh(
-                    backfill,
-                    historyStatus,
-                    displayProgress);
-            if (backgroundRefresh
-                && !BackfillDeferredReasons.IsCatalogRefresh(
-                    backfill.DeferredReason))
-            {
-                _persistence.Meta.DeferBackfill(
-                    backfill.AccountId,
-                    totalPairs,
-                    BackfillDeferredReasons.CatalogRefreshQueue);
-            }
-
-            _persistence.Meta.StartBackfill(backfill.AccountId);
-            _syncTracker.BeginBackfill(
-                backfill.AccountId,
-                totalPairs,
-                backgroundRefresh);
-            var historyAdmissionRevision = _persistence.Meta.AdmitHistoryRecon(
-                backfill.AccountId,
-                expectedHistoryPairs,
-                HistoryReconstructor.CurrentReconstructionVersion,
-                historyWindowFingerprint);
-            var backfillChecked = _persistence.Meta.GetCheckedBackfillPairs(
-                backfill.AccountId);
-            var historyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(
-                backfill.AccountId,
-                HistoryReconstructor.CurrentReconstructionVersion,
-                historyWindowFingerprint,
-                historyAdmissionRevision);
-
-            users.Add(new UserWorkItem
-            {
-                AccountId = backfill.AccountId,
-                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
-                AllTimeNeeded = true,
-                SeasonsNeeded = new HashSet<int>(allSeasons),
-                BackfillAlreadyChecked = backfillChecked,
-                HistoryAlreadyProcessed = historyProcessed,
-                HistoryReconstructionVersion =
-                    HistoryReconstructor.CurrentReconstructionVersion,
-                HistoryWindowFingerprint = historyWindowFingerprint,
-                HistoryAdmissionRevision = historyAdmissionRevision,
-            });
-        }
-
-        _log.LogInformation(
-            "Running deferred registration sync for {Count} user(s) after the current publication cache cut; their score data remains pending until a later ranked publication.",
-            users.Count);
-        UpdatePostProcessOperation(
-            "DeferredRegistrationSync",
-            $"Backfilling {users.Count} deferred registration(s)",
-            progressPercent: 0);
-
-        var result = await _cyclicalMachine.AttachAsync(
-            users,
-            chartedSongIds,
-            seasonWindows,
-            SongMachineSource.PostScrape,
-            isHighPriority: true,
-            ct: ct,
-            preserveProgressPhaseOnIdle: true);
-
-        if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
-            _log.LogInformation("Deferred registration sync updated {Entries} entries, {Sessions} sessions for {Users} users.",
-                result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
-
-        var postSyncFailures = new List<Exception>();
-        for (var index = 0; index < users.Count; index++)
-        {
-            var user = users[index];
-            UpdatePostProcessOperation(
-                "DeferredRegistrationSync",
-                $"Queueing deferred rivals {index + 1}/{users.Count}",
-                progressPercent: users.Count == 0 ? 100 : 100d * index / users.Count);
-            try
-            {
-                _persistence.Meta.QueueRivalsRecompute(user.AccountId);
-
-                if (!TryCompleteHistoryRecon(user, chartedSongIds))
-                {
-                    throw new InvalidOperationException(
-                        $"Deferred registration history reconstruction remained incomplete for {user.AccountId}.");
-                }
-                if (!TryCompleteBackfill(user.AccountId, chartedSongIds))
-                {
-                    throw new InvalidOperationException(
-                        $"Deferred registration backfill coverage remained incomplete for {user.AccountId}.");
-                }
-                _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
-                _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                var failure = new InvalidOperationException(
-                    $"Deferred registration post-sync actions failed for {user.AccountId}.",
-                    ex);
-                postSyncFailures.Add(failure);
-                _log.LogWarning(failure, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
-            }
-
-            UpdatePostProcessOperation(
-                "DeferredRegistrationSync",
-                $"Queued deferred rivals {index + 1}/{users.Count}",
-                progressPercent: 100d * (index + 1) / users.Count);
-        }
-
-        if (postSyncFailures.Count > 0)
-        {
-            throw new AggregateException(
-                $"Deferred registration post-sync actions failed for {postSyncFailures.Count} user(s).",
-                postSyncFailures);
-        }
-    }
-
-    /// <summary>
     /// Detect improvement notifications only after the scrape has been published, so
     /// rank notifications never advertise a newer snapshot than public leaderboard pages.
     /// </summary>
@@ -809,18 +497,13 @@ public sealed class PostScrapeOrchestrator
         ScrapePhase resolvedPhases,
         CancellationToken ct)
     {
-        if (!resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
-            return;
-
-        if (!ctx.RankingsComputedSuccessfully)
-            return;
-
-        if (!ShouldRunImprovementNotifications(ctx, resolvedPhases))
-            return;
-
-        if (_improvementNotificationRecovery is null)
+        var skipReason = GetImprovementNotificationSkipReason(
+            ctx,
+            resolvedPhases,
+            requireRecoveryService: true);
+        if (skipReason is not null)
         {
-            _log.LogWarning("Improvement notifications skipped because the recovery service is unavailable.");
+            RecordSkippedPhase(ctx, "ImprovementNotifications", skipReason);
             return;
         }
 
@@ -829,7 +512,7 @@ public sealed class PostScrapeOrchestrator
             "ImprovementNotifications",
             async () =>
             {
-                await _improvementNotificationRecovery.RunPublishedScrapeAsync(
+                await _improvementNotificationRecovery!.RunPublishedScrapeAsync(
                     expectedPublishedScrapeId: ctx.ScrapeId,
                     execute: true,
                     baselineOnly: false,
@@ -845,9 +528,10 @@ public sealed class PostScrapeOrchestrator
     public bool ShouldQueueImprovementNotifications(
         ScrapePassContext ctx,
         ScrapePhase resolvedPhases) =>
-        resolvedPhases.HasFlag(ScrapePhase.SoloRankings)
-        && ctx.RankingsComputedSuccessfully
-        && ShouldRunImprovementNotifications(ctx, resolvedPhases);
+        GetImprovementNotificationSkipReason(
+            ctx,
+            resolvedPhases,
+            requireRecoveryService: false) is null;
 
     public Task EnsureBandContextReadyBeforeScrapeAsync(CancellationToken ct) =>
         _bandExtractor.EnsureBandContextReadyAsync(ct);
@@ -1012,7 +696,8 @@ public sealed class PostScrapeOrchestrator
         var cleanupSoloExcessEntries = resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
         var cleanupRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
         var cleanupBandRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
-        var cleanupServiceLevelRetention = ShouldRunServiceLevelRetentionMaintenance(resolvedPhases);
+        var cleanupServiceLevelRetention =
+            resolvedPhases.HasFlag(ScrapePhase.SoloFinalize);
 
         if (cleanupSoloExcessEntries)
             cleanupItems++;
@@ -1048,30 +733,66 @@ public sealed class PostScrapeOrchestrator
 
         if (cleanupRankHistoryRetention)
         {
-            if (await ShouldSkipMaintenanceCleanupAsync("rank history retention", ct))
+            var skipReason = await GetMaintenanceCleanupSkipReasonAsync(
+                "rank history retention",
+                ct);
+            if (skipReason is not null)
+            {
                 ReportSkippedCleanupItems(GlobalLeaderboardScraper.AllInstruments.Count + 1);
+                RecordSkippedPhase(ctx, "Cleanup.RankHistoryRetention", skipReason);
+            }
             else
                 await RunPhaseAsync(ctx, "Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
         }
 
         if (cleanupBandRankHistoryRetention)
         {
-            if (await ShouldSkipMaintenanceCleanupAsync("band rank history retention", ct))
+            var skipReason = await GetMaintenanceCleanupSkipReasonAsync(
+                "band rank history retention",
+                ct);
+            if (skipReason is not null)
+            {
                 ReportSkippedCleanupItems(BandInstrumentMapping.AllBandTypes.Count);
+                RecordSkippedPhase(ctx, "Cleanup.BandRankHistoryRetention", skipReason);
+            }
             else
                 await RunPhaseAsync(ctx, "Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
         }
 
         if (cleanupServiceLevelRetention)
-            await RunPhaseAsync(ctx, "Cleanup.ServiceLevelRetention", () => RunServiceLevelRetentionMaintenanceAsync(ct));
+        {
+            if (_retentionMaintenanceService is null)
+            {
+                ReportSkippedCleanupItems(1);
+                RecordSkippedPhase(
+                    ctx,
+                    "Cleanup.ServiceLevelRetention",
+                    "retention maintenance service is unavailable");
+            }
+            else if (!_databaseMaintenanceOptions.Value.ServiceLevelRetentionMaintenanceEnabled)
+            {
+                ReportSkippedCleanupItems(1);
+                RecordSkippedPhase(
+                    ctx,
+                    "Cleanup.ServiceLevelRetention",
+                    "service-level retention maintenance is disabled");
+            }
+            else
+            {
+                await RunPhaseAsync<DatabaseRetentionMaintenanceResult>(
+                    ctx,
+                    "Cleanup.ServiceLevelRetention",
+                    () => RunServiceLevelRetentionMaintenanceAsync(ct),
+                    completionSelector: static result =>
+                        result.Skipped
+                            ? new PhaseCompletion("skipped", result.Reason)
+                            : PhaseCompletion.Completed);
+            }
+        }
     }
 
-    private bool ShouldRunServiceLevelRetentionMaintenance(ScrapePhase resolvedPhases) =>
-        _retentionMaintenanceService is not null &&
-        _databaseMaintenanceOptions.Value.ServiceLevelRetentionMaintenanceEnabled &&
-        resolvedPhases.HasFlag(ScrapePhase.SoloFinalize);
-
-    private async Task RunServiceLevelRetentionMaintenanceAsync(CancellationToken ct)
+    private async Task<DatabaseRetentionMaintenanceResult> RunServiceLevelRetentionMaintenanceAsync(
+        CancellationToken ct)
     {
         _progress.SetSubOperation("cleanup_service_level_retention");
         try
@@ -1080,7 +801,7 @@ public sealed class PostScrapeOrchestrator
             if (result.Skipped)
             {
                 _log.LogInformation("Service-level retention maintenance skipped: {Reason}.", result.Reason);
-                return;
+                return result;
             }
 
             _log.LogInformation(
@@ -1089,6 +810,7 @@ public sealed class PostScrapeOrchestrator
                 result.SnapshotRetention.CandidateCount,
                 result.SnapshotRetention.RewriteResults.Count,
                 result.MetadataCleanup.TotalDeletedRows);
+            return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1101,21 +823,25 @@ public sealed class PostScrapeOrchestrator
         }
     }
 
-    private async Task<bool> ShouldSkipMaintenanceCleanupAsync(string cleanupName, CancellationToken ct)
+    private async Task<string?> GetMaintenanceCleanupSkipReasonAsync(
+        string cleanupName,
+        CancellationToken ct)
     {
         var options = _databaseMaintenanceOptions.Value;
         if (!options.SkipCleanupWhenPressureDetected || _databasePressureMonitor is null)
-            return false;
+            return null;
 
         var snapshot = await _databasePressureMonitor.GetPressureSnapshotAsync(options, ct);
         if (!snapshot.IsUnderPressure)
-            return false;
+            return null;
 
+        var reason =
+            $"database pressure is already high: {string.Join("; ", snapshot.Reasons)}";
         _log.LogWarning(
             "Skipping {CleanupName} cleanup because database pressure is already high: {Reasons}.",
             cleanupName,
             string.Join("; ", snapshot.Reasons));
-        return true;
+        return reason;
     }
 
     private void ReportSkippedCleanupItems(int itemCount)
@@ -1510,13 +1236,6 @@ public sealed class PostScrapeOrchestrator
             resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute),
             "publication cleanup");
 
-    private bool ShouldSkipDeferredRegistrationSyncForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
-        ShouldSkipIncompleteScrapeWork(
-            ctx,
-            resolvedPhases,
-            resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers),
-            "deferred registration sync");
-
     private bool ShouldSkipBestEffortCleanupForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
         ShouldSkipIncompleteScrapeWork(
             ctx,
@@ -1556,31 +1275,42 @@ public sealed class PostScrapeOrchestrator
          resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
          resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers));
 
-    private bool ShouldRunImprovementNotifications(ScrapePassContext ctx, ScrapePhase resolvedPhases)
-    {
-        var options = _improvementNotificationOptions.Value;
-        if (_improvementNotifications is null || !options.Enabled)
-            return false;
-
-        return HasSufficientSoloScrapeCoverageForNotifications(ctx, resolvedPhases, options);
-    }
-
-    internal bool HasSufficientSoloScrapeCoverageForNotifications(
+    private string? GetImprovementNotificationSkipReason(
         ScrapePassContext ctx,
         ScrapePhase resolvedPhases,
-        ImprovementNotificationOptions options)
+        bool requireRecoveryService)
     {
-        var minimumCoverage = options.MinimumSoloLeaderboardCoverageRatio;
-        if (HasSufficientSoloScrapeCoverage(ctx, resolvedPhases, minimumCoverage, out var actualSoloLeaderboards, out var expectedSoloLeaderboards, out var coverage))
-            return true;
+        if (!resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
+            return "solo rankings were not selected";
+        if (!ctx.RankingsComputedSuccessfully)
+            return "rankings did not complete successfully";
 
-        _log.LogWarning(
-            "Improvement notifications skipped because solo scrape coverage was below threshold: {Actual:N0}/{Expected:N0} leaderboards with data ({Coverage:P1}) below required {Required:P1}.",
-            actualSoloLeaderboards,
-            expectedSoloLeaderboards,
-            coverage,
-            minimumCoverage);
-        return false;
+        var options = _improvementNotificationOptions.Value;
+        if (_improvementNotifications is null)
+            return "notification persistence is unavailable";
+        if (!options.Enabled)
+            return "improvement notifications are disabled";
+
+        var minimumCoverage = options.MinimumSoloLeaderboardCoverageRatio;
+        if (!HasSufficientSoloScrapeCoverage(
+                ctx,
+                resolvedPhases,
+                minimumCoverage,
+                out var actualSoloLeaderboards,
+                out var expectedSoloLeaderboards,
+                out var coverage))
+        {
+            return
+                $"solo scrape coverage was below threshold: " +
+                $"{actualSoloLeaderboards:N0}/{expectedSoloLeaderboards:N0} " +
+                $"leaderboards with data ({coverage:P1}) below required " +
+                $"{minimumCoverage:P1}";
+        }
+
+        if (requireRecoveryService && _improvementNotificationRecovery is null)
+            return "notification recovery service is unavailable";
+
+        return null;
     }
 
     private static bool HasSufficientSoloScrapeCoverage(
@@ -1935,25 +1665,6 @@ public sealed class PostScrapeOrchestrator
         params IReadOnlyCollection<BandCurrentProjectionScopeKey>[] sources) =>
         BandCurrentProjectionScopeTracker.OrderedDistinct(sources.SelectMany(static source => source));
 
-    private void StartBestEffortCacheWarm(IReadOnlyCollection<string> registeredIds)
-    {
-        _progress.StartBranch("pre_warming_cache");
-        _progress.CompleteBranch("pre_warming_cache", "queued", "running after scrape completion");
-
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                _persistence.PreWarmRankingsCache(registeredIds);
-                _log.LogInformation("Best-effort rankings cache warm completed for {UserCount:N0} registered user(s).", registeredIds.Count);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Best-effort rankings cache warm failed. Cache entries will populate on demand.");
-            }
-        });
-    }
-
     internal static bool ShouldActivateShadowSnapshotsBeforeDerived(
         ScrapePassContext ctx,
         ScrapePhase resolvedPhases)
@@ -2045,7 +1756,8 @@ public sealed class PostScrapeOrchestrator
         string phaseName,
         Func<Task<T>> phase,
         T defaultValue = default!,
-        bool alwaysPropagateFailure = false)
+        bool alwaysPropagateFailure = false,
+        Func<T, PhaseCompletion>? completionSelector = null)
     {
         var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
         var heapBefore = GC.GetTotalMemory(false);
@@ -2096,13 +1808,48 @@ public sealed class PostScrapeOrchestrator
             return result;
         }
         sw.Stop();
-        UpdatePostProcessOperation(phaseName, $"Completed {phaseName}");
-        RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
-        CompleteDurablePhase(phaseName, "completed");
+        var completion = completionSelector?.Invoke(result) ?? PhaseCompletion.Completed;
+        if (completion.Status == "skipped")
+            EnsureSkipIsAllowed(phaseName, criticality);
+        var detail = completion.Status == "skipped"
+            ? $"Skipped {phaseName}: {completion.WarningMessage}"
+            : $"Completed {phaseName}";
+        UpdatePostProcessOperation(phaseName, detail);
+        RecordPhaseOutcome(
+            ctx,
+            phaseName,
+            criticality,
+            true,
+            startedAt,
+            sw.Elapsed,
+            null,
+            completion.Status);
+        CompleteDurablePhase(
+            phaseName,
+            completion.Status,
+            completion.WarningMessage);
         var heapAfter = GC.GetTotalMemory(false);
-        _log.LogInformation(
-            "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
-            phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
+        if (completion.Status == "skipped")
+        {
+            _log.LogInformation(
+                "PostScrape phase [{Phase}] skipped in {Elapsed}: {Reason}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+                phaseName,
+                sw.Elapsed,
+                completion.WarningMessage,
+                heapBefore,
+                heapAfter,
+                heapAfter - heapBefore);
+        }
+        else
+        {
+            _log.LogInformation(
+                "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+                phaseName,
+                sw.Elapsed,
+                heapBefore,
+                heapAfter,
+                heapAfter - heapBefore);
+        }
         return result;
     }
 
@@ -2153,6 +1900,38 @@ public sealed class PostScrapeOrchestrator
             progressPercent: progressPercent);
     }
 
+    private void RecordSkippedPhase(
+        ScrapePassContext ctx,
+        string phaseName,
+        string reason)
+    {
+        var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
+        EnsureSkipIsAllowed(phaseName, criticality);
+        var recordedAt = DateTime.UtcNow;
+        StartDurablePhase(phaseName);
+        UpdatePostProcessOperation(phaseName, $"Skipped {phaseName}: {reason}");
+        RecordPhaseOutcome(
+            ctx,
+            phaseName,
+            criticality,
+            true,
+            recordedAt,
+            TimeSpan.Zero,
+            null,
+            "skipped");
+        CompleteDurablePhase(phaseName, "skipped", reason);
+        _log.LogInformation(
+            "PostScrape phase [{Phase}] skipped: {Reason}.",
+            phaseName,
+            reason);
+    }
+
+    internal void RecordSkippedPhaseForTest(
+        ScrapePassContext ctx,
+        string phaseName,
+        string reason) =>
+        RecordSkippedPhase(ctx, phaseName, reason);
+
     internal Task RunClassifiedPhaseForTestAsync(
         ScrapePassContext ctx,
         string phaseName,
@@ -2167,13 +1946,20 @@ public sealed class PostScrapeOrchestrator
         bool success,
         DateTime startedAt,
         TimeSpan duration,
-        string? errorMessage)
+        string? errorMessage,
+        string? status = null)
     {
+        var outcomeStatus = status ?? (success ? "completed" : "failed");
+        if (outcomeStatus == "skipped")
+            EnsureSkipIsAllowed(phaseName, criticality);
         ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
             phaseName,
             criticality,
             success,
-            errorMessage));
+            errorMessage)
+        {
+            Status = outcomeStatus,
+        });
 
         if (ctx.ScrapeId <= 0)
             return;
@@ -2186,7 +1972,7 @@ public sealed class PostScrapeOrchestrator
                 criticality == PostScrapePhaseCriticality.PublicationCritical
                     ? "publication_critical"
                     : "best_effort",
-                success ? "completed" : "failed",
+                outcomeStatus,
                 startedAt,
                 startedAt + duration,
                 (long)duration.TotalMilliseconds,
@@ -2205,6 +1991,17 @@ public sealed class PostScrapeOrchestrator
                     $"Unable to persist publication-critical phase outcome for {phaseName}.",
                     ex);
             }
+        }
+    }
+
+    private static void EnsureSkipIsAllowed(
+        string phaseName,
+        PostScrapePhaseCriticality criticality)
+    {
+        if (criticality != PostScrapePhaseCriticality.BestEffort)
+        {
+            throw new InvalidOperationException(
+                $"Publication-critical phase '{phaseName}' cannot be recorded as skipped.");
         }
     }
 
@@ -2247,35 +2044,56 @@ public sealed class PostScrapeOrchestrator
         _progress.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution" });
         _progress.SetSubOperation("enriching_parallel_rank_recompute");
 
-        var rankTask = RunPhaseAsync(ctx, "RankRecompute", () => Task.Run(() =>
+        Task rankTask;
+        if (!_persistence.WriteLegacyLiveLeaderboardDuringScrape)
         {
-            _progress.StartBranch("rank_recompute");
-            try
-            {
-                var rankChangedSongs = ctx.Aggregates?.RankChangedSongIds;
-                if (rankChangedSongs is { Count: > 0 })
+            rankTask = RunPhaseAsync(
+                ctx,
+                "RankRecompute",
+                () =>
                 {
-                    _progress.SetBranchTotal("rank_recompute", rankChangedSongs.Count);
-                    _log.LogInformation("Recomputing ranks for {Count:N0} changed song(s) (of {Total:N0} total).",
-                        rankChangedSongs.Count, ctx.ScrapeRequests.Count);
-                    var rankUpdated = _persistence.RecomputeRanksForSongs(rankChangedSongs);
-                    _progress.ReportBranchProgress("rank_recompute", rankChangedSongs.Count);
-                    _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
-                    _progress.CompleteBranch("rank_recompute", "complete", $"{rankUpdated:N0} entries updated");
-                }
-                else
-                {
-                    _log.LogInformation("No songs with rank-affecting changes. Skipping rank recomputation.");
-                    _progress.CompleteBranch("rank_recompute", "skipped", "no rank-affecting changes");
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+                    _progress.StartBranch("rank_recompute");
+                    _progress.CompleteBranch(
+                        "rank_recompute",
+                        "skipped",
+                        "legacy live leaderboard writes are disabled");
+                    _log.LogInformation(
+                        "Legacy rank recompute requires no work because legacy live leaderboard writes are disabled.");
+                    return Task.CompletedTask;
+                });
+        }
+        else
+        {
+            rankTask = RunPhaseAsync(ctx, "RankRecompute", () => Task.Run(() =>
             {
-                _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
-                _progress.CompleteBranch("rank_recompute", "failed", ex.Message);
-                throw;
-            }
-        }, ct));
+                _progress.StartBranch("rank_recompute");
+                try
+                {
+                    var rankChangedSongs = ctx.Aggregates?.RankChangedSongIds;
+                    if (rankChangedSongs is { Count: > 0 })
+                    {
+                        _progress.SetBranchTotal("rank_recompute", rankChangedSongs.Count);
+                        _log.LogInformation("Recomputing ranks for {Count:N0} changed song(s) (of {Total:N0} total).",
+                            rankChangedSongs.Count, ctx.ScrapeRequests.Count);
+                        var rankUpdated = _persistence.RecomputeRanksForSongs(rankChangedSongs);
+                        _progress.ReportBranchProgress("rank_recompute", rankChangedSongs.Count);
+                        _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
+                        _progress.CompleteBranch("rank_recompute", "complete", $"{rankUpdated:N0} entries updated");
+                    }
+                    else
+                    {
+                        _log.LogInformation("No songs with rank-affecting changes. Skipping rank recomputation.");
+                        _progress.CompleteBranch("rank_recompute", "skipped", "no rank-affecting changes");
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
+                    _progress.CompleteBranch("rank_recompute", "failed", ex.Message);
+                    throw;
+                }
+            }, ct));
+        }
 
         var firstSeenTask = RunPhaseAsync(ctx, "FirstSeenSeason", async () =>
         {
@@ -2623,63 +2441,6 @@ public sealed class PostScrapeOrchestrator
             _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);
     }
 
-    private bool TryCompleteHistoryRecon(
-        UserWorkItem user,
-        IReadOnlyCollection<string> chartedSongIds)
-    {
-        var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
-            user.AccountId,
-            user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint,
-            user.HistoryAdmissionRevision);
-        if (!BackfillOrchestrator.HasExpectedPairCoverage(
-                chartedSongIds,
-                processed))
-        {
-            var expectedHistoryPairs =
-                chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
-            _persistence.Meta.FailHistoryRecon(
-                user.AccountId,
-                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
-                user.HistoryReconstructionVersion,
-                user.HistoryWindowFingerprint,
-                user.HistoryAdmissionRevision);
-            return false;
-        }
-
-        _persistence.Meta.CompleteHistoryRecon(
-            user.AccountId,
-            user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint,
-            user.HistoryAdmissionRevision);
-        return true;
-    }
-
-    private bool TryCompleteBackfill(
-        string accountId,
-        IReadOnlyCollection<string> chartedSongIds)
-    {
-        var expected = chartedSongIds
-            .SelectMany(songId =>
-                GlobalLeaderboardScraper.AllInstruments.Select(
-                    instrument => (SongId: songId, Instrument: instrument)))
-            .ToHashSet();
-        var checkedPairs = _persistence.Meta.GetCheckedBackfillPairs(accountId);
-        if (!expected.IsSubsetOf(checkedPairs))
-        {
-            _persistence.Meta.DeferBackfill(
-                accountId,
-                expected.Count,
-                "incomplete_alltime_coverage");
-            return false;
-        }
-
-        _persistence.Meta.CompleteBackfill(
-            accountId,
-            rankingsPending: true);
-        return true;
-    }
-
     private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(
         ScrapePassContext ctx,
         SongProcessingMachine.MachineResult registeredUserRefreshResult,
@@ -2690,18 +2451,6 @@ public sealed class PostScrapeOrchestrator
 
         if (ctx.SoloCurrentProjectionRefreshedForPublication)
         {
-            if (ctx.NotificationProjectionRequiresFullRefresh)
-            {
-                if (options.RefreshAllSoloScopesWhenNoImpactedScopes
-                    && _soloCurrentProjectionBuilder is not null)
-                {
-                    return await _soloCurrentProjectionBuilder.LoadCurrentScopesAsync(ct);
-                }
-
-                throw new InvalidOperationException(
-                    "Improvement notification projection requires a full refresh, but unbounded scope fallback is disabled.");
-            }
-
             foreach (var scope in ctx.NotificationProjectionScopes)
                 scopes.Add(scope);
             foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
@@ -2792,6 +2541,15 @@ public sealed class PostScrapeOrchestrator
                 return ValueTask.CompletedTask;
             });
     }
+
+    internal Task RunLeaderboardRivalsPhaseAsync(
+        ScrapePassContext ctx,
+        CancellationToken ct) =>
+        RunPhaseAsync(
+            ctx,
+            "LeaderboardRivals",
+            () => ComputeLeaderboardRivalsAsync(ctx, ct),
+            alwaysPropagateFailure: true);
 
     /// <summary>
     /// Prune excess entries from instrument DBs down to the configured max per song,

@@ -30,7 +30,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly TokenManager _tokenManager;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly AccountNameResolver _nameResolver;
-    private readonly PostScrapeRefresher _refresher;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly SongProcessingMachine _machine;
     private readonly CyclicalSongMachine _cyclicalMachine;
@@ -89,9 +88,6 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<AccountNameResolver>>());
 
-        _refresher = Substitute.For<PostScrapeRefresher>(
-            scraper, _persistence, new ScrapeProgressTracker(),
-            Substitute.For<ILogger<PostScrapeRefresher>>());
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
             scraper,
             _persistence,
@@ -116,10 +112,6 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns(new SongProcessingMachine.MachineResult());
 
         _pool = new SharedDopPool(16, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());
-
-        // ServiceProvider returns the mocked machine
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
 
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
@@ -155,8 +147,6 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            serviceProvider,
             _historyReconstructor,
             _pool,
             _cyclicalMachine,
@@ -170,10 +160,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions
-            {
-                DeferredRegistrationSyncTimeout = TimeSpan.FromMilliseconds(50),
-            }), _log, _registrationMutations, null,
+            Options.Create(new ScraperOptions()), _log, _registrationMutations, null,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
             databasePressureMonitor: _databasePressureMonitor,
             workerStatus: _workerStatus,
@@ -257,8 +244,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(
             rivalsCalculator,
@@ -289,8 +274,6 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         return new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             _cyclicalMachine,
@@ -318,7 +301,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         ScraperOptions? options = null,
         GlobalLeaderboardPersistence? persistence = null,
         SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
-        IPostScrapePhaseFaultInjector? phaseFaultInjector = null)
+        IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
+        IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
+        DatabaseMaintenanceOptions? databaseMaintenanceOptions = null)
     {
         var activePersistence = persistence ?? _persistence;
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
@@ -357,8 +342,6 @@ public class PostScrapeOrchestratorTests : IDisposable
             activePersistence,
             _firstSeenCalculator,
             _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             historyReconstructor,
             _pool,
             cyclicalMachine,
@@ -404,7 +387,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             null,
             soloCurrentProjectionBuilder:
                 soloCurrentProjectionBuilder ?? _soloCurrentProjectionBuilder,
+            databaseMaintenanceOptions: Options.Create(
+                databaseMaintenanceOptions ?? new DatabaseMaintenanceOptions()),
             databasePressureMonitor: _databasePressureMonitor,
+            retentionMaintenanceService: retentionMaintenanceService,
             phaseFaultInjector: phaseFaultInjector,
             workerStatus: _workerStatus);
     }
@@ -417,11 +403,13 @@ public class PostScrapeOrchestratorTests : IDisposable
     public async Task RefreshRegisteredUsers_NoRegisteredUsers_Skips()
     {
         var ctx = CreateContext();
+        _cyclicalMachine.ClearReceivedCalls();
 
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
-        await _refresher.DidNotReceiveWithAnyArgs()
-            .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
+        Assert.DoesNotContain(
+            _cyclicalMachine.ReceivedCalls(),
+            call => call.GetMethodInfo().Name == nameof(CyclicalSongMachine.AttachAsync));
     }
 
     [Fact]
@@ -1147,8 +1135,11 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
-        await _refresher.DidNotReceiveWithAnyArgs()
-            .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
+        Assert.Contains(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "No access token for post-scrape refresh",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1218,8 +1209,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             stalledMachine,
@@ -1305,8 +1294,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             historyReconstructor,
             _pool,
             _cyclicalMachine,
@@ -1378,6 +1365,59 @@ public class PostScrapeOrchestratorTests : IDisposable
         await _sut.RunEnrichmentAsync(ctx, service, CancellationToken.None);
 
         Assert.Equal(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment, _progress.Phase);
+        var rankOutcome = Assert.Single(
+            ctx.PostScrapeOutcomes.Outcomes,
+            outcome => outcome.Phase == "RankRecompute");
+        Assert.True(rankOutcome.Success);
+        Assert.Equal("completed", rankOutcome.Status);
+    }
+
+    [Fact]
+    public async Task RunEnrichmentAsync_WhenLegacyWritesAreDisabled_CompletesRankContractWithoutWork()
+    {
+        using var snapshotOnlyPersistence = new GlobalLeaderboardPersistence(
+            _metaDb,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                WriteLegacyLiveLeaderboardDuringScrape = false,
+            }));
+        snapshotOnlyPersistence.Initialize();
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            persistence: snapshotOnlyPersistence);
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        var scrapeId = _metaDb.StartScrapeRun();
+        var ctx = CreateContext(scrapeId);
+
+        await sut.RunEnrichmentAsync(
+            ctx,
+            new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null),
+            CancellationToken.None);
+
+        var outcome = Assert.Single(
+            ctx.PostScrapeOutcomes.Outcomes,
+            item => item.Phase == "RankRecompute");
+        Assert.True(outcome.Success);
+        Assert.Equal("completed", outcome.Status);
+        Assert.Contains(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "legacy live leaderboard writes are disabled",
+                StringComparison.Ordinal));
+        Assert.Equal(
+            "completed",
+            Assert.Single(
+                _metaDb.GetScrapeResumeState(scrapeId)!.PhaseOutcomes,
+                item => item.Phase == "RankRecompute").Status);
+        ScrapePublicationGuard.EnsureCanPublish(
+            42,
+            ctx.PostScrapeOutcomes,
+            enforcePublicationCriticalPhases: true);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1415,8 +1455,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         var leaderboardRivalsCalculator2 = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(opts.Value), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             CreateMockCyclicalMachine(),
@@ -1483,8 +1521,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         var leaderboardRivalsCalculator3 = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(opts.Value), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             CreateMockCyclicalMachine(),
@@ -1758,7 +1794,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         var leaderboardRivalsIndex = logs.FindIndex(e =>
             e.Message.Contains("[LeaderboardRivals]", StringComparison.Ordinal));
         var playerStatsIndex = logs.FindIndex(e => e.Message.Contains("[PlayerStatsTiers]", StringComparison.Ordinal));
-        var checkpointIndex = logs.FindIndex(e => e.Message.Contains("[Checkpoint]", StringComparison.Ordinal));
         var activateIndex = logs.FindIndex(e => e.Message.Contains("[ActivateShadowSnapshots]", StringComparison.Ordinal));
 
         Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
@@ -1769,8 +1804,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.True(
             playerStatsIndex > leaderboardRivalsIndex,
             "Expected player stats to run after leaderboard rivals.");
-        Assert.True(checkpointIndex > playerStatsIndex, "Expected checkpoint to run after player stats.");
-        Assert.True(activateIndex > checkpointIndex, "Expected final snapshot activation to run after checkpoint.");
+        Assert.True(activateIndex > playerStatsIndex, "Expected final snapshot activation after player stats.");
+        Assert.DoesNotContain(logs, e => e.Message.Contains("[Checkpoint]", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            ctx.PostScrapeOutcomes.Outcomes,
+            outcome => outcome.Phase == "Checkpoint");
         Assert.DoesNotContain(logs, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
 
         await sut.RunImprovementNotificationsAfterPublicationAsync(
@@ -1814,7 +1852,11 @@ public class PostScrapeOrchestratorTests : IDisposable
             ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
             CancellationToken.None);
 
-        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
+        var outcome = Assert.Single(
+            ctx.PostScrapeOutcomes.Outcomes,
+            item => item.Phase == "ImprovementNotifications");
+        Assert.True(outcome.Success);
+        Assert.Equal("skipped", outcome.Status);
         Assert.Contains(_log.Entries, e => e.Message.Contains("solo scrape coverage was below threshold", StringComparison.Ordinal));
     }
 
@@ -2254,37 +2296,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task PrepareImprovementNotificationProjectionScopesAsync_RejectsUnboundedFallback()
-    {
-        var sut = CreateOrchestratorWithImprovementNotifications();
-        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
-        aggregates.IncrementSoloLeaderboardsWithData();
-        aggregates.IncrementSongsWithData();
-        var ctx = CreateContext(
-            aggregates: aggregates,
-            scrapeRequests:
-            [
-                new GlobalLeaderboardScraper.SongScrapeRequest
-                {
-                    SongId = "song-notify-plan",
-                    Instruments = ["Solo_Guitar"],
-                    Label = "Notification Plan",
-                },
-            ]);
-        ctx.RankingsComputedSuccessfully = true;
-        ctx.SoloCurrentProjectionRefreshedForPublication = true;
-        ctx.NotificationProjectionRequiresFullRefresh = true;
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            sut.PrepareImprovementNotificationProjectionScopesAsync(
-                ctx,
-                ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
-                CancellationToken.None));
-
-        Assert.Contains("unbounded scope fallback is disabled", exception.Message);
-    }
-
-    [Fact]
     public async Task PrepareImprovementNotificationProjectionScopesAsync_ReturnsBoundedScopes()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
@@ -2391,8 +2402,49 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Contains(_log.Entries, entry =>
             entry.Level == LogLevel.Warning &&
             entry.Message.Contains("Skipping band rank history retention cleanup", StringComparison.Ordinal));
+        Assert.Equal(
+            "skipped",
+            Assert.Single(
+                ctx.PostScrapeOutcomes.Outcomes,
+                outcome => outcome.Phase == "Cleanup.RankHistoryRetention").Status);
+        Assert.Equal(
+            "skipped",
+            Assert.Single(
+                ctx.PostScrapeOutcomes.Outcomes,
+                outcome => outcome.Phase == "Cleanup.BandRankHistoryRetention").Status);
         var progress = _progress.GetProgressResponse();
         Assert.Equal(100, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task RunCleanupAsync_ServiceRetentionSkipIsExplicit()
+    {
+        var retention = Substitute.For<IDatabaseRetentionMaintenanceService>();
+        retention.RunAsync(Arg.Any<CancellationToken>())
+            .Returns(DatabaseRetentionMaintenanceResult.SkippedResult(
+                DateTime.UtcNow,
+                "another maintenance run owns the advisory lock"));
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            retentionMaintenanceService: retention);
+        var ctx = CreateContext();
+
+        await sut.RunCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        var outcome = Assert.Single(
+            ctx.PostScrapeOutcomes.Outcomes,
+            item => item.Phase == "Cleanup.ServiceLevelRetention");
+        Assert.True(outcome.Success);
+        Assert.Equal("skipped", outcome.Status);
+        Assert.Contains(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "another maintenance run owns the advisory lock",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2609,8 +2661,6 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _refresher,
-            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             CreateMockCyclicalMachine(),
@@ -3020,48 +3070,18 @@ public class PostScrapeOrchestratorTests : IDisposable
                 options != null && options.PreserveSongOrder));
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // PreWarmRankingsCache
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
     [Fact]
-    public void PreWarmRankingsCache_warms_cache_for_registered_users()
+    public void Retired_deferred_sync_and_refresher_surfaces_are_absent()
     {
-        // Seed an instrument DB with leaderboard data
-        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        db.UpsertEntries("song_1",
-        [
-            new LeaderboardEntry
-            {
-                AccountId = "user-warm", Score = 100_000,
-                Accuracy = 95, IsFullCombo = false, Stars = 5,
-                Season = 3, Difficulty = 3, Percentile = 99.0,
-            },
-            new LeaderboardEntry
-            {
-                AccountId = "user-other", Score = 80_000,
-                Accuracy = 90, IsFullCombo = false, Stars = 4,
-                Season = 3, Difficulty = 3, Percentile = 95.0,
-            },
-        ]);
-
-        // Pre-warm cache for user-warm
-        _persistence.PreWarmRankingsCache(new HashSet<string> { "user-warm" });
-
-        // Verify rankings data is correct (PG has no in-memory cache, so each call is a fresh query)
-        var first = db.GetPlayerRankings("user-warm");
-        var second = db.GetPlayerRankings("user-warm");
-        Assert.Equal(first, second);
-        Assert.Single(first);
-        Assert.Equal(1, first["song_1"]); // rank 1 (top score)
+        Assert.Null(
+            typeof(PostScrapeOrchestrator).GetMethod(
+                "RunDeferredRegistrationSyncAsync"));
+        Assert.Null(
+            typeof(PostScrapeOrchestrator).Assembly.GetType(
+                "FSTService.Scraping.PostScrapeRefresher"));
     }
 
-    [Fact]
-    public void PreWarmRankingsCache_with_empty_accounts_does_not_throw()
-    {
-        _persistence.PreWarmRankingsCache(new HashSet<string>());
-    }
-
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // ComputeLeaderboardRivalsAsync â€” skip when rankings fail
@@ -3098,6 +3118,85 @@ public class PostScrapeOrchestratorTests : IDisposable
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         await Assert.ThrowsAsync<Npgsql.PostgresException>(
             () => _sut.ComputeRankingsAsync(service, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LeaderboardRivals_NoRegisteredAccounts_CompletesCriticalContractWithoutWork()
+    {
+        var ctx = CreateContext();
+
+        await _sut.RunLeaderboardRivalsPhaseAsync(
+            ctx,
+            CancellationToken.None);
+
+        var outcome = Assert.Single(ctx.PostScrapeOutcomes.Outcomes);
+        Assert.Equal("LeaderboardRivals", outcome.Phase);
+        Assert.True(outcome.Success);
+        Assert.Equal("completed", outcome.Status);
+        ScrapePublicationGuard.EnsureCanPublish(
+            42,
+            ctx.PostScrapeOutcomes,
+            enforcePublicationCriticalPhases: true);
+    }
+
+    [Fact]
+    public void CriticalSkipRecorder_RejectsBeforePersisting()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.AttachScrape(scrapeId);
+        var ctx = CreateContext(scrapeId);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            _sut.RecordSkippedPhaseForTest(
+                ctx,
+                "RankRecompute",
+                "corrupt skip"));
+
+        Assert.Contains(
+            "Publication-critical phase 'RankRecompute' cannot be recorded as skipped",
+            error.Message);
+        Assert.Empty(ctx.PostScrapeOutcomes.Outcomes);
+        Assert.Empty(
+            _metaDb.GetScrapeResumeState(scrapeId)!.PhaseOutcomes);
+    }
+
+    [Fact]
+    public void BestEffortSkip_PersistsDurableReasonAndRemainsNonblocking()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        _workerStatus.AttachScrape(scrapeId);
+
+        var ctx = CreateContext(scrapeId);
+        _sut.RecordSkippedPhaseForTest(
+            ctx,
+            "FirstSeenSeason",
+            "no access token");
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT status, warning_message, error_message
+            FROM scrape_phase_attempts
+            WHERE scrape_id = @scrapeId
+              AND phase_id = 'post.first_seen_season'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("skipped", reader.GetString(0));
+        Assert.Equal("no access token", reader.GetString(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.Equal(
+            "skipped",
+            Assert.Single(ctx.PostScrapeOutcomes.Outcomes).Status);
+        ScrapePublicationGuard.EnsureCanPublish(
+            scrapeId,
+            ctx.PostScrapeOutcomes,
+            enforcePublicationCriticalPhases: true);
     }
 
     [Theory]
@@ -3147,13 +3246,13 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RunClassifiedPhaseForTestAsync(
             CreateContext(),
-            "Checkpoint",
+            "FirstSeenSeason",
             () => Task.CompletedTask);
 
         var after = _metaDb.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey)!
             .CurrentOperation!;
-        Assert.Equal("Checkpoint", after.SubOperation);
-        Assert.Equal("Completed Checkpoint", after.Detail);
+        Assert.Equal("FirstSeenSeason", after.SubOperation);
+        Assert.Equal("Completed FirstSeenSeason", after.Detail);
         Assert.True(after.UpdatedAtUtc >= before.UpdatedAtUtc);
     }
 
@@ -3169,7 +3268,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RunClassifiedPhaseForTestAsync(
             CreateContext(scrapeId),
-            "Checkpoint",
+            "FirstSeenSeason",
             () => Task.CompletedTask);
 
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -3178,12 +3277,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             SELECT phase_id, attempt, status, warning_message, error_message
             FROM scrape_phase_attempts
             WHERE scrape_id = @scrapeId
-              AND phase_id = 'post.checkpoint'
+              AND phase_id = 'post.first_seen_season'
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
-        Assert.Equal("post.checkpoint", reader.GetString(0));
+        Assert.Equal("post.first_seen_season", reader.GetString(0));
         Assert.Equal(1, reader.GetInt32(1));
         Assert.Equal("completed", reader.GetString(2));
         Assert.True(reader.IsDBNull(3));
@@ -3202,8 +3301,8 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RunClassifiedPhaseForTestAsync(
             CreateContext(scrapeId),
-            "Checkpoint",
-            () => throw new InvalidOperationException("checkpoint failed"));
+            "FirstSeenSeason",
+            () => throw new InvalidOperationException("first-seen failed"));
 
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -3211,13 +3310,13 @@ public class PostScrapeOrchestratorTests : IDisposable
             SELECT status, warning_message, error_message
             FROM scrape_phase_attempts
             WHERE scrape_id = @scrapeId
-              AND phase_id = 'post.checkpoint'
+              AND phase_id = 'post.first_seen_season'
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal("failed", reader.GetString(0));
-        Assert.Equal("checkpoint failed", reader.GetString(1));
+        Assert.Equal("first-seen failed", reader.GetString(1));
         Assert.True(reader.IsDBNull(2));
     }
 
@@ -3240,26 +3339,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task DeferredRegistrationSyncTimeoutIsBoundedAndVisible()
-    {
-        var sw = Stopwatch.StartNew();
-
-        var error = await Assert.ThrowsAsync<TimeoutException>(() =>
-            _sut.RunDeferredRegistrationSyncTimeoutForTestAsync(
-                WaitUntilCancelledAsync,
-                CancellationToken.None));
-        sw.Stop();
-
-        Assert.Contains("Deferred registration sync timed out", error.Message);
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Deferred sync timeout took {sw.Elapsed}.");
-        Assert.Contains(
-            _log.Entries,
-            entry => entry.Message.Contains(
-                "Deferred registration sync timed out",
-                StringComparison.Ordinal));
-    }
-
-    [Fact]
     public void PhasePolicyRejectsUnclassifiedPhasesAndExposesBestEffortFailures()
     {
         Assert.Throws<InvalidOperationException>(() =>
@@ -3267,14 +3346,60 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ledger = new PostScrapeExecutionLedger();
         ledger.Record(new PostScrapePhaseOutcome(
-            "Checkpoint",
+            "FirstSeenSeason",
             PostScrapePhaseCriticality.BestEffort,
             false,
             "injected"));
 
         Assert.True(ledger.CanPublish);
         Assert.Empty(ledger.FailedPublicationCriticalPhases);
-        Assert.Equal("Checkpoint", Assert.Single(ledger.FailedBestEffortPhases).Phase);
+        Assert.Equal("FirstSeenSeason", Assert.Single(ledger.FailedBestEffortPhases).Phase);
+    }
+
+    [Fact]
+    public void CorruptCriticalSkippedOutcome_BlocksPublication()
+    {
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(new PostScrapePhaseOutcome(
+            "RankRecompute",
+            PostScrapePhaseCriticality.PublicationCritical,
+            true,
+            null)
+        {
+            Status = "skipped",
+        });
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScrapePublicationGuard.EnsureCanPublish(
+                42,
+                ledger,
+                enforcePublicationCriticalPhases: false));
+
+        Assert.Contains(
+            "publication-critical phase(s) were invalidly skipped: RankRecompute",
+            error.Message);
+        Assert.False(ledger.CanPublish);
+    }
+
+    [Fact]
+    public void BestEffortSkippedOutcome_RemainsNonblocking()
+    {
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(new PostScrapePhaseOutcome(
+            "FirstSeenSeason",
+            PostScrapePhaseCriticality.BestEffort,
+            false,
+            null)
+        {
+            Status = "skipped",
+        });
+
+        ScrapePublicationGuard.EnsureCanPublish(
+            42,
+            ledger,
+            enforcePublicationCriticalPhases: true);
+        Assert.True(ledger.CanPublish);
+        Assert.Empty(ledger.FailedBestEffortPhases);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
