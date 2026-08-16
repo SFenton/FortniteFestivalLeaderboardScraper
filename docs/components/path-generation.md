@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -151,9 +152,13 @@ SHA-256 identities, then rejects:
 - known-invalid plastic-drums v3 current or staged state;
 - a runtime/artifact identity mismatch;
 - a nonpositive changed maximum;
+- any non-null current, staged, or request maximum above
+  `RankingsCalculator.MaximumScoreWithRepresentableRankingCutoff`
+  (`2,045,222,521`);
 - a missing authoritative published score source or an observed score above
-  `floor(newMaximum × 1.05)`, the exact integer ranking validity cutoff (a
-  score above the CHOpt denominator but within that cutoff remains valid);
+  `floor(newMaximum × 21 / 20)`, the exact `1.05` integer ranking validity
+  cutoff (a score above the CHOpt denominator but within that cutoff remains
+  valid);
 - a plastic-drums cymbal mode below no-cymbal mode, empty authored activation
   windows, or a plastic note inventory matching `Solo_Drums`;
 - a maximum difference omitted from `changedInstruments`; or

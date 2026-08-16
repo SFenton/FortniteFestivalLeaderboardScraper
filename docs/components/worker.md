@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 354f87eb
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -18,6 +18,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -157,10 +158,11 @@ rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
 Before any post-freeze mutation and again on resume, maintenance reloads each
 mapped highest observed score, compares it with the ranking threshold
-`floor(newMaximum × 1.05)` rather than the CHOpt denominator, and reconstructs
-the approved plan-digest v5 evidence. A missing source, score above that
-cutoff, or changed still-valid evidence keeps the workflow frozen and
-resumable.
+`floor(newMaximum × 21 / 20)` rather than the CHOpt denominator, and
+reconstructs the approved plan-digest v5 evidence. Stage requests and manifests
+reject every maximum above `2,045,222,521`, so the exact `1.05` cutoff remains
+a PostgreSQL `INTEGER`. A missing source, score above that cutoff, or changed
+still-valid evidence keeps the workflow frozen and resumable.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 Every max-score database mutation and checkpoint commits through a bounded

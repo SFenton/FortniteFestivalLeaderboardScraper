@@ -19,6 +19,18 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
         "Solo_PeripheralCymbals",
         "Solo_PeripheralDrums",
     ];
+    public static TheoryData<string> MaximumScoreInstruments { get; } =
+        new()
+        {
+            "Solo_Guitar",
+            "Solo_Bass",
+            "Solo_Drums",
+            "Solo_Vocals",
+            "Solo_PeripheralGuitar",
+            "Solo_PeripheralBass",
+            "Solo_PeripheralCymbals",
+            "Solo_PeripheralDrums",
+        };
     private const string ValidPngBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -638,6 +650,219 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
+    public void Ranking_cutoff_uses_the_largest_exact_int_boundary()
+    {
+        Assert.Equal(
+            2_045_222_521,
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff);
+        Assert.Equal(
+            int.MaxValue,
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                checked(
+                    RankingsCalculator
+                        .MaximumScoreWithRepresentableRankingCutoff
+                    + 1)));
+    }
+
+    [Theory]
+    [MemberData(nameof(MaximumScoreInstruments))]
+    public void Maxima_validation_enforces_the_cutoff_boundary_for_every_field(
+        string instrument)
+    {
+        var maxima = new MaxScoreMaintenanceMaxima(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+        var accepted = WithMaximum(
+            maxima,
+            instrument,
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff);
+
+        Assert.Equal(accepted, accepted.Validate("maxima"));
+
+        var rejected = WithMaximum(
+            maxima,
+            instrument,
+            checked(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff
+                + 1));
+        var error = Assert.Throws<ArgumentOutOfRangeException>(
+            () => rejected.Validate("maxima"));
+        Assert.Contains("PostgreSQL INTEGER", error.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(MaximumScoreInstruments))]
+    public void Discovery_constraints_enforce_the_cutoff_boundary(
+        string instrument)
+    {
+        var accepted = new MaxScoreMaintenanceMaximaConstraint(
+            instrument,
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff);
+
+        Assert.Equal(
+            accepted,
+            accepted.ValidateAndNormalize());
+
+        var rejected = accepted with
+        {
+            ExpectedValue = checked(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff
+                + 1),
+        };
+        Assert.Throws<ArgumentOutOfRangeException>(
+            rejected.ValidateAndNormalize);
+    }
+
+    [Fact]
+    public void Stage_actual_maxima_reject_an_unrepresentable_cutoff_before_manifest()
+    {
+        var request = CreateStageRequest(
+            MaxScoreMaintenanceStagePurposes.Discovery);
+        var song = request.Songs[0];
+        var invalid = WithMaximum(
+            CreateManifest().Songs[0].CurrentPath.Maxima,
+            "Solo_Guitar",
+            checked(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff
+                + 1));
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => song.ValidateOldMaxima(invalid));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => song.ValidateNewMaxima(invalid));
+    }
+
+    [Theory]
+    [MemberData(nameof(MaximumScoreInstruments))]
+    public async Task Promotion_request_loader_enforces_the_cutoff_boundary_for_every_field(
+        string instrument)
+    {
+        var request = CreateStageRequest(
+            MaxScoreMaintenanceStagePurposes.Promotion);
+        var accepted = WithPromotionMaximum(
+            request,
+            instrument,
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff);
+        var path = Path.Combine(
+            _dataDirectory,
+            $"promotion-boundary-{instrument}.json");
+        await File.WriteAllBytesAsync(
+            path,
+            JsonSerializer.SerializeToUtf8Bytes(
+                accepted,
+                MaxScoreMaintenanceJson.Canonical));
+
+        var loaded =
+            await MaxScoreMaintenanceFileStore
+                .LoadStageRequestAsync(
+                    _dataDirectory,
+                    path,
+                    CancellationToken.None);
+        Assert.All(
+            loaded.Songs,
+            song => Assert.Equal(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff,
+                song.ExpectedNewMaxima!
+                    .GetByInstrument(instrument)));
+
+        var rejected = WithPromotionMaximum(
+            request,
+            instrument,
+            checked(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff
+                + 1));
+        await File.WriteAllBytesAsync(
+            path,
+            JsonSerializer.SerializeToUtf8Bytes(
+                rejected,
+                MaxScoreMaintenanceJson.Canonical));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            MaxScoreMaintenanceFileStore.LoadStageRequestAsync(
+                _dataDirectory,
+                path,
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Manifest_loader_rejects_an_unrepresentable_cutoff_before_plan()
+    {
+        var manifest = CreateManifest();
+        MaxScoreMaintenanceManifest WithLeadMaximum(int maximum)
+            => manifest with
+            {
+                Songs = manifest.Songs
+                    .Select(song => song with
+                    {
+                        StagedPath = song.StagedPath with
+                        {
+                            Maxima = song.StagedPath.Maxima with
+                            {
+                                Lead = maximum,
+                            },
+                        },
+                    })
+                    .ToArray(),
+            };
+
+        var path = Path.Combine(
+            _dataDirectory,
+            "manifest-cutoff-boundary.json");
+        await File.WriteAllBytesAsync(
+            path,
+            JsonSerializer.SerializeToUtf8Bytes(
+                WithLeadMaximum(
+                    RankingsCalculator
+                        .MaximumScoreWithRepresentableRankingCutoff),
+                MaxScoreMaintenanceJson.Canonical));
+        var loaded =
+            await MaxScoreMaintenanceFileStore.LoadManifestAsync(
+                _dataDirectory,
+                path,
+                CancellationToken.None);
+        Assert.All(
+            loaded.Songs,
+            song => Assert.Equal(
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff,
+                song.StagedPath.Maxima.Lead));
+
+        await File.WriteAllBytesAsync(
+            path,
+            JsonSerializer.SerializeToUtf8Bytes(
+                WithLeadMaximum(
+                    checked(
+                        RankingsCalculator
+                            .MaximumScoreWithRepresentableRankingCutoff
+                        + 1)),
+                MaxScoreMaintenanceJson.Canonical));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            MaxScoreMaintenanceFileStore.LoadManifestAsync(
+                _dataDirectory,
+                path,
+                CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Stage_request_is_canonical_and_binds_discovery_or_promotion_scope()
     {
         foreach (var purpose in new[]
@@ -1227,6 +1452,60 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             manifest.Runtime.Profile)
             .ValidateAndNormalize();
     }
+
+    private static MaxScoreMaintenanceStageRequest
+        WithPromotionMaximum(
+            MaxScoreMaintenanceStageRequest request,
+            string instrument,
+            int maximum)
+    {
+        var instrumentChanges =
+            request.ExpectedChangedInstruments.Contains(
+                instrument,
+                StringComparer.Ordinal);
+        return request with
+        {
+            Songs = request.Songs
+                .Select(song => song with
+                {
+                    ExpectedOldMaxima = instrumentChanges
+                        ? song.ExpectedOldMaxima
+                        : WithMaximum(
+                            song.ExpectedOldMaxima!,
+                            instrument,
+                            maximum),
+                    ExpectedNewMaxima = WithMaximum(
+                        song.ExpectedNewMaxima!,
+                        instrument,
+                        maximum),
+                })
+                .ToArray(),
+        };
+    }
+
+    private static MaxScoreMaintenanceMaxima WithMaximum(
+        MaxScoreMaintenanceMaxima maxima,
+        string instrument,
+        int maximum)
+        => instrument switch
+        {
+            "Solo_Guitar" => maxima with { Lead = maximum },
+            "Solo_Bass" => maxima with { Bass = maximum },
+            "Solo_Drums" => maxima with { Drums = maximum },
+            "Solo_Vocals" => maxima with { Vocals = maximum },
+            "Solo_PeripheralGuitar" =>
+                maxima with { ProLead = maximum },
+            "Solo_PeripheralBass" =>
+                maxima with { ProBass = maximum },
+            "Solo_PeripheralCymbals" =>
+                maxima with { ProCymbals = maximum },
+            "Solo_PeripheralDrums" =>
+                maxima with { ProDrums = maximum },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(instrument),
+                instrument,
+                "Unsupported maximum instrument."),
+        };
 
     private void WriteGeneration(
         string songId,

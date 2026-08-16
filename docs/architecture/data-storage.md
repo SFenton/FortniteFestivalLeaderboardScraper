@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -146,11 +147,18 @@ supplemental overlay, with overlay precedence per account. They do not trust
 For each changed maximum, maintenance records the CHOpt denominator and the
 exact ranking validity cutoff,
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)` or
-`floor(newMaximum × 1.05)`. A mapped observed score may exceed the denominator
-but not the cutoff. Plan report/digest contract v5 binds the cutoff and highest
-observed score. Apply and every resumable continuation reload those rows and
-reconstruct the approved digest before mutation; a missing mapping, a score
-above the cutoff, or any evidence drift fails closed.
+`floor(newMaximum × 21 / 20)`. The shared
+`MaximumScoreWithRepresentableRankingCutoff` is `2,045,222,521`, derived as
+`(((int.MaxValue + 1) × 20) - 1) / 21`; the next maximum would require cutoff
+`2,147,483,648`. Complete maxima, partial constraints, current/staged manifest
+paths, and report checks reject that value before SQL. C# uses checked
+`long` multiplication and a checked `int` conversion, while PostgreSQL
+evidence selectors continue to use `INTEGER` maximum and cutoff arrays. A
+mapped observed score may exceed the denominator but not the cutoff. Plan
+report/digest contract v5 binds the cutoff and highest observed score. Apply
+and every resumable continuation reload those rows and reconstruct the
+approved digest before mutation; a missing mapping, a score above the cutoff,
+or any evidence drift fails closed.
 Maintenance population is resolved from the same complete source map,
 combining each source's reported population with its resolved overlay row
 count. It is snapshotted once under the exclusive fence and never falls back

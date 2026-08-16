@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: 354f87eb
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -19,6 +19,7 @@ sources:
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
@@ -104,9 +105,12 @@ production meanings:
 - Total Score is the sum of eligible scores;
 - Max Score % uses the CHOpt maximum as its ratio denominator, but validity is
   a separate integer threshold:
-  `floor(CHOpt maximum × 1.05)`. Scores above that threshold are excluded.
-  Scores above the denominator but at or below the threshold remain valid;
-  their ratios are capped at `1.05` before averaging. The score-count
+  `floor(CHOpt maximum × 21 / 20)`, the exact `1.05` contract. Scores above
+  that threshold are excluded. Max-score maintenance admits maxima only
+  through `2,045,222,521`, whose cutoff is `int.MaxValue`; the next value is
+  rejected before publication because its cutoff cannot fit PostgreSQL
+  `INTEGER`. Scores above the denominator but at or below the threshold remain
+  valid; their ratios are capped at `1.05` before averaging. The score-count
   credibility adjustment then produces the public value, while
   `rawMaxScorePercent` retains the pre-adjustment average. A valid score on a
   chart without a computed maximum is omitted from that raw average but

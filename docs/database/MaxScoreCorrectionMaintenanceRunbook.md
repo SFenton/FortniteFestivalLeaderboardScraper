@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: dc946315
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -178,11 +178,24 @@ are rejected.
   manifest is always non-promotable.
 - `purpose=promotion` forbids partial constraints and requires complete
   eight-field old/new maxima for every song.
+- Every non-null maximum or partial constraint must be between `1` and
+  `2,045,222,521`, inclusive.
 - Both purposes bind the exact generated and changed instrument arrays plus
   CHOpt version, binary SHA-256, and profile.
 - Any plastic-drums change requires the approved CHOpt `1.16.4` binary SHA
   `4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f`
   and profile `chopt-fnf-ew0-s20-json-png-prodrums-v4`.
+
+`RankingsCalculator.MaximumScoreWithRepresentableRankingCutoff` is
+`2,045,222,521`. The `1.05` ranking contract is the exact rational `21 / 20`,
+so this is the greatest integer maximum satisfying
+`floor(maximum × 21 / 20) <= 2,147,483,647`:
+`(((int.MaxValue + 1) × 20) - 1) / 21`. The boundary produces
+`int.MaxValue`; `2,045,222,522` would produce `2,147,483,648` and is rejected
+before staging, manifest emission, or plan. C# computes the cutoff with
+checked integer arithmetic. PostgreSQL selector tables and parameters retain
+`INTEGER` maxima/cutoffs and therefore rely on this admission bound rather
+than a saturated .NET conversion.
 
 ## Command sequence
 
@@ -276,10 +289,11 @@ docker compose run --rm --no-deps \
 ```
 
 Discovery does not promote and its manifest cannot enter plan/apply. The
-service already enforces exact scope/runtime, four changed maxima, positive
-plastic values, cymbal mode greater than or equal to no-cymbal mode, non-empty
-authored activation windows, and plastic note inventories distinct from
-`Solo_Drums`. Keep the following operator check as readable evidence:
+service already enforces exact scope/runtime, four changed maxima, the
+representable-cutoff bound on every maximum, positive plastic values, cymbal
+mode greater than or equal to no-cymbal mode, non-empty authored activation
+windows, and plastic note inventories distinct from `Solo_Drums`. Keep the
+following operator check as readable evidence:
 
 | Song | Lead | Pro Lead | Pro Cymbals | Pro Drums |
 |---|---:|---:|---:|---:|
@@ -300,6 +314,9 @@ jq -e '
   .runtime.profile == "chopt-fnf-ew0-s20-json-png-prodrums-v4" and
   (.songs | length) == 2 and
   all(.songs[];
+    ([.currentPath.maxima[], .stagedPath.maxima[]] |
+      all(. == null or
+        (. > 0 and . <= 2045222521))) and
     .changedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
     .stagedPath.expectedInstruments == ["Solo_Guitar","Solo_Bass","Solo_Drums","Solo_Vocals","Solo_PeripheralGuitar","Solo_PeripheralBass","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
     .currentPath.maxima.lead == null and
@@ -320,16 +337,22 @@ jq -e '
 ' "$EVIDENCE/discovery-manifest.json"
 
 jq -c '
-  def maxima($m): {
-    lead:$m.lead,
-    bass:$m.bass,
-    drums:$m.drums,
-    vocals:$m.vocals,
-    proLead:$m.proLead,
-    proBass:$m.proBass,
-    proCymbals:$m.proCymbals,
-    proDrums:$m.proDrums
-  };
+  def maxima($m):
+    if all($m[];
+      . == null or
+      (. > 0 and . <= 2045222521))
+    then {
+      lead:$m.lead,
+      bass:$m.bass,
+      drums:$m.drums,
+      vocals:$m.vocals,
+      proLead:$m.proLead,
+      proBass:$m.proBass,
+      proCymbals:$m.proCymbals,
+      proDrums:$m.proDrums
+    }
+    else error("maximum has an unrepresentable 1.05 ranking cutoff")
+    end;
   {
     requestVersion: 2,
     purpose: "promotion",
@@ -390,6 +413,10 @@ docker compose run --rm --no-deps \
 
 PLAN_DIGEST=$(
   jq -er '
+    def maximumScoreWithRepresentableRankingCutoff:
+      2045222521;
+    def rankingCutoff:
+      ((. * 21 / 20) | floor);
     select(
       .reportVersion == 5 and
       .canApply == true and
@@ -404,7 +431,10 @@ PLAN_DIGEST=$(
       all(.checks[]; .passed) and
       all(.observedScoreChecks[];
         .sourceMapped == true and
-        .validCutoff == ((.newMaximum * 1.05) | floor) and
+        .newMaximum > 0 and
+        .newMaximum <=
+          maximumScoreWithRepresentableRankingCutoff and
+        .validCutoff == (.newMaximum | rankingCutoff) and
         (.highestObservedScore == null or
           .highestObservedScore <= .validCutoff) and
         .passed == true) and
@@ -423,12 +453,13 @@ PLAN_DIGEST=$(
 Each observed-score row requires `sourceMapped=true`. Its `validCutoff` is the
 exact integer returned by
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
-`floor(newMaximum × 1.05)`. `highestObservedScore` may be null; otherwise it
-must be less than or equal to that cutoff. A score above the CHOpt denominator
-but within this cutoff is valid evidence. A score above the cutoff, or a
-missing authoritative source mapping, fails closed. This contract does not use
-`Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to deep-scrape
-counting and pruning, not ranking or maintenance validity.
+`floor(newMaximum × 21 / 20)`, with `newMaximum` no greater than
+`2,045,222,521`. `highestObservedScore` may be null; otherwise it must be less
+than or equal to that cutoff. A score above the CHOpt denominator but within
+this cutoff is valid evidence. A score above the cutoff, an unrepresentable
+maximum, or a missing authoritative source mapping fails closed. This contract
+does not use `Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to
+deep-scrape counting and pruning, not ranking or maintenance validity.
 
 Snapshot rows and supplemental overlay-only rows use the same authoritative
 resolver as production `InstrumentDatabase` reads. Apply uses both approved
@@ -470,9 +501,9 @@ immediately; there is no history-sized temporary relation or ordered payload
 aggregation.
 
 Plan report version 5 adds the explicit per-row `validCutoff`. Plan-digest
-contract version 5 binds that field and its exact integer rounding. The
-apply/resume report remains version 3 because its output contract did not
-change.
+contract version 5 binds that field, the exact `21 / 20` integer rounding, and
+the representable maximum admitted by the manifest contract. The apply/resume
+report remains version 3 because its output contract did not change.
 
 Expected work is:
 

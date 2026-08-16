@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: 354f87eb
+last_verified_commit: 02c28ccd
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -107,6 +107,9 @@ replacement, unrelated-account preservation, frozen-scope cache filtering,
 strict plan report/digest version 5 cutoff serialization/rejection, strict
 apply/resume report version 3 compatibility/rejection, null/exact/boundary
 observed-score cases, integer-floor rounding, live-shaped promotion evidence,
+the `2,045,222,521` pass/`2,045,222,522` reject boundary for all eight maximum
+fields, discovery constraints, canonical promotion parsing, manifest
+admission, an exact `int.MaxValue` cutoff without .NET or PostgreSQL overflow,
 and plan/apply/resume digest consistency. It also covers the max-score timeout
 default/environment binding/bounds, stage-specific timeout reporting, and
 identical configured evidence timeouts across plan, apply revalidation, and

@@ -86,15 +86,31 @@ public sealed record MaxScoreMaintenanceMaxima(
     {
         foreach (var instrument in MaxScoreMaintenanceManifest.AllInstruments)
         {
-            if (GetByInstrument(instrument) is <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    parameterName,
-                    $"{parameterName}.{instrument} must be null or positive.");
-            }
+            ValidateMaximum(
+                GetByInstrument(instrument),
+                parameterName,
+                $"{parameterName}.{instrument}");
         }
 
         return this;
+    }
+
+    internal static void ValidateMaximum(
+        int? maximum,
+        string parameterName,
+        string fieldName)
+    {
+        if (!maximum.HasValue)
+            return;
+        if (maximum.Value is <= 0
+            or > RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff)
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                maximum.Value,
+                $"{fieldName} must be null or between 1 and {RankingsCalculator.MaximumScoreWithRepresentableRankingCutoff} so its 1.05 ranking cutoff fits PostgreSQL INTEGER.");
+        }
     }
 }
 
@@ -118,12 +134,10 @@ public sealed record MaxScoreMaintenanceMaximaConstraint(
                 $"Unsupported maximum constraint instrument {instrument}.",
                 nameof(Instrument));
         }
-        if (ExpectedValue is <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(ExpectedValue),
-                "A constrained maximum must be null or positive.");
-        }
+        MaxScoreMaintenanceMaxima.ValidateMaximum(
+            ExpectedValue,
+            nameof(ExpectedValue),
+            "A constrained maximum");
 
         return this with { Instrument = instrument };
     }
@@ -211,6 +225,8 @@ public sealed record MaxScoreMaintenanceStageRequestSong(
     internal void ValidateOldMaxima(
         MaxScoreMaintenanceMaxima actual)
     {
+        ArgumentNullException.ThrowIfNull(actual);
+        actual.Validate("actualOldMaxima");
         if (ExpectedOldMaxima is not null
             && ExpectedOldMaxima != actual)
         {
@@ -227,6 +243,8 @@ public sealed record MaxScoreMaintenanceStageRequestSong(
     internal void ValidateNewMaxima(
         MaxScoreMaintenanceMaxima actual)
     {
+        ArgumentNullException.ThrowIfNull(actual);
+        actual.Validate("actualNewMaxima");
         if (ExpectedNewMaxima is not null
             && ExpectedNewMaxima != actual)
         {

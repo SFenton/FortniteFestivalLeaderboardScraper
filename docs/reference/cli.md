@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: 354f87eb
+last_verified_commit: 02c28ccd
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -14,6 +14,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
+  - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
@@ -153,7 +154,10 @@ Stage requests and manifests use canonical strict JSON; unknown properties,
 noncanonical encoding, unsupported versions, duplicate/unsorted song IDs, and
 more than 32 songs are rejected. Request version 2 binds a discovery or
 promotion purpose, exact runtime, exact generated/changed instrument sets, and
-per-song maximum constraints. Unscoped repeated song IDs are rejected.
+per-song maximum constraints. Every non-null complete maximum or partial
+constraint must be at most `2,045,222,521`, the largest value whose exact
+`1.05` ranking cutoff fits a PostgreSQL `INTEGER`. Unscoped repeated song IDs
+are rejected.
 
 | Action | Required flags | Behavior |
 |---|---|---|
@@ -172,11 +176,13 @@ validates the same canonical bytes.
 Plan report version 5 includes `populationEvidence`, `scoreHistoryEvidence`,
 and `validCutoff` on every `observedScoreChecks` row. The cutoff is exactly
 `RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
-`floor(newMaximum × 1.05)`: scores above the CHOpt denominator remain valid
-when they do not exceed this cutoff. Missing source mappings and scores above
-the cutoff fail closed. Plan-digest contract version 5 binds the same evidence.
-Apply rebuilds the plan before freeze; apply and resume then reload the
-observed-score rows and reconstruct the approved digest before mutation.
+`floor(newMaximum × 21 / 20)`: scores above the CHOpt denominator remain valid
+when they do not exceed this cutoff. Checked C# arithmetic rejects
+`newMaximum > 2,045,222,521` instead of saturating the cutoff. Missing source
+mappings and scores above the cutoff fail closed. Plan-digest contract version
+5 binds the same evidence. Apply rebuilds the plan before freeze; apply and
+resume then reload the observed-score rows and reconstruct the approved digest
+before mutation.
 
 Apply/resume report version 3 includes
 `cacheEvidence` after cache staging, including the exact

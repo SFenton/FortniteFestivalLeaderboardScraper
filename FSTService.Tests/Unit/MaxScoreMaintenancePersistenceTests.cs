@@ -222,6 +222,70 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public async Task Observed_score_validation_handles_the_largest_int_cutoff_without_overflow()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var template = CreateManifest();
+        var manifest = (template with
+        {
+            Songs = template.Songs
+                .Select(song => song with
+                {
+                    StagedPath = song.StagedPath with
+                    {
+                        Maxima = song.StagedPath.Maxima with
+                        {
+                            Lead = RankingsCalculator
+                                .MaximumScoreWithRepresentableRankingCutoff,
+                        },
+                    },
+                })
+                .ToArray(),
+        }).ValidateAndNormalize();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: int.MaxValue);
+
+        await using (var cutoffCommand = dataSource.CreateCommand(
+                         """
+                         SELECT FLOOR(
+                             @maximum::NUMERIC * 1.05)::INTEGER
+                         """))
+        {
+            cutoffCommand.Parameters.AddWithValue(
+                "maximum",
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff);
+            Assert.Equal(
+                int.MaxValue,
+                (int)(await cutoffCommand.ExecuteScalarAsync())!);
+        }
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        var check = Assert.Single(
+            await MaxScoreMaintenanceService
+                .LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+
+        Assert.Equal(
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff,
+            check.NewMaximum);
+        Assert.Equal(int.MaxValue, check.ValidCutoff);
+        Assert.Equal(int.MaxValue, check.HighestObservedScore);
+        Assert.True(check.Passed);
+        check.ValidateContract();
+    }
+
+    [Fact]
     public async Task Observed_score_validation_fails_closed_without_authoritative_source()
     {
         using var dataSource =

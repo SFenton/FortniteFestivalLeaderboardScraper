@@ -36,12 +36,41 @@ public sealed class RankingsCalculator
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
     internal const double PopulationMedian = 0.5;
 
+    private const int RankingValidityCutoffNumerator = 21;
+    private const int RankingValidityCutoffDenominator = 20;
+
     /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
-    private const double BaseThresholdMultiplier = 1.05;
+    private const double BaseThresholdMultiplier =
+        (double)RankingValidityCutoffNumerator
+        / RankingValidityCutoffDenominator;
+
+    /// <summary>
+    /// Largest maximum whose exact <c>floor(maximum × 1.05)</c> cutoff fits
+    /// both <see cref="int"/> and PostgreSQL <c>INTEGER</c>.
+    /// </summary>
+    internal const int MaximumScoreWithRepresentableRankingCutoff =
+        (int)((((long)int.MaxValue + 1)
+               * RankingValidityCutoffDenominator - 1)
+              / RankingValidityCutoffNumerator);
+
     private const double RankingRateTolerance = 1e-9;
 
     internal static int ComputeMaxScoreThreshold(int maxScore)
-        => (int)(maxScore * BaseThresholdMultiplier);
+    {
+        if (maxScore is <= 0
+            or > MaximumScoreWithRepresentableRankingCutoff)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxScore),
+                maxScore,
+                $"Maximum score must be between 1 and {MaximumScoreWithRepresentableRankingCutoff} so its 1.05 ranking cutoff fits PostgreSQL INTEGER.");
+        }
+
+        var scaled = checked(
+            (long)maxScore * RankingValidityCutoffNumerator);
+        return checked(
+            (int)(scaled / RankingValidityCutoffDenominator));
+    }
 
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
