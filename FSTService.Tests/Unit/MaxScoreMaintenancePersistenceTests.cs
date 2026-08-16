@@ -183,8 +183,14 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         Assert.True(classified[2].BlocksMaintenance);
     }
 
-    [Fact]
-    public async Task Observed_score_validation_rejects_overlay_only_high_score()
+    [Theory]
+    [InlineData(52_809, true)]
+    [InlineData(54_151, true)]
+    [InlineData(54_152, false)]
+    [InlineData(60_000, false)]
+    public async Task Observed_score_validation_uses_resolved_ranking_cutoff(
+        int overlayScore,
+        bool expectedPassed)
     {
         using var dataSource =
             SharedPostgresContainer.CreateDatabase();
@@ -192,7 +198,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         SeedPublishedSoloCurrentState(
             dataSource,
             manifest,
-            overlayScore: 60_000);
+            overlayScore);
 
         await using var connection =
             await dataSource.OpenConnectionAsync();
@@ -207,10 +213,122 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     CancellationToken.None);
 
         var check = Assert.Single(checks);
-        Assert.Equal(60_000, check.HighestObservedScore);
+        Assert.Equal(overlayScore, check.HighestObservedScore);
         Assert.Equal(51_573, check.NewMaximum);
+        Assert.Equal(54_151, check.ValidCutoff);
         Assert.True(check.SourceMapped);
+        Assert.Equal(expectedPassed, check.Passed);
+        check.ValidateContract();
+    }
+
+    [Fact]
+    public async Task Observed_score_validation_handles_the_largest_int_cutoff_without_overflow()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var template = CreateManifest();
+        var manifest = (template with
+        {
+            Songs = template.Songs
+                .Select(song => song with
+                {
+                    StagedPath = song.StagedPath with
+                    {
+                        Maxima = song.StagedPath.Maxima with
+                        {
+                            Lead = RankingsCalculator
+                                .MaximumScoreWithRepresentableRankingCutoff,
+                        },
+                    },
+                })
+                .ToArray(),
+        }).ValidateAndNormalize();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: int.MaxValue);
+
+        await using (var cutoffCommand = dataSource.CreateCommand(
+                         """
+                         SELECT FLOOR(
+                             @maximum::NUMERIC * 1.05)::INTEGER
+                         """))
+        {
+            cutoffCommand.Parameters.AddWithValue(
+                "maximum",
+                RankingsCalculator
+                    .MaximumScoreWithRepresentableRankingCutoff);
+            Assert.Equal(
+                int.MaxValue,
+                (int)(await cutoffCommand.ExecuteScalarAsync())!);
+        }
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        var check = Assert.Single(
+            await MaxScoreMaintenanceService
+                .LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+
+        Assert.Equal(
+            RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff,
+            check.NewMaximum);
+        Assert.Equal(int.MaxValue, check.ValidCutoff);
+        Assert.Equal(int.MaxValue, check.HighestObservedScore);
+        Assert.True(check.Passed);
+        check.ValidateContract();
+    }
+
+    [Fact]
+    public async Task Observed_score_validation_fails_closed_without_authoritative_source()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        await using (var removeSource =
+                     dataSource.CreateCommand(
+                         """
+                         DELETE FROM leaderboard_published_scope_source
+                         WHERE published_scrape_id = @scrapeId
+                           AND song_id = 'song-a'
+                           AND instrument = 'Solo_Guitar'
+                         """))
+        {
+            removeSource.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            Assert.Equal(
+                1,
+                await removeSource.ExecuteNonQueryAsync());
+        }
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        var check = Assert.Single(
+            await MaxScoreMaintenanceService
+                .LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+
+        Assert.False(check.SourceMapped);
+        Assert.Null(check.HighestObservedScore);
+        Assert.Equal(54_151, check.ValidCutoff);
         Assert.False(check.Passed);
+        check.ValidateContract();
     }
 
     [Fact]
@@ -562,6 +680,10 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 ["other-song"] = new SongMaxScores
                 {
                     MaxLeadScore = 50_000,
+                    MaxBassScore = checked(
+                        RankingsCalculator
+                            .MaximumScoreWithRepresentableRankingCutoff
+                        + 1),
                 },
             };
         var originalId = InsertHistory(

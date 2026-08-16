@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: c7398340
+last_verified_commit: 739954f8
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -143,6 +144,25 @@ validation, and ranking/player-stat inputs share the published solo source
 resolver: the current publication's selected snapshot or empty source plus
 supplemental overlay, with overlay precedence per account. They do not trust
 `current_leaderboard_entries`, which can lag overlay-only writes.
+For each changed maximum, maintenance records the CHOpt denominator and the
+exact ranking validity cutoff,
+`RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)` or
+`floor(newMaximum × 21 / 20)`. The shared
+`MaximumScoreWithRepresentableRankingCutoff` is `2,045,222,521`, derived as
+`(((int.MaxValue + 1) × 20) - 1) / 21`; the next maximum would require cutoff
+`2,147,483,648`. Target complete maxima, partial constraints, actual
+current/staged paths, manifest paths, and report checks reject that value
+before mutation. General ranking threshold computation remains compatible
+with unrelated frozen-catalog maxima by using exact `long` arithmetic and
+saturating the result to `int.MaxValue`; no PostgreSQL `INTEGER` score can
+exceed the unsaturated cutoff in that case. Score-history selectors therefore
+receive only representable `INTEGER` maximum/cutoff arrays without turning an
+unrelated catalog value into target admission. A mapped target score may
+exceed the denominator but not the cutoff. Plan report/digest contract v5
+binds the cutoff and highest observed score. Apply and every resumable
+continuation reload those rows and reconstruct the approved digest before
+mutation; a missing mapping, a score above the cutoff, or any evidence drift
+fails closed.
 Maintenance population is resolved from the same complete source map,
 combining each source's reported population with its resolved overlay row
 count. It is snapshotted once under the exclusive fence and never falls back

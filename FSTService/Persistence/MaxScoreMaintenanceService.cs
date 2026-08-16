@@ -38,6 +38,12 @@ public sealed class MaxScoreMaintenanceService
     internal Action<string, int>?
         EvidenceCommandTimeoutTestHook
     { get; set; }
+    internal Func<
+        string,
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>,
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>>?
+        ObservedScoreChecksTestHook
+    { get; set; }
 
     public MaxScoreMaintenanceService(
         PathGenerationCoordinator pathGeneration,
@@ -649,6 +655,8 @@ public sealed class MaxScoreMaintenanceService
                     throw new InvalidOperationException(
                         "Max-score maintenance run disappeared after freeze establishment.");
                 }
+                ValidateObservedScoreEvidence(
+                    readSnapshot.ObservedScoreChecks);
                 if (readSnapshot.PopulationEvidence
                         != run.PopulationEvidence
                     || readSnapshot.ScoreHistoryEvidence
@@ -662,6 +670,12 @@ public sealed class MaxScoreMaintenanceService
                     throw new InvalidOperationException(
                         "Publication-bound population or consumed score-history evidence differs from the persisted plan.");
                 }
+                ValidateRecomputedPlanEvidence(
+                    manifest,
+                    manifestDigest,
+                    publishedContext,
+                    run,
+                    readSnapshot);
 
                 if (resumingExistingRun)
                 {
@@ -1177,11 +1191,13 @@ public sealed class MaxScoreMaintenanceService
             "observed-score-evidence",
             stageStarted);
         var observedScoreChecks =
-            await LoadObservedScoreChecksAsync(
-                manifest,
-                connection,
-                transaction,
-                ct);
+            ApplyObservedScoreChecksTestHook(
+                "plan",
+                await LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    ct));
         var observedScoresClear =
             observedScoreChecks.All(check => check.Passed);
         BeginPlanEvidenceStage(
@@ -1297,15 +1313,13 @@ public sealed class MaxScoreMaintenanceService
                     "observed-scores",
                     observedScoresClear,
                     observedScoresClear
-                        ? $"{observedScoreChecks.Count} changed song/instrument maxima are at or above every observed score"
+                        ? $"{observedScoreChecks.Count} changed song/instrument maxima have mapped authoritative sources and no observed score above the ranking validity cutoff"
                         : string.Join(
                             "; ",
                             observedScoreChecks
                                 .Where(check => !check.Passed)
-                                .Select(check =>
-                                    check.SourceMapped
-                                        ? $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore}, newMaximum={check.NewMaximum}"
-                                        : $"{check.SongId}/{check.Instrument}: authoritative published source is missing"))),
+                                .Select(
+                                    FormatObservedScoreFailure))),
                 new(
                     "notifications",
                     routineCandidatesClear,
@@ -3205,16 +3219,12 @@ public sealed class MaxScoreMaintenanceService
             var highestObservedScore = reader.IsDBNull(4)
                 ? (int?)null
                 : reader.GetInt32(4);
-            checks.Add(new MaxScoreMaintenanceObservedScoreCheck(
+            checks.Add(MaxScoreMaintenanceObservedScoreCheck.Create(
                 reader.GetString(0),
                 reader.GetString(1),
                 newMaximum,
                 sourceMapped,
-                highestObservedScore,
-                sourceMapped
-                && IsObservedScoreCompatible(
-                    newMaximum,
-                    highestObservedScore)));
+                highestObservedScore));
         }
         if (checks.Count != changedPairs.Length)
         {
@@ -3227,10 +3237,19 @@ public sealed class MaxScoreMaintenanceService
 
     internal static bool IsObservedScoreCompatible(
         int newMaximum,
+        bool sourceMapped,
         int? highestObservedScore)
-        => newMaximum > 0
-           && (highestObservedScore is null
-               || highestObservedScore <= newMaximum);
+        => MaxScoreMaintenanceObservedScoreCheck
+            .IsCompatible(
+                newMaximum,
+                sourceMapped,
+                highestObservedScore);
+
+    private static string FormatObservedScoreFailure(
+        MaxScoreMaintenanceObservedScoreCheck check)
+        => check.SourceMapped
+            ? $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore?.ToString() ?? "none"}, newMaximum={check.NewMaximum}, validCutoff={check.ValidCutoff}"
+            : $"{check.SongId}/{check.Instrument}: authoritative published source is missing, newMaximum={check.NewMaximum}, validCutoff={check.ValidCutoff}";
 
     internal static async Task<MaxScoreMaintenanceScoreHistoryEvidence>
         ComputeScoreHistoryEvidenceAsync(
@@ -3775,6 +3794,14 @@ public sealed class MaxScoreMaintenanceService
                         manifest,
                         publishedCatalogSongs,
                         publishedScopes);
+                var observedScoreChecks =
+                    ApplyObservedScoreChecksTestHook(
+                        "apply-resume",
+                        await LoadObservedScoreChecksAsync(
+                            manifest,
+                            connection,
+                            transaction,
+                            token));
                 var scoreHistory =
                     await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                         .ComputeAsync(
@@ -3792,6 +3819,7 @@ public sealed class MaxScoreMaintenanceService
                     population.Population,
                     population.Evidence,
                     scoreHistory.Evidence,
+                    observedScoreChecks,
                     publishedScopes,
                     scoreHistory
                         .AffectedPlayerStatsAccounts,
@@ -3803,6 +3831,14 @@ public sealed class MaxScoreMaintenanceService
             IsolationLevel.RepeatableRead,
             ct);
     }
+
+    private IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
+        ApplyObservedScoreChecksTestHook(
+            string stage,
+            IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
+                checks)
+        => ObservedScoreChecksTestHook?.Invoke(stage, checks)
+           ?? checks;
 
     private static void ValidatePublishedScopeOwnership(
         IReadOnlyCollection<Song> publishedCatalogSongs,
@@ -3864,7 +3900,9 @@ public sealed class MaxScoreMaintenanceService
         var canonical = JsonSerializer.Serialize(
             new
             {
-                contractVersion = 4,
+                contractVersion =
+                    MaxScoreMaintenancePlanReport
+                        .CurrentPlanDigestContractVersion,
                 manifestDigest,
                 publishedScrapeId =
                     context.Pointers.PublishedScrapeId,
@@ -3887,6 +3925,52 @@ public sealed class MaxScoreMaintenanceService
             MaxScoreMaintenanceJson.Canonical);
         return Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static void ValidateRecomputedPlanEvidence(
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        PublishedContext context,
+        MaxScoreMaintenanceRunState run,
+        MaxScoreMaintenanceReadSnapshot readSnapshot)
+    {
+        var recomputedDigest = ComputePlanDigest(
+            manifestDigest,
+            context,
+            new MaxScoreMaintenanceNotificationInspection(
+                run.PublishedScoreSourceFingerprint,
+                run.NotificationStateFingerprint,
+                []),
+            run.RankHistoryFingerprint,
+            readSnapshot.PopulationEvidence,
+            readSnapshot.ScoreHistoryEvidence,
+            manifest.Scope.ExpectedChangedInstruments.ToArray(),
+            CreateArtifactEvidence(manifest),
+            readSnapshot.ObservedScoreChecks);
+        if (!string.Equals(
+                recomputedDigest,
+                run.PlanDigest,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Recomputed max-score plan evidence digest {recomputedDigest} differs from the approved digest {run.PlanDigest}.");
+        }
+    }
+
+    private static void ValidateObservedScoreEvidence(
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
+            observedScoreChecks)
+    {
+        var failedObservedScore =
+            observedScoreChecks
+                .FirstOrDefault(check => !check.Passed);
+        if (failedObservedScore is not null)
+        {
+            throw new InvalidOperationException(
+                "Observed-score evidence no longer satisfies the approved ranking validity cutoff: "
+                + FormatObservedScoreFailure(
+                    failedObservedScore));
+        }
     }
 
     private async Task<MaxScoreMaintenanceRunState?> LoadRunAsync(
@@ -4924,6 +5008,8 @@ public sealed class MaxScoreMaintenanceService
             PopulationEvidence,
         MaxScoreMaintenanceScoreHistoryEvidence
             ScoreHistoryEvidence,
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
+            ObservedScoreChecks,
         IReadOnlyList<(
             string SongId,
             string Instrument)> PublishedScopes,

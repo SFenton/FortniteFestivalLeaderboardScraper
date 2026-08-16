@@ -36,12 +36,40 @@ public sealed class RankingsCalculator
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
     internal const double PopulationMedian = 0.5;
 
+    private const int RankingValidityCutoffNumerator = 21;
+    private const int RankingValidityCutoffDenominator = 20;
+
     /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
-    private const double BaseThresholdMultiplier = 1.05;
+    private const double BaseThresholdMultiplier =
+        (double)RankingValidityCutoffNumerator
+        / RankingValidityCutoffDenominator;
+
+    /// <summary>
+    /// Largest maximum whose exact <c>floor(maximum × 1.05)</c> cutoff fits
+    /// both <see cref="int"/> and PostgreSQL <c>INTEGER</c>.
+    /// </summary>
+    internal const int MaximumScoreWithRepresentableRankingCutoff =
+        (int)((((long)int.MaxValue + 1)
+               * RankingValidityCutoffDenominator - 1)
+              / RankingValidityCutoffNumerator);
+
     private const double RankingRateTolerance = 1e-9;
 
+    /// <summary>
+    /// Computes the exact ranking cutoff and saturates it to the score storage
+    /// range. Maintenance target admission applies the stricter bound above.
+    /// </summary>
     internal static int ComputeMaxScoreThreshold(int maxScore)
-        => (int)(maxScore * BaseThresholdMultiplier);
+    {
+        var scaled =
+            (long)maxScore * RankingValidityCutoffNumerator;
+        var threshold =
+            scaled / RankingValidityCutoffDenominator;
+        return (int)Math.Clamp(
+            threshold,
+            int.MinValue,
+            int.MaxValue);
+    }
 
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;

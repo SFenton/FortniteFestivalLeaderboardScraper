@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: fca22bbb
+last_verified_commit: 739954f8
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -104,13 +104,21 @@ This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
 replacement, unrelated-account preservation, frozen-scope cache filtering,
-strict apply/resume report version 3 compatibility/rejection, the max-score
-timeout default/environment binding/bounds, stage-specific timeout reporting,
-and identical configured evidence timeouts across plan, apply revalidation,
-and resume. Final-completion coverage also verifies that PostgreSQL uses the
-configured timeout for immutable cache validation, retains the `5s` lock
-timeout and serializable transaction, restores the `120s` mutation timeout,
-and leaves validation failures frozen.
+strict plan report/digest version 5 cutoff serialization/rejection, strict
+apply/resume report version 3 compatibility/rejection, null/exact/boundary
+observed-score cases, integer-floor rounding, live-shaped promotion evidence,
+the `2,045,222,521` pass/`2,045,222,522` reject boundary for all eight maximum
+fields, discovery constraints, canonical promotion parsing, manifest
+admission, strict observed-report validation, an exact `int.MaxValue` cutoff
+without .NET or PostgreSQL overflow, a valid target plan with an unrelated
+over-limit catalog maximum saturated to the representable score domain, and
+plan/apply/resume digest consistency. It also covers the max-score timeout
+default/environment binding/bounds, stage-specific timeout reporting, and
+identical configured evidence timeouts across plan, apply revalidation, and
+resume. Final-completion coverage verifies that PostgreSQL uses the configured
+timeout for immutable cache validation, retains the `5s` lock timeout and
+serializable transaction, restores the `120s` mutation timeout, and leaves
+validation failures frozen.
 
 The focused score-history matrix compares the optimized selector/branch
 aggregates with the exact pre-optimization SQL on a deterministic randomized

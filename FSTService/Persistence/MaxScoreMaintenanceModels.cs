@@ -86,15 +86,31 @@ public sealed record MaxScoreMaintenanceMaxima(
     {
         foreach (var instrument in MaxScoreMaintenanceManifest.AllInstruments)
         {
-            if (GetByInstrument(instrument) is <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    parameterName,
-                    $"{parameterName}.{instrument} must be null or positive.");
-            }
+            ValidateMaximum(
+                GetByInstrument(instrument),
+                parameterName,
+                $"{parameterName}.{instrument}");
         }
 
         return this;
+    }
+
+    internal static void ValidateMaximum(
+        int? maximum,
+        string parameterName,
+        string fieldName)
+    {
+        if (!maximum.HasValue)
+            return;
+        if (maximum.Value is <= 0
+            or > RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff)
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                maximum.Value,
+                $"{fieldName} must be null or between 1 and {RankingsCalculator.MaximumScoreWithRepresentableRankingCutoff} so its 1.05 ranking cutoff fits PostgreSQL INTEGER.");
+        }
     }
 }
 
@@ -118,12 +134,10 @@ public sealed record MaxScoreMaintenanceMaximaConstraint(
                 $"Unsupported maximum constraint instrument {instrument}.",
                 nameof(Instrument));
         }
-        if (ExpectedValue is <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(ExpectedValue),
-                "A constrained maximum must be null or positive.");
-        }
+        MaxScoreMaintenanceMaxima.ValidateMaximum(
+            ExpectedValue,
+            nameof(ExpectedValue),
+            "A constrained maximum");
 
         return this with { Instrument = instrument };
     }
@@ -211,6 +225,8 @@ public sealed record MaxScoreMaintenanceStageRequestSong(
     internal void ValidateOldMaxima(
         MaxScoreMaintenanceMaxima actual)
     {
+        ArgumentNullException.ThrowIfNull(actual);
+        actual.Validate("actualOldMaxima");
         if (ExpectedOldMaxima is not null
             && ExpectedOldMaxima != actual)
         {
@@ -227,6 +243,8 @@ public sealed record MaxScoreMaintenanceStageRequestSong(
     internal void ValidateNewMaxima(
         MaxScoreMaintenanceMaxima actual)
     {
+        ArgumentNullException.ThrowIfNull(actual);
+        actual.Validate("actualNewMaxima");
         if (ExpectedNewMaxima is not null
             && ExpectedNewMaxima != actual)
         {
@@ -1213,9 +1231,77 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
     string SongId,
     string Instrument,
     int NewMaximum,
+    int ValidCutoff,
     bool SourceMapped,
     int? HighestObservedScore,
-    bool Passed);
+    bool Passed)
+{
+    internal static MaxScoreMaintenanceObservedScoreCheck Create(
+        string songId,
+        string instrument,
+        int newMaximum,
+        bool sourceMapped,
+        int? highestObservedScore)
+    {
+        MaxScoreMaintenanceMaxima.ValidateMaximum(
+            newMaximum,
+            nameof(newMaximum),
+            "Observed-score maximum");
+        return new MaxScoreMaintenanceObservedScoreCheck(
+            songId,
+            instrument,
+            newMaximum,
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                newMaximum),
+            sourceMapped,
+            highestObservedScore,
+            IsCompatible(
+                newMaximum,
+                sourceMapped,
+                highestObservedScore));
+    }
+
+    internal static bool IsCompatible(
+        int newMaximum,
+        bool sourceMapped,
+        int? highestObservedScore)
+        => sourceMapped
+           && newMaximum is > 0
+               and <= RankingsCalculator
+                   .MaximumScoreWithRepresentableRankingCutoff
+           && (highestObservedScore is null
+               || highestObservedScore
+                  <= RankingsCalculator
+                      .ComputeMaxScoreThreshold(
+                          newMaximum));
+
+    internal MaxScoreMaintenanceObservedScoreCheck ValidateContract()
+    {
+        if (NewMaximum is <= 0
+            or > RankingsCalculator
+                .MaximumScoreWithRepresentableRankingCutoff)
+        {
+            throw new ArgumentException(
+                "Observed-score evidence must use a maximum whose ranking validity cutoff fits PostgreSQL INTEGER.");
+        }
+
+        var expectedCutoff =
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                NewMaximum);
+        if (ValidCutoff != expectedCutoff
+            || Passed
+               != IsCompatible(
+                   NewMaximum,
+                   SourceMapped,
+                   HighestObservedScore))
+        {
+            throw new ArgumentException(
+                "Observed-score evidence must use the ranking validity cutoff and a consistent pass result.");
+        }
+
+        return this;
+    }
+}
 
 public sealed record MaxScoreMaintenancePopulationEvidence(
     int ScopeCount,
@@ -1264,7 +1350,27 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
     IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 4;
+    public const int CurrentReportVersion = 5;
+    internal const int CurrentPlanDigestContractVersion = 5;
+
+    internal MaxScoreMaintenancePlanReport ValidateContract()
+    {
+        if (ReportVersion != CurrentReportVersion)
+        {
+            throw new ArgumentException(
+                $"reportVersion must be {CurrentReportVersion}.",
+                nameof(ReportVersion));
+        }
+        if (ObservedScoreChecks is null)
+        {
+            throw new ArgumentNullException(
+                nameof(ObservedScoreChecks));
+        }
+        foreach (var check in ObservedScoreChecks)
+            check.ValidateContract();
+
+        return this;
+    }
 }
 
 public enum MaxScoreMaintenancePhase

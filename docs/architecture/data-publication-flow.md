@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: fca22bbb
+last_verified_commit: 739954f8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -138,11 +139,20 @@ derived rows while retaining the same published scrape/publication ID.
 3. Plan binds the exact current publication/catalog/path revisions, validates
    current rollback and staged artifact trees/hashes plus observed-score
    bounds through the authoritative published snapshot/empty source plus
-   supplemental overlay, and fingerprints published score sources,
-   notification state, rank history, publication-bound population, and the
-   complete score-history input consumed by registered caches, affected player
-   stats, and all-song rankings for rebuilt instruments. The bounded evidence
-   includes counts/ranges/hashes and never falls back to mutable population.
+   supplemental overlay. Each mapped score may exceed the CHOpt denominator
+   but not the exact ranking threshold
+   `floor(newMaximum × 21 / 20)`. All target request, actual current/staged,
+   manifest, and report maxima are bounded at `2,045,222,521`, keeping their
+   exact `1.05` cutoffs representable as PostgreSQL `INTEGER`. Unrelated
+   frozen-catalog maxima above that admission bound do not invalidate the
+   target plan; general threshold computation saturates them at `int.MaxValue`,
+   which is equivalent for the stored `INTEGER` score domain and keeps SQL
+   parameters representable. Plan report/digest contract v5 records each
+   target cutoff and fingerprints published score sources, notification state,
+   rank history, publication-bound population, and the complete score-history
+   input consumed by registered caches, affected player stats, and all-song
+   rankings for rebuilt instruments. The bounded evidence includes
+   counts/ranges/hashes and never falls back to mutable population.
 4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,
@@ -151,7 +161,9 @@ derived rows while retaining the same published scrape/publication ID.
    and checkpoint through bounded transactions on that same session. Each
    dependent transaction takes source table locks in fixed order, including
    `score_history` after the solo entry tables, and verifies the lease again
-   immediately before commit.
+   immediately before commit. After freeze and on every resume, it reloads the
+   observed-score rows and reconstructs the approved v5 plan digest before any
+   mutation continues.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
