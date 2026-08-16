@@ -22,7 +22,8 @@ public sealed class WorkerStatusPublisherTests
                 Arg.Any<WorkerOperationInfo?>(),
                 Arg.Any<string?>(),
                 Arg.Any<string?>(),
-                Arg.Any<DateTime?>()))
+                Arg.Any<DateTime?>(),
+                Arg.Any<string?>()))
             .Do(call => startedOperation = call.ArgAt<WorkerOperationInfo>(1));
         publisher.BeginOperation(
             "scrape.post_process",
@@ -77,7 +78,8 @@ public sealed class WorkerStatusPublisherTests
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
             Arg.Any<string?>(),
-            Arg.Any<DateTime?>());
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
     }
 
     [Fact]
@@ -134,7 +136,8 @@ public sealed class WorkerStatusPublisherTests
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
             Arg.Any<string?>(),
-            Arg.Any<DateTime?>());
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
     }
 
     [Fact]
@@ -179,7 +182,8 @@ public sealed class WorkerStatusPublisherTests
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
             Arg.Any<string?>(),
-            Arg.Any<DateTime?>());
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
     }
 
     [Fact]
@@ -218,6 +222,7 @@ public sealed class WorkerStatusPublisherTests
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
             Arg.Any<string?>(),
-            Arg.Any<DateTime?>());
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
     }
 }

@@ -2194,11 +2194,19 @@ public class GlobalLeaderboardScraper
 
                 var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
                 var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
+                long completedDeepJobs = 0;
+                _progress.SetDeepScrapeProgress(0, deepJobs.Count);
 
                 var deepResults = await coordinator.RunAsync(
                     deepJobs, limiter, accessToken, accountId,
                     seedBatch: overThresholdExtraPages,
-                    onJobComplete: null,
+                    onJobComplete: _ =>
+                    {
+                        _progress.SetDeepScrapeProgress(
+                            Interlocked.Increment(ref completedDeepJobs),
+                            deepJobs.Count);
+                        return ValueTask.CompletedTask;
+                    },
                     ct,
                     accessTokenProvider);
 

@@ -80,6 +80,12 @@ remains consumable during rolling deployment. Phase descriptors include the
 optional mirrored `reserved` boolean; consumers treat only `reserved === true`
 as retired so older payloads remain active-compatible.
 
+The mirrored response also includes optional
+`ServiceInfoSubphaseProgress` and `phasePlan.subphaseCatalogVersion`.
+Subphase schema version 1 distinguishes exact, indeterminate, and
+not-applicable progress and carries reset epoch plus monotonic sequence fields.
+All additive members remain optional for mixed-version service/web rollout.
+
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.
 

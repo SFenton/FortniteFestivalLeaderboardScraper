@@ -1259,6 +1259,71 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Worker_status_rejects_older_instance_heartbeat_and_activity()
+    {
+        var now = DateTime.UtcNow;
+        var oldStartedAt = now.AddMinutes(-2);
+        var newStartedAt = now.AddMinutes(-1);
+        var oldOperation = new WorkerOperationInfo
+        {
+            OperationKey = "scrape.old",
+            OperationLabel = "Old operation",
+            Status = "running",
+            StartedAtUtc = oldStartedAt,
+            UpdatedAtUtc = now,
+        };
+        var newOperation = new WorkerOperationInfo
+        {
+            OperationKey = "scrape.new",
+            OperationLabel = "New operation",
+            Status = "running",
+            StartedAtUtc = newStartedAt,
+            UpdatedAtUtc = now.AddSeconds(1),
+        };
+
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "old-instance",
+            oldStartedAt,
+            now,
+            currentOperation: oldOperation);
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "new-instance",
+            newStartedAt,
+            now.AddSeconds(1),
+            currentOperation: newOperation);
+
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "offline",
+            "scraper",
+            "old-instance",
+            oldStartedAt,
+            now.AddSeconds(2),
+            currentOperation: oldOperation);
+        Db.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            oldOperation,
+            status: "offline",
+            updatedAtUtc: now.AddSeconds(3),
+            instanceId: "old-instance");
+
+        var status = Db.GetWorkerStatus(
+            WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.NotNull(status);
+        Assert.Equal("new-instance", status!.InstanceId);
+        Assert.Equal("running", status.Status);
+        Assert.Equal(
+            "scrape.new",
+            status.CurrentOperation?.OperationKey);
+    }
+
+    [Fact]
     public void PublishScrapeRun_requires_completed_scrape()
     {
         var id = Db.StartScrapeRun();

@@ -204,14 +204,31 @@ Aggregate player scopes intentionally use different formulas:
 `GET /api/service-info` remains an `OperationalLive` endpoint and retains every
 version-1 field. Contract version 2 adds:
 
-- `phasePlan.version` and ordered descriptors (`id`, label, legacy phase,
-  ordinal, default units kind, additive `reserved`);
+- `phasePlan.version`, `phasePlan.subphaseCatalogVersion`, and ordered
+  descriptors (`id`, label, legacy phase, ordinal, default units kind,
+  additive `reserved`);
 - stable operation, phase, and subphase IDs plus attempt/ordinal/plan version;
 - units kind/completed/total and `unitsTotalFinal`;
 - exact `phasePercent` only with a final denominator;
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+`currentUpdate.subphaseProgress` is an optional additive object with
+`schemaVersion=1`. It carries `id`, reset `epoch`, monotonic `sequence`,
+`kind`, optional units/completed/total/percent, the denominator-final flag,
+and optional subphase start/last-progress timestamps. `kind` is:
+
+- `exact` only when a final, positive denominator and valid numerator exist;
+- `indeterminate` when work is active but no honest exact fraction exists;
+- `not_applicable` for transition/event states where a progress bar has no
+  useful meaning.
+
+Phase and subphase progress are separate streams. A named subphase must not
+reinterpret or inherit the parent phase percentage. The object may be absent
+during a rolling upgrade; consumers must retain the existing version-2 fields
+and treat a named legacy subphase as indeterminate rather than fabricating an
+exact value.
 
 Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
 historical compatibility. `post.checkpoint` and
@@ -229,11 +246,10 @@ Initial overall progress is normally `indeterminate`. Existing `phase`,
 remain available for version-1 browser fallback.
 
 The Settings client consumes this additive payload through the existing shared
-service-info React Query request. It uses stable IDs for translated labels,
-renders exact phase percentage only when `unitsTotalFinal=true`, and shows
-server-owned overall/ETA evidence only when present and trustworthy. It does
-not derive an overall percentage from browser weights or promote legacy
-`progressPercent` into an exact value.
+service-info React Query request. It uses stable IDs for translated labels and
+renders a bare exact, indeterminate, or absent subphase bar. It does not display
+numeric progress, derive browser-weighted overall progress, promote legacy
+`progressPercent`, or use parent `phasePercent` for a named subphase.
 
 Live web validation of commit `0af25b3f` accepted this browser consumption
 contract while publication `1296` stayed idle and unfrozen. Across
@@ -247,6 +263,11 @@ diagnostics. The measured evidence is under
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
 backward-compatible operation JSON for rolling upgrades.
+
+When parallel phase attempts are active, service-info selects the lowest phase
+ordinal deterministically, then the newest attempt for that phase. Worker JSON
+activity and heartbeat updates are fenced by worker instance/start time so an
+older process cannot replace a newer worker's fallback summary.
 
 Matched candidate scrape `1300` accepted the reserved-descriptor projection:
 the v2 plan remained 28 ordered descriptors, exactly

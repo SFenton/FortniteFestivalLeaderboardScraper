@@ -376,6 +376,11 @@ public sealed class ScrapeProgressTracker
     private long _bandPagesTotal;
     private int _bandSongsDiscovered;
     private long _bandRetries;
+    private long _bandFetchEpoch;
+
+    // Coordinated deep-scrape progress
+    private long _deepJobsCompleted;
+    private long _deepJobsTotal;
 
     // Solo vs band completion
     private volatile bool _soloFetchComplete;
@@ -463,6 +468,11 @@ public sealed class ScrapeProgressTracker
     /// <summary>Update band fetch progress counters.</summary>
     public void SetBandFetchProgress(string bandPhase, long pagesCompleted, long pagesTotal, int songsDiscovered, long retries)
     {
+        if (!string.Equals(_bandPhase, bandPhase, StringComparison.Ordinal)
+            && !string.Equals(bandPhase, "complete", StringComparison.Ordinal))
+        {
+            Interlocked.Increment(ref _bandFetchEpoch);
+        }
         _bandPhase = bandPhase;
         Interlocked.Exchange(ref _bandPagesCompleted, pagesCompleted);
         Interlocked.Exchange(ref _bandPagesTotal, pagesTotal);
@@ -476,6 +486,14 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Mark the band fetch as complete.</summary>
     public void SetBandFetchComplete() { _bandFetchComplete = true; Interlocked.Increment(ref _changeSequence); }
+
+    /// <summary>Update coordinated deep-scrape job progress.</summary>
+    public void SetDeepScrapeProgress(long completed, long total)
+    {
+        Interlocked.Exchange(ref _deepJobsCompleted, Math.Max(0, completed));
+        Interlocked.Exchange(ref _deepJobsTotal, Math.Max(0, total));
+        Interlocked.Increment(ref _changeSequence);
+    }
 
     /// <summary>Report progress for band rank-history maintenance, including background catch-up jobs.</summary>
     public void ReportBandRankHistoryProgress(
@@ -537,6 +555,9 @@ public sealed class ScrapeProgressTracker
         Interlocked.Exchange(ref _bandPagesTotal, 0);
         _bandSongsDiscovered = 0;
         Interlocked.Exchange(ref _bandRetries, 0);
+        Interlocked.Exchange(ref _bandFetchEpoch, 0);
+        Interlocked.Exchange(ref _deepJobsCompleted, 0);
+        Interlocked.Exchange(ref _deepJobsTotal, 0);
         _soloFetchComplete = false;
         _bandFetchComplete = false;
         _bandRankHistoryMode = null;
@@ -559,12 +580,19 @@ public sealed class ScrapeProgressTracker
         var flushInst = _flushingInstrument;
         var indexOp = _indexOperation;
         var bandPh = _bandPhase;
+        var deepJobsTotal = Interlocked.Read(ref _deepJobsTotal);
         var soloComplete = _soloFetchComplete;
         var bandComplete = _bandFetchComplete;
         var historyStatus = _bandRankHistoryStatus;
 
         // Only emit detail when there's something to report
-        if (flushInst is null && indexOp is null && bandPh is null && !soloComplete && !bandComplete && historyStatus is null)
+        if (flushInst is null
+            && indexOp is null
+            && bandPh is null
+            && deepJobsTotal == 0
+            && !soloComplete
+            && !bandComplete
+            && historyStatus is null)
             return null;
 
         return new SubOperationDetail
@@ -602,6 +630,13 @@ public sealed class ScrapeProgressTracker
             BandPagesTotal = bandPh is not null ? Interlocked.Read(ref _bandPagesTotal) : null,
             BandSongsDiscovered = bandPh is not null ? _bandSongsDiscovered : null,
             BandRetries = bandPh is not null ? Interlocked.Read(ref _bandRetries) : null,
+            BandFetchEpoch = bandPh is not null
+                ? Interlocked.Read(ref _bandFetchEpoch)
+                : null,
+            DeepJobsCompleted = deepJobsTotal > 0
+                ? Interlocked.Read(ref _deepJobsCompleted)
+                : null,
+            DeepJobsTotal = deepJobsTotal > 0 ? deepJobsTotal : null,
             SoloFetchComplete = soloComplete,
             BandFetchComplete = bandComplete,
             BandRankHistoryMode = historyStatus is not null ? _bandRankHistoryMode : null,
@@ -758,6 +793,13 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Report one work item completed.</summary>
     public void ReportPhaseItemComplete() { Interlocked.Increment(ref _phaseCompleted); Interlocked.Increment(ref _changeSequence); }
+    /// <summary>Report multiple work items completed.</summary>
+    public void ReportPhaseItemsComplete(int count)
+    {
+        if (count <= 0) return;
+        Interlocked.Add(ref _phaseCompleted, count);
+        Interlocked.Increment(ref _changeSequence);
+    }
 
     /// <summary>Report one account-level unit completed.</summary>
     public void ReportPhaseAccountComplete() { Interlocked.Increment(ref _phaseAccountsCompleted); Interlocked.Increment(ref _changeSequence); }
@@ -1429,6 +1471,11 @@ public sealed class SubOperationDetail
     public long? BandPagesTotal { get; init; }
     public int? BandSongsDiscovered { get; init; }
     public long? BandRetries { get; init; }
+    public long? BandFetchEpoch { get; init; }
+
+    // Coordinated deep scrape
+    public long? DeepJobsCompleted { get; init; }
+    public long? DeepJobsTotal { get; init; }
 
     // Solo vs band completion
     public bool SoloFetchComplete { get; init; }

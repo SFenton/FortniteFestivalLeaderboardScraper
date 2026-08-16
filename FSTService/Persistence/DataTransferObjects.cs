@@ -995,6 +995,23 @@ public sealed class WorkerOperationInfo
     public int? EtaSampleCount { get; init; }
     public DateTime? LastProgressAtUtc { get; init; }
     public DateTime? HeartbeatAtUtc { get; init; }
+    public SubphaseProgressInfo? SubphaseProgress { get; init; }
+}
+
+public sealed record SubphaseProgressInfo
+{
+    public int SchemaVersion { get; init; } = 1;
+    public string? Id { get; init; }
+    public int Epoch { get; init; }
+    public long Sequence { get; init; }
+    public string Kind { get; init; } = "indeterminate";
+    public string? UnitsKind { get; init; }
+    public long? UnitsCompleted { get; init; }
+    public long? UnitsTotal { get; init; }
+    public bool UnitsTotalFinal { get; init; }
+    public double? Percent { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? LastProgressAtUtc { get; init; }
 }
 
 public sealed record ScrapePhaseAttemptStart(
@@ -1022,7 +1039,17 @@ public sealed record ScrapePhaseAttemptStart(
     DateTime LastProgressAtUtc,
     DateTime HeartbeatAtUtc,
     string? BuildId,
-    string? ConfigId);
+    string? ConfigId,
+    int CurrentSubphaseEpoch = 0,
+    long SubphaseSequence = 0,
+    string SubphaseProgressKind = "indeterminate",
+    string? SubphaseUnitsKind = null,
+    long? SubphaseUnitsCompleted = null,
+    long? SubphaseUnitsTotal = null,
+    bool SubphaseUnitsTotalFinal = false,
+    double? SubphasePercent = null,
+    DateTime? SubphaseStartedAtUtc = null,
+    DateTime? SubphaseLastProgressAtUtc = null);
 
 public sealed record ScrapePhaseAttemptProgress(
     long ScrapeId,
@@ -1042,7 +1069,18 @@ public sealed record ScrapePhaseAttemptProgress(
     string? EtaConfidence,
     int? EtaSampleCount,
     DateTime LastProgressAtUtc,
-    DateTime HeartbeatAtUtc);
+    DateTime HeartbeatAtUtc,
+    string WorkerInstanceId = "",
+    int CurrentSubphaseEpoch = 0,
+    long SubphaseSequence = 0,
+    string SubphaseProgressKind = "indeterminate",
+    string? SubphaseUnitsKind = null,
+    long? SubphaseUnitsCompleted = null,
+    long? SubphaseUnitsTotal = null,
+    bool SubphaseUnitsTotalFinal = false,
+    double? SubphasePercent = null,
+    DateTime? SubphaseStartedAtUtc = null,
+    DateTime? SubphaseLastProgressAtUtc = null);
 
 public sealed record ScrapePhaseAttemptCompletion(
     long ScrapeId,
@@ -1084,6 +1122,16 @@ public sealed class ScrapePhaseAttemptInfo
     public double? EtaUpperSeconds { get; init; }
     public string? EtaConfidence { get; init; }
     public int? EtaSampleCount { get; init; }
+    public int CurrentSubphaseEpoch { get; init; }
+    public long SubphaseSequence { get; init; }
+    public string SubphaseProgressKind { get; init; } = "indeterminate";
+    public string? SubphaseUnitsKind { get; init; }
+    public long? SubphaseUnitsCompleted { get; init; }
+    public long? SubphaseUnitsTotal { get; init; }
+    public bool SubphaseUnitsTotalFinal { get; init; }
+    public double? SubphasePercent { get; init; }
+    public DateTime? SubphaseStartedAtUtc { get; init; }
+    public DateTime? SubphaseLastProgressAtUtc { get; init; }
     public DateTime StartedAtUtc { get; init; }
     public DateTime LastProgressAtUtc { get; init; }
     public DateTime HeartbeatAtUtc { get; init; }

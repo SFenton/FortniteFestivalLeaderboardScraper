@@ -159,6 +159,67 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void Deep_scrape_progress_exposes_completed_jobs_and_final_total()
+    {
+        _tracker.BeginPass(2, 2, 0);
+        _tracker.SetSubOperation("deep_scraping");
+
+        _tracker.SetDeepScrapeProgress(3, 7);
+
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.NotNull(detail);
+        Assert.Equal(3, detail!.DeepJobsCompleted);
+        Assert.Equal(7, detail.DeepJobsTotal);
+    }
+
+    [Fact]
+    public void Band_fetch_epoch_advances_only_between_bounded_stages()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.SetBandFetchProgress(
+            "page0_discovery",
+            0,
+            8,
+            0,
+            0);
+        var discoveryEpoch = _tracker.GetProgressResponse()
+            .Current?.Detail?.BandFetchEpoch;
+        Assert.NotNull(discoveryEpoch);
+        _tracker.SetBandFetchProgress(
+            "page0_discovery",
+            4,
+            8,
+            2,
+            0);
+        Assert.Equal(
+            discoveryEpoch,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.BandFetchEpoch);
+
+        _tracker.SetBandFetchProgress(
+            "fetching_pages",
+            8,
+            40,
+            2,
+            0);
+        var pageFetchEpoch = _tracker.GetProgressResponse()
+            .Current?.Detail?.BandFetchEpoch;
+        Assert.Equal(discoveryEpoch.Value + 1, pageFetchEpoch);
+
+        _tracker.SetBandFetchProgress(
+            "complete",
+            40,
+            40,
+            2,
+            0);
+        Assert.Equal(
+            pageFetchEpoch,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.BandFetchEpoch);
+    }
+
+    [Fact]
     public void ReportSongComplete_IncrementsSongCounter()
     {
         _tracker.BeginPass(2, 2, 0);
