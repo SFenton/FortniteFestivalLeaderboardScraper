@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -27,6 +27,7 @@ sources:
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/Replay/
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -295,6 +296,36 @@ timing persistence. `current_projection_refresh` dominated at `6,049,933 ms`
 `745,473 ms`. The current refresh considered `53,543` scopes, selected `8,020`,
 wrote `14,179,946` rows, and deleted `14,189,655`.
 
+Accepted scrape `1302` confirmed that current projection remains the dominant
+BandMaintenance cost: `6,495,632 ms` of `8,217,883 ms` (`79.043%`), with
+`53,790` scopes considered, `9,048` refreshed, `15,998,027` rows inserted, and
+`15,983,000` deleted.
+
+The current projection row query derives seven ordered member arrays through
+seven correlated `band_member_stats` aggregate subqueries with identical scope
+predicates. The unaccepted code candidate replaces only those aggregates with
+one `LEFT JOIN LATERAL` pass that produces the same seven arrays in
+`member_index` order. It does not change scope discovery, per-scope
+transactions, candidate deletion, generation publication, cleanup, ordering,
+or failure handling.
+
+`Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` controls the
+candidate and defaults to `false`. Normal and chunk-fallback refreshes receive
+the same option, and durable phase configuration identity includes it.
+Structured refresh logs record the selected query shape and successful scope
+transaction, command, round-trip, and logical aggregate-pass counts. Setting
+the switch back to `false` is the code-path rollback.
+
+Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
+global-state hashes for zero, all-unchanged, one-changed, mixed, and 64-scope/
+2,048-row fixtures, plus failure, retry, and cancellation cases. The large
+fixture keeps 64 transactions, 192 commands, and 320 scope round trips while
+reducing logical member-stat aggregate passes from `14,336` to `2,048`
+(`-85.714%`). Local elapsed reductions are diagnostic only; no production
+improvement is accepted. A matched full-scrape A/B remains blocked until the
+FST capacity guard again has at least one `60.4 GB` scrape window, preferably
+two (`120.8 GB`).
+
 ## Durable phase progress
 
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
@@ -336,7 +367,8 @@ total within 10%, then pass the `0.35` coefficient-of-variation gate. Emitted
 ranges are monotonic and carry model version, confidence, and sample count.
 The configuration fingerprint covers an allowlist of phase, network,
 persistence, publication, ranking, notification, and retention controls; it
-never stores credentials or resolved provider endpoints.
+also distinguishes the default-off batched member-stat candidate. It never
+stores credentials or resolved provider endpoints.
 
 Matched control scrape `1295` and accepted candidate `1296` validated the
 contract under identical `800/32/4` network enforcement. Candidate wall time
@@ -373,10 +405,12 @@ Protocol v1 invokes only the existing BandMaintenance current-projection
 refresh builder against a marker-owned isolated PostgreSQL database; every
 other post-scrape phase remains explicitly unsupported.
 
-Replay forces unchanged-scope skipping off, one band-type worker, synchronous
-commit, and cleanup off. Output/comparison manifests therefore declare
-`productionComparableTiming=false`; replay timing cannot support production
-phase-wall or unchanged-scope optimization claims.
+Replay defaults to the accepted deterministic overrides, while explicit
+option-parity profiles can run unchanged-scope discovery and the default-off
+batched member-stat query shape with production skip/commit/DOP/cleanup choices
+inside Tier-1 bounds. Output/comparison manifests bind the profile and still
+declare `productionComparableTiming=false`; isolated timing cannot support a
+production phase-wall claim.
 
 Future worker capture must remain a separately gated change with explicit FST
 drive capacity/retention ownership and must preserve PostgreSQL authority,

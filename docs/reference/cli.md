@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-15
-last_verified_commit: 739954f8
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -58,12 +58,22 @@ The protocol-v1 execution command requires all of:
 --replay-output <new-attempt-directory>
 --replay-id <manifest-replay-id>
 --replay-attempt <positive-integer>
+[--replay-profile <profile-id>]
 --no-publication
 ```
 
 Only the bounded BandMaintenance current-projection refresh kernel is
 replayable. Unknown phase IDs, other stable phases, other BandMaintenance
 subphases, provider/network phases, phase ranges, and publication are rejected.
+The profile IDs are:
+
+| Profile | Behavior |
+|---|---|
+| `deterministic-v1` | Default accepted replay overrides: no unchanged skipping, DOP 1, synchronous commit, no cleanup |
+| `production-option-parity-v1` | Production skip/commit/DOP/cleanup choices within Tier-1 bounds: unchanged filtering, DOP 2, asynchronous commit, bounded cleanup |
+| `production-option-parity-batched-member-stats-v1` | Option parity plus the default-off one-pass member-stat aggregation candidate |
+
+Unknown profiles fail before target database use.
 
 Comparison is a separate no-database command. It requires baseline/candidate
 package paths, report output, exact expected image digest, Git commit, OCI
@@ -86,8 +96,9 @@ revision, attempt number for both lanes, and `--no-publication`:
 
 Exit codes distinguish usage, root, package, target, import, phase, output,
 comparison, cancellation, and unexpected failures. Output/comparison format
-version `2` always emits `productionComparableTiming=false` with the
-deterministic-override reason. CLI availability does not authorize
+version `3` binds each lane's profile and operation counts and always emits
+`productionComparableTiming=false` with a profile-specific reason. CLI
+availability does not authorize
 production-derived capture, full BandMaintenance, provider access, live
 replay, or deployment.
 

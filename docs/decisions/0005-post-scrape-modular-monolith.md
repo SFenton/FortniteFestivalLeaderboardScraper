@@ -1,8 +1,8 @@
 ---
 status: decision
 owner: worker
-last_verified: 2026-08-12
-last_verified_commit: cb295b7e
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/FSTService.csproj
   - FSTService/Program.cs
@@ -44,10 +44,11 @@ BandMaintenance: stable phase `post.band_maintenance`, adapter
 isolated PostgreSQL only. This is sufficient to iterate the dominant
 current-projection SQL/algorithm while prune, search projection, provider
 capture, publication, and notification coupling remain unsupported.
-Replay forces unchanged-scope skipping off, one band-type worker, synchronous
-commit, and candidate cleanup off. Its timing is explicitly non-comparable to
-production; option-parity replay or a separate bounded probe is required for
-production optimization claims.
+Deterministic replay retains those accepted overrides. Explicit option-parity
+profiles can instead exercise the production current-projection option shape
+and a default-off query candidate. Every replay profile remains explicitly
+non-comparable to production; matched full-scrape evidence is still required
+for production optimization claims.
 
 ## Context
 

@@ -30,6 +30,57 @@ public sealed class ReplayContractTests
         Assert.Equal("/approved/input", command.InputPackagePath);
         Assert.Equal("/approved/output", command.OutputPath);
         Assert.Equal(2, command.Attempt);
+        Assert.Equal(
+            ReplayExecutionProfileCatalog.DeterministicProfileId,
+            command.ExecutionProfile);
+    }
+
+    [Fact]
+    public void ExecutionCommandAcceptsExplicitOptionParityProfile()
+    {
+        var command = ReplayCommand.Parse(
+        [
+            "--replay-parent-package", "/approved/parent",
+            "--replay-package", "/approved/input",
+            "--replay-phase",
+            ReplayPhaseCatalog.BandMaintenancePhaseId,
+            "--replay-subphase",
+            ReplayPhaseCatalog.CurrentProjectionSubphaseId,
+            "--replay-output", "/approved/output",
+            "--replay-id", "replay-1",
+            "--replay-attempt", "1",
+            "--replay-profile",
+            ReplayExecutionProfileCatalog
+                .ProductionOptionParityProfileId,
+            "--no-publication",
+        ]);
+
+        Assert.Equal(
+            ReplayExecutionProfileCatalog
+                .ProductionOptionParityProfileId,
+            command.ExecutionProfile);
+    }
+
+    [Fact]
+    public void ExecutionCommandRejectsUnknownReplayProfile()
+    {
+        var exception = Assert.Throws<ReplayException>(() =>
+            ReplayCommand.Parse(
+            [
+                "--replay-parent-package", "/approved/parent",
+                "--replay-package", "/approved/input",
+                "--replay-phase",
+                ReplayPhaseCatalog.BandMaintenancePhaseId,
+                "--replay-subphase",
+                ReplayPhaseCatalog.CurrentProjectionSubphaseId,
+                "--replay-output", "/approved/output",
+                "--replay-id", "replay-1",
+                "--replay-attempt", "1",
+                "--replay-profile", "unknown",
+                "--no-publication",
+            ]));
+
+        Assert.Equal(ReplayFailureKind.Usage, exception.Kind);
     }
 
     [Theory]

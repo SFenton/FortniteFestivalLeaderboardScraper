@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-15
-last_verified_commit: fca22bbb
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -647,13 +647,16 @@ Order is evidence-driven:
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
    existing parity/capacity contract passes;
-2. BandMaintenance current projection refresh, starting with the measured
-   `53,543` considered / `8,020` refreshed scope and row-churn path. Current
-   replay forces `SkipUnchangedScopes=false`, one band-type worker,
-   synchronous commit, and cleanup disabled, so it cannot evaluate this
-   unchanged-scope hypothesis. The next optimization must add an option-parity
-   replay mode or
-   use a separate bounded probe before claiming skip-path evidence;
+2. BandMaintenance current projection refresh. The unaccepted default-off
+   candidate replaces seven same-key `band_member_stats` aggregates with one
+   lateral aggregate. Option-parity replay and primed isolated PostgreSQL tests
+   now cover unchanged discovery and zero/all/one/mixed changed scopes. A
+   64-scope/2,048-row fixture preserves exact output/state hashes and
+   transaction/command/round-trip counts while reducing logical aggregate
+   passes `14,336` to `2,048` (`-85.714%`). Isolated timing is explicitly not
+   production-comparable. Promotion remains blocked on a capacity-safe matched
+   full scrape with exact publication/data parity and the protected `>10%`
+   regression rule;
 3. solo current-projection write reduction;
 4. rank-history query path and one-variable concurrency/overlap experiment;
 5. leaderboard-rivals batching/fingerprints;
@@ -695,6 +698,9 @@ Order is evidence-driven:
 - isolated-target guard;
 - deterministic same-image rerun;
 - baseline/candidate from identical parent;
+- deterministic and production-option-parity execution profiles;
+- all-unchanged and mixed changed-scope filtering;
+- exact transaction/command/round-trip and member-stat aggregation-pass deltas;
 - interrupted resume;
 - phase-scoped input sufficiency;
 - no production publication authority;

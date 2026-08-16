@@ -7,7 +7,14 @@ Usage: tools/postgres-tier1-replay-drill.sh \
   --root <approved-fst-evidence-root> \
   --fixture-dir <synthetic-tier1-fixture> \
   --baseline-image <fstservice-image> \
-  --candidate-image <fstservice-image>
+  --candidate-image <fstservice-image> \
+  [--baseline-profile <profile-id>] \
+  [--candidate-profile <profile-id>]
+
+Profiles:
+  deterministic-v1 (default)
+  production-option-parity-v1
+  production-option-parity-batched-member-stats-v1
 EOF
 }
 
@@ -15,6 +22,8 @@ root=""
 fixture_dir=""
 baseline_image=""
 candidate_image=""
+baseline_profile="deterministic-v1"
+candidate_profile="deterministic-v1"
 
 while (($#)); do
   case "$1" in
@@ -22,6 +31,8 @@ while (($#)); do
     --fixture-dir) fixture_dir=${2:-}; shift 2 ;;
     --baseline-image) baseline_image=${2:-}; shift 2 ;;
     --candidate-image) candidate_image=${2:-}; shift 2 ;;
+    --baseline-profile) baseline_profile=${2:-}; shift 2 ;;
+    --candidate-profile) candidate_profile=${2:-}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
   esac
@@ -31,6 +42,15 @@ done
   usage >&2
   exit 64
 }
+
+for profile in "$baseline_profile" "$candidate_profile"; do
+  case "$profile" in
+    deterministic-v1|\
+    production-option-parity-v1|\
+    production-option-parity-batched-member-stats-v1) ;;
+    *) echo "Unknown replay profile: $profile" >&2; exit 64 ;;
+  esac
+done
 
 python3 - "$root" <<'PY'
 import os
@@ -124,7 +144,6 @@ parent_package="$input_root/tier0-parent"
 input_package="$input_root/tier1-input"
 replay_id=$(jq -er '.replayId' "$input_package/tier1/phase-input.json")
 input_hash=$(jq -er '.packageRootHash' "$input_package/manifest.json")
-timing_reason="Deterministic replay overrides differ from production: SkipUnchangedScopes=false, one band-type worker, synchronous commit enabled, and candidate cleanup disabled."
 
 active_containers=()
 active_pgdata=()
@@ -165,6 +184,7 @@ run_lane() {
   local label=$1
   local image=$2
   local attempt=$3
+  local profile=$4
   local work
   local view
   if [[ "$label" = baseline ]]; then
@@ -296,6 +316,7 @@ SQL
     --replay-output "$output" \
     --replay-id "$replay_id" \
     --replay-attempt "$attempt" \
+    --replay-profile "$profile" \
     --no-publication \
     >"$root/${label}.jsonl"
 
@@ -309,10 +330,22 @@ SQL
     echo "Replay output was not sealed for $label." >&2
     exit 8
   }
+  jq -e \
+    --arg profile "$profile" \
+    '.formatId == "fst.tier1.phase-output"
+     and .version == 3
+     and .executionProfile == $profile
+     and .productionComparableTiming == false
+     and (.timingComparisonReason | type == "string" and length > 0)
+     and .metrics.successfulScopeTransactions >= 0
+     and .metrics.successfulScopeCommandExecutions >= 0
+     and .metrics.successfulScopeRoundTrips >= 0
+     and .metrics.memberStatsAggregationPasses >= 0' \
+    "$output/replay/output-manifest.json" >/dev/null
 }
 
-run_lane baseline "$baseline_image" 1
-run_lane candidate "$candidate_image" 2
+run_lane baseline "$baseline_image" 1 "$baseline_profile"
+run_lane candidate "$candidate_image" 2 "$candidate_profile"
 
 docker run --rm \
   --network none \
@@ -342,11 +375,59 @@ docker run --rm \
   >"$root/comparison-command.jsonl"
 
 jq -e \
-  --arg reason "$timing_reason" \
-  '.exactParity == true
+  --arg baselineProfile "$baseline_profile" \
+  --arg candidateProfile "$candidate_profile" \
+  '.formatId == "fst.tier1.phase-comparison"
+   and .version == 3
+   and .baselineExecutionProfile == $baselineProfile
+   and .candidateExecutionProfile == $candidateProfile
+   and .exactParity == true
    and .productionComparableTiming == false
-   and .timingComparisonReason == $reason' \
+   and (.timingComparisonReason | type == "string" and length > 0)
+   and .baselineScopeTransactions >= 0
+   and .candidateScopeTransactions >= 0
+   and .baselineScopeCommandExecutions >= 0
+   and .candidateScopeCommandExecutions >= 0
+   and .baselineScopeRoundTrips >= 0
+   and .candidateScopeRoundTrips >= 0
+   and .baselineMemberStatsAggregationPasses >= 0
+   and .candidateMemberStatsAggregationPasses >= 0' \
   "$comparison_work/comparison.json" >/dev/null
+if [[ "$baseline_profile" = "production-option-parity-v1" &&
+      "$candidate_profile" = "production-option-parity-batched-member-stats-v1" ]]; then
+  jq -e \
+    '.baselineScopeTransactions == .candidateScopeTransactions
+     and .baselineScopeCommandExecutions == .candidateScopeCommandExecutions
+     and .baselineScopeRoundTrips == .candidateScopeRoundTrips
+     and .candidateMemberStatsAggregationPasses <
+         .baselineMemberStatsAggregationPasses' \
+    "$comparison_work/comparison.json" >/dev/null
+fi
+timing_reason=$(jq -er '.timingComparisonReason' \
+  "$comparison_work/comparison.json")
+elapsed_delta_percent=$(jq -er '.elapsedDeltaPercent' \
+  "$comparison_work/comparison.json")
+baseline_scope_transactions=$(jq -er '.baselineScopeTransactions' \
+  "$comparison_work/comparison.json")
+candidate_scope_transactions=$(jq -er '.candidateScopeTransactions' \
+  "$comparison_work/comparison.json")
+baseline_scope_commands=$(jq -er '.baselineScopeCommandExecutions' \
+  "$comparison_work/comparison.json")
+candidate_scope_commands=$(jq -er '.candidateScopeCommandExecutions' \
+  "$comparison_work/comparison.json")
+baseline_scope_round_trips=$(jq -er '.baselineScopeRoundTrips' \
+  "$comparison_work/comparison.json")
+candidate_scope_round_trips=$(jq -er '.candidateScopeRoundTrips' \
+  "$comparison_work/comparison.json")
+baseline_member_stats_passes=$(jq -er \
+  '.baselineMemberStatsAggregationPasses' \
+  "$comparison_work/comparison.json")
+candidate_member_stats_passes=$(jq -er \
+  '.candidateMemberStatsAggregationPasses' \
+  "$comparison_work/comparison.json")
+member_stats_pass_delta_percent=$(jq -er \
+  '.memberStatsAggregationPassDeltaPercent' \
+  "$comparison_work/comparison.json")
 cp "$comparison_work/comparison.json" "$root/comparison.json"
 rm -rf "$baseline_view" "$candidate_view" "$comparison_view"
 [[ -z "$(find "$scratch_root" -mindepth 1 -print -quit)" ]] || {
@@ -363,26 +444,55 @@ jq -n \
   --arg candidateDigest "$candidate_digest" \
   --arg baselineRevision "$baseline_revision" \
   --arg candidateRevision "$candidate_revision" \
+  --arg baselineProfile "$baseline_profile" \
+  --arg candidateProfile "$candidate_profile" \
   --arg inputRoot "$input_hash" \
   --arg timingReason "$timing_reason" \
+  --argjson elapsedDeltaPercent "$elapsed_delta_percent" \
+  --argjson baselineScopeTransactions "$baseline_scope_transactions" \
+  --argjson candidateScopeTransactions "$candidate_scope_transactions" \
+  --argjson baselineScopeCommands "$baseline_scope_commands" \
+  --argjson candidateScopeCommands "$candidate_scope_commands" \
+  --argjson baselineScopeRoundTrips "$baseline_scope_round_trips" \
+  --argjson candidateScopeRoundTrips "$candidate_scope_round_trips" \
+  --argjson baselineMemberStatsPasses "$baseline_member_stats_passes" \
+  --argjson candidateMemberStatsPasses "$candidate_member_stats_passes" \
+  --argjson memberStatsPassDeltaPercent "$member_stats_pass_delta_percent" \
   '{
     format: "fst.tier1.replay-drill",
-    version: 2,
+    version: 3,
     replayId: $replayId,
     baseline: {
       image: $baselineImage,
       digest: $baselineDigest,
-      revision: $baselineRevision
+      revision: $baselineRevision,
+      executionProfile: $baselineProfile
     },
     candidate: {
       image: $candidateImage,
       digest: $candidateDigest,
-      revision: $candidateRevision
+      revision: $candidateRevision,
+      executionProfile: $candidateProfile
     },
     inputRootHash: $inputRoot,
     exactParity: true,
     productionComparableTiming: false,
     timingComparisonReason: $timingReason,
+    comparison: {
+      elapsedDeltaPercent: $elapsedDeltaPercent,
+      baselineScopeTransactions: $baselineScopeTransactions,
+      candidateScopeTransactions: $candidateScopeTransactions,
+      baselineScopeCommands: $baselineScopeCommands,
+      candidateScopeCommands: $candidateScopeCommands,
+      baselineScopeRoundTrips: $baselineScopeRoundTrips,
+      candidateScopeRoundTrips: $candidateScopeRoundTrips,
+      baselineMemberStatsAggregationPasses:
+        $baselineMemberStatsPasses,
+      candidateMemberStatsAggregationPasses:
+        $candidateMemberStatsPasses,
+      memberStatsAggregationPassDeltaPercent:
+        $memberStatsPassDeltaPercent
+    },
     networkMode: "isolated-container-namespace",
     publishedPorts: false,
     dockerSocketMounted: false,
@@ -395,8 +505,15 @@ cat >"$root/report.md" <<EOF
 - Replay ID: \`$replay_id\`
 - Parent input root: \`$input_hash\`
 - Baseline image: \`$baseline_image\` / \`$baseline_digest\` / \`$baseline_revision\`
+- Baseline execution profile: \`$baseline_profile\`
 - Candidate image: \`$candidate_image\` / \`$candidate_digest\` / \`$candidate_revision\`
+- Candidate execution profile: \`$candidate_profile\`
 - Exact output parity: accepted
+- Diagnostic elapsed delta: \`$elapsed_delta_percent%\`
+- Scope transactions: \`$baseline_scope_transactions\` baseline / \`$candidate_scope_transactions\` candidate
+- Scope commands: \`$baseline_scope_commands\` baseline / \`$candidate_scope_commands\` candidate
+- Scope round trips: \`$baseline_scope_round_trips\` baseline / \`$candidate_scope_round_trips\` candidate
+- Member-stat aggregate passes: \`$baseline_member_stats_passes\` baseline / \`$candidate_member_stats_passes\` candidate (\`$member_stats_pass_delta_percent%\`)
 - Production-comparable timing: false
 - Timing reason: $timing_reason
 - PostgreSQL: two fresh PostgreSQL 17 containers, no published ports, network-none namespaces

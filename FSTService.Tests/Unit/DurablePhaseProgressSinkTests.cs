@@ -31,6 +31,17 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void CurrentProjectionCandidateChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigId(enabled: false);
+        var candidate = CaptureConfigId(enabled: true);
+
+        Assert.StartsWith("sha256:", baseline, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", candidate, StringComparison.Ordinal);
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
     public void Reattaching_same_scrape_and_instance_is_idempotent()
     {
         var (sink, metaDb, _) = CreateSink();
@@ -454,6 +465,40 @@ public sealed class DurablePhaseProgressSinkTests
                 clock),
             metaDb,
             clock);
+    }
+
+    private static string CaptureConfigId(bool enabled)
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        ScrapePhaseAttemptStart? captured = null;
+        metaDb.StartScrapePhaseAttempt(
+                Arg.Do<ScrapePhaseAttemptStart>(
+                    start => captured = start))
+            .Returns(1);
+        metaDb.GetSuccessfulPhaseDurationSamples(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>(),
+                Arg.Any<int>())
+            .Returns([]);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation"] =
+                        enabled.ToString(),
+                })
+            .Build();
+        var sink = new DurablePhaseProgressSink(
+            metaDb,
+            configuration,
+            NullLogger<DurablePhaseProgressSink>.Instance,
+            new FakePhaseProgressClock());
+
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0]);
+
+        return Assert.IsType<string>(captured?.ConfigId);
     }
 
     private static IConfiguration BuildConfiguration() =>

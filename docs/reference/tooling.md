@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-13
-last_verified_commit: cb295b7e
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -96,9 +96,19 @@ is the comparator, every image reference is resolved once to its immutable ID,
 and comparison enforces each lane's expected digest, Git commit, OCI revision,
 and attempt before parity. Preserve the emitted sealed packages,
 `comparison.json`, `run.json`, report, and checksums on the FST drive.
-Drill/report format version `2` also requires
-`productionComparableTiming=false`; its elapsed/resource deltas are diagnostic
-only because replay forces deterministic options that differ from production.
+`productionComparableTiming=false` remains mandatory; elapsed/resource deltas
+are diagnostic only.
+
+Both lanes default to `deterministic-v1`. Optional `--baseline-profile` and
+`--candidate-profile` accept only the three replay profile IDs documented in
+[FSTService CLI](cli.md). Drill/report format version `3` records both profiles
+and successful scope transaction, command, round-trip, and member-stat
+aggregation-pass metrics. The option-parity/batched candidate pair must keep
+the first three counts equal and reduce the final count before the drill
+succeeds. A profile-only query-shape A/B should pass the same v3-capable
+immutable image for both lane image arguments so the profile is the only
+implementation variable. Exact output hashes remain mandatory regardless of
+timing.
 
 Validate tool structure with:
 

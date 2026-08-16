@@ -1,14 +1,15 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-15
-last_verified_commit: b7ce5d3a
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
@@ -365,6 +366,15 @@ subphases record zero. For `current_projection_refresh`, `rows_read` stores the
 already-known impacted scope count considered and `scope_count` stores scopes
 selected for refresh, so `0`/`0` and `N`/`0` remain distinct without another
 query or timing row.
+
+The unaccepted current-projection query candidate changes no schema or data
+ownership. It replaces seven same-key correlated aggregates over
+`band_member_stats` with one lateral aggregate that returns the same ordered
+member arrays. PostgreSQL remains authoritative; scope selection,
+candidate-generation deletion, per-scope transaction boundaries, scope/global
+state, generation publication, cleanup, and row ordering are unchanged. The
+candidate is default-off and requires matched full-scrape parity before
+production use.
 
 Live scrape `1293` validated the compatibility shape and bounded write cost:
 the two prior comparable scrapes contained `69` timing rows each, while `1293`

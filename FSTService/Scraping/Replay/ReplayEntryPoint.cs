@@ -48,8 +48,14 @@ public static class ReplayEntryPoint
                     kind = "comparison",
                     exactParity = report.ExactParity,
                     datasets = report.Datasets.Count,
+                    baselineExecutionProfile =
+                        report.BaselineExecutionProfile,
+                    candidateExecutionProfile =
+                        report.CandidateExecutionProfile,
                     elapsedDeltaPercent =
                         report.ElapsedDeltaPercent,
+                    memberStatsAggregationPassDeltaPercent =
+                        report.MemberStatsAggregationPassDeltaPercent,
                 });
                 return (int)ReplayExitCode.Success;
             }
@@ -86,6 +92,7 @@ public static class ReplayEntryPoint
                 kind = "phase-replay",
                 phaseId = command.PhaseId,
                 subphaseId = command.SubphaseId,
+                executionProfile = command.ExecutionProfile,
                 packageRootHash = result.PackageRootHash,
                 elapsedMilliseconds =
                     result.Metrics.ElapsedMilliseconds,
@@ -93,6 +100,14 @@ public static class ReplayEntryPoint
                     result.Metrics.RefreshedScopes,
                 insertedRows = result.Metrics.InsertedRows,
                 deletedRows = result.Metrics.DeletedRows,
+                scopeTransactions =
+                    result.Metrics.SuccessfulScopeTransactions,
+                scopeCommands =
+                    result.Metrics.SuccessfulScopeCommandExecutions,
+                scopeRoundTrips =
+                    result.Metrics.SuccessfulScopeRoundTrips,
+                memberStatsAggregationPasses =
+                    result.Metrics.MemberStatsAggregationPasses,
                 noPublication = true,
             });
             return (int)ReplayExitCode.Success;

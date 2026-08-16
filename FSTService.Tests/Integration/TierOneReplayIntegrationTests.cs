@@ -1,13 +1,16 @@
 using System.Text;
+using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Scraping.Replay;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Xunit.Abstractions;
 
 namespace FSTService.Tests.Integration;
 
-public sealed class TierOneReplayIntegrationTests
+public sealed class TierOneReplayIntegrationTests(
+    ITestOutputHelper output)
 {
     [Fact]
     public async Task SameInputProducesExactProjectionParityInFreshDatabases()
@@ -67,8 +70,14 @@ public sealed class TierOneReplayIntegrationTests
         Assert.False(
             comparison.ProductionComparableTiming);
         Assert.Equal(
-            ReplayTimingSemantics.TimingComparisonReason,
+            ReplayTimingSemantics.ComparisonTimingReason,
             comparison.TimingComparisonReason);
+        Assert.Equal(
+            ReplayExecutionProfileCatalog.DeterministicProfileId,
+            comparison.BaselineExecutionProfile);
+        Assert.Equal(
+            ReplayExecutionProfileCatalog.DeterministicProfileId,
+            comparison.CandidateExecutionProfile);
         Assert.All(
             comparison.Datasets,
             static dataset => Assert.True(dataset.ExactParity));
@@ -95,7 +104,11 @@ public sealed class TierOneReplayIntegrationTests
         Assert.False(
             outputManifest.ProductionComparableTiming);
         Assert.Equal(
-            ReplayTimingSemantics.TimingComparisonReason,
+            ReplayExecutionProfileCatalog.DeterministicProfileId,
+            outputManifest.ExecutionProfile);
+        Assert.Equal(
+            ReplayTimingSemantics
+                .DeterministicTimingComparisonReason,
             outputManifest.TimingComparisonReason);
         var productionComparableBytes =
             TierOneReplayCanonical.SerializeOutput(
@@ -116,7 +129,7 @@ public sealed class TierOneReplayIntegrationTests
         var mislabeledOutput = Path.Combine(
             directory.Path,
             "mislabeled-output");
-        await CloneOutputWithTimingSemanticsAsync(
+        await CloneOutputWithManifestAsync(
             baselineOutput,
             mislabeledOutput,
             productionComparable);
@@ -142,6 +155,51 @@ public sealed class TierOneReplayIntegrationTests
             ReplayFailureKind.ComparisonFailed,
             mislabeled.Kind);
         Assert.False(File.Exists(mislabeledReport));
+
+        var unknownProfileBytes =
+            TierOneReplayCanonical.SerializeOutput(
+                outputManifest with
+                {
+                    ExecutionProfile = "unknown-profile-v1",
+                    ManifestRootHash = null,
+                });
+        var unknownProfile =
+            TierZeroCanonicalJson
+                .Deserialize<TierOnePhaseOutputManifest>(
+                    unknownProfileBytes);
+        Assert.NotEqual(
+            outputManifest.ManifestRootHash,
+            unknownProfile.ManifestRootHash);
+        var unknownProfileOutput = Path.Combine(
+            directory.Path,
+            "unknown-profile-output");
+        await CloneOutputWithManifestAsync(
+            baselineOutput,
+            unknownProfileOutput,
+            unknownProfile);
+        var unknownProfileReport = Path.Combine(
+            directory.Path,
+            "unknown-profile-comparison.json");
+        var unknownProfileFailure =
+            await Assert.ThrowsAsync<ReplayException>(
+                () => new ReplayComparisonService().CompareAsync(
+                    unknownProfileOutput,
+                    candidateOutput,
+                    unknownProfileReport,
+                    new ReplayComparisonExpectations(
+                        TierOneReplayFixture.Build.OciImageDigest,
+                        TierOneReplayFixture.Build.GitCommit,
+                        TierOneReplayFixture.Build.OciImageRevision,
+                        1,
+                        TierOneReplayFixture.Build.OciImageDigest,
+                        TierOneReplayFixture.Build.GitCommit,
+                        TierOneReplayFixture.Build.OciImageRevision,
+                        2),
+                    CancellationToken.None));
+        Assert.Equal(
+            ReplayFailureKind.ComparisonFailed,
+            unknownProfileFailure.Kind);
+        Assert.False(File.Exists(unknownProfileReport));
 
         var entryPointConnection =
             SharedPostgresContainer
@@ -226,6 +284,144 @@ public sealed class TierOneReplayIntegrationTests
         Assert.Equal(
             (int)ReplayExitCode.Cancelled,
             cancelledExit);
+    }
+
+    [Fact]
+    public async Task OptionParityProfilesPreserveOutputAndReduceMemberStatsPasses()
+    {
+        using var directory = new ReplayIntegrationDirectory(
+            "option-parity-member-stats");
+        var fixture = await TierOneReplayFixture.CreateAsync(
+            directory.Path);
+        var baselineOutput = Path.Combine(
+            directory.Path,
+            "baseline-output");
+        var candidateOutput = Path.Combine(
+            directory.Path,
+            "candidate-output");
+
+        var baseline = await ExecuteAsync(
+            fixture,
+            baselineOutput,
+            attempt: 1,
+            ReplayExecutionProfileCatalog
+                .ProductionOptionParityProfileId);
+        var candidate = await ExecuteAsync(
+            fixture,
+            candidateOutput,
+            attempt: 2,
+            ReplayExecutionProfileCatalog
+                .BatchedMemberStatsCandidateProfileId);
+
+        var policy = new ReplayRootAdmission(
+            new ReplayRootPolicyOptions(
+                directory.Path,
+                TestOnly: true,
+                RollbackReserveBytes: 0));
+        var comparisonPath = Path.Combine(
+            directory.Path,
+            "comparison.json");
+        var admitted = policy.AdmitComparison(
+            baselineOutput,
+            candidateOutput,
+            comparisonPath);
+        var comparison = await new ReplayComparisonService()
+            .CompareAsync(
+                admitted.Baseline,
+                admitted.Candidate,
+                admitted.Report,
+                new ReplayComparisonExpectations(
+                    TierOneReplayFixture.Build.OciImageDigest,
+                    TierOneReplayFixture.Build.GitCommit,
+                    TierOneReplayFixture.Build.OciImageRevision,
+                    1,
+                    TierOneReplayFixture.Build.OciImageDigest,
+                    TierOneReplayFixture.Build.GitCommit,
+                    TierOneReplayFixture.Build.OciImageRevision,
+                    2),
+                CancellationToken.None);
+
+        Assert.True(comparison.ExactParity);
+        Assert.Equal(
+            ReplayExecutionProfileCatalog
+                .ProductionOptionParityProfileId,
+            comparison.BaselineExecutionProfile);
+        Assert.Equal(
+            ReplayExecutionProfileCatalog
+                .BatchedMemberStatsCandidateProfileId,
+            comparison.CandidateExecutionProfile);
+        Assert.Equal(
+            baseline.Metrics.SuccessfulScopeTransactions,
+            candidate.Metrics.SuccessfulScopeTransactions);
+        Assert.Equal(
+            baseline.Metrics.SuccessfulScopeCommandExecutions,
+            candidate.Metrics.SuccessfulScopeCommandExecutions);
+        Assert.Equal(
+            baseline.Metrics.SuccessfulScopeRoundTrips,
+            candidate.Metrics.SuccessfulScopeRoundTrips);
+        Assert.Equal(
+            baseline.Metrics.InsertedRows *
+            BandCurrentProjectionBuilder
+                .LegacyMemberStatsAggregationPassesPerRow,
+            baseline.Metrics.MemberStatsAggregationPasses);
+        Assert.Equal(
+            candidate.Metrics.InsertedRows,
+            candidate.Metrics.MemberStatsAggregationPasses);
+        Assert.Equal(
+            -85.714,
+            comparison.MemberStatsAggregationPassDeltaPercent,
+            3);
+        Assert.Equal(
+            ReplayTimingSemantics.ComparisonTimingReason,
+            comparison.TimingComparisonReason);
+        var baselineManifest =
+            await ReadOutputManifestAsync(baselineOutput);
+        var candidateManifest =
+            await ReadOutputManifestAsync(candidateOutput);
+        Assert.False(
+            baselineManifest.ProductionComparableTiming);
+        Assert.False(
+            candidateManifest.ProductionComparableTiming);
+        Assert.Equal(
+            ReplayTimingSemantics
+                .OptionParityTimingComparisonReason,
+            baselineManifest.TimingComparisonReason);
+        Assert.Equal(
+            ReplayTimingSemantics
+                .BatchedMemberStatsTimingComparisonReason,
+            candidateManifest.TimingComparisonReason);
+        Assert.True(baseline.Metrics.ElapsedMilliseconds >= 0);
+        Assert.True(candidate.Metrics.ElapsedMilliseconds >= 0);
+        Assert.True(baseline.Metrics.CpuMilliseconds >= 0);
+        Assert.True(candidate.Metrics.CpuMilliseconds >= 0);
+        Assert.True(baseline.Metrics.WalBytes >= 0);
+        Assert.True(candidate.Metrics.WalBytes >= 0);
+        Assert.True(baseline.Metrics.TempBytes >= 0);
+        Assert.True(candidate.Metrics.TempBytes >= 0);
+        Assert.True(baseline.Metrics.PeakWorkingSetBytes > 0);
+        Assert.True(candidate.Metrics.PeakWorkingSetBytes > 0);
+        output.WriteLine(
+            TierZeroCanonicalJson.SerializeToString(
+                new
+                {
+                    scenario = "option-parity-member-stats",
+                    exactParity = comparison.ExactParity,
+                    baselineProfile =
+                        comparison.BaselineExecutionProfile,
+                    candidateProfile =
+                        comparison.CandidateExecutionProfile,
+                    baseline = baseline.Metrics,
+                    candidate = candidate.Metrics,
+                    elapsedDeltaPercent =
+                        comparison.ElapsedDeltaPercent,
+                    walDeltaBytes =
+                        comparison.WalDeltaBytes,
+                    peakWorkingSetDeltaBytes =
+                        comparison.PeakWorkingSetDeltaBytes,
+                    memberStatsAggregationPassDeltaPercent =
+                        comparison
+                            .MemberStatsAggregationPassDeltaPercent,
+                }));
     }
 
     [Fact]
@@ -691,7 +887,9 @@ public sealed class TierOneReplayIntegrationTests
     private static async Task<ReplayExecutionResult> ExecuteAsync(
         TierOneReplayFixture fixture,
         string output,
-        int attempt)
+        int attempt,
+        string executionProfile =
+            ReplayExecutionProfileCatalog.DeterministicProfileId)
     {
         var connectionString =
             SharedPostgresContainer
@@ -719,7 +917,8 @@ public sealed class TierOneReplayIntegrationTests
             TierOneReplayFixture.Command(
                 fixture,
                 output,
-                attempt),
+                attempt,
+                executionProfile),
             CancellationToken.None);
         var verification = await TierZeroPackageVerifier.VerifyAsync(
             output);
@@ -779,7 +978,7 @@ public sealed class TierOneReplayIntegrationTests
             .Deserialize<TierOnePhaseOutputManifest>(bytes);
     }
 
-    private static async Task CloneOutputWithTimingSemanticsAsync(
+    private static async Task CloneOutputWithManifestAsync(
         string source,
         string destination,
         TierOnePhaseOutputManifest replacementManifest)
@@ -870,7 +1069,11 @@ public sealed class TierOneReplayIntegrationTests
             1,
             0,
             1,
-            0);
+            0,
+            1,
+            2,
+            4,
+            7);
         var database = new ReplayDatabaseIdentity(
             "fst_replay_incomplete",
             "1",
@@ -892,8 +1095,10 @@ public sealed class TierOneReplayIntegrationTests
             TierOneReplayFixture.Build,
             database,
             [],
+            ReplayExecutionProfileCatalog.DeterministicProfileId,
             ReplayTimingSemantics.ProductionComparableTiming,
-            ReplayTimingSemantics.TimingComparisonReason,
+            ReplayTimingSemantics
+                .DeterministicTimingComparisonReason,
             metrics,
             TierOneReplayFixture.CreatedAt,
             TierOneReplayFixture.CreatedAt.AddSeconds(1),
@@ -963,6 +1168,7 @@ public sealed class TierOneReplayIntegrationTests
         public Task<ReplayPhaseExecutionResult> ExecuteAsync(
             NpgsqlDataSource dataSource,
             TierOneReplayInput input,
+            ReplayExecutionProfile executionProfile,
             CancellationToken cancellationToken) =>
             throw new OperationCanceledException();
     }

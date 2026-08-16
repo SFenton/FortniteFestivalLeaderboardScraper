@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified: 2026-08-16
+last_verified_commit: f2c36bdc
 sources:
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
@@ -18,6 +18,7 @@ sources:
   - FSTService/Scraping/Replay/TierOneReplayModels.cs
   - FSTService/Scraping/Replay/TierOneReplayPackage.cs
   - FSTService/Scraping/Replay/TierOneReplayRunner.cs
+  - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - tools/postgres-tier1-replay-drill.sh
 update_triggers:
   - Evidence package format, canonicalization, hashing, path safety, artifact ownership, capture, import, replay, retention, or promotion behavior changes.
@@ -52,7 +53,8 @@ rollback, and lineage ownership before creating live artifacts.
 
 The PR-4 library confines package-relative operations beneath the root supplied
 by its caller, but it does not choose or authorize that root. This is
-intentional: no CLI or runtime entry point exists yet.
+intentional at the Tier-0 library boundary; the accepted PR-5 entry point adds
+the stricter runtime policy below.
 
 The accepted PR-5 root policy fails closed before package creation unless:
 
@@ -91,28 +93,34 @@ complete `band_member_stats`. JSON Lines must be canonical UTF-8, keys must be
 unique, member rows must be complete, and the package is rejected rather than
 truncated.
 
-The current replay adapter calls the production
-`BandCurrentProjectionBuilder.RefreshScopesAsync` implementation directly with
-`SkipUnchangedScopes=false`, one band-type worker, synchronous commit enabled,
-local isolated generation publication enabled, and candidate cleanup disabled.
-This is a deterministic current-projection refresh kernel, not full
-BandMaintenance parity: prune, search projection refresh, incremental
-unchanged detection, old candidate cleanup, global publication, freeze, cache,
+The replay adapter calls the production
+`BandCurrentProjectionBuilder.RefreshScopesAsync` implementation directly.
+Execution now has an explicit profile:
+
+- `deterministic-v1` remains the default and preserves the accepted PR-5
+  behavior: `SkipUnchangedScopes=false`, one band-type worker, synchronous
+  commit enabled, and candidate cleanup disabled.
+- `production-option-parity-v1` uses the production skip, commit, DOP, and
+  cleanup choices: unchanged-scope filtering enabled, two band-type workers,
+  synchronous commit disabled, and bounded candidate cleanup enabled. Tier-1
+  statement/row limits and overall-only scopes still apply.
+- `production-option-parity-batched-member-stats-v1` uses the same option shape
+  and additionally enables the default-off one-pass member-stat aggregation
+  candidate.
+
+A fresh replay target has no prior projection state, so option-parity execution
+selects its imported scopes after running unchanged-scope discovery. Primed
+isolated PostgreSQL tests separately cover zero, all-unchanged, one-changed,
+and mixed-changed scope sets. None of these profiles is full BandMaintenance:
+prune, search projection refresh, global publication, freeze, cache,
 notifications, and provider behavior remain unsupported.
 
-These overrides intentionally differ from production. Output and comparison
-format version `2` therefore require:
-
-```json
-{
-  "productionComparableTiming": false,
-  "timingComparisonReason": "Deterministic replay overrides differ from production: SkipUnchangedScopes=false, one band-type worker, synchronous commit enabled, and candidate cleanup disabled."
-}
-```
-
-The fields are part of canonical hashing and verification. Replay elapsed/WAL/
-resource deltas are drill diagnostics only and cannot be cited as production
-wall-clock evidence.
+Output and comparison format version `3` canonically bind the profile,
+profile-specific non-production timing reason, successful scope transaction/
+command/round-trip counts, and logical member-stat aggregation passes.
+`productionComparableTiming` remains `false` for every profile. Replay elapsed,
+CPU, RSS, WAL, and temp deltas are drill diagnostics only and cannot be cited
+as production wall-clock evidence.
 
 ## Isolated PostgreSQL target
 
@@ -135,18 +143,19 @@ the isolated attempt failed and retain an unsealed failure package.
 ## Tier-1 output and comparison
 
 A successful replay seals a Tier-0 output envelope parented to both Tier-0 and
-Tier-1 input roots. Output format version `2` records phase/adapter,
+Tier-1 input roots. Output format version `3` records phase/adapter,
 implementation commit/image/config/schema identity, isolated database
 identity, exact output datasets, row counts/hashes, timing, CPU/allocation/RSS,
-WAL/temp deltas, `noPublication=true`, and the mandatory non-production timing
-semantics above.
+WAL/temp deltas, execution profile, operation counts,
+`noPublication=true`, and the mandatory non-production timing semantics above.
 
 Output datasets are canonical projections, scope state, and projection-global
 state with volatile timestamps excluded from parity. The trusted comparison
-format version `2` requires exact expected digest, Git commit, OCI revision,
+format version `3` requires exact expected digest, Git commit, OCI revision,
 attempt, and `productionComparableTiming=false` for each lane. It reports
-row/hash parity and diagnostic resource deltas, and fails even when replay
-timing improves if any output differs.
+row/hash parity, both execution profiles, operation-count deltas, and
+diagnostic resource deltas. It fails even when replay timing improves if any
+output differs.
 
 `tools/postgres-tier1-replay-drill.sh` runs baseline and candidate against
 separate fresh PostgreSQL 17 containers with no published ports, no provider
@@ -154,6 +163,11 @@ network, no Docker socket, non-superuser replay roles, candidate-inaccessible
 PGDATA, read-only input/baseline mounts, lane-specific writable outputs, and an
 immutable baseline comparator. It removes containers and PGDATA while
 preserving only sealed evidence.
+
+The drill defaults both lanes to `deterministic-v1`. Operators may explicitly
+pass `--baseline-profile` and `--candidate-profile`; an option-parity/batched
+comparison additionally requires unchanged transaction, command, and
+round-trip counts plus a lower candidate member-stat aggregation-pass count.
 
 ## Package layout
 

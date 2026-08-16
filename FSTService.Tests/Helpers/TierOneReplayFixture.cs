@@ -258,7 +258,9 @@ internal sealed record TierOneReplayFixture(
     internal static ReplayCommand Command(
         TierOneReplayFixture fixture,
         string outputPath,
-        int attempt = 1) =>
+        int attempt = 1,
+        string executionProfile =
+            ReplayExecutionProfileCatalog.DeterministicProfileId) =>
         new(
             ReplayCommandKind.Execute,
             fixture.ParentPackage,
@@ -270,7 +272,9 @@ internal sealed record TierOneReplayFixture(
             attempt,
             null,
             null,
-            null);
+            null,
+            null,
+            executionProfile);
 
     internal static async Task BootstrapDatabaseAsync(
         string connectionString,
