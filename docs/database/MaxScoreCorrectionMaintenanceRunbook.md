@@ -800,6 +800,29 @@ identities as bounded SHA-256 evidence IDs. Routine non-maintenance precompute
 logs keep their existing behavior; incident evidence does not need raw
 registered account IDs.
 
+### Publication 1302 recovery acceptance
+
+The reviewed phase-5 forward resume completed on 2026-08-17 from
+`notifications_quarantined/failed` using PR #52 commit `555408ad`:
+
+- paths, derived state, and notification alignment were skipped and remained
+  byte/counter unchanged;
+- 9,255 cache entries were rebuilt, semantically validated, fingerprinted, and
+  published;
+- the run committed `completed`, publication 80 remained bound to scrape 1302,
+  and the exact digest freeze was released atomically;
+- direct/web songs, overview, composite, band, Solo, path, and representative
+  player routes returned HTTP 200 with direct/web payload parity;
+- the stale emergency web songs override was removed;
+- WAL increased by `583,901,923` bytes. PostgreSQL reported
+  `178,597,552,128` cumulative temp bytes while physical free space fell from
+  `58,927,673,344` to a monitored low of `50,162,028,544` bytes before
+  recovering.
+
+Future phase-5 resume attempts require at least 16 GiB free, not the original
+5 GiB planning estimate. Full rollback remains a separate 64 GiB minimum and
+was not executed.
+
 A resume whose durable phase is `caches_staged` or `validated` re-runs the
 required cache semantic validation and exact key/ETag/JSON-hash comparison for
 both staging tables before final completion. From `caches_staged` onward,

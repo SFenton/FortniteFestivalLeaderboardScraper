@@ -212,6 +212,12 @@ families and uses commit-only publication fences. Rollback remains the
 correctness fallback when current derived validation fails, but it repeats the
 full ranking/tier/rivals/band/cache workload.
 
+The accepted publication-1302 phase-5 resume observed an 8.77 GB physical
+free-space excursion despite only 584 MB of WAL growth because final validation
+used large temporary files. Require at least 16 GiB free for a future
+`notifications_quarantined` resume. This does not relax the independent 60.4 GB
+next-scrape capacity gate or the 64 GiB full-rollback requirement.
+
 ## Service availability
 
 `fstworker`, `fstservice`, and `festivalweb` may be restarted or briefly stopped

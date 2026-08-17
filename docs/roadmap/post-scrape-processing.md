@@ -643,21 +643,11 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. max-score phase-aware recovery: durable publication-1302 state is
-   `notifications_quarantined/failed`, with forward derived and notification
-   checkpoints complete. Review the PR #52 resume commit-fence/cache-order fix,
-   then prefer the smaller forward resume (cache restage, validation,
-   completion/unfreeze) with at least 5 GiB free. Use full rollback only if
-   final derived/cache validation rejects resume and after a conservative
-   64 GiB free-space gate. Either path requires continuous API/lock/disk
-   monitoring, publication 1302 unchanged, worker held, exact terminal parity,
-   and safe removal of the temporary songs cache. Repository readiness is not
-   live authorization;
-2. snapshot-capacity recovery investigation: refresh the read-only protected
+1. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
    existing parity/capacity contract passes;
-3. BandMaintenance current projection refresh. PR #47 merges the
+2. BandMaintenance current projection refresh. PR #47 merges the
    implementation default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
    Schema and fixture tests prove `member_index` uniqueness inside the query
@@ -671,14 +661,14 @@ Order is evidence-driven:
    Production enablement remains pending, not accepted: capacity must first
    restore a full-scrape window, then a matched full-scrape A/B must pass exact
    publication/data parity and the protected `>10%` regression rule;
-4. solo current-projection write reduction;
-5. rank-history query path and one-variable concurrency/overlap experiment;
-6. leaderboard-rivals batching/fingerprints;
-7. precompute input reuse/selective concurrency;
-8. best-effort cleanup reorder;
-9. snapshot activation consolidation;
-10. storage-retention execution after parity/capacity gates;
-11. capture-only overlap research after architecture/storage redesign.
+3. solo current-projection write reduction;
+4. rank-history query path and one-variable concurrency/overlap experiment;
+5. leaderboard-rivals batching/fingerprints;
+6. precompute input reuse/selective concurrency;
+7. best-effort cleanup reorder;
+8. snapshot activation consolidation;
+9. storage-retention execution after parity/capacity gates;
+10. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 
