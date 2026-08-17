@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -173,9 +173,19 @@ above its cutoff, or any raw/eligible/count drift keeps the workflow frozen
 and resumable.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+The rollback action is the same strict one-shot boundary: it registers no
+hosted initializer, scraper, catalog refresh, registration, publication
+monitor, or Docker worker and performs no provider traffic. Dry-run performs exact read-only
+admission. Execution restores paths in one atomic checkpoint, then resumes
+complete rollback-derived/notification/cache phases until terminal
+`rolled_back`; apply/resume cannot continue after rollback starts. Every
+failure leaves the worker offline and public reads frozen.
 Every max-score database mutation and checkpoint commits through a bounded
 source-locked transaction on the live unpooled advisory-lock session; ordinary
-pooled connections are read-only for that workflow. The final cache swap,
+pooled connections are read-only for that workflow. Rollback keeps the
+registration/path locks and durable gate but yields the global publication
+lock between transactions, reacquiring it transactionally only at commit so
+cached API reads do not queue behind long reconciliation. The final cache swap,
 completed checkpoint, and unfreeze use one such transaction while the durable
 gate remains set. That transaction keeps a `5s` lock timeout, uses the
 configured maintenance statement timeout only for final immutable cache

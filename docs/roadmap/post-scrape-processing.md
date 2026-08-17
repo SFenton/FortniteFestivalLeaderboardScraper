@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -643,11 +643,19 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. snapshot-capacity recovery investigation: refresh the read-only protected
+1. max-score rollback recovery: review and deploy the canonical rollback
+   one-shot, initialize its release schema, pass exact dry-run against the
+   frozen publication-1302 manifest/plan/rollback identities, then execute
+   under continuous API/lock/disk monitoring. Acceptance requires terminal
+   `rolled_back`, publication 1302 unchanged, complete path/derived/cache
+   parity, unfreeze, direct/public route recovery, worker still held, and safe
+   removal of the temporary songs cache. The repository candidate is not live
+   authorization;
+2. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
    existing parity/capacity contract passes;
-2. BandMaintenance current projection refresh. PR #47 merges the
+3. BandMaintenance current projection refresh. PR #47 merges the
    implementation default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
    Schema and fixture tests prove `member_index` uniqueness inside the query
@@ -661,14 +669,14 @@ Order is evidence-driven:
    Production enablement remains pending, not accepted: capacity must first
    restore a full-scrape window, then a matched full-scrape A/B must pass exact
    publication/data parity and the protected `>10%` regression rule;
-3. solo current-projection write reduction;
-4. rank-history query path and one-variable concurrency/overlap experiment;
-5. leaderboard-rivals batching/fingerprints;
-6. precompute input reuse/selective concurrency;
-7. best-effort cleanup reorder;
-8. snapshot activation consolidation;
-9. storage-retention execution after parity/capacity gates;
-10. capture-only overlap research after architecture/storage redesign.
+4. solo current-projection write reduction;
+5. rank-history query path and one-variable concurrency/overlap experiment;
+6. leaderboard-rivals batching/fingerprints;
+7. precompute input reuse/selective concurrency;
+8. best-effort cleanup reorder;
+9. snapshot activation consolidation;
+10. storage-retention execution after parity/capacity gates;
+11. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 

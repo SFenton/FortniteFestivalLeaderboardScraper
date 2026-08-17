@@ -6,6 +6,7 @@ public enum MaxScoreMaintenanceAction
     Plan,
     Apply,
     Resume,
+    Rollback,
 }
 
 public sealed record MaxScoreMaintenanceCommand(
@@ -18,12 +19,17 @@ public sealed record MaxScoreMaintenanceCommand(
     string ReportOutputPath,
     string? RollbackOutputPath,
     string? ExpectedManifestDigest,
-    string? ExpectedPlanDigest)
+    string? ExpectedPlanDigest,
+    string? RollbackFilePath,
+    string? ExpectedRollbackDigest,
+    bool RollbackDryRun)
 {
     public const string StageFlag = "--max-score-maintenance-stage";
     public const string PlanFlag = "--max-score-maintenance-plan";
     public const string ApplyFlag = "--max-score-maintenance-apply";
     public const string ResumeFlag = "--max-score-maintenance-resume";
+    public const string RollbackFlag =
+        "--max-score-maintenance-rollback";
     public const string StageRequestFlag =
         "--max-score-maintenance-stage-request";
     public const string SongIdFlag = "--max-score-maintenance-song-id";
@@ -34,10 +40,16 @@ public sealed record MaxScoreMaintenanceCommand(
         "--max-score-maintenance-report-output";
     public const string RollbackOutputFlag =
         "--max-score-maintenance-rollback-output";
+    public const string RollbackFileFlag =
+        "--max-score-maintenance-rollback-file";
     public const string ExpectedManifestDigestFlag =
         "--expected-max-score-manifest-digest";
     public const string ExpectedPlanDigestFlag =
         "--expected-max-score-plan-digest";
+    public const string ExpectedRollbackDigestFlag =
+        "--expected-max-score-rollback-digest";
+    public const string RollbackDryRunFlag =
+        "--max-score-maintenance-rollback-dry-run";
     public const string PublishedScrapeIdFlag =
         PublishedScrapeIdArgument.Flag;
 
@@ -47,14 +59,18 @@ public sealed record MaxScoreMaintenanceCommand(
         PlanFlag,
         ApplyFlag,
         ResumeFlag,
+        RollbackFlag,
         StageRequestFlag,
         SongIdFlag,
         ManifestFlag,
         ManifestOutputFlag,
         ReportOutputFlag,
         RollbackOutputFlag,
+        RollbackFileFlag,
         ExpectedManifestDigestFlag,
         ExpectedPlanDigestFlag,
+        ExpectedRollbackDigestFlag,
+        RollbackDryRunFlag,
         PublishedScrapeIdFlag,
     ];
 
@@ -107,13 +123,14 @@ public sealed record MaxScoreMaintenanceCommand(
             (Flag: PlanFlag, Action: MaxScoreMaintenanceAction.Plan),
             (Flag: ApplyFlag, Action: MaxScoreMaintenanceAction.Apply),
             (Flag: ResumeFlag, Action: MaxScoreMaintenanceAction.Resume),
+            (Flag: RollbackFlag, Action: MaxScoreMaintenanceAction.Rollback),
         }
         .Where(action => values.ContainsKey(action.Flag))
         .ToArray();
         if (actions.Length != 1)
         {
             throw new ArgumentException(
-                $"Specify exactly one of {StageFlag}, {PlanFlag}, {ApplyFlag}, or {ResumeFlag}.");
+                $"Specify exactly one of {StageFlag}, {PlanFlag}, {ApplyFlag}, {ResumeFlag}, or {RollbackFlag}.");
         }
         foreach (var actionFlag in new[]
                  {
@@ -121,6 +138,7 @@ public sealed record MaxScoreMaintenanceCommand(
                      PlanFlag,
                      ApplyFlag,
                      ResumeFlag,
+                     RollbackFlag,
                  })
         {
             RequireFlagWithoutValue(values, actionFlag);
@@ -165,12 +183,24 @@ public sealed record MaxScoreMaintenanceCommand(
         var rollbackOutput = OptionalSingleValue(
             values,
             RollbackOutputFlag);
+        var rollbackFile = OptionalSingleValue(
+            values,
+            RollbackFileFlag);
         var manifestDigest = NormalizeOptionalDigest(
             OptionalSingleValue(values, ExpectedManifestDigestFlag),
             ExpectedManifestDigestFlag);
         var planDigest = NormalizeOptionalDigest(
             OptionalSingleValue(values, ExpectedPlanDigestFlag),
             ExpectedPlanDigestFlag);
+        var rollbackDigest = NormalizeOptionalDigest(
+            OptionalSingleValue(
+                values,
+                ExpectedRollbackDigestFlag),
+            ExpectedRollbackDigestFlag);
+        var rollbackDryRun =
+            RequireOptionalFlagWithoutValue(
+                values,
+                RollbackDryRunFlag);
 
         switch (actions[0].Action)
         {
@@ -182,6 +212,15 @@ public sealed record MaxScoreMaintenanceCommand(
                 Reject(rollbackOutput, RollbackOutputFlag, StageFlag);
                 Reject(manifestDigest, ExpectedManifestDigestFlag, StageFlag);
                 Reject(planDigest, ExpectedPlanDigestFlag, StageFlag);
+                Reject(rollbackFile, RollbackFileFlag, StageFlag);
+                Reject(
+                    rollbackDigest,
+                    ExpectedRollbackDigestFlag,
+                    StageFlag);
+                RejectFlag(
+                    rollbackDryRun,
+                    RollbackDryRunFlag,
+                    StageFlag);
                 break;
             case MaxScoreMaintenanceAction.Plan:
                 Require(manifest, ManifestFlag);
@@ -191,6 +230,15 @@ public sealed record MaxScoreMaintenanceCommand(
                 Reject(manifestOutput, ManifestOutputFlag, PlanFlag);
                 Reject(rollbackOutput, RollbackOutputFlag, PlanFlag);
                 Reject(planDigest, ExpectedPlanDigestFlag, PlanFlag);
+                Reject(rollbackFile, RollbackFileFlag, PlanFlag);
+                Reject(
+                    rollbackDigest,
+                    ExpectedRollbackDigestFlag,
+                    PlanFlag);
+                RejectFlag(
+                    rollbackDryRun,
+                    RollbackDryRunFlag,
+                    PlanFlag);
                 break;
             case MaxScoreMaintenanceAction.Apply:
                 Require(manifest, ManifestFlag);
@@ -200,6 +248,15 @@ public sealed record MaxScoreMaintenanceCommand(
                 Reject(stageRequest, StageRequestFlag, ApplyFlag);
                 RejectSongs(songIds, ApplyFlag);
                 Reject(manifestOutput, ManifestOutputFlag, ApplyFlag);
+                Reject(rollbackFile, RollbackFileFlag, ApplyFlag);
+                Reject(
+                    rollbackDigest,
+                    ExpectedRollbackDigestFlag,
+                    ApplyFlag);
+                RejectFlag(
+                    rollbackDryRun,
+                    RollbackDryRunFlag,
+                    ApplyFlag);
                 break;
             case MaxScoreMaintenanceAction.Resume:
                 Require(manifest, ManifestFlag);
@@ -208,6 +265,34 @@ public sealed record MaxScoreMaintenanceCommand(
                 Reject(stageRequest, StageRequestFlag, ResumeFlag);
                 RejectSongs(songIds, ResumeFlag);
                 Reject(manifestOutput, ManifestOutputFlag, ResumeFlag);
+                Reject(rollbackFile, RollbackFileFlag, ResumeFlag);
+                Reject(
+                    rollbackDigest,
+                    ExpectedRollbackDigestFlag,
+                    ResumeFlag);
+                RejectFlag(
+                    rollbackDryRun,
+                    RollbackDryRunFlag,
+                    ResumeFlag);
+                break;
+            case MaxScoreMaintenanceAction.Rollback:
+                Require(manifest, ManifestFlag);
+                Require(manifestDigest, ExpectedManifestDigestFlag);
+                Require(planDigest, ExpectedPlanDigestFlag);
+                Require(rollbackFile, RollbackFileFlag);
+                Require(
+                    rollbackDigest,
+                    ExpectedRollbackDigestFlag);
+                Reject(stageRequest, StageRequestFlag, RollbackFlag);
+                RejectSongs(songIds, RollbackFlag);
+                Reject(
+                    manifestOutput,
+                    ManifestOutputFlag,
+                    RollbackFlag);
+                Reject(
+                    rollbackOutput,
+                    RollbackOutputFlag,
+                    RollbackFlag);
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -223,7 +308,10 @@ public sealed record MaxScoreMaintenanceCommand(
             reportOutput,
             rollbackOutput,
             manifestDigest,
-            planDigest);
+            planDigest,
+            rollbackFile,
+            rollbackDigest,
+            rollbackDryRun);
     }
 
     private static Dictionary<string, List<string?>> Tokenize(
@@ -246,7 +334,9 @@ public sealed record MaxScoreMaintenanceCommand(
                 && flag is not StageFlag
                     and not PlanFlag
                     and not ApplyFlag
-                    and not ResumeFlag)
+                    and not ResumeFlag
+                    and not RollbackFlag
+                    and not RollbackDryRunFlag)
             {
                 if (index + 1 >= args.Count
                     || args[index + 1].StartsWith(
@@ -279,6 +369,20 @@ public sealed record MaxScoreMaintenanceCommand(
             throw new ArgumentException(
                 $"{flag} must be specified exactly once without a value.");
         }
+    }
+
+    private static bool RequireOptionalFlagWithoutValue(
+            IReadOnlyDictionary<string, List<string?>> values,
+            string flag)
+    {
+        if (!values.TryGetValue(flag, out var occurrences))
+            return false;
+        if (occurrences.Count != 1 || occurrences[0] is not null)
+        {
+            throw new ArgumentException(
+                $"{flag} must be specified exactly once without a value.");
+        }
+        return true;
     }
 
     private static string RequireSingleValue(
@@ -321,6 +425,15 @@ public sealed record MaxScoreMaintenanceCommand(
         string action)
     {
         if (value is not null)
+            throw new ArgumentException($"{flag} is not valid with {action}.");
+    }
+
+    private static void RejectFlag(
+        bool present,
+        string flag,
+        string action)
+    {
+        if (present)
             throw new ArgumentException($"{flag} is not valid with {action}.");
     }
 

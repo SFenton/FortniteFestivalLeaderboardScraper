@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified_commit: 937868e0
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -169,6 +169,25 @@ authorize running with an active worker, weakening source locks, or clearing a
 post-freeze failure. Plan failures identify the evidence stage so operators
 can distinguish publication-population, complete score-history, and other
 evidence without exposing SQL or credentials.
+
+For an incomplete post-promotion run, use only the canonical max-score
+rollback dry-run/execute commands from the runbook. Rollback requires exact
+manifest/plan/rollback digests, zero worker/maintenance backends and waiting
+locks, the worker offline, and the original digest-owned freeze. It restores
+paths atomically, rebuilds complete derived/notification/cache state, records
+terminal `rolled_back`, and unfreezes only with exact final validation. Never
+replace it with manual path SQL, phase/status edits, cache swaps, gate clearing,
+or freeze clearing. A rollback failure keeps the freeze and resumes through the
+same command/identities from its durable rollback phase. The executor keeps
+the registration/path locks and durable freeze but yields the global
+publication lock during long work. It takes that lock transactionally only at
+each commit with the existing `5s` lock timeout; contention rolls back that
+unit rather than authorizing prolonged public-read queuing. Keep cached and
+cold route probes active throughout. A `rollback_captured` run is executable
+only when exact current path identity proves promotion committed before the
+missing checkpoint.
+Scrape allocation remains forbidden in code while the max-score freeze or
+durable mutation owner exists, even if the held worker is started accidentally.
 
 ## Service availability
 

@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 937868e0
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -34,7 +34,7 @@ sources:
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Api/PublicReadGateService.cs
 update_triggers:
-  - Max-score stage, plan, apply, resume, freeze, notification, cache, validation, or rollback-evidence behavior changes.
+  - Max-score stage, plan, apply, resume, rollback, freeze, notification, cache, validation, or rollback-evidence behavior changes.
 ---
 
 # Max-score correction maintenance
@@ -791,10 +791,153 @@ After success, verify:
   rewritten; and
 - API/web health and same-publication client refresh succeeded.
 
-There is intentionally no automatic rollback command. The rollback JSON plus
-`max_score_maintenance_rollback_songs` is authoritative. A reversal requires a
-separately reviewed transaction while reads remain frozen, restoration of
-every captured path field for every song, the same complete derived rebuild
-and notification quarantine rules, cache restaging, and full validation before
-unfreeze. Never delete the promoted immutable generations or audit rows as
-rollback.
+## Guarded rollback
+
+Release schema must be initialized before rollback; the rollback one-shot does
+not run schema initialization or hosted/background services.
+
+Run the read-only preflight first with a new report path:
+
+```bash
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --max-score-maintenance-rollback \
+  --max-score-maintenance-rollback-dry-run \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --expected-max-score-manifest-digest "$MANIFEST_SHA" \
+  --expected-max-score-plan-digest "$PLAN_DIGEST" \
+  --max-score-maintenance-rollback-file "$EVIDENCE_REL/rollback.json" \
+  --expected-max-score-rollback-digest "$ROLLBACK_SHA" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/rollback-dry-run-report.json"
+```
+
+Dry-run validates exact publication/freeze/run phase, zero maintenance/worker
+backends and waiting locks, canonical rollback bytes/digest, rollback
+file/database row parity, exact manifest song/instrument scope, current
+promoted paths, immutable current/staged artifacts, and the worker-offline
+gate. It never acquires the mutation lease, edits the durable phase, restores
+paths, stages caches, or unfreezes. Dry-run against an already terminal
+`rolled_back` run is rejected read-only; use the execute form when stale
+terminal-gate reconciliation is required.
+
+Execute with the same identities, omit
+`--max-score-maintenance-rollback-dry-run`, and use another new report path:
+
+```bash
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --max-score-maintenance-rollback \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --expected-max-score-manifest-digest "$MANIFEST_SHA" \
+  --expected-max-score-plan-digest "$PLAN_DIGEST" \
+  --max-score-maintenance-rollback-file "$EVIDENCE_REL/rollback.json" \
+  --expected-max-score-rollback-digest "$ROLLBACK_SHA" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/rollback-report-1.json"
+```
+
+The command reserves the new report file before loading the rollback workflow
+or acquiring a database lease. Existing targets and collisions with the
+manifest or rollback input therefore fail before mutation. If the manifest
+cannot be parsed well enough to form a typed failure report, disposal removes
+the unwritten reservation rather than leaving a zero-byte path that blocks a
+retry.
+
+Keep the public-health/resource monitor active for the entire command. At
+minimum sample PostgreSQL locks/query ownership, FST free bytes, readyz, web
+shell, service-info, direct/public songs, rankings overview/composite/bands,
+Solo rankings, and worker state every 60 seconds. Stop only the exact rollback
+one-off on identity mismatch or unacceptable public degradation; never stop
+PostgreSQL, service/web, proxies, autovacuum, or the held worker.
+
+The executor:
+
+1. acquires the exclusive registration mutation gate and path-generation
+   advisory lock, briefly proves the global publication lock is available,
+   then yields that publication lock between transactions while preserving the
+   durable freeze and mutation owner;
+2. atomically restores every rollback path field for the exact manifest songs,
+   including nullable pre-apply maxima and the prior expected-instrument set,
+   without deleting promoted immutable generations or audit rows;
+3. rebuilds affected solo/band rankings, complete affected player-tier sets,
+   leaderboard rivals, and related derived state from the restored maxima plus
+   the immutable publication-1302 source/population;
+4. quarantines and aligns rollback notification candidates with zero visible
+   delivery under a direction-specific audit digest, so an identical or empty
+   apply candidate set cannot suppress restored-state alignment; the audit,
+   alignment mutations, rollback audit ID/counts, and
+   `rollback_notifications_quarantined` checkpoint commit atomically;
+5. stages both legacy and publication-addressed caches and captures separate
+   immutable rollback cache-entry evidence;
+6. validates paths, population, both the accepted post-promotion and exact
+   restored-maximum score-history selectors, rankings, tiers, rivals,
+   notifications, cache keys/content, unchanged rank history, and the
+   canonical rollback file again immediately before completion;
+7. atomically swaps validated caches, records `rolled_back`, and releases the
+   exact freeze.
+
+Rollback does not retain the global publication advisory lock across derived
+rebuild or cache generation. Each lease-owned transaction performs its work
+under the durable freeze/source guards, then requests the transaction-scoped
+exclusive publication lock immediately before commit. PostgreSQL MVCC keeps
+uncommitted rows invisible; existing publication readers drain before the
+commit, and later readers observe either the preceding or committed unit. The
+existing `5s` lock timeout rejects and rolls back a contended unit rather than
+allowing a long rollback command to queue public reads. Cached public routes
+therefore remain available between these bounded commit fences; cold routes
+remain cache-or-`503` until terminal unfreeze.
+The active digest-owned max-score freeze blocks every normal cache-build lease,
+cache swap, and non-owner staging mutation from rollback admission onward, not
+only after rollback cache evidence is captured. This prevents intermediate
+rollback checkpoints from becoming a published cache generation.
+The guard remains active even if an unexpected working-publication pointer
+appears. Canonical scrape allocation also rejects the max-score freeze or
+durable mutation token, so no new working publication may begin while rollback
+owns the current generation.
+Schema initialization remains restart-safe: its row-scoped retention delete may
+remove only staging rows whose publication is not current, previous, or
+working. Current-generation insert/update/delete and every truncate remain
+blocked for non-owners.
+
+Durable rollback phases are `rollback_validating`,
+`rollback_paths_restored`, `rollback_derived_state_rebuilt`,
+`rollback_notifications_quarantined`, `rollback_caches_staged`,
+`rollback_validated`, and `rolled_back`. Path restoration and its checkpoint
+share one serializable transaction. Later work is resumable and idempotent;
+rerun the same command and identities with a new report path after interruption.
+From `rollback_caches_staged` onward, rollback cache evidence blocks normal
+cache-build leases and non-owner staging DML exactly like apply cache evidence.
+An already `rolled_back` run returns its terminal report without applying
+again. A run still recorded as `rollback_captured` is eligible only when every
+current path already exactly matches the manifest's promoted identity, covering
+an acknowledged path commit whose phase checkpoint was lost. If paths still
+match the pre-promotion identity, rollback rejects without mutation. A final
+commit acknowledgement failure is reconciled from durable `rolled_back` plus
+an unfrozen publication. Before reporting success, the executor disposes or
+replaces the lease under the exclusive mutation gate and verifies every
+durable mutation-owner field is null. A terminal retry performs the same
+stale-gate cleanup, so backend loss after commit cannot leave registration
+blocked while returning a false success.
+If cleanup itself cannot complete, report v2 records terminal `rolled_back`
+with `cleanupPending=true`, `succeeded=false`, `resumable=true`, and unfrozen
+reads. Retry the same execute command and identities with a new report path;
+do not edit the gate manually.
+Apply/resume invoked after rollback ownership begins returns a truthful
+non-resumable rejection report with the actual rollback phase and freeze state;
+it never presents rollback as an apply-resumable failure.
+Post-commit success reconciliation is enabled only after this invocation has
+passed terminal path/publication validation and attempted the final completion
+or terminal cleanup. A failed terminal preflight is never converted into
+success merely because the durable run was already `rolled_back`.
+
+Any mismatch or failure keeps the freeze, rollback evidence, original apply
+failure/audit fields, promoted immutable generations, and the last durable
+rollback phase. The report records rollback-specific stage timestamps,
+path/cache fingerprints, counts, and failure detail. Never manually clear the
+freeze, edit phase/status, delete promoted generations/audit rows, or substitute
+ad-hoc SQL for this command.

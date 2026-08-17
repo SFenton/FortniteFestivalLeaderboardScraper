@@ -387,6 +387,16 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         ANALYZE fst_max_score_evidence_affected_accounts;
         """;
 
+    private const string SeedAffectedAccountsSql = """
+        INSERT INTO fst_max_score_evidence_affected_accounts (
+            account_id,
+            is_overlay_only)
+        SELECT account_id,
+               FALSE
+        FROM unnest(@accountIds::TEXT[]) account_id
+        ON CONFLICT (account_id) DO NOTHING;
+        """;
+
     private const string AnalyzeFallbackScopesSql = """
         ANALYZE fst_max_score_evidence_fallback_scopes;
         """;
@@ -531,7 +541,9 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             NpgsqlTransaction transaction,
             CancellationToken ct,
             int commandTimeoutSeconds,
-            Action<string, int>? commandTimeoutConfigured = null)
+            Action<string, int>? commandTimeoutConfigured = null,
+            bool requirePositiveChangedMaxima = true,
+            IReadOnlyCollection<string>? seededAffectedAccounts = null)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(postPromotionMaxScores);
@@ -582,7 +594,8 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         var maximumPairs = maxima
             .Select(item => (item.SongId, item.Instrument))
             .ToHashSet();
-        if (!changedPairs.IsSubsetOf(maximumPairs))
+        if (requirePositiveChangedMaxima
+            && !changedPairs.IsSubsetOf(maximumPairs))
         {
             throw new InvalidOperationException(
                 "Score-history evidence requires a positive post-promotion maximum for every changed scope.");
@@ -612,6 +625,11 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                     deadline);
                 await PopulateAffectedAccountsAsync(
                     scopeSources,
+                    connection,
+                    transaction,
+                    deadline);
+                await SeedAffectedAccountsAsync(
+                    seededAffectedAccounts,
                     connection,
                     transaction,
                     deadline);
@@ -699,6 +717,35 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                 savepointName);
             throw;
         }
+    }
+
+    private static async Task SeedAffectedAccountsAsync(
+        IReadOnlyCollection<string>? accountIds,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SharedCommandDeadline deadline)
+    {
+        if (accountIds is null || accountIds.Count == 0)
+            return;
+
+        var normalized = accountIds
+            .Where(accountId =>
+                !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(accountId => accountId, StringComparer.Ordinal)
+            .ToArray();
+        if (normalized.Length == 0)
+            return;
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        deadline.Configure(command);
+        command.CommandText = SeedAffectedAccountsSql;
+        command.Parameters.Add(
+            "accountIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            normalized;
+        await command.ExecuteNonQueryAsync(deadline.Token);
     }
 
     private static async Task PrepareSelectorsAsync(

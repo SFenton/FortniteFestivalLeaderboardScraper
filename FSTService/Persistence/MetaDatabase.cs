@@ -246,6 +246,40 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
         }
 
+        using (var maxScoreMaintenance = conn.CreateCommand())
+        {
+            maxScoreMaintenance.Transaction = tx;
+            maxScoreMaintenance.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM scrape_publication_state publication
+                    WHERE publication.id = TRUE
+                      AND (
+                          publication.max_score_mutation_gate_token
+                              IS NOT NULL
+                          OR (
+                              publication.public_reads_frozen
+                              AND publication.public_reads_frozen_reason
+                                  LIKE @maxScoreReasonPrefix
+                          )
+                      )
+                )
+                """;
+            maxScoreMaintenance.Parameters.AddWithValue(
+                "maxScoreReasonPrefix",
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + "%");
+            if (maxScoreMaintenance.ExecuteScalar() is true)
+            {
+                throw new PublicationCommitBusyException(
+                    "Max-score maintenance must finish or reconcile before allocating another scrape.",
+                    TimeSpan.Zero,
+                    lockRejections: 1,
+                    relationLockRetries: 0);
+            }
+        }
+
         SongCatalogPersistenceToken persistedCatalog;
         using (var catalogToken = conn.CreateCommand())
         {
@@ -11714,9 +11748,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
                                  run.freeze_reason
                              AND run.expected_publication_id =
                                  @publicationId
-                             AND run.phase <> 'completed'
+                             AND run.phase NOT IN (
+                                 'completed',
+                                 'rolled_back')
                              AND run.status IN ('running', 'failed')
-                             AND run.staged_cache_evidence IS NOT NULL
                        ) AS protected_max_score_cache
                 FROM publication
                 """;
@@ -11960,6 +11995,28 @@ public sealed partial class MetaDatabase : IMetaDatabase
         AcquireMaxScoreMaintenanceLeaseAsync(
             long publicationId,
             CancellationToken ct = default)
+        => await AcquireMaxScoreMaintenanceLeaseCoreAsync(
+            publicationId,
+            applicationName: "fst-max-score-maintenance",
+            retainPublicationLock: true,
+            ct);
+
+    public async Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => await AcquireMaxScoreMaintenanceLeaseCoreAsync(
+            publicationId,
+            applicationName: "fst-max-score-rollback",
+            retainPublicationLock: false,
+            ct);
+
+    private async Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceLeaseCoreAsync(
+            long publicationId,
+            string applicationName,
+            bool retainPublicationLock,
+            CancellationToken ct)
     {
         if (publicationId <= 0)
         {
@@ -11987,7 +12044,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     SELECT
                         set_config(
                             'application_name',
-                            'fst-max-score-maintenance',
+                            @applicationName,
                             FALSE),
                         set_config(
                             'fst.max_score_maintenance_lease_token',
@@ -11995,6 +12052,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
                             FALSE),
                         pg_backend_pid()
                     """;
+                identity.Parameters.AddWithValue(
+                    "applicationName",
+                    applicationName);
                 identity.Parameters.AddWithValue(
                     "leaseToken",
                     leaseToken);
@@ -12058,13 +12118,34 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         "Max-score maintenance is blocked by publication or another maintenance operation.");
                 }
             }
+            if (!retainPublicationLock)
+            {
+                // Rollback keeps the durable freeze and mutation fences, but
+                // yields this global lock between atomic commit boundaries so
+                // cached public reads do not queue behind long reconciliation.
+                await using var releasePublicationLock =
+                    conn.CreateCommand();
+                releasePublicationLock.CommandTimeout = 5;
+                releasePublicationLock.CommandText =
+                    "SELECT pg_advisory_unlock(@lockKey)";
+                releasePublicationLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationSchema.AdvisoryLockKey);
+                if (await releasePublicationLock.ExecuteScalarAsync(ct)
+                    is not true)
+                {
+                    throw new MaxScoreMaintenanceLeaseLostException();
+                }
+                publicationLockAcquired = false;
+            }
 
             return new MaxScoreMaintenanceLease(
                 this,
                 conn,
                 publicationId,
                 leaseToken,
-                backendProcessId);
+                backendProcessId,
+                retainPublicationLock);
         }
         catch
         {
@@ -12433,6 +12514,39 @@ public sealed partial class MetaDatabase : IMetaDatabase
         long publishedScrapeId,
         string manifestSha256,
         string leaseToken)
+        => CompleteMaxScoreMaintenanceCore(
+            conn,
+            tx,
+            publicationId,
+            publishedScrapeId,
+            manifestSha256,
+            leaseToken,
+            rollback: false);
+
+    private void CompleteMaxScoreMaintenanceRollback(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long publicationId,
+        long publishedScrapeId,
+        string manifestSha256,
+        string leaseToken)
+        => CompleteMaxScoreMaintenanceCore(
+            conn,
+            tx,
+            publicationId,
+            publishedScrapeId,
+            manifestSha256,
+            leaseToken,
+            rollback: true);
+
+    private void CompleteMaxScoreMaintenanceCore(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long publicationId,
+        long publishedScrapeId,
+        string manifestSha256,
+        string leaseToken,
+        bool rollback)
     {
         var normalizedDigest =
             MaxScoreMaintenanceManifest.NormalizeSha256(
@@ -12517,15 +12631,23 @@ public sealed partial class MetaDatabase : IMetaDatabase
         {
             run.Transaction = tx;
             run.CommandText = """
-                SELECT staged_cache_entry_count
+                SELECT CASE
+                           WHEN @rollback
+                               THEN rollback_staged_cache_entry_count
+                           ELSE staged_cache_entry_count
+                       END
                 FROM max_score_maintenance_runs
                 WHERE manifest_sha256 = @manifestSha256
                   AND expected_publication_id = @publicationId
                   AND expected_published_scrape_id =
                       @publishedScrapeId
-                  AND phase = 'validated'
+                  AND phase = @validatedPhase
                   AND status IN ('running', 'failed')
-                  AND staged_cache_evidence IS NOT NULL
+                  AND CASE
+                          WHEN @rollback
+                              THEN rollback_cache_evidence IS NOT NULL
+                          ELSE staged_cache_evidence IS NOT NULL
+                      END
                 FOR UPDATE
                 """;
             run.Parameters.AddWithValue(
@@ -12537,6 +12659,14 @@ public sealed partial class MetaDatabase : IMetaDatabase
             run.Parameters.AddWithValue(
                 "publishedScrapeId",
                 publishedScrapeId);
+            run.Parameters.AddWithValue(
+                "rollback",
+                rollback);
+            run.Parameters.AddWithValue(
+                "validatedPhase",
+                rollback
+                    ? "rollback_validated"
+                    : "validated");
             var value = run.ExecuteScalar();
             if (value is null or DBNull)
             {
@@ -12550,13 +12680,27 @@ public sealed partial class MetaDatabase : IMetaDatabase
             tx,
             _maxScoreMaintenanceCommandTimeoutSeconds,
             "final-cache-validation");
-        MaxScoreMaintenanceCacheEntryEvidenceStore.Validate(
-            normalizedDigest,
-            publicationId,
-            stagedCacheEntryCount,
-            conn,
-            tx,
-            _maxScoreMaintenanceCommandTimeoutSeconds);
+        if (rollback)
+        {
+            MaxScoreMaintenanceCacheEntryEvidenceStore
+                .ValidateRollback(
+                    normalizedDigest,
+                    publicationId,
+                    stagedCacheEntryCount,
+                    conn,
+                    tx,
+                    _maxScoreMaintenanceCommandTimeoutSeconds);
+        }
+        else
+        {
+            MaxScoreMaintenanceCacheEntryEvidenceStore.Validate(
+                normalizedDigest,
+                publicationId,
+                stagedCacheEntryCount,
+                conn,
+                tx,
+                _maxScoreMaintenanceCommandTimeoutSeconds);
+        }
         ConfigureMaxScoreMaintenanceCompletionStatementTimeout(
             conn,
             tx,
@@ -12628,7 +12772,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     jsonb_build_object(
                         'table', 'songs',
                         'maintenanceManifestSha256',
-                            @manifestSha256),
+                            @manifestSha256,
+                        'maintenanceRollback',
+                            @rollback),
                     (
                         SELECT COUNT(*)
                         FROM songs
@@ -12658,16 +12804,30 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     built_at = EXCLUDED.built_at;
 
                 UPDATE max_score_maintenance_runs
-                SET phase = 'completed',
-                    status = 'completed',
-                    failure_stage = NULL,
-                    failure_detail = NULL,
+                SET phase = @terminalPhase,
+                    status = @terminalStatus,
+                    failure_stage = CASE
+                        WHEN @rollback
+                            THEN failure_stage
+                        ELSE NULL
+                    END,
+                    failure_detail = CASE
+                        WHEN @rollback
+                            THEN failure_detail
+                        ELSE NULL
+                    END,
+                    rollback_failure_stage = NULL,
+                    rollback_failure_detail = NULL,
                     completed_at = now(),
+                    rolled_back_at = CASE
+                        WHEN @rollback THEN now()
+                        ELSE rolled_back_at
+                    END,
                     updated_at = now()
                 WHERE manifest_sha256 = @manifestSha256
                   AND expected_publication_id = @publicationId
                   AND expected_published_scrape_id = @publishedScrapeId
-                  AND phase = 'validated'
+                  AND phase = @validatedPhase
                   AND status IN ('running', 'failed');
                 """;
             swap.Parameters.AddWithValue(
@@ -12679,6 +12839,20 @@ public sealed partial class MetaDatabase : IMetaDatabase
             swap.Parameters.AddWithValue(
                 "manifestSha256",
                 normalizedDigest);
+            swap.Parameters.AddWithValue(
+                "rollback",
+                rollback);
+            swap.Parameters.AddWithValue(
+                "terminalPhase",
+                rollback ? "rolled_back" : "completed");
+            swap.Parameters.AddWithValue(
+                "terminalStatus",
+                rollback ? "rolled_back" : "completed");
+            swap.Parameters.AddWithValue(
+                "validatedPhase",
+                rollback
+                    ? "rollback_validated"
+                    : "validated");
             swap.ExecuteNonQuery();
         }
 
@@ -12727,8 +12901,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             verify.CommandText = """
                 SELECT
                     (
-                        SELECT phase = 'completed'
-                           AND status = 'completed'
+                        SELECT phase = @terminalPhase
+                           AND status = @terminalStatus
                         FROM max_score_maintenance_runs
                         WHERE manifest_sha256 = @manifestSha256
                     ),
@@ -12751,6 +12925,12 @@ public sealed partial class MetaDatabase : IMetaDatabase
             verify.Parameters.AddWithValue(
                 "publicationId",
                 publicationId);
+            verify.Parameters.AddWithValue(
+                "terminalPhase",
+                rollback ? "rolled_back" : "completed");
+            verify.Parameters.AddWithValue(
+                "terminalStatus",
+                rollback ? "rolled_back" : "completed");
             using var reader = verify.ExecuteReader();
             if (!reader.Read()
                 || reader.IsDBNull(0)
@@ -12878,11 +13058,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 WHERE publication.id = TRUE
                   AND publication.current_publication_id =
                         @publicationId
-                  AND publication.working_publication_id IS NULL
                   AND publication.public_reads_frozen
-                  AND run.phase <> 'completed'
+                  AND run.phase NOT IN (
+                      'completed',
+                      'rolled_back')
                   AND run.status IN ('running', 'failed')
-                  AND run.staged_cache_evidence IS NOT NULL
             )
             """;
         command.Parameters.AddWithValue(
@@ -12891,7 +13071,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (command.ExecuteScalar() is true)
         {
             throw new InvalidOperationException(
-                $"Publication {publicationId} cache build is blocked by max-score maintenance cache evidence for the same generation.");
+                $"Publication {publicationId} cache build is blocked by active max-score maintenance for the same generation.");
         }
     }
 
@@ -12917,13 +13097,13 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 WHERE publication.id = TRUE
                   AND publication.current_publication_id =
                       @publicationId
-                  AND publication.working_publication_id IS NULL
                   AND publication.public_reads_frozen
                   AND run.expected_published_scrape_id =
                       publication.published_scrape_id
-                  AND run.phase <> 'completed'
+                  AND run.phase NOT IN (
+                      'completed',
+                      'rolled_back')
                   AND run.status IN ('running', 'failed')
-                  AND run.staged_cache_evidence IS NOT NULL
                   AND (
                       publication.max_score_mutation_gate_token
                           IS NULL
@@ -12941,7 +13121,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (command.ExecuteScalar() is true)
         {
             throw new InvalidOperationException(
-                $"Publication {publicationId.Value} cache staging is immutable after max-score cache evidence capture.");
+                $"Publication {publicationId.Value} cache staging is blocked by active max-score maintenance.");
         }
     }
 
@@ -13280,6 +13460,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         private readonly MetaDatabase _owner;
         private NpgsqlConnection? _connection;
         private readonly string _leaseToken;
+        private readonly bool _retainPublicationLock;
         private readonly SemaphoreSlim _operationGate = new(1, 1);
 
         public MaxScoreMaintenanceLease(
@@ -13287,13 +13468,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
             NpgsqlConnection connection,
             long publicationId,
             string leaseToken,
-            int backendProcessId)
+            int backendProcessId,
+            bool retainPublicationLock)
         {
             _owner = owner;
             _connection = connection;
             PublicationId = publicationId;
             _leaseToken = leaseToken;
             BackendProcessId = backendProcessId;
+            _retainPublicationLock = retainPublicationLock;
         }
 
         public int BackendProcessId { get; }
@@ -13306,16 +13489,27 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 var connection = _connection
                     ?? throw new MaxScoreMaintenanceLeaseLostException();
-                if (!requireSourceLocks)
+                if (!requireSourceLocks
+                    && _retainPublicationLock)
                 {
-                    VerifyOwnedConnection(connection, transaction: null);
+                    VerifyOwnedConnection(
+                        connection,
+                        transaction: null,
+                        requireSourceLocks: false,
+                        requirePublicationLock: true);
                     return;
                 }
 
                 using var transaction = connection.BeginTransaction();
                 ConfigureOwnedTransaction(connection, transaction);
-                AcquireSourceLocks(connection, transaction);
-                VerifyOwnedConnection(connection, transaction);
+                if (requireSourceLocks)
+                    AcquireSourceLocks(connection, transaction);
+                VerifyOwnedConnection(
+                    connection,
+                    transaction,
+                    requireSourceLocks,
+                    requirePublicationLock:
+                        _retainPublicationLock);
                 transaction.Commit();
             }
             catch (MaxScoreMaintenanceLeaseLostException)
@@ -13341,12 +13535,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 var connection = _connection
                     ?? throw new MaxScoreMaintenanceLeaseLostException();
-                if (!requireSourceLocks)
+                if (!requireSourceLocks
+                    && _retainPublicationLock)
                 {
                     await VerifyOwnedConnectionAsync(
                         connection,
                         transaction: null,
-                        ct);
+                        ct,
+                        requireSourceLocks: false,
+                        requirePublicationLock: true);
                     return;
                 }
 
@@ -13356,14 +13553,20 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     connection,
                     transaction,
                     ct);
-                await AcquireSourceLocksAsync(
-                    connection,
-                    transaction,
-                    ct);
+                if (requireSourceLocks)
+                {
+                    await AcquireSourceLocksAsync(
+                        connection,
+                        transaction,
+                        ct);
+                }
                 await VerifyOwnedConnectionAsync(
                     connection,
                     transaction,
-                    ct);
+                    ct,
+                    requireSourceLocks,
+                    requirePublicationLock:
+                        _retainPublicationLock);
                 await transaction.CommitAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -13454,6 +13657,31 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 ct);
         }
 
+        public async Task CompleteRollbackAsync(
+            long publishedScrapeId,
+            string manifestSha256,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            await ExecuteOwnedTransactionAsync<object?>(
+                "final-rollback-cache-publication-unfreeze",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                {
+                    _owner.CompleteMaxScoreMaintenanceRollback(
+                        connection,
+                        transaction,
+                        PublicationId,
+                        publishedScrapeId,
+                        manifestSha256,
+                        _leaseToken);
+                    return Task.FromResult<object?>(null);
+                },
+                IsolationLevel.Serializable,
+                verifyAfterAction: true,
+                ct);
+        }
+
         public void Dispose()
         {
             var connection = Interlocked.Exchange(ref _connection, null);
@@ -13467,7 +13695,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         connection,
                         mutationGateLockAcquired: true,
                         pathLockAcquired: true,
-                        publicationLockAcquired: true);
+                        publicationLockAcquired:
+                            _retainPublicationLock);
                     _owner
                         .MaxScoreMaintenanceAfterLocksReleasedTestHook
                         ?.Invoke(
@@ -13506,31 +13735,12 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 try
                 {
-                    await using var unlock =
-                        connection.CreateCommand();
-                    unlock.CommandTimeout = 5;
-                    unlock.CommandText = """
-                        SELECT pg_advisory_unlock(
-                            @publicationLockKey);
-                        SELECT pg_advisory_unlock(
-                            @pathLockKey);
-                        SELECT pg_advisory_unlock(
-                            @mutationGateLockKey);
-                        """;
-                    unlock.Parameters.AddWithValue(
-                        "publicationLockKey",
-                        PublicationGenerationSchema
-                            .AdvisoryLockKey);
-                    unlock.Parameters.AddWithValue(
-                        "pathLockKey",
-                        PathGenerationAdmissionLock
-                            .AdvisoryLockKey);
-                    unlock.Parameters.AddWithValue(
-                        "mutationGateLockKey",
-                        RegistrationMutationGate
-                            .AdvisoryLockKey);
-                    await unlock.ExecuteNonQueryAsync(
-                        CancellationToken.None);
+                    ReleaseMaxScoreMaintenanceLocks(
+                        connection,
+                        mutationGateLockAcquired: true,
+                        pathLockAcquired: true,
+                        publicationLockAcquired:
+                            _retainPublicationLock);
                     _owner
                         .MaxScoreMaintenanceAfterLocksReleasedTestHook
                         ?.Invoke(
@@ -13593,12 +13803,24 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     connection,
                     transaction,
                     ct,
-                    requireSourceLocks);
+                    requireSourceLocks,
+                    requirePublicationLock:
+                        _retainPublicationLock);
 
                 var result = await action(
                     connection,
                     transaction,
                     ct);
+                if (!_retainPublicationLock)
+                {
+                    // MVCC keeps uncommitted rollback rows invisible. Drain
+                    // existing publication readers only at commit so each
+                    // request observes the state before or after this unit.
+                    await AcquirePublicationCommitLockAsync(
+                        connection,
+                        transaction,
+                        ct);
+                }
                 await using (var durableCommit =
                              connection.CreateCommand())
                 {
@@ -13613,7 +13835,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         connection,
                         transaction,
                         ct,
-                        requireSourceLocks);
+                        requireSourceLocks,
+                        requirePublicationLock: true);
                 }
 
                 _owner.MaxScoreMaintenanceBeforeCommitTestHook
@@ -13712,14 +13935,32 @@ public sealed partial class MetaDatabase : IMetaDatabase
             await command.ExecuteNonQueryAsync(ct);
         }
 
+        private static async Task AcquirePublicationCommitLockAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            command.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
         private void VerifyOwnedConnection(
             NpgsqlConnection connection,
-            NpgsqlTransaction? transaction)
+            NpgsqlTransaction? transaction,
+            bool requireSourceLocks,
+            bool requirePublicationLock)
         {
             using var command = CreateVerificationCommand(
                 connection,
                 transaction,
-                requireSourceLocks: transaction is not null);
+                requireSourceLocks,
+                requirePublicationLock);
             if (command.ExecuteScalar() is not true)
                 throw new MaxScoreMaintenanceLeaseLostException();
         }
@@ -13728,12 +13969,14 @@ public sealed partial class MetaDatabase : IMetaDatabase
             NpgsqlConnection connection,
             NpgsqlTransaction? transaction,
             CancellationToken ct,
-            bool requireSourceLocks = false)
+            bool requireSourceLocks = false,
+            bool requirePublicationLock = true)
         {
             await using var command = CreateVerificationCommand(
                 connection,
                 transaction,
-                requireSourceLocks);
+                requireSourceLocks,
+                requirePublicationLock);
             try
             {
                 if (await command.ExecuteScalarAsync(ct) is not true)
@@ -13757,7 +14000,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         private NpgsqlCommand CreateVerificationCommand(
             NpgsqlConnection connection,
             NpgsqlTransaction? transaction,
-            bool requireSourceLocks)
+            bool requireSourceLocks,
+            bool requirePublicationLock)
         {
             var command = connection.CreateCommand();
             command.CommandTimeout = 5;
@@ -13769,10 +14013,20 @@ public sealed partial class MetaDatabase : IMetaDatabase
                             'fst.max_score_maintenance_lease_token',
                             TRUE) = @leaseToken
                     AND (
-                        SELECT COUNT(*) = 3
+                        SELECT COUNT(*) =
+                            CASE
+                                WHEN @requirePublicationLock
+                                    THEN 3
+                                ELSE 2
+                            END
                         FROM unnest(@lockKeys::BIGINT[])
                             AS expected(lock_key)
-                        WHERE EXISTS (
+                        WHERE (
+                            @requirePublicationLock
+                            OR expected.lock_key <>
+                                @publicationLockKey
+                        )
+                          AND EXISTS (
                             SELECT 1
                             FROM pg_locks held
                             WHERE held.pid = pg_backend_pid()
@@ -13828,6 +14082,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
             command.Parameters.AddWithValue(
                 "publicationId",
                 PublicationId);
+            command.Parameters.AddWithValue(
+                "publicationLockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
             command.Parameters.Add(
                     "lockKeys",
                     NpgsqlDbType.Array | NpgsqlDbType.Bigint)
@@ -13840,6 +14097,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
             command.Parameters.AddWithValue(
                 "requireSourceLocks",
                 requireSourceLocks);
+            command.Parameters.AddWithValue(
+                "requirePublicationLock",
+                requirePublicationLock);
             return command;
         }
     }

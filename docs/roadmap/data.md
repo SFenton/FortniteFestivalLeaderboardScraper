@@ -2,7 +2,7 @@
 status: roadmap
 owner: data
 last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified_commit: 937868e0
 sources:
   - FSTService/FeatureOptions.cs
   - FSTService/appsettings.json
@@ -20,6 +20,7 @@ These are verified gaps, not automatic implementation approvals.
 
 | Item | Current evidence | Acceptance gate |
 |---|---|---|
+| Recover frozen max-score publication 1302 | Rollback evidence is exact and current paths match the promoted manifest; direct cold publication routes remain fail-closed while the run is `paths_promoted/running`. The canonical rollback executor is an urgent review candidate and has not been deployed or executed. | Merge/deploy reviewed rollback code and release schema; pass exact dry-run; execute under public-health/lock/capacity monitoring; require terminal `rolled_back`, publication 1302 unchanged, unfreeze, complete API/cache/path/derived parity, and removal of the temporary songs cache |
 | Complete generation-addressable publication bindings | `EnablePublicationReadContext` remains false for both service and worker roles | Every publication-bound surface reports ready; stale/current generation behavior passes contract tests and live-safe validation |
 | Finish snapshot/current-state ownership migration | Snapshot-overlay worker reads and unchanged-snapshot skipping remain disabled | Complete scrape A/B parity, replay evidence, rollback, and storage/resource comparison |
 | Revalidate snapshot reuse | The living runbook contains evaluation history but no blanket promotion | Fresh matched baseline and candidate on current schema/code |

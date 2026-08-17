@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -74,6 +74,18 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Max-score rollback one-shot
+
+The canonical rollback executor is part of `FSTService.dll`, not an ad-hoc SQL
+or shell script. Use only the exact command in the
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+It consumes canonical manifest/rollback files under `Scraper:DataDirectory`,
+the three expected SHA-256 gates, and a new report path. The optional dry-run
+performs no lease or mutation. Execution owns durable rollback phases and
+separate immutable rollback cache evidence. There is no supported manual
+freeze clear, phase edit, partial path update, cache swap, or generated SQL
+fallback.
 
 ### Tier-1 isolated replay drill
 

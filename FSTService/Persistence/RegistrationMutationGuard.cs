@@ -40,6 +40,10 @@ public interface IMaxScoreMaintenanceLease : IDisposable, IAsyncDisposable
         long publishedScrapeId,
         string manifestSha256,
         CancellationToken ct = default);
+    Task CompleteRollbackAsync(
+        long publishedScrapeId,
+        string manifestSha256,
+        CancellationToken ct = default);
 }
 
 public class RegistrationMutationBlockedException

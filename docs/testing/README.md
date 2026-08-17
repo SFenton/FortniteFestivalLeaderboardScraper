@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -105,7 +105,7 @@ This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
 replacement, unrelated-account preservation, frozen-scope cache filtering,
-strict plan report/digest version 5 cutoff serialization/rejection, strict
+strict plan report/digest version 6 cutoff serialization/rejection, strict
 apply/resume report version 3 compatibility/rejection, null/exact/boundary
 observed-score cases, integer-floor rounding, live-shaped promotion evidence,
 the `2,045,222,521` pass/`2,045,222,522` reject boundary for all eight maximum
@@ -120,6 +120,31 @@ resume. Final-completion coverage verifies that PostgreSQL uses the configured
 timeout for immutable cache validation, retains the `5s` lock timeout and
 serializable transaction, restores the `120s` mutation timeout, and leaves
 validation failures frozen.
+
+Rollback coverage starts from `paths_promoted`, partial derived progress, and
+an ambiguous committed promotion still checkpointed as `rollback_captured`;
+the same phase with pre-promotion paths is rejected.
+It proves dry-run non-mutation; strict CLI/file/digest/report contracts;
+schema upgrade; wrong manifest/plan/rollback/publication/freeze/path/rollback
+row/extra-song rejection; active backend/worker/waiting-lock rejection; exact
+atomic path restoration; complete derived, tier, notification, and cache
+parity; unrelated scope/tier preservation; transaction and final-completion
+failure recovery; interruption retry; idempotent already-rolled-back handling;
+post-commit acknowledgement reconciliation; final rollback-file revalidation;
+restored-maximum-only score-history drift detection; publication-lock yielding
+between transaction commit fences; direction-specific apply/rollback
+notification audits; stale terminal mutation-gate cleanup; original
+apply-audit preservation; atomic notification alignment/checkpoint retry;
+terminal dry-run non-mutation; truthful apply/resume rejection from resumable
+and terminal rollback phases; pre-mutation report-path reservation; normal
+cache-build rejection from rollback cache evidence; truthful terminal
+`cleanupPending` reporting and retry;
+whole-freeze cache publisher/staging rejection; terminal validation failures
+that cannot be success-reconciled; schema reinitialization during an active
+freeze; safe removal of unwritten report reservations;
+working-pointer-independent cache fencing plus scrape-allocation rejection; and
+unfreeze only with terminal `rolled_back`. Hosted-mode tests lock rollback into
+the strict no-hosted-service one-shot path.
 
 The focused score-history matrix compares the optimized selector/branch
 aggregates with the exact pre-optimization SQL on a deterministic randomized

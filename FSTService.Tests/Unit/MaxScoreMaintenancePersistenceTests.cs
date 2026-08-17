@@ -9,13 +9,112 @@ namespace FSTService.Tests.Unit;
 
 public sealed partial class MaxScoreMaintenancePersistenceTests
 {
+    [Fact]
+    public void Schema_upgrade_adds_resumable_rollback_contract()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        using var connection =
+            fixture.DataSource.OpenConnection();
+        using (var legacy = connection.CreateCommand())
+        {
+            legacy.CommandText = """
+                ALTER TABLE max_score_maintenance_runs
+                    DROP CONSTRAINT
+                        max_score_maintenance_runs_phase_check;
+                ALTER TABLE max_score_maintenance_runs
+                    DROP CONSTRAINT
+                        max_score_maintenance_runs_status_check;
+                ALTER TABLE max_score_maintenance_runs
+                    DROP CONSTRAINT
+                        ck_max_score_maintenance_terminal_state;
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        max_score_maintenance_runs_phase_check
+                    CHECK (
+                        phase IN (
+                            'freeze_established',
+                            'rollback_captured',
+                            'paths_promoted',
+                            'derived_state_rebuilt',
+                            'notifications_quarantined',
+                            'caches_staged',
+                            'validated',
+                            'completed'));
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        max_score_maintenance_runs_status_check
+                    CHECK (
+                        status IN (
+                            'running',
+                            'failed',
+                            'completed'));
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_max_score_maintenance_terminal_state
+                    CHECK (
+                        (phase = 'completed') =
+                        (status = 'completed'));
+                """;
+            legacy.ExecuteNonQuery();
+        }
+        using (var upgrade = connection.CreateCommand())
+        {
+            upgrade.CommandText =
+                MaxScoreMaintenanceSchema.Sql;
+            upgrade.ExecuteNonQuery();
+        }
+        using var verify = connection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                pg_get_constraintdef(
+                    (
+                        SELECT oid
+                        FROM pg_constraint
+                        WHERE conrelid =
+                            'max_score_maintenance_runs'::regclass
+                          AND conname =
+                            'max_score_maintenance_runs_phase_check'
+                    )
+                ) LIKE '%rolled_back%',
+                pg_get_constraintdef(
+                    (
+                        SELECT oid
+                        FROM pg_constraint
+                        WHERE conrelid =
+                            'max_score_maintenance_runs'::regclass
+                          AND conname =
+                            'max_score_maintenance_runs_status_check'
+                    )
+                ) LIKE '%rolled_back%',
+                to_regclass(
+                    'public.max_score_maintenance_rollback_cache_entries')
+                    IS NOT NULL,
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name =
+                          'max_score_maintenance_runs'
+                      AND column_name =
+                          'rollback_cache_evidence'
+                )
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+    }
+
     public static TheoryData<
         string,
         int,
         int[],
         int?,
         int?,
-        long> ObservedScoreEvidenceCases { get; } =
+        long> ObservedScoreEvidenceCases
+    { get; } =
         new()
         {
             {
@@ -1797,6 +1896,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         using (var seed = conn.CreateCommand())
         {
             seed.CommandText = """
+                SELECT set_config(
+                    'fst.max_score_maintenance_lease_token',
+                    @leaseToken,
+                    FALSE);
+
                 INSERT INTO scrape_log (
                     id, started_at, completed_at, status)
                 VALUES (
@@ -1822,6 +1926,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     public_reads_frozen_at,
                     public_reads_frozen_scrape_id,
                     public_reads_frozen_reason,
+                    max_score_mutation_gate_token,
+                    max_score_mutation_gate_publication_id,
+                    max_score_mutation_gate_backend_pid,
+                    max_score_mutation_gate_backend_start,
+                    max_score_mutation_gate_acquired_at,
                     updated_at)
                 VALUES (
                     TRUE,
@@ -1831,6 +1940,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     now(),
                     @scrapeId,
                     @freezeReason,
+                    @leaseToken,
+                    @publicationId,
+                    pg_backend_pid(),
+                    now(),
+                    now(),
                     now())
                 ON CONFLICT (id) DO UPDATE SET
                     current_publication_id =
@@ -1844,6 +1958,16 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                         EXCLUDED.public_reads_frozen_scrape_id,
                     public_reads_frozen_reason =
                         EXCLUDED.public_reads_frozen_reason,
+                    max_score_mutation_gate_token =
+                        EXCLUDED.max_score_mutation_gate_token,
+                    max_score_mutation_gate_publication_id =
+                        EXCLUDED.max_score_mutation_gate_publication_id,
+                    max_score_mutation_gate_backend_pid =
+                        EXCLUDED.max_score_mutation_gate_backend_pid,
+                    max_score_mutation_gate_backend_start =
+                        EXCLUDED.max_score_mutation_gate_backend_start,
+                    max_score_mutation_gate_acquired_at =
+                        EXCLUDED.max_score_mutation_gate_acquired_at,
                     updated_at = now();
 
                 INSERT INTO max_score_maintenance_runs (
@@ -1957,6 +2081,9 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             seed.Parameters.AddWithValue(
                 "freezeReason",
                 freezeReason);
+            seed.Parameters.AddWithValue(
+                "leaseToken",
+                "cache-completion-seed");
             seed.ExecuteNonQuery();
         }
 
@@ -4115,6 +4242,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         using var connection = dataSource.OpenConnection();
         using var seed = connection.CreateCommand();
         seed.CommandText = """
+            SELECT set_config(
+                'fst.max_score_maintenance_lease_token',
+                @leaseToken,
+                FALSE);
+
             INSERT INTO scrape_log (
                 id, started_at, completed_at, status)
             VALUES (
@@ -4146,6 +4278,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 public_reads_frozen_at,
                 public_reads_frozen_scrape_id,
                 public_reads_frozen_reason,
+                max_score_mutation_gate_token,
+                max_score_mutation_gate_publication_id,
+                max_score_mutation_gate_backend_pid,
+                max_score_mutation_gate_backend_start,
+                max_score_mutation_gate_acquired_at,
                 updated_at)
             VALUES (
                 TRUE,
@@ -4156,6 +4293,11 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                 now(),
                 @scrapeId,
                 @freezeReason,
+                @leaseToken,
+                @publicationId,
+                pg_backend_pid(),
+                now(),
+                now(),
                 now())
             ON CONFLICT (id) DO UPDATE SET
                 current_publication_id =
@@ -4169,6 +4311,16 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
                     EXCLUDED.public_reads_frozen_scrape_id,
                 public_reads_frozen_reason =
                     EXCLUDED.public_reads_frozen_reason,
+                max_score_mutation_gate_token =
+                    EXCLUDED.max_score_mutation_gate_token,
+                max_score_mutation_gate_publication_id =
+                    EXCLUDED.max_score_mutation_gate_publication_id,
+                max_score_mutation_gate_backend_pid =
+                    EXCLUDED.max_score_mutation_gate_backend_pid,
+                max_score_mutation_gate_backend_start =
+                    EXCLUDED.max_score_mutation_gate_backend_start,
+                max_score_mutation_gate_acquired_at =
+                    EXCLUDED.max_score_mutation_gate_acquired_at,
                 updated_at = now();
 
             INSERT INTO max_score_maintenance_runs (
@@ -4305,6 +4457,9 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         seed.Parameters.AddWithValue(
             "freezeReason",
             freezeReason);
+        seed.Parameters.AddWithValue(
+            "leaseToken",
+            "validated-completion-seed");
         seed.ExecuteNonQuery();
     }
 

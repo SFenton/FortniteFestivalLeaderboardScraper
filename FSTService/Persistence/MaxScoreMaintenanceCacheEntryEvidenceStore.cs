@@ -109,6 +109,55 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
              publication_mismatches
         """;
 
+    private const string RollbackValidationSql = """
+        WITH evidence AS MATERIALIZED (
+            SELECT cache_key, etag, json_sha256
+            FROM max_score_maintenance_rollback_cache_entries
+            WHERE manifest_sha256 = @manifestSha256
+        ), legacy AS MATERIALIZED (
+            SELECT cache_key,
+                   etag,
+                   encode(
+                       digest(json_data, 'sha256'),
+                       'hex') AS json_sha256
+            FROM api_response_cache_staging
+        ), publication AS MATERIALIZED (
+            SELECT cache_key,
+                   etag,
+                   encode(
+                       digest(json_data, 'sha256'),
+                       'hex') AS json_sha256
+            FROM publication_api_response_cache_staging
+            WHERE publication_id = @publicationId
+        ), legacy_mismatches AS (
+            SELECT COUNT(*)::BIGINT AS row_count
+            FROM evidence
+            FULL JOIN legacy USING (cache_key)
+            WHERE evidence.cache_key IS NULL
+               OR legacy.cache_key IS NULL
+               OR evidence.etag IS DISTINCT FROM legacy.etag
+               OR evidence.json_sha256 IS DISTINCT FROM
+                    legacy.json_sha256
+        ), publication_mismatches AS (
+            SELECT COUNT(*)::BIGINT AS row_count
+            FROM evidence
+            FULL JOIN publication USING (cache_key)
+            WHERE evidence.cache_key IS NULL
+               OR publication.cache_key IS NULL
+               OR evidence.etag IS DISTINCT FROM publication.etag
+               OR evidence.json_sha256 IS DISTINCT FROM
+                    publication.json_sha256
+        )
+        SELECT
+            (SELECT COUNT(*)::BIGINT FROM evidence),
+            (SELECT COUNT(*)::BIGINT FROM legacy),
+            (SELECT COUNT(*)::BIGINT FROM publication),
+            legacy_mismatches.row_count,
+            publication_mismatches.row_count
+        FROM legacy_mismatches,
+             publication_mismatches
+        """;
+
     internal static async Task CaptureAsync(
         string manifestSha256,
         long publicationId,
@@ -220,6 +269,136 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         ThrowIfInvalid(validation, expectedEntryCount);
     }
 
+    internal static async Task CaptureRollbackAsync(
+        string manifestSha256,
+        long publicationId,
+        long expectedEntryCount,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken ct,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(manifestSha256);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The rollback cache evidence transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        await ValidateStagingParityAsync(
+            publicationId,
+            expectedEntryCount,
+            connection,
+            transaction,
+            ct,
+            commandTimeoutSeconds,
+            "rollback-cache-entry-comparison-evidence");
+
+        await using var capture = connection.CreateCommand();
+        capture.Transaction = transaction;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            capture,
+            commandTimeoutSeconds,
+            "rollback-cache-entry-capture-evidence");
+        capture.CommandText = """
+            INSERT INTO max_score_maintenance_rollback_cache_entries (
+                manifest_sha256,
+                cache_key,
+                etag,
+                json_sha256)
+            SELECT @manifestSha256,
+                   cache_key,
+                   etag,
+                   encode(
+                       digest(json_data, 'sha256'),
+                       'hex')
+            FROM publication_api_response_cache_staging
+            WHERE publication_id = @publicationId
+            ON CONFLICT (manifest_sha256, cache_key)
+            DO NOTHING
+            """;
+        capture.Parameters.AddWithValue(
+            "manifestSha256",
+            manifestSha256);
+        capture.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        _ = await capture.ExecuteNonQueryAsync(ct);
+        await ValidateRollbackAsync(
+            manifestSha256,
+            publicationId,
+            expectedEntryCount,
+            connection,
+            transaction,
+            ct,
+            commandTimeoutSeconds);
+    }
+
+    internal static async Task ValidateRollbackAsync(
+        string manifestSha256,
+        long publicationId,
+        long expectedEntryCount,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        CancellationToken ct,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
+    {
+        await using var command = CreateValidationCommand(
+            manifestSha256,
+            publicationId,
+            connection,
+            transaction,
+            commandTimeoutSeconds,
+            RollbackValidationSql,
+            "rollback-cache-entry-validation-evidence");
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                "Persisted max-score rollback cache evidence was unavailable.");
+        }
+        ThrowIfInvalid(
+            ReadValidation(reader),
+            expectedEntryCount);
+    }
+
+    internal static void ValidateRollback(
+        string manifestSha256,
+        long publicationId,
+        long expectedEntryCount,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
+    {
+        using var command = CreateValidationCommand(
+            manifestSha256,
+            publicationId,
+            connection,
+            transaction,
+            commandTimeoutSeconds,
+            RollbackValidationSql,
+            "rollback-cache-entry-validation-evidence");
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException(
+                "Persisted max-score rollback cache evidence was unavailable.");
+        }
+        ThrowIfInvalid(
+            ReadValidation(reader),
+            expectedEntryCount);
+    }
+
     internal static void Validate(
         string manifestSha256,
         long publicationId,
@@ -276,6 +455,23 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         int commandTimeoutSeconds)
+        => CreateValidationCommand(
+            manifestSha256,
+            publicationId,
+            connection,
+            transaction,
+            commandTimeoutSeconds,
+            ValidationSql,
+            "cache-entry-validation-evidence");
+
+    private static NpgsqlCommand CreateValidationCommand(
+        string manifestSha256,
+        long publicationId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        int commandTimeoutSeconds,
+        string validationSql,
+        string stage)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(manifestSha256);
         ArgumentNullException.ThrowIfNull(connection);
@@ -284,8 +480,8 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         MaxScoreMaintenanceCommandTimeout.Configure(
             command,
             commandTimeoutSeconds,
-            "cache-entry-validation-evidence");
-        command.CommandText = ValidationSql;
+            stage);
+        command.CommandText = validationSql;
         command.Parameters.AddWithValue(
             "manifestSha256",
             manifestSha256);
@@ -293,6 +489,47 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
             "publicationId",
             publicationId);
         return command;
+    }
+
+    private static async Task ValidateStagingParityAsync(
+        long publicationId,
+        long expectedEntryCount,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken ct,
+        int commandTimeoutSeconds,
+        string stage)
+    {
+        await using var compare = connection.CreateCommand();
+        compare.Transaction = transaction;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            compare,
+            commandTimeoutSeconds,
+            stage);
+        compare.CommandText = StagingComparisonSql;
+        compare.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        await using var reader =
+            await compare.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                "Maintenance cache staging comparison returned no evidence.");
+        }
+        var legacyRows = reader.GetInt64(0);
+        var publicationRows = reader.GetInt64(1);
+        var mismatches = reader.GetInt64(2);
+        if (expectedEntryCount <= 0
+            || legacyRows != expectedEntryCount
+            || publicationRows != expectedEntryCount
+            || mismatches != 0)
+        {
+            throw new InvalidOperationException(
+                "Maintenance cache staging tables differ before immutable rollback evidence capture: "
+                + $"expected={expectedEntryCount}, legacy={legacyRows}, "
+                + $"publication={publicationRows}, mismatches={mismatches}.");
+        }
     }
 
     private static MaxScoreMaintenanceCacheEntryValidation

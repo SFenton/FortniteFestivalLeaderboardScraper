@@ -32,6 +32,21 @@ public sealed class MaxScoreMaintenanceService
     { get; set; }
     internal Action<Exception>? FailureTestHook
     { get; set; }
+    internal Action<MaxScoreMaintenancePhase>?
+        AfterRollbackPhaseCheckpointTestHook
+    { get; set; }
+    internal Action? BeforeRollbackPathRestoreTestHook
+    { get; set; }
+    internal Action? BeforeRollbackCompletionTestHook
+    { get; set; }
+    internal Action<int>? AfterRollbackCompletionTestHook
+    { get; set; }
+    internal Func<Exception?>?
+        TerminalMutationGateCleanupFailureTestHook
+    { get; set; }
+    internal Func<MaxScoreMaintenanceRollbackRuntimeState>?
+        RollbackRuntimeStateTestHook
+    { get; set; }
     internal Func<string, Exception?>?
         PlanEvidenceStageFailureTestHook
     { get; set; }
@@ -517,6 +532,12 @@ public sealed class MaxScoreMaintenanceService
                 requireSourceLocks: false,
                 ct);
             var run = await LoadRunAsync(manifestDigest, ct);
+            if (run?.Phase
+                >= MaxScoreMaintenancePhase.RollbackValidating)
+            {
+                throw new InvalidOperationException(
+                    "The maintenance run has entered rollback reconciliation; use the rollback command.");
+            }
             if (run?.Phase == MaxScoreMaintenancePhase.Completed)
             {
                 report = ToApplyReport(
@@ -1058,7 +1079,9 @@ public sealed class MaxScoreMaintenanceService
                 run = await LoadRunAsync(manifestDigest, ct);
                 if (run is not null
                     && run.Phase
-                    != MaxScoreMaintenancePhase.Completed)
+                    != MaxScoreMaintenancePhase.Completed
+                    && run.Phase
+                    < MaxScoreMaintenancePhase.RollbackValidating)
                 {
                     if (activeLease is not null)
                     {
@@ -1091,6 +1114,15 @@ public sealed class MaxScoreMaintenanceService
             catch
             {
             }
+            var rollbackOwned =
+                run is not null
+                && run.Phase
+                    >= MaxScoreMaintenancePhase
+                        .RollbackValidating;
+            var currentFreeze =
+                _metaDatabase
+                    .GetPublicReadFreezeState()
+                    .IsFrozen;
             report = run?.Phase
                 == MaxScoreMaintenancePhase.Completed
                 ? ToApplyReport(
@@ -1121,6 +1153,11 @@ public sealed class MaxScoreMaintenanceService
                         ? "checkpoint_unavailable"
                         : "pre_freeze",
                     Detail: BoundDetail(ex.Message))
+                : rollbackOwned
+                ? ToApplyRollbackOwnedRejection(
+                    run!,
+                    currentFreeze,
+                    ex)
                 : ToApplyReport(
                     run,
                     succeeded: false,
@@ -1137,6 +1174,704 @@ public sealed class MaxScoreMaintenanceService
         await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
             _options.DataDirectory,
             reportOutputPath,
+            report,
+            ct);
+        return report;
+    }
+
+    public async Task<MaxScoreMaintenanceRollbackReport> RollbackAsync(
+        long expectedPublishedScrapeId,
+        string manifestPath,
+        string expectedManifestDigest,
+        string expectedPlanDigest,
+        string rollbackFilePath,
+        string expectedRollbackDigest,
+        string reportOutputPath,
+        bool dryRun,
+        CancellationToken ct)
+    {
+        var startedAtUtc = DateTime.UtcNow;
+        await using var reportReservation =
+            MaxScoreMaintenanceFileStore.ReserveNewReport(
+                _options.DataDirectory,
+                reportOutputPath);
+        try
+        {
+            return await RollbackCoreAsync(
+                expectedPublishedScrapeId,
+                manifestPath,
+                expectedManifestDigest,
+                expectedPlanDigest,
+                rollbackFilePath,
+                expectedRollbackDigest,
+                reportReservation,
+                dryRun,
+                startedAtUtc,
+                ct);
+        }
+        catch (Exception ex) when (
+            ex is not OperationCanceledException)
+        {
+            try
+            {
+                FailureTestHook?.Invoke(ex);
+            }
+            catch
+            {
+            }
+            var manifest =
+                await MaxScoreMaintenanceFileStore
+                    .LoadManifestAsync(
+                        _options.DataDirectory,
+                        manifestPath,
+                        CancellationToken.None);
+            var report = CreateRollbackFailureReport(
+                manifest,
+                MaxScoreMaintenanceManifest.NormalizeSha256(
+                    expectedManifestDigest,
+                    nameof(expectedManifestDigest)),
+                MaxScoreMaintenanceManifest.NormalizeSha256(
+                    expectedPlanDigest,
+                    nameof(expectedPlanDigest)),
+                MaxScoreMaintenanceManifest.NormalizeSha256(
+                    expectedRollbackDigest,
+                    nameof(expectedRollbackDigest)),
+                startedAtUtc,
+                _metaDatabase
+                    .GetPublicReadFreezeState()
+                    .IsFrozen,
+                dryRun,
+                ex);
+            await reportReservation.WriteAsync(
+                report,
+                CancellationToken.None);
+            return report;
+        }
+    }
+
+    private async Task<MaxScoreMaintenanceRollbackReport>
+        RollbackCoreAsync(
+        long expectedPublishedScrapeId,
+        string manifestPath,
+        string expectedManifestDigest,
+        string expectedPlanDigest,
+        string rollbackFilePath,
+        string expectedRollbackDigest,
+        MaxScoreMaintenanceFileStore.NewReportReservation
+            reportReservation,
+        bool dryRun,
+        DateTime startedAtUtc,
+        CancellationToken ct)
+    {
+        var manifest =
+            (await MaxScoreMaintenanceFileStore.LoadManifestAsync(
+                _options.DataDirectory,
+                manifestPath,
+                ct)).RequirePromotionReady();
+        var manifestDigest = manifest.ComputeDigest();
+        ValidateManifestCliIdentity(
+            manifest,
+            manifestDigest,
+            expectedPublishedScrapeId,
+            expectedManifestDigest);
+        var planDigest =
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                expectedPlanDigest,
+                nameof(expectedPlanDigest));
+        var rollbackDigest =
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                expectedRollbackDigest,
+                nameof(expectedRollbackDigest));
+        var rollbackFile =
+            await MaxScoreMaintenanceFileStore
+                .LoadCanonicalRollbackSnapshotAsync(
+                    _options.DataDirectory,
+                    rollbackFilePath,
+                    ct);
+        if (!string.Equals(
+                rollbackFile.Sha256,
+                rollbackDigest,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Rollback file SHA-256 does not match the CLI gate.");
+        }
+        var rollbackSnapshot =
+            rollbackFile.Snapshot.ValidateAndNormalize();
+        ValidateRollbackSnapshotIdentity(
+            rollbackSnapshot,
+            manifest,
+            manifestDigest,
+            planDigest);
+        foreach (var song in manifest.Songs)
+        {
+            MaxScoreMaintenanceArtifactValidator
+                .ValidateManifestSong(
+                    _options.DataDirectory,
+                    song);
+        }
+
+        MaxScoreMaintenanceRollbackReport report;
+        IMaxScoreMaintenanceLease? activeLease = null;
+        IDisposable? authoritativeReadPass = null;
+        var terminalReconciliationEligible = false;
+        try
+        {
+            ValidateWorkerOffline();
+            await ValidateRollbackRuntimeQuiescenceAsync(ct);
+            var run = await LoadRequiredRunAsync(
+                manifestDigest,
+                ct);
+            ValidateRunIdentity(run, manifest, planDigest);
+            await ValidateRollbackRunAndEvidenceAsync(
+                manifest,
+                manifestDigest,
+                rollbackDigest,
+                rollbackFile.FullPath,
+                rollbackSnapshot,
+                run,
+                ct);
+
+            if (run.Phase == MaxScoreMaintenancePhase.RolledBack)
+            {
+                if (dryRun)
+                {
+                    throw new InvalidOperationException(
+                        "Rollback dry-run is read-only and is not applicable after the run is already rolled_back.");
+                }
+                ValidateRollbackPathPhase(
+                    rollbackSnapshot,
+                    throwOnMismatch: true);
+                _ = LoadPublishedContext(
+                    manifest.ExpectedPublishedScrapeId,
+                    manifest.ExpectedPublicationId,
+                    manifest.Songs
+                        .Select(song => song.SongId)
+                        .ToArray(),
+                    requireUnfrozen: true);
+                terminalReconciliationEligible = true;
+                await EnsureTerminalMutationGateReleasedAsync(
+                        manifest.ExpectedPublicationId,
+                        ct);
+                report = ToRollbackReport(
+                    run,
+                    rollbackDigest,
+                    dryRun: false,
+                    validated: true,
+                    succeeded: true,
+                    resumable: false,
+                    publicReadsFrozen: false,
+                    startedAtUtc,
+                    completedAtUtc:
+                        run.RolledBackAtUtc
+                        ?? run.CompletedAtUtc
+                        ?? run.UpdatedAtUtc);
+            }
+            else
+            {
+                ValidateRollbackEligiblePhase(run.Phase);
+                RequireOwnedFreeze(manifest, manifestDigest);
+                var currentPathsRestored =
+                    run.Phase
+                    >= MaxScoreMaintenancePhase
+                        .RollbackPathsRestored;
+                if (currentPathsRestored)
+                {
+                    ValidateRollbackPathPhase(
+                        rollbackSnapshot,
+                        throwOnMismatch: true);
+                }
+                else
+                {
+                    ValidatePathPhase(
+                        manifest,
+                        postPromotion: true,
+                        throwOnMismatch: true);
+                }
+                var beforePathFingerprint =
+                    ComputeManifestPathFingerprint(
+                        manifest,
+                        postPromotion: true);
+                var afterPathFingerprint =
+                    ComputeRollbackPathFingerprint(
+                        rollbackSnapshot);
+
+                if (dryRun)
+                {
+                    report =
+                        CreateRollbackDryRunReport(
+                            run,
+                            rollbackDigest,
+                            beforePathFingerprint,
+                            afterPathFingerprint,
+                            startedAtUtc);
+                }
+                else
+                {
+                    activeLease =
+                        await _metaDatabase
+                            .AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+                                manifest.ExpectedPublicationId,
+                                ct);
+                    var lease = activeLease;
+                    await lease.VerifyHeldAsync(
+                        requireSourceLocks: true,
+                        ct);
+                    run = await LoadRequiredRunAsync(
+                        manifestDigest,
+                        ct);
+                    ValidateRunIdentity(
+                        run,
+                        manifest,
+                        planDigest);
+                    RequireOwnedFreeze(
+                        manifest,
+                        manifestDigest);
+                    await ValidatePersistedRollbackEvidenceAsync(
+                        lease,
+                        manifest,
+                        manifestDigest,
+                        run,
+                        ct);
+
+                    authoritativeReadPass =
+                        _persistence
+                            .BeginMaxScoreMaintenancePublishedReadPass();
+                    var publishedContext = LoadPublishedContext(
+                        manifest.ExpectedPublishedScrapeId,
+                        manifest.ExpectedPublicationId,
+                        manifest.Songs
+                            .Select(song => song.SongId)
+                            .ToArray(),
+                        requireUnfrozen: false,
+                        requiredFreezeReason:
+                            PublicReadFreezeState
+                                .MaxScoreMaintenanceReasonPrefix
+                            + manifestDigest);
+                    ValidateManifestCatalogIdentity(
+                        manifest,
+                        publishedContext.Catalog);
+                    var readSnapshot =
+                        await CaptureRollbackReadSnapshotAsync(
+                            lease,
+                            manifest,
+                            rollbackSnapshot,
+                            publishedContext.CatalogSongs,
+                            ct);
+                    if (readSnapshot.PopulationEvidence
+                            != run.PopulationEvidence
+                        || readSnapshot.ScoreHistoryEvidence
+                            != run.ScoreHistoryEvidence)
+                    {
+                        throw new InvalidOperationException(
+                            "Rollback publication population or approved score-history evidence differs from the accepted run.");
+                    }
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackValidating)
+                    {
+                        await BeginRollbackAsync(
+                            lease,
+                            manifestDigest,
+                            planDigest,
+                            rollbackDigest,
+                            beforePathFingerprint,
+                            ct);
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+                    else
+                    {
+                        await MarkRollbackRunningAsync(
+                            lease,
+                            manifestDigest,
+                            ct);
+                    }
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackPathsRestored)
+                    {
+                        await RestoreRollbackPathsAsync(
+                            lease,
+                            manifest,
+                            manifestDigest,
+                            planDigest,
+                            rollbackSnapshot,
+                            beforePathFingerprint,
+                            afterPathFingerprint,
+                            ct);
+                        _pathStore.InvalidateCachedState();
+                        _instrumentSupportCache
+                            .RefreshSongInstrumentSupport();
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+                    ValidateRollbackPathPhase(
+                        rollbackSnapshot,
+                        throwOnMismatch: true);
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackDerivedStateRebuilt)
+                    {
+                        ValidateWorkerOffline();
+                        var derived =
+                            await _derivedState.RebuildAsync(
+                                manifest,
+                                publishedContext.CatalogSongs,
+                                readSnapshot.PostPromotionMaxScores,
+                                readSnapshot.Population,
+                                readSnapshot
+                                    .AffectedPlayerStatsAccounts,
+                                lease,
+                                ct);
+                        await AdvanceRollbackPhaseAsync(
+                            lease,
+                            manifestDigest,
+                            planDigest,
+                            MaxScoreMaintenancePhase
+                                .RollbackPathsRestored,
+                            MaxScoreMaintenancePhase
+                                .RollbackDerivedStateRebuilt,
+                            restoredSongCount: null,
+                            rebuiltInstrumentCount:
+                                derived.RebuiltInstrumentCount,
+                            notificationResult: null,
+                            stagedCacheEntryCount: null,
+                            cacheEvidence: null,
+                            cachePublicationId: null,
+                            ct);
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackNotificationsQuarantined)
+                    {
+                        await _notifications
+                            .QuarantineAndAlignRollbackAsync(
+                                manifest,
+                                manifestDigest,
+                                planDigest,
+                                run
+                                    .PublishedScoreSourceFingerprint,
+                                lease,
+                                ct);
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackCachesStaged)
+                    {
+                        var stagedCacheEntries =
+                            await _precomputer
+                                .StageCurrentPublicationCachesForMaintenanceAsync(
+                                    manifest.ExpectedPublicationId,
+                                    publishedContext.CatalogSongs,
+                                    readSnapshot
+                                        .PostPromotionMaxScores,
+                                    readSnapshot.Population,
+                                    lease,
+                                    ct);
+                        if (stagedCacheEntries <= 0)
+                        {
+                            throw new InvalidOperationException(
+                                "Rollback cache staging produced no entries.");
+                        }
+                        var cacheEvidence =
+                            await BuildCacheEvidenceAsync(
+                                manifest,
+                                readSnapshot,
+                                ct);
+                        await AdvanceRollbackPhaseAsync(
+                            lease,
+                            manifestDigest,
+                            planDigest,
+                            MaxScoreMaintenancePhase
+                                .RollbackNotificationsQuarantined,
+                            MaxScoreMaintenancePhase
+                                .RollbackCachesStaged,
+                            restoredSongCount: null,
+                            rebuiltInstrumentCount: null,
+                            notificationResult: null,
+                            stagedCacheEntries,
+                            cacheEvidence,
+                            manifest.ExpectedPublicationId,
+                            ct);
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+
+                    if (run.Phase
+                        < MaxScoreMaintenancePhase
+                            .RollbackValidated)
+                    {
+                        await ValidateCompletedRollbackAsync(
+                            lease,
+                            manifest,
+                            manifestDigest,
+                            rollbackSnapshot,
+                            run,
+                            readSnapshot,
+                            ct);
+                        await AdvanceRollbackPhaseAsync(
+                            lease,
+                            manifestDigest,
+                            planDigest,
+                            MaxScoreMaintenancePhase
+                                .RollbackCachesStaged,
+                            MaxScoreMaintenancePhase
+                                .RollbackValidated,
+                            restoredSongCount: null,
+                            rebuiltInstrumentCount: null,
+                            notificationResult: null,
+                            stagedCacheEntryCount: null,
+                            cacheEvidence: null,
+                            cachePublicationId: null,
+                            ct);
+                        run = await LoadRequiredRunAsync(
+                            manifestDigest,
+                            ct);
+                        AfterRollbackPhaseCheckpointTestHook
+                            ?.Invoke(run.Phase);
+                    }
+
+                    BeforeRollbackCompletionTestHook?.Invoke();
+                    await ValidateCompletedRollbackAsync(
+                        lease,
+                        manifest,
+                        manifestDigest,
+                        rollbackSnapshot,
+                        run,
+                        readSnapshot,
+                        ct);
+                    await ValidatePersistedRollbackEvidenceAsync(
+                        lease,
+                        manifest,
+                        manifestDigest,
+                        run,
+                        ct);
+                    terminalReconciliationEligible = true;
+                    await lease.CompleteRollbackAsync(
+                        manifest.ExpectedPublishedScrapeId,
+                        manifestDigest,
+                        ct);
+                    AfterRollbackCompletionTestHook?.Invoke(
+                        lease.BackendProcessId);
+                    _instrumentSupportCache
+                        .InvalidateSongInstrumentSupport();
+                    run = await LoadRequiredRunAsync(
+                        manifestDigest,
+                        ct);
+                    await activeLease.DisposeAsync();
+                    activeLease = null;
+                    await EnsureTerminalMutationGateReleasedAsync(
+                        manifest.ExpectedPublicationId,
+                        ct);
+                    report = ToRollbackReport(
+                        run,
+                        rollbackDigest,
+                        dryRun: false,
+                        validated: true,
+                        succeeded: true,
+                        resumable: false,
+                        publicReadsFrozen: false,
+                        startedAtUtc,
+                        completedAtUtc:
+                            run.RolledBackAtUtc
+                            ?? run.UpdatedAtUtc);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            try
+            {
+                FailureTestHook?.Invoke(ex);
+            }
+            catch
+            {
+            }
+            MaxScoreMaintenanceRunState? run = null;
+            try
+            {
+                run = await LoadRunAsync(
+                    manifestDigest,
+                    CancellationToken.None);
+                if (activeLease is not null
+                    && run is not null
+                    && run.Phase
+                        >= MaxScoreMaintenancePhase
+                            .RollbackValidating
+                    && run.Phase
+                        < MaxScoreMaintenancePhase.RolledBack)
+                {
+                    await RecordRollbackFailureAsync(
+                        activeLease,
+                        manifestDigest,
+                        run.Phase,
+                        ex,
+                        CancellationToken.None);
+                    run = await LoadRunAsync(
+                        manifestDigest,
+                        CancellationToken.None);
+                }
+            }
+            catch (Exception checkpointError)
+            {
+                _log.LogError(
+                    checkpointError,
+                    "Failed to persist max-score rollback failure state.");
+            }
+            if (dryRun
+                && run?.Phase
+                    == MaxScoreMaintenancePhase.RolledBack)
+            {
+                throw;
+            }
+            var freezeState =
+                _metaDatabase.GetPublicReadFreezeState();
+            var terminalCommitted =
+                terminalReconciliationEligible
+                &&
+                run is
+                {
+                    Phase:
+                        MaxScoreMaintenancePhase.RolledBack,
+                    Status: "rolled_back",
+                }
+                && !freezeState.IsFrozen;
+            Exception? terminalCleanupFailure = null;
+            if (terminalCommitted)
+            {
+                try
+                {
+                    if (activeLease is not null)
+                    {
+                        await activeLease.DisposeAsync();
+                        activeLease = null;
+                    }
+                    await EnsureTerminalMutationGateReleasedAsync(
+                        manifest.ExpectedPublicationId,
+                        CancellationToken.None);
+                }
+                catch (Exception cleanupError)
+                {
+                    terminalCleanupFailure =
+                        new InvalidOperationException(
+                        "Rollback committed, but the durable max-score mutation gate could not be reconciled.",
+                        new AggregateException(
+                            ex,
+                            cleanupError));
+                }
+            }
+            report = terminalCommitted
+                     && terminalCleanupFailure is null
+                ? ToRollbackReport(
+                    run!,
+                    rollbackDigest,
+                    dryRun: false,
+                    validated: true,
+                    succeeded: true,
+                    resumable: false,
+                    publicReadsFrozen: false,
+                    startedAtUtc,
+                    completedAtUtc:
+                        run!.RolledBackAtUtc
+                        ?? run.UpdatedAtUtc)
+                : terminalCommitted
+                ? ToRollbackReport(
+                    run!,
+                    rollbackDigest,
+                    dryRun: false,
+                    validated: true,
+                    succeeded: false,
+                    resumable: true,
+                    publicReadsFrozen: false,
+                    startedAtUtc,
+                    completedAtUtc:
+                        run!.RolledBackAtUtc
+                        ?? run.UpdatedAtUtc,
+                    cleanupPending: true,
+                    failureStage:
+                        "mutation_gate_cleanup",
+                    detail:
+                        BoundDetail(
+                            terminalCleanupFailure!
+                                .Message))
+                : run?.Phase
+                    == MaxScoreMaintenancePhase.RolledBack
+                ? CreateRollbackFailureReport(
+                    manifest,
+                    manifestDigest,
+                    planDigest,
+                    rollbackDigest,
+                    startedAtUtc,
+                    freezeState.IsFrozen,
+                    dryRun,
+                    ex)
+                : run is null
+                ? CreateRollbackFailureReport(
+                    manifest,
+                    manifestDigest,
+                    planDigest,
+                    rollbackDigest,
+                    startedAtUtc,
+                    freezeState.IsFrozen,
+                    dryRun,
+                    ex)
+                : ToRollbackReport(
+                    run,
+                    rollbackDigest,
+                    dryRun,
+                    validated:
+                        run.Phase
+                        >= MaxScoreMaintenancePhase
+                            .RollbackValidated,
+                    succeeded: false,
+                    resumable:
+                        run.Phase
+                        >= MaxScoreMaintenancePhase
+                            .RollbackValidating,
+                    publicReadsFrozen:
+                        freezeState.IsFrozen,
+                    startedAtUtc,
+                    completedAtUtc: DateTime.UtcNow,
+                    failureStage:
+                        run.RollbackFailureStage
+                        ?? FormatPhase(run.Phase),
+                    detail:
+                        run.RollbackFailureDetail
+                        ?? BoundDetail(ex.Message));
+        }
+        finally
+        {
+            authoritativeReadPass?.Dispose();
+            if (activeLease is not null)
+                await activeLease.DisposeAsync();
+        }
+
+        await reportReservation.WriteAsync(
             report,
             ct);
         return report;
@@ -1528,6 +2263,152 @@ public sealed class MaxScoreMaintenanceService
         }
     }
 
+    private static void ValidateRollbackSnapshotIdentity(
+        MaxScoreMaintenanceRollbackSnapshot snapshot,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        string planDigest)
+    {
+        if (!string.Equals(
+                snapshot.ManifestSha256,
+                manifestDigest,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                snapshot.PlanDigest,
+                planDigest,
+                StringComparison.Ordinal)
+            || snapshot.ExpectedPublishedScrapeId
+                != manifest.ExpectedPublishedScrapeId
+            || snapshot.ExpectedPublicationId
+                != manifest.ExpectedPublicationId
+            || snapshot.CatalogVersion
+                != manifest.CatalogVersion
+            || snapshot.CatalogSchemaVersion
+                != manifest.CatalogSchemaVersion
+            || snapshot.CatalogSongCount
+                != manifest.CatalogSongCount
+            || !string.Equals(
+                snapshot.CatalogContentHash,
+                manifest.CatalogContentHash,
+                StringComparison.Ordinal)
+            || snapshot.CatalogSourceCapturedAtUtc
+                != manifest.CatalogSourceCapturedAtUtc
+            || snapshot.Songs.Count != manifest.Songs.Count)
+        {
+            throw new InvalidOperationException(
+                "Rollback snapshot identity differs from the manifest, plan, publication, or catalog.");
+        }
+        for (var index = 0;
+             index < manifest.Songs.Count;
+             index++)
+        {
+            var rollbackSong = snapshot.Songs[index];
+            var manifestSong = manifest.Songs[index];
+            if (!string.Equals(
+                    rollbackSong.SongId,
+                    manifestSong.SongId,
+                    StringComparison.Ordinal)
+                || !ProviderTimestampIdentity.Equivalent(
+                    rollbackSong.ExpectedCatalogLastModified,
+                    manifestSong.ExpectedCatalogLastModified)
+                || !PathIdentityCanonicalEquals(
+                    rollbackSong.Path,
+                    manifestSong.CurrentPath))
+            {
+                throw new InvalidOperationException(
+                    $"Rollback snapshot does not restore the exact pre-apply path identity for {manifestSong.SongId}.");
+            }
+        }
+    }
+
+    private static void ValidateRollbackEligiblePhase(
+        MaxScoreMaintenancePhase phase)
+    {
+        if (phase is MaxScoreMaintenancePhase.RollbackCaptured
+            or >= MaxScoreMaintenancePhase.PathsPromoted
+            and <= MaxScoreMaintenancePhase.Validated
+            or >= MaxScoreMaintenancePhase.RollbackValidating
+            and < MaxScoreMaintenancePhase.RolledBack)
+        {
+            return;
+        }
+        throw new InvalidOperationException(
+            $"Max-score rollback requires a post-promotion incomplete or resumable rollback phase; current phase is {phase}.");
+    }
+
+    private void ValidateRollbackPathPhase(
+        MaxScoreMaintenanceRollbackSnapshot snapshot,
+        bool throwOnMismatch)
+    {
+        try
+        {
+            foreach (var song in snapshot.Songs)
+            {
+                var state = RequireCurrentPathState(
+                    song.SongId,
+                    song.SongId,
+                    song.ExpectedCatalogLastModified);
+                if (!PathIdentityMatches(state, song.Path))
+                {
+                    throw new InvalidOperationException(
+                        $"Rolled-back path identity mismatch for {song.SongId}.");
+                }
+            }
+        }
+        catch when (!throwOnMismatch)
+        {
+        }
+    }
+
+    private static bool PathIdentityCanonicalEquals(
+        MaxScoreMaintenancePathIdentity first,
+        MaxScoreMaintenancePathIdentity second)
+        => JsonSerializer.SerializeToUtf8Bytes(
+                first.ValidateAndNormalize(
+                    nameof(first),
+                    true),
+                MaxScoreMaintenanceJson.Canonical)
+            .AsSpan()
+            .SequenceEqual(
+                JsonSerializer.SerializeToUtf8Bytes(
+                    second.ValidateAndNormalize(
+                        nameof(second),
+                        true),
+                    MaxScoreMaintenanceJson.Canonical));
+
+    private static string ComputeManifestPathFingerprint(
+        MaxScoreMaintenanceManifest manifest,
+        bool postPromotion)
+        => ComputePathFingerprint(
+            manifest.Songs.Select(song => new
+            {
+                song.SongId,
+                Path = postPromotion
+                    ? song.StagedPath with
+                    {
+                        Revision = checked(
+                            song.CurrentPath.Revision + 1),
+                    }
+                    : song.CurrentPath,
+            }));
+
+    private static string ComputeRollbackPathFingerprint(
+        MaxScoreMaintenanceRollbackSnapshot snapshot)
+        => ComputePathFingerprint(
+            snapshot.Songs.Select(song => new
+            {
+                song.SongId,
+                song.Path,
+            }));
+
+    private static string ComputePathFingerprint<T>(
+        IEnumerable<T> rows)
+        => Convert.ToHexStringLower(
+            SHA256.HashData(
+                JsonSerializer.SerializeToUtf8Bytes(
+                    rows,
+                    MaxScoreMaintenanceJson.Canonical)));
+
     private void ValidateWorkerOffline()
     {
         var runtime = _metaDatabase.GetServiceRuntimeState(
@@ -1564,6 +2445,139 @@ public sealed class MaxScoreMaintenanceService
         }
     }
 
+    private async Task ValidateRollbackRuntimeQuiescenceAsync(
+        CancellationToken ct)
+    {
+        MaxScoreMaintenanceRollbackRuntimeState state;
+        if (RollbackRuntimeStateTestHook is not null)
+        {
+            state = RollbackRuntimeStateTestHook();
+        }
+        else
+        {
+            await using var connection =
+                await _dataSource.OpenConnectionAsync(ct);
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = 5;
+            command.CommandText = """
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE application_name IN (
+                            'fst-max-score-maintenance',
+                            'fst-max-score-rollback')
+                    )::INTEGER,
+                    COUNT(*) FILTER (
+                        WHERE application_name IN (
+                            'fstworker-scraper',
+                            'fstworker-registration',
+                            'FST Scraper Worker')
+                    )::INTEGER,
+                    (
+                        SELECT COUNT(*)::INTEGER
+                        FROM pg_locks lock
+                        JOIN pg_stat_activity waiting
+                          ON waiting.pid = lock.pid
+                        WHERE NOT lock.granted
+                          AND waiting.datname =
+                              current_database()
+                    )
+                FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND datname = current_database()
+                """;
+            await using var reader =
+                await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    "Rollback runtime quiescence evidence was unavailable.");
+            }
+            state = new MaxScoreMaintenanceRollbackRuntimeState(
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2));
+        }
+        if (state.MaintenanceBackendCount != 0
+            || state.WorkerBackendCount != 0
+            || state.WaitingLockCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Rollback requires zero maintenance/worker backends and zero waiting locks: "
+                + $"maintenance={state.MaintenanceBackendCount}, "
+                + $"worker={state.WorkerBackendCount}, "
+                + $"waitingLocks={state.WaitingLockCount}.");
+        }
+    }
+
+    private async Task EnsureTerminalMutationGateReleasedAsync(
+        long publicationId,
+        CancellationToken ct)
+    {
+        if (await IsTerminalMutationGateReleasedAsync(
+                publicationId,
+                ct))
+        {
+            return;
+        }
+        var injectedFailure =
+            TerminalMutationGateCleanupFailureTestHook
+                ?.Invoke();
+        if (injectedFailure is not null)
+            throw injectedFailure;
+
+        var cleanupLease =
+            await _metaDatabase
+                .AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+                    publicationId,
+                    ct);
+        try
+        {
+            await cleanupLease.VerifyHeldAsync(
+                requireSourceLocks: false,
+                ct);
+        }
+        finally
+        {
+            await cleanupLease.DisposeAsync();
+        }
+
+        if (!await IsTerminalMutationGateReleasedAsync(
+                publicationId,
+                ct))
+        {
+            throw new InvalidOperationException(
+                "The durable max-score mutation gate remains asserted after terminal rollback cleanup.");
+        }
+    }
+
+    private async Task<bool> IsTerminalMutationGateReleasedAsync(
+        long publicationId,
+        CancellationToken ct)
+    {
+        await using var connection =
+            await _dataSource.OpenConnectionAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = """
+            SELECT
+                current_publication_id = @publicationId
+                AND max_score_mutation_gate_token IS NULL
+                AND max_score_mutation_gate_publication_id
+                    IS NULL
+                AND max_score_mutation_gate_backend_pid IS NULL
+                AND max_score_mutation_gate_backend_start
+                    IS NULL
+                AND max_score_mutation_gate_acquired_at IS NULL
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        return await command.ExecuteScalarAsync(ct)
+            is true;
+    }
+
     private async Task EstablishFreezeAsync(
         IMaxScoreMaintenanceLease lease,
         MaxScoreMaintenanceManifest manifest,
@@ -1579,11 +2593,11 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: false,
             async (conn, tx, token) =>
             {
-        await ConfigureShortTransactionAsync(conn, tx, token);
-        await using (var state = conn.CreateCommand())
-        {
-            state.Transaction = tx;
-            state.CommandText = """
+                await ConfigureShortTransactionAsync(conn, tx, token);
+                await using (var state = conn.CreateCommand())
+                {
+                    state.Transaction = tx;
+                    state.CommandText = """
                 SELECT current_publication_id,
                        working_publication_id,
                        published_scrape_id,
@@ -1599,35 +2613,35 @@ public sealed class MaxScoreMaintenanceService
                 WHERE id = TRUE
                 FOR UPDATE
                 """;
-            await using var reader = await state.ExecuteReaderAsync(token);
-            if (!await reader.ReadAsync(token)
-                || reader.IsDBNull(0)
-                || reader.GetInt64(0)
-                    != manifest.ExpectedPublicationId
-                || !reader.IsDBNull(1)
-                || reader.IsDBNull(2)
-                || Convert.ToInt64(reader.GetValue(2))
-                    != manifest.ExpectedPublishedScrapeId
-                || reader.GetBoolean(3)
-                || reader.IsDBNull(4)
-                || Convert.ToInt64(reader.GetValue(4))
-                    != manifest.ExpectedPublishedScrapeId
-                || reader.IsDBNull(5)
-                || !string.Equals(
-                    reader.GetString(5),
-                    "completed",
-                    StringComparison.Ordinal)
-                || reader.GetBoolean(6))
-            {
-                throw new InvalidOperationException(
-                    "Publication state changed before maintenance freeze establishment.");
-            }
-        }
+                    await using var reader = await state.ExecuteReaderAsync(token);
+                    if (!await reader.ReadAsync(token)
+                        || reader.IsDBNull(0)
+                        || reader.GetInt64(0)
+                            != manifest.ExpectedPublicationId
+                        || !reader.IsDBNull(1)
+                        || reader.IsDBNull(2)
+                        || Convert.ToInt64(reader.GetValue(2))
+                            != manifest.ExpectedPublishedScrapeId
+                        || reader.GetBoolean(3)
+                        || reader.IsDBNull(4)
+                        || Convert.ToInt64(reader.GetValue(4))
+                            != manifest.ExpectedPublishedScrapeId
+                        || reader.IsDBNull(5)
+                        || !string.Equals(
+                            reader.GetString(5),
+                            "completed",
+                            StringComparison.Ordinal)
+                        || reader.GetBoolean(6))
+                    {
+                        throw new InvalidOperationException(
+                            "Publication state changed before maintenance freeze establishment.");
+                    }
+                }
 
-        await using (var insert = conn.CreateCommand())
-        {
-            insert.Transaction = tx;
-            insert.CommandText = """
+                await using (var insert = conn.CreateCommand())
+                {
+                    insert.Transaction = tx;
+                    insert.CommandText = """
                 INSERT INTO max_score_maintenance_runs (
                     manifest_sha256,
                     manifest_version,
@@ -1667,63 +2681,63 @@ public sealed class MaxScoreMaintenanceService
                     'running',
                     0)
                 """;
-            insert.Parameters.AddWithValue(
-                "manifestSha256",
-                manifestDigest);
-            insert.Parameters.AddWithValue(
-                "manifestVersion",
-                manifest.ManifestVersion);
-            insert.Parameters.AddWithValue(
-                "planDigest",
-                plan.PlanDigest);
-            insert.Parameters.AddWithValue(
-                "publishedScrapeId",
-                manifest.ExpectedPublishedScrapeId);
-            insert.Parameters.AddWithValue(
-                "publicationId",
-                manifest.ExpectedPublicationId);
-            insert.Parameters.AddWithValue(
-                "catalogHash",
-                manifest.CatalogContentHash);
-            insert.Parameters.AddWithValue(
-                "catalogSongCount",
-                manifest.CatalogSongCount);
-            insert.Parameters.AddWithValue(
-                "scoreFingerprint",
-                plan.PublishedScoreSourceFingerprint);
-            insert.Parameters.AddWithValue(
-                "notificationFingerprint",
-                plan.NotificationStateFingerprint);
-            insert.Parameters.AddWithValue(
-                "rankHistoryFingerprint",
-                plan.RankHistoryFingerprint);
-            insert.Parameters.AddWithValue(
-                "scoreHistoryFingerprint",
-                plan.ScoreHistoryFingerprint);
-            insert.Parameters.Add(
-                "populationEvidence",
-                NpgsqlDbType.Jsonb).Value =
-                JsonSerializer.Serialize(
-                    plan.PopulationEvidence,
-                    MaxScoreMaintenanceJson.Canonical);
-            insert.Parameters.Add(
-                "scoreHistoryEvidence",
-                NpgsqlDbType.Jsonb).Value =
-                JsonSerializer.Serialize(
-                    plan.ScoreHistoryEvidence,
-                    MaxScoreMaintenanceJson.Canonical);
-            insert.Parameters.Add("manifest", NpgsqlDbType.Jsonb).Value =
-                Encoding.UTF8.GetString(manifest.SerializeCanonical());
-            insert.Parameters.AddWithValue(
-                "freezeReason",
-                freezeReason);
-            await insert.ExecuteNonQueryAsync(token);
-        }
+                    insert.Parameters.AddWithValue(
+                        "manifestSha256",
+                        manifestDigest);
+                    insert.Parameters.AddWithValue(
+                        "manifestVersion",
+                        manifest.ManifestVersion);
+                    insert.Parameters.AddWithValue(
+                        "planDigest",
+                        plan.PlanDigest);
+                    insert.Parameters.AddWithValue(
+                        "publishedScrapeId",
+                        manifest.ExpectedPublishedScrapeId);
+                    insert.Parameters.AddWithValue(
+                        "publicationId",
+                        manifest.ExpectedPublicationId);
+                    insert.Parameters.AddWithValue(
+                        "catalogHash",
+                        manifest.CatalogContentHash);
+                    insert.Parameters.AddWithValue(
+                        "catalogSongCount",
+                        manifest.CatalogSongCount);
+                    insert.Parameters.AddWithValue(
+                        "scoreFingerprint",
+                        plan.PublishedScoreSourceFingerprint);
+                    insert.Parameters.AddWithValue(
+                        "notificationFingerprint",
+                        plan.NotificationStateFingerprint);
+                    insert.Parameters.AddWithValue(
+                        "rankHistoryFingerprint",
+                        plan.RankHistoryFingerprint);
+                    insert.Parameters.AddWithValue(
+                        "scoreHistoryFingerprint",
+                        plan.ScoreHistoryFingerprint);
+                    insert.Parameters.Add(
+                        "populationEvidence",
+                        NpgsqlDbType.Jsonb).Value =
+                        JsonSerializer.Serialize(
+                            plan.PopulationEvidence,
+                            MaxScoreMaintenanceJson.Canonical);
+                    insert.Parameters.Add(
+                        "scoreHistoryEvidence",
+                        NpgsqlDbType.Jsonb).Value =
+                        JsonSerializer.Serialize(
+                            plan.ScoreHistoryEvidence,
+                            MaxScoreMaintenanceJson.Canonical);
+                    insert.Parameters.Add("manifest", NpgsqlDbType.Jsonb).Value =
+                        Encoding.UTF8.GetString(manifest.SerializeCanonical());
+                    insert.Parameters.AddWithValue(
+                        "freezeReason",
+                        freezeReason);
+                    await insert.ExecuteNonQueryAsync(token);
+                }
 
-        await using (var freeze = conn.CreateCommand())
-        {
-            freeze.Transaction = tx;
-            freeze.CommandText = """
+                await using (var freeze = conn.CreateCommand())
+                {
+                    freeze.Transaction = tx;
+                    freeze.CommandText = """
                 UPDATE scrape_publication_state
                 SET public_reads_frozen = TRUE,
                     public_reads_frozen_at = now(),
@@ -1737,21 +2751,21 @@ public sealed class MaxScoreMaintenanceService
                   AND published_scrape_id = @publishedScrapeId
                   AND NOT public_reads_frozen
                 """;
-            freeze.Parameters.AddWithValue(
-                "publishedScrapeId",
-                manifest.ExpectedPublishedScrapeId);
-            freeze.Parameters.AddWithValue(
-                "publicationId",
-                manifest.ExpectedPublicationId);
-            freeze.Parameters.AddWithValue(
-                "freezeReason",
-                freezeReason);
-            if (await freeze.ExecuteNonQueryAsync(token) != 1)
-            {
-                throw new InvalidOperationException(
-                    "Digest-owned maintenance freeze was not established.");
-            }
-        }
+                    freeze.Parameters.AddWithValue(
+                        "publishedScrapeId",
+                        manifest.ExpectedPublishedScrapeId);
+                    freeze.Parameters.AddWithValue(
+                        "publicationId",
+                        manifest.ExpectedPublicationId);
+                    freeze.Parameters.AddWithValue(
+                        "freezeReason",
+                        freezeReason);
+                    if (await freeze.ExecuteNonQueryAsync(token) != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Digest-owned maintenance freeze was not established.");
+                    }
+                }
             },
             IsolationLevel.Serializable,
             ct);
@@ -1790,18 +2804,18 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, tx, token) =>
             {
-        await ConfigureShortTransactionAsync(conn, tx, token);
-        await LockOwnedFreezeRowAsync(
-            conn,
-            tx,
-            manifest,
-            manifestDigest,
-            token);
-        foreach (var song in snapshot.Songs)
-        {
-            await using var insert = conn.CreateCommand();
-            insert.Transaction = tx;
-            insert.CommandText = """
+                await ConfigureShortTransactionAsync(conn, tx, token);
+                await LockOwnedFreezeRowAsync(
+                    conn,
+                    tx,
+                    manifest,
+                    manifestDigest,
+                    token);
+                foreach (var song in snapshot.Songs)
+                {
+                    await using var insert = conn.CreateCommand();
+                    insert.Transaction = tx;
+                    insert.CommandText = """
                 INSERT INTO max_score_maintenance_rollback_songs (
                     manifest_sha256,
                     song_id,
@@ -1852,17 +2866,17 @@ public sealed class MaxScoreMaintenanceService
                     @pending)
                 ON CONFLICT (manifest_sha256, song_id) DO NOTHING
                 """;
-            AddRollbackParameters(
-                insert,
-                manifestDigest,
-                song);
-            await insert.ExecuteNonQueryAsync(token);
-        }
+                    AddRollbackParameters(
+                        insert,
+                        manifestDigest,
+                        song);
+                    await insert.ExecuteNonQueryAsync(token);
+                }
 
-        await using (var advance = conn.CreateCommand())
-        {
-            advance.Transaction = tx;
-            advance.CommandText = """
+                await using (var advance = conn.CreateCommand())
+                {
+                    advance.Transaction = tx;
+                    advance.CommandText = """
                 UPDATE max_score_maintenance_runs
                 SET rollback_snapshot_path = @rollbackPath,
                     rollback_snapshot_sha256 = @rollbackSha256,
@@ -1877,30 +2891,30 @@ public sealed class MaxScoreMaintenanceService
                       'freeze_established',
                       'rollback_captured')
                 """;
-            advance.Parameters.AddWithValue(
-                "rollbackPath",
-                written.FullPath);
-            advance.Parameters.AddWithValue(
-                "rollbackSha256",
-                written.Sha256);
-            advance.Parameters.AddWithValue(
-                "manifestSha256",
-                manifestDigest);
-            advance.Parameters.AddWithValue(
-                "planDigest",
-                planDigest);
-            if (await advance.ExecuteNonQueryAsync(token) != 1)
-            {
-                throw new InvalidOperationException(
-                    "Rollback capture phase identity changed.");
-            }
-        }
-        await ValidateRollbackRowsAsync(
-            conn,
-            tx,
-            manifestDigest,
-            snapshot.Songs,
-            token);
+                    advance.Parameters.AddWithValue(
+                        "rollbackPath",
+                        written.FullPath);
+                    advance.Parameters.AddWithValue(
+                        "rollbackSha256",
+                        written.Sha256);
+                    advance.Parameters.AddWithValue(
+                        "manifestSha256",
+                        manifestDigest);
+                    advance.Parameters.AddWithValue(
+                        "planDigest",
+                        planDigest);
+                    if (await advance.ExecuteNonQueryAsync(token) != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Rollback capture phase identity changed.");
+                    }
+                }
+                await ValidateRollbackRowsAsync(
+                    conn,
+                    tx,
+                    manifestDigest,
+                    snapshot.Songs,
+                    token);
             },
             IsolationLevel.Serializable,
             ct);
@@ -2007,6 +3021,106 @@ public sealed class MaxScoreMaintenanceService
                 ct);
     }
 
+    private async Task ValidateRollbackRunAndEvidenceAsync(
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        string rollbackDigest,
+        string rollbackFullPath,
+        MaxScoreMaintenanceRollbackSnapshot rollbackSnapshot,
+        MaxScoreMaintenanceRunState run,
+        CancellationToken ct)
+    {
+        if (run.Phase == MaxScoreMaintenancePhase.Completed
+                || run.Status is "completed")
+        {
+            throw new InvalidOperationException(
+                "A successfully completed max-score run cannot be rolled back by the incomplete-run recovery command.");
+        }
+        if (run.Phase == MaxScoreMaintenancePhase.RolledBack)
+        {
+            if (!string.Equals(
+                    run.Status,
+                    "rolled_back",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Rolled-back phase has an invalid terminal status.");
+            }
+        }
+        else
+        {
+            ValidateRollbackEligiblePhase(run.Phase);
+            if (run.Status is not ("running" or "failed"))
+            {
+                throw new InvalidOperationException(
+                    "Rollback requires a running or failed incomplete maintenance run.");
+            }
+            RequireOwnedFreeze(manifest, manifestDigest);
+            _ = LoadPublishedContext(
+                manifest.ExpectedPublishedScrapeId,
+                manifest.ExpectedPublicationId,
+                manifest.Songs
+                    .Select(song => song.SongId)
+                    .ToArray(),
+                requireUnfrozen: false,
+                requiredFreezeReason:
+                    PublicReadFreezeState
+                        .MaxScoreMaintenanceReasonPrefix
+                    + manifestDigest);
+        }
+        if (run.RollbackSnapshotPath is null
+                || run.RollbackSnapshotSha256 is null
+                || !PathsEquivalent(
+                    rollbackFullPath,
+                    run.RollbackSnapshotPath)
+                || !string.Equals(
+                    rollbackDigest,
+                    run.RollbackSnapshotSha256,
+                    StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Rollback file path or digest differs from the durable checkpoint.");
+        }
+
+        await using var connection =
+                await _dataSource.OpenConnectionAsync(ct);
+        await using var transaction =
+                await connection.BeginTransactionAsync(
+                    IsolationLevel.RepeatableRead,
+                    ct);
+        var rollbackSongs =
+                await LoadRollbackSongsAsync(
+                    connection,
+                    transaction,
+                    manifestDigest,
+                    ct);
+        var expectedSnapshot =
+                new MaxScoreMaintenanceRollbackSnapshot(
+                    MaxScoreMaintenanceRollbackSnapshot
+                        .CurrentSnapshotVersion,
+                    NormalizeDatabaseTimestamp(run.CreatedAtUtc),
+                    manifestDigest,
+                    run.PlanDigest,
+                    run.ExpectedPublishedScrapeId,
+                    run.ExpectedPublicationId,
+                    manifest.CatalogVersion,
+                    manifest.CatalogSchemaVersion,
+                    run.ExpectedCatalogHash,
+                    run.ExpectedCatalogSongCount,
+                    manifest.CatalogSourceCapturedAtUtc,
+                    rollbackSongs)
+                .ValidateAndNormalize();
+        if (!rollbackSnapshot.SerializeCanonical()
+                    .AsSpan()
+                    .SequenceEqual(
+                        expectedSnapshot.SerializeCanonical()))
+        {
+            throw new InvalidOperationException(
+                "Rollback file, database rollback rows, and manifest scope are not exactly equal.");
+        }
+        await transaction.CommitAsync(ct);
+    }
+
     private static async Task<
         IReadOnlyList<MaxScoreMaintenanceRollbackSong>>
         LoadRollbackSongsAsync(
@@ -2090,7 +3204,42 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceRunState run,
         MaxScoreMaintenanceReadSnapshot readSnapshot,
         CancellationToken ct)
+        => await ValidateCompletedMaintenanceCoreAsync(
+            lease,
+            manifest,
+            manifestDigest,
+            rollbackSnapshot: null,
+            run,
+            readSnapshot,
+            ct);
+
+    private async Task ValidateCompletedRollbackAsync(
+        IMaxScoreMaintenanceLease lease,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        MaxScoreMaintenanceRollbackSnapshot rollbackSnapshot,
+        MaxScoreMaintenanceRunState run,
+        MaxScoreMaintenanceReadSnapshot readSnapshot,
+        CancellationToken ct)
+        => await ValidateCompletedMaintenanceCoreAsync(
+            lease,
+            manifest,
+            manifestDigest,
+            rollbackSnapshot,
+            run,
+            readSnapshot,
+            ct);
+
+    private async Task ValidateCompletedMaintenanceCoreAsync(
+        IMaxScoreMaintenanceLease lease,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        MaxScoreMaintenanceRollbackSnapshot? rollbackSnapshot,
+        MaxScoreMaintenanceRunState run,
+        MaxScoreMaintenanceReadSnapshot readSnapshot,
+        CancellationToken ct)
     {
+        var rollback = rollbackSnapshot is not null;
         if (!_persistence
                 .IsMaxScoreMaintenancePublishedReadPassActive)
         {
@@ -2098,18 +3247,45 @@ public sealed class MaxScoreMaintenanceService
                 "Final max-score validation requires the strict published-source read context.");
         }
         RequireOwnedFreeze(manifest, manifestDigest);
-        if (run.PromotedSongCount != manifest.Songs.Count
-            || run.RebuiltInstrumentCount
+        var changedSongCount = rollback
+            ? run.RollbackRestoredSongCount
+            : run.PromotedSongCount;
+        var rebuiltInstrumentCount = rollback
+            ? run.RollbackRebuiltInstrumentCount
+            : run.RebuiltInstrumentCount;
+        var visibleDeliveryCount = rollback
+            ? run.RollbackVisibleDeliveryCount
+            : run.VisibleDeliveryCount;
+        var cacheEvidence = rollback
+            ? run.RollbackCacheEvidence
+            : run.CacheEvidence;
+        var stagedCacheEntryCount = rollback
+            ? run.RollbackStagedCacheEntryCount
+            : run.StagedCacheEntryCount;
+        var notificationMaintenanceRunId = rollback
+            ? run.RollbackNotificationMaintenanceRunId
+            : run.NotificationMaintenanceRunId;
+        if (changedSongCount != manifest.Songs.Count
+            || rebuiltInstrumentCount
                 != manifest.Scope.ExpectedChangedInstruments.Count
-            || run.VisibleDeliveryCount != 0)
+            || visibleDeliveryCount != 0)
         {
             throw new InvalidOperationException(
                 "Maintenance checkpoint does not cover the exact song/instrument scope or zero-visible notification contract.");
         }
-        ValidatePathPhase(
-            manifest,
-            postPromotion: true,
-            throwOnMismatch: true);
+        if (rollback)
+        {
+            ValidateRollbackPathPhase(
+                rollbackSnapshot!,
+                throwOnMismatch: true);
+        }
+        else
+        {
+            ValidatePathPhase(
+                manifest,
+                postPromotion: true,
+                throwOnMismatch: true);
+        }
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
         if (!string.Equals(
@@ -2120,13 +3296,13 @@ public sealed class MaxScoreMaintenanceService
             throw new InvalidOperationException(
                 "Rank history changed during max-score maintenance.");
         }
-        var cacheEvidence =
+        var currentCacheEvidence =
             await BuildCacheEvidenceAsync(
                 manifest,
                 readSnapshot,
                 ct);
-        if (run.CacheEvidence is null
-            || run.CacheEvidence != cacheEvidence)
+        if (cacheEvidence is null
+            || cacheEvidence != currentCacheEvidence)
         {
             throw new InvalidOperationException(
                 "Staged cache content evidence changed or no longer matches the authoritative target scopes/accounts.");
@@ -2137,94 +3313,148 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, transaction, token) =>
             {
-        await using (var cacheLocks = conn.CreateCommand())
-        {
-            cacheLocks.Transaction = transaction;
-            cacheLocks.CommandText = """
+                await using (var cacheLocks = conn.CreateCommand())
+                {
+                    cacheLocks.Transaction = transaction;
+                    cacheLocks.CommandText = """
                 LOCK TABLE api_response_cache_staging
                     IN SHARE MODE;
                 LOCK TABLE publication_api_response_cache_staging
                     IN SHARE MODE;
                 """;
-            await cacheLocks.ExecuteNonQueryAsync(token);
-        }
-        await MaxScoreMaintenanceCacheEntryEvidenceStore
-            .ValidateAsync(
-                manifestDigest,
-                manifest.ExpectedPublicationId,
-                run.StagedCacheEntryCount,
-                conn,
-                transaction,
-                token,
-                _options
-                    .MaxScoreMaintenanceCommandTimeoutSeconds);
-        var scoreHistorySnapshot =
-            await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
-                .ComputeAsync(
-                manifest,
-                readSnapshot.PostPromotionMaxScores,
-                conn,
-                transaction,
-                token,
-                _options
-                    .MaxScoreMaintenanceCommandTimeoutSeconds,
-                EvidenceCommandTimeoutTestHook);
-        var scoreHistoryEvidence =
-            scoreHistorySnapshot.Evidence;
-        if (scoreHistoryEvidence
-                != readSnapshot.ScoreHistoryEvidence
-            || scoreHistoryEvidence
-                != run.ScoreHistoryEvidence)
-        {
-            throw new InvalidOperationException(
-                "Score history changed during max-score maintenance.");
-        }
-        if (!scoreHistorySnapshot
-                .AffectedPlayerStatsAccounts
-                .SequenceEqual(
-                    readSnapshot
-                        .AffectedPlayerStatsAccounts,
-                    StringComparer.Ordinal)
-            || !scoreHistorySnapshot
-                .AffectedRegisteredAccounts
-                .SequenceEqual(
-                    readSnapshot
-                        .AffectedRegisteredAccounts,
-                    StringComparer.Ordinal)
-            || !scoreHistorySnapshot
-                .OverlayOnlyRegisteredAccounts
-                .SequenceEqual(
-                    readSnapshot
-                        .OverlayOnlyRegisteredAccounts,
-                    StringComparer.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "Affected score-history account selectors changed during max-score maintenance.");
-        }
+                    await cacheLocks.ExecuteNonQueryAsync(token);
+                }
+                if (rollback)
+                {
+                    await MaxScoreMaintenanceCacheEntryEvidenceStore
+                        .ValidateRollbackAsync(
+                            manifestDigest,
+                            manifest.ExpectedPublicationId,
+                            stagedCacheEntryCount,
+                            conn,
+                            transaction,
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds);
+                }
+                else
+                {
+                    await MaxScoreMaintenanceCacheEntryEvidenceStore
+                        .ValidateAsync(
+                            manifestDigest,
+                            manifest.ExpectedPublicationId,
+                            stagedCacheEntryCount,
+                            conn,
+                            transaction,
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds);
+                }
+                var scoreHistorySnapshot =
+                    await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                        .ComputeAsync(
+                        manifest,
+                        readSnapshot.ScoreHistoryEvidenceMaxScores,
+                        conn,
+                        transaction,
+                        token,
+                        _options
+                            .MaxScoreMaintenanceCommandTimeoutSeconds,
+                        EvidenceCommandTimeoutTestHook);
+                var scoreHistoryEvidence =
+                    scoreHistorySnapshot.Evidence;
+                if (scoreHistoryEvidence
+                        != readSnapshot.ScoreHistoryEvidence
+                    || scoreHistoryEvidence
+                        != run.ScoreHistoryEvidence)
+                {
+                    throw new InvalidOperationException(
+                        "Score history changed during max-score maintenance.");
+                }
+                if (!scoreHistorySnapshot
+                        .AffectedPlayerStatsAccounts
+                        .SequenceEqual(
+                            readSnapshot
+                                .AffectedPlayerStatsAccounts,
+                            StringComparer.Ordinal)
+                    || !scoreHistorySnapshot
+                        .AffectedRegisteredAccounts
+                        .SequenceEqual(
+                            readSnapshot
+                                .AffectedRegisteredAccounts,
+                            StringComparer.Ordinal)
+                    || !scoreHistorySnapshot
+                        .OverlayOnlyRegisteredAccounts
+                        .SequenceEqual(
+                            readSnapshot
+                                .OverlayOnlyRegisteredAccounts,
+                            StringComparer.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Affected score-history account selectors changed during max-score maintenance.");
+                }
+                if (rollback)
+                {
+                    var rollbackScoreHistorySnapshot =
+                        HasPositiveScoreHistoryMaximum(
+                            readSnapshot
+                                .RollbackScoreHistoryEvidenceMaxScores,
+                            readSnapshot.PublishedScopes)
+                            ? await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                                .ComputeAsync(
+                                    manifest,
+                                    readSnapshot
+                                        .RollbackScoreHistoryEvidenceMaxScores,
+                                    conn,
+                                    transaction,
+                                    token,
+                                    _options
+                                        .MaxScoreMaintenanceCommandTimeoutSeconds,
+                                    EvidenceCommandTimeoutTestHook,
+                                    requirePositiveChangedMaxima: false,
+                                    seededAffectedAccounts:
+                                        scoreHistorySnapshot
+                                            .AffectedPlayerStatsAccounts)
+                            : new MaxScoreMaintenanceScoreHistorySnapshot(
+                                EmptyScoreHistoryEvidence(),
+                                scoreHistorySnapshot
+                                    .AffectedPlayerStatsAccounts,
+                                scoreHistorySnapshot
+                                    .AffectedRegisteredAccounts,
+                                scoreHistorySnapshot
+                                    .OverlayOnlyRegisteredAccounts);
+                    if (rollbackScoreHistorySnapshot.Evidence
+                        != readSnapshot
+                            .RollbackScoreHistoryEvidence)
+                    {
+                        throw new InvalidOperationException(
+                            "Rollback score history changed during max-score maintenance.");
+                    }
+                }
 
-        var publishedInstruments = readSnapshot.PublishedScopes
-            .Select(scope => scope.Instrument)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(
-                instrument => instrument,
-                StringComparer.Ordinal)
-            .ToArray();
-        var invalidPlayerStatsAccountCount =
-            await MaxScoreMaintenanceDerivedStateService
-                .CountInvalidPlayerStatsAccountsAsync(
-                    readSnapshot.AffectedPlayerStatsAccounts,
-                    publishedInstruments,
-                    NormalizeDatabaseTimestamp(
-                        run.CreatedAtUtc),
-                    conn,
-                    transaction,
-                    token);
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = transaction;
-        ConfigureEvidenceCommandTimeout(
-            cmd,
-            "final-state-evidence");
-        cmd.CommandText = $"""
+                var publishedInstruments = readSnapshot.PublishedScopes
+                    .Select(scope => scope.Instrument)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(
+                        instrument => instrument,
+                        StringComparer.Ordinal)
+                    .ToArray();
+                var invalidPlayerStatsAccountCount =
+                    await MaxScoreMaintenanceDerivedStateService
+                        .CountInvalidPlayerStatsAccountsAsync(
+                            readSnapshot.AffectedPlayerStatsAccounts,
+                            publishedInstruments,
+                            NormalizeDatabaseTimestamp(
+                                run.CreatedAtUtc),
+                            conn,
+                            transaction,
+                            token);
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = transaction;
+                ConfigureEvidenceCommandTimeout(
+                    cmd,
+                    "final-state-evidence");
+                cmd.CommandText = $"""
             WITH {PublishedSoloScopeSql.CurrentResolvedAllEntriesCte},
             expected(
                 song_id,
@@ -2413,131 +3643,131 @@ public sealed class MaxScoreMaintenanceService
                  missing_leaderboard_rivals,
                  invalid_band_rankings
             """;
-        var affectedInstruments = manifest.Scope
-            .ExpectedChangedInstruments
-            .ToHashSet(StringComparer.Ordinal);
-        var expectedScopes = readSnapshot.Population
-            .Where(pair =>
-                affectedInstruments.Contains(
-                    pair.Key.Instrument))
-            .OrderBy(
-                pair => pair.Key.SongId,
-                StringComparer.Ordinal)
-            .ThenBy(
-                pair => pair.Key.Instrument,
-                StringComparer.Ordinal)
-            .Select(pair =>
-            {
-                readSnapshot.PostPromotionMaxScores.TryGetValue(
-                    pair.Key.SongId,
-                    out var songMaxScores);
-                return (
-                    pair.Key.SongId,
-                    pair.Key.Instrument,
-                    MaxScore: songMaxScores?.GetByInstrument(
-                        pair.Key.Instrument),
-                    TotalEntries: pair.Value);
-            })
-            .ToArray();
-        if (expectedScopes.Length == 0)
-        {
-            throw new InvalidOperationException(
-                "Final validation has no frozen published scopes for the affected instruments.");
-        }
-        cmd.Parameters.Add(
-            "songIds",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            expectedScopes.Select(pair => pair.SongId).ToArray();
-        cmd.Parameters.Add(
-            "instruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            expectedScopes.Select(pair => pair.Instrument).ToArray();
-        cmd.Parameters.Add(
-            "maxScores",
-            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
-            expectedScopes.Select(pair => pair.MaxScore).ToArray();
-        cmd.Parameters.Add(
-            "totalEntries",
-            NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
-            expectedScopes.Select(pair =>
-                    pair.TotalEntries)
-                .ToArray();
-        cmd.Parameters.Add(
-            "affectedInstruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            affectedInstruments
-                .OrderBy(
-                    instrument => instrument,
-                    StringComparer.Ordinal)
-                .ToArray();
-        cmd.Parameters.AddWithValue(
-            "manifestSha256",
-            manifestDigest);
-        cmd.Parameters.AddWithValue(
-            "notificationMaintenanceRunId",
-            run.NotificationMaintenanceRunId
-            ?? throw new InvalidOperationException(
-                "Notification maintenance audit run is missing."));
-        cmd.Parameters.AddWithValue(
-            "purpose",
-            MaxScoreMaintenanceSchema.Purpose);
-        cmd.Parameters.AddWithValue(
-            "publicationId",
-            manifest.ExpectedPublicationId);
-        cmd.Parameters.Add(
-            "allInstruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            GlobalLeaderboardScraper.AllInstruments.ToArray();
-        cmd.Parameters.Add(
-            "rankMethods",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            LeaderboardRivalsCalculator.RankMethods;
-        cmd.Parameters.AddWithValue(
-            "invalidPlayerStatsAccountCount",
-            invalidPlayerStatsAccountCount);
-        await using var reader =
-            await cmd.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token))
-        {
-            throw new InvalidOperationException(
-                "Post-maintenance validation returned no evidence row.");
-        }
-        var validation = new
-        {
-            ExpectedStats = reader.GetInt32(0),
-            ActualStats = reader.GetInt32(1),
-            InvalidStats = reader.GetInt32(2),
-            RankingRows = reader.GetInt64(3),
-            InvalidRankings = reader.GetInt64(4),
-            RollbackRows = reader.GetInt32(5),
-            NotificationRows = reader.GetInt32(6),
-            VisibleNotifications = reader.GetInt32(7),
-            StagedCacheRows = reader.GetInt64(8),
-            CompositeRows = reader.GetInt64(9),
-            FamilyRows = reader.GetInt64(10),
-            ComboRows = reader.GetInt64(11),
-            MissingPlayerStats = reader.GetInt64(12),
-            MissingLeaderboardRivals = reader.GetInt64(13),
-            InvalidBandRankings = reader.GetInt64(14),
-        };
-        if (validation.ExpectedStats
-                != expectedScopes.Length
-            || validation.ActualStats
-                != expectedScopes.Length
-            || validation.InvalidStats != 0
-            || validation.InvalidRankings != 0
-            || validation.RollbackRows != manifest.Songs.Count
-            || validation.NotificationRows != 1
-            || validation.VisibleNotifications != 0
-            || validation.StagedCacheRows
-                != run.StagedCacheEntryCount
-            || validation.MissingPlayerStats != 0
-            || validation.MissingLeaderboardRivals != 0
-            || validation.InvalidBandRankings != 0)
-        {
-            throw new InvalidOperationException(
-                $"Post-maintenance validation failed: stats={validation.ActualStats}/{validation.ExpectedStats} (mismatches={validation.InvalidStats}), rankings={validation.RankingRows} (invalid={validation.InvalidRankings}), rollback={validation.RollbackRows}/{manifest.Songs.Count}, notificationRows={validation.NotificationRows}, visible={validation.VisibleNotifications}, cache={validation.StagedCacheRows}/{run.StagedCacheEntryCount}, composite={validation.CompositeRows}, family={validation.FamilyRows}, combo={validation.ComboRows}, invalidPlayerStats={validation.MissingPlayerStats}, missingRivals={validation.MissingLeaderboardRivals}, invalidBandRankings={validation.InvalidBandRankings}.");
-        }
+                var affectedInstruments = manifest.Scope
+                    .ExpectedChangedInstruments
+                    .ToHashSet(StringComparer.Ordinal);
+                var expectedScopes = readSnapshot.Population
+                    .Where(pair =>
+                        affectedInstruments.Contains(
+                            pair.Key.Instrument))
+                    .OrderBy(
+                        pair => pair.Key.SongId,
+                        StringComparer.Ordinal)
+                    .ThenBy(
+                        pair => pair.Key.Instrument,
+                        StringComparer.Ordinal)
+                    .Select(pair =>
+                    {
+                        readSnapshot.PostPromotionMaxScores.TryGetValue(
+                            pair.Key.SongId,
+                            out var songMaxScores);
+                        return (
+                            pair.Key.SongId,
+                            pair.Key.Instrument,
+                            MaxScore: songMaxScores?.GetByInstrument(
+                                pair.Key.Instrument),
+                            TotalEntries: pair.Value);
+                    })
+                    .ToArray();
+                if (expectedScopes.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Final validation has no frozen published scopes for the affected instruments.");
+                }
+                cmd.Parameters.Add(
+                    "songIds",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    expectedScopes.Select(pair => pair.SongId).ToArray();
+                cmd.Parameters.Add(
+                    "instruments",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    expectedScopes.Select(pair => pair.Instrument).ToArray();
+                cmd.Parameters.Add(
+                    "maxScores",
+                    NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+                    expectedScopes.Select(pair => pair.MaxScore).ToArray();
+                cmd.Parameters.Add(
+                    "totalEntries",
+                    NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+                    expectedScopes.Select(pair =>
+                            pair.TotalEntries)
+                        .ToArray();
+                cmd.Parameters.Add(
+                    "affectedInstruments",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    affectedInstruments
+                        .OrderBy(
+                            instrument => instrument,
+                            StringComparer.Ordinal)
+                        .ToArray();
+                cmd.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                cmd.Parameters.AddWithValue(
+                    "notificationMaintenanceRunId",
+                    notificationMaintenanceRunId
+                    ?? throw new InvalidOperationException(
+                        "Notification maintenance audit run is missing."));
+                cmd.Parameters.AddWithValue(
+                    "purpose",
+                    MaxScoreMaintenanceSchema.Purpose);
+                cmd.Parameters.AddWithValue(
+                    "publicationId",
+                    manifest.ExpectedPublicationId);
+                cmd.Parameters.Add(
+                    "allInstruments",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    GlobalLeaderboardScraper.AllInstruments.ToArray();
+                cmd.Parameters.Add(
+                    "rankMethods",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    LeaderboardRivalsCalculator.RankMethods;
+                cmd.Parameters.AddWithValue(
+                    "invalidPlayerStatsAccountCount",
+                    invalidPlayerStatsAccountCount);
+                await using var reader =
+                    await cmd.ExecuteReaderAsync(token);
+                if (!await reader.ReadAsync(token))
+                {
+                    throw new InvalidOperationException(
+                        "Post-maintenance validation returned no evidence row.");
+                }
+                var validation = new
+                {
+                    ExpectedStats = reader.GetInt32(0),
+                    ActualStats = reader.GetInt32(1),
+                    InvalidStats = reader.GetInt32(2),
+                    RankingRows = reader.GetInt64(3),
+                    InvalidRankings = reader.GetInt64(4),
+                    RollbackRows = reader.GetInt32(5),
+                    NotificationRows = reader.GetInt32(6),
+                    VisibleNotifications = reader.GetInt32(7),
+                    StagedCacheRows = reader.GetInt64(8),
+                    CompositeRows = reader.GetInt64(9),
+                    FamilyRows = reader.GetInt64(10),
+                    ComboRows = reader.GetInt64(11),
+                    MissingPlayerStats = reader.GetInt64(12),
+                    MissingLeaderboardRivals = reader.GetInt64(13),
+                    InvalidBandRankings = reader.GetInt64(14),
+                };
+                if (validation.ExpectedStats
+                        != expectedScopes.Length
+                    || validation.ActualStats
+                        != expectedScopes.Length
+                    || validation.InvalidStats != 0
+                    || validation.InvalidRankings != 0
+                    || validation.RollbackRows != manifest.Songs.Count
+                    || validation.NotificationRows != 1
+                    || validation.VisibleNotifications != 0
+                    || validation.StagedCacheRows
+                        != stagedCacheEntryCount
+                    || validation.MissingPlayerStats != 0
+                    || validation.MissingLeaderboardRivals != 0
+                    || validation.InvalidBandRankings != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Post-maintenance validation failed: stats={validation.ActualStats}/{validation.ExpectedStats} (mismatches={validation.InvalidStats}), rankings={validation.RankingRows} (invalid={validation.InvalidRankings}), rollback={validation.RollbackRows}/{manifest.Songs.Count}, notificationRows={validation.NotificationRows}, visible={validation.VisibleNotifications}, cache={validation.StagedCacheRows}/{stagedCacheEntryCount}, composite={validation.CompositeRows}, family={validation.FamilyRows}, combo={validation.ComboRows}, invalidPlayerStats={validation.MissingPlayerStats}, missingRivals={validation.MissingLeaderboardRivals}, invalidBandRankings={validation.InvalidBandRankings}.");
+                }
             },
             IsolationLevel.RepeatableRead,
             ct);
@@ -3865,8 +5095,13 @@ public sealed class MaxScoreMaintenanceService
                 return new MaxScoreMaintenanceReadSnapshot(
                     postPromotionMaxScores.ToFrozenDictionary(
                         StringComparer.OrdinalIgnoreCase),
+                    postPromotionMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
+                    postPromotionMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
                     population.Population,
                     population.Evidence,
+                    scoreHistory.Evidence,
                     scoreHistory.Evidence,
                     observedScoreChecks,
                     publishedScopes,
@@ -3880,6 +5115,191 @@ public sealed class MaxScoreMaintenanceService
             IsolationLevel.RepeatableRead,
             ct);
     }
+
+    private async Task<MaxScoreMaintenanceReadSnapshot>
+        CaptureRollbackReadSnapshotAsync(
+            IMaxScoreMaintenanceLease lease,
+            MaxScoreMaintenanceManifest manifest,
+            MaxScoreMaintenanceRollbackSnapshot rollbackSnapshot,
+            IReadOnlyCollection<Song> publishedCatalogSongs,
+            CancellationToken ct)
+    {
+        if (!_persistence
+                .IsMaxScoreMaintenancePublishedReadPassActive)
+        {
+            throw new InvalidOperationException(
+                "Max-score rollback input capture requires the strict published-source read context.");
+        }
+
+        return await lease.ExecuteTransactionAsync(
+            "capture-rollback-publication-bound-inputs",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                var population =
+                    await LoadPublishedPopulationSnapshotAsync(
+                        manifest,
+                        connection,
+                        transaction,
+                        token);
+                var publishedScopes = population.Population.Keys
+                    .OrderBy(
+                        scope => scope.SongId,
+                        StringComparer.Ordinal)
+                    .ThenBy(
+                        scope => scope.Instrument,
+                        StringComparer.Ordinal)
+                    .ToArray();
+                ValidatePublishedScopeOwnership(
+                    publishedCatalogSongs,
+                    publishedScopes);
+                ValidateManifestPopulationCoverage(
+                    manifest,
+                    population.Population);
+                var rollbackMaxScores =
+                    BuildRollbackMaxScores(
+                        rollbackSnapshot,
+                        publishedCatalogSongs,
+                        publishedScopes);
+                var evidenceMaxScores =
+                    BuildPostPromotionMaxScores(
+                        manifest,
+                        publishedCatalogSongs,
+                        publishedScopes);
+                var approvedScoreHistory =
+                    await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                        .ComputeAsync(
+                            manifest,
+                            evidenceMaxScores,
+                            connection,
+                            transaction,
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds,
+                            EvidenceCommandTimeoutTestHook);
+                var rollbackScoreHistory =
+                    HasPositiveScoreHistoryMaximum(
+                        rollbackMaxScores,
+                        publishedScopes)
+                        ? await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                            .ComputeAsync(
+                                manifest,
+                                rollbackMaxScores,
+                                connection,
+                                transaction,
+                                token,
+                                _options
+                                    .MaxScoreMaintenanceCommandTimeoutSeconds,
+                                EvidenceCommandTimeoutTestHook,
+                                requirePositiveChangedMaxima: false,
+                                seededAffectedAccounts:
+                                    approvedScoreHistory
+                                        .AffectedPlayerStatsAccounts)
+                        : new MaxScoreMaintenanceScoreHistorySnapshot(
+                            EmptyScoreHistoryEvidence(),
+                            approvedScoreHistory
+                                .AffectedPlayerStatsAccounts,
+                            approvedScoreHistory
+                                .AffectedRegisteredAccounts,
+                            approvedScoreHistory
+                                .OverlayOnlyRegisteredAccounts);
+                var affectedPlayerStatsAccounts =
+                    approvedScoreHistory
+                        .AffectedPlayerStatsAccounts
+                        .Concat(
+                            rollbackScoreHistory
+                                .AffectedPlayerStatsAccounts)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(
+                            accountId => accountId,
+                            StringComparer.Ordinal)
+                        .ToArray();
+                var affectedRegisteredAccounts =
+                    approvedScoreHistory
+                        .AffectedRegisteredAccounts
+                        .Concat(
+                            rollbackScoreHistory
+                                .AffectedRegisteredAccounts)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(
+                            accountId => accountId,
+                            StringComparer.Ordinal)
+                        .ToArray();
+                var overlayOnlyRegisteredAccounts =
+                    approvedScoreHistory
+                        .OverlayOnlyRegisteredAccounts
+                        .Concat(
+                            rollbackScoreHistory
+                                .OverlayOnlyRegisteredAccounts)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(
+                            accountId => accountId,
+                            StringComparer.Ordinal)
+                        .ToArray();
+                return new MaxScoreMaintenanceReadSnapshot(
+                    rollbackMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
+                    evidenceMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
+                    rollbackMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
+                    population.Population,
+                    population.Evidence,
+                    approvedScoreHistory.Evidence,
+                    rollbackScoreHistory.Evidence,
+                    [],
+                    publishedScopes,
+                    affectedPlayerStatsAccounts,
+                    affectedRegisteredAccounts,
+                    overlayOnlyRegisteredAccounts);
+            },
+            IsolationLevel.RepeatableRead,
+            ct);
+    }
+
+    private Dictionary<string, SongMaxScores>
+        BuildRollbackMaxScores(
+            MaxScoreMaintenanceRollbackSnapshot rollbackSnapshot,
+            IReadOnlyCollection<Song> publishedCatalogSongs,
+            IEnumerable<(string SongId, string Instrument)>
+                publishedScopes)
+    {
+        var catalogSongIds = publishedCatalogSongs
+            .Select(song => song.track?.su)
+            .Where(static songId =>
+                !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .ToHashSet(StringComparer.Ordinal);
+        var scopedSongIds = publishedScopes
+            .Select(scope => scope.SongId)
+            .ToHashSet(StringComparer.Ordinal);
+        var result = _pathStore.GetAllMaxScores()
+            .Where(pair =>
+                catalogSongIds.Contains(pair.Key)
+                && scopedSongIds.Contains(pair.Key))
+            .ToDictionary(
+                pair => pair.Key,
+                pair => MaxScoreMaintenanceMaxima
+                    .From(pair.Value)
+                    .ToSongMaxScores(),
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var song in rollbackSnapshot.Songs)
+        {
+            result[song.SongId] =
+                song.Path.Maxima.ToSongMaxScores();
+        }
+        return result;
+    }
+
+    private static bool HasPositiveScoreHistoryMaximum(
+        IReadOnlyDictionary<string, SongMaxScores> maxScores,
+        IEnumerable<(string SongId, string Instrument)> scopes)
+        => scopes.Any(scope =>
+            maxScores.TryGetValue(
+                scope.SongId,
+                out var songMaxScores)
+            && songMaxScores.GetByInstrument(
+                scope.Instrument) is > 0);
 
     private IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
         ApplyObservedScoreChecksTestHook(
@@ -4058,7 +5478,27 @@ public sealed class MaxScoreMaintenanceService
                        staged_cache_evidence::TEXT,
                        failure_stage,
                        failure_detail,
-                       created_at
+                       created_at,
+                       rollback_started_at,
+                       rollback_paths_restored_at,
+                       rollback_derived_state_rebuilt_at,
+                       rollback_notifications_quarantined_at,
+                       rollback_caches_staged_at,
+                       rollback_validated_at,
+                       rolled_back_at,
+                       rollback_before_path_fingerprint,
+                       rollback_after_path_fingerprint,
+                       rollback_restored_song_count,
+                       rollback_rebuilt_instrument_count,
+                       rollback_notification_maintenance_run_id,
+                       rollback_quarantined_candidate_count,
+                       rollback_visible_delivery_count,
+                       rollback_staged_cache_entry_count,
+                       rollback_cache_evidence::TEXT,
+                       rollback_failure_stage,
+                       rollback_failure_detail,
+                       updated_at,
+                       completed_at
                 FROM max_score_maintenance_runs
                 WHERE manifest_sha256 = @manifestSha256
                 """;
@@ -4125,7 +5565,31 @@ public sealed class MaxScoreMaintenanceService
                         reader.GetString(23)),
             reader.IsDBNull(24) ? null : reader.GetString(24),
             reader.IsDBNull(25) ? null : reader.GetString(25),
-            reader.GetDateTime(26));
+            reader.GetDateTime(26),
+            ReadNullableDateTime(reader, 27),
+            ReadNullableDateTime(reader, 28),
+            ReadNullableDateTime(reader, 29),
+            ReadNullableDateTime(reader, 30),
+            ReadNullableDateTime(reader, 31),
+            ReadNullableDateTime(reader, 32),
+            ReadNullableDateTime(reader, 33),
+            ReadNullableString(reader, 34),
+            ReadNullableString(reader, 35),
+            reader.GetInt32(36),
+            reader.GetInt32(37),
+            ReadNullableInt64(reader, 38),
+            reader.GetInt64(39),
+            reader.GetInt32(40),
+            reader.GetInt64(41),
+            reader.IsDBNull(42)
+                ? null
+                : DeserializeEvidence<
+                    MaxScoreMaintenanceCacheEvidence>(
+                        reader.GetString(42)),
+            ReadNullableString(reader, 43),
+            ReadNullableString(reader, 44),
+            reader.GetDateTime(45),
+            ReadNullableDateTime(reader, 46));
 
     private async Task AdvancePhaseAsync(
         IMaxScoreMaintenanceLease lease,
@@ -4145,37 +5609,37 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, tx, token) =>
             {
-        if (nextPhase == MaxScoreMaintenancePhase.CachesStaged)
-        {
-            if (!cachePublicationId.HasValue
-                || stagedCacheEntryCount is not > 0
-                || cacheEvidence is null
-                || cacheEvidence.EntryCount
-                    != stagedCacheEntryCount.Value)
-            {
-                throw new InvalidOperationException(
-                    "The cache-staging checkpoint requires exact publication, count, and aggregate evidence.");
-            }
-            await MaxScoreMaintenanceCacheEntryEvidenceStore
-                .CaptureAsync(
-                    manifestDigest,
-                    cachePublicationId.Value,
-                    stagedCacheEntryCount.Value,
-                    conn,
-                    tx,
-                    token,
-                    _options
-                        .MaxScoreMaintenanceCommandTimeoutSeconds);
-        }
-        else if (cachePublicationId.HasValue)
-        {
-            throw new InvalidOperationException(
-                "Cache publication identity is only valid for the cache-staging checkpoint.");
-        }
+                if (nextPhase == MaxScoreMaintenancePhase.CachesStaged)
+                {
+                    if (!cachePublicationId.HasValue
+                        || stagedCacheEntryCount is not > 0
+                        || cacheEvidence is null
+                        || cacheEvidence.EntryCount
+                            != stagedCacheEntryCount.Value)
+                    {
+                        throw new InvalidOperationException(
+                            "The cache-staging checkpoint requires exact publication, count, and aggregate evidence.");
+                    }
+                    await MaxScoreMaintenanceCacheEntryEvidenceStore
+                        .CaptureAsync(
+                            manifestDigest,
+                            cachePublicationId.Value,
+                            stagedCacheEntryCount.Value,
+                            conn,
+                            tx,
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds);
+                }
+                else if (cachePublicationId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        "Cache publication identity is only valid for the cache-staging checkpoint.");
+                }
 
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET phase = @nextPhase,
                 status = 'running',
@@ -4199,41 +5663,542 @@ public sealed class MaxScoreMaintenanceService
               AND phase = @expectedPhase
               AND status IN ('running', 'failed')
             """;
-        cmd.Parameters.AddWithValue(
-            "nextPhase",
-            FormatPhase(nextPhase));
-        cmd.Parameters.Add(
-            "promotedSongCount",
-            NpgsqlDbType.Integer).Value =
-            (object?)promotedSongCount ?? DBNull.Value;
-        cmd.Parameters.Add(
-            "rebuiltInstrumentCount",
-            NpgsqlDbType.Integer).Value =
-            (object?)rebuiltInstrumentCount ?? DBNull.Value;
-        cmd.Parameters.Add(
-            "stagedCacheEntryCount",
-            NpgsqlDbType.Bigint).Value =
-            (object?)stagedCacheEntryCount ?? DBNull.Value;
-        cmd.Parameters.Add(
-            "cacheEvidence",
-            NpgsqlDbType.Jsonb).Value =
-            cacheEvidence is null
-                ? DBNull.Value
-                : JsonSerializer.Serialize(
-                    cacheEvidence,
-                    MaxScoreMaintenanceJson.Canonical);
-        cmd.Parameters.AddWithValue(
-            "manifestSha256",
-            manifestDigest);
-        cmd.Parameters.AddWithValue("planDigest", planDigest);
-        cmd.Parameters.AddWithValue(
-            "expectedPhase",
-            FormatPhase(expectedPhase));
-        if (await cmd.ExecuteNonQueryAsync(token) != 1)
-        {
-            throw new InvalidOperationException(
-                $"Max-score phase changed before {nextPhase} checkpoint.");
-        }
+                cmd.Parameters.AddWithValue(
+                    "nextPhase",
+                    FormatPhase(nextPhase));
+                cmd.Parameters.Add(
+                    "promotedSongCount",
+                    NpgsqlDbType.Integer).Value =
+                    (object?)promotedSongCount ?? DBNull.Value;
+                cmd.Parameters.Add(
+                    "rebuiltInstrumentCount",
+                    NpgsqlDbType.Integer).Value =
+                    (object?)rebuiltInstrumentCount ?? DBNull.Value;
+                cmd.Parameters.Add(
+                    "stagedCacheEntryCount",
+                    NpgsqlDbType.Bigint).Value =
+                    (object?)stagedCacheEntryCount ?? DBNull.Value;
+                cmd.Parameters.Add(
+                    "cacheEvidence",
+                    NpgsqlDbType.Jsonb).Value =
+                    cacheEvidence is null
+                        ? DBNull.Value
+                        : JsonSerializer.Serialize(
+                            cacheEvidence,
+                            MaxScoreMaintenanceJson.Canonical);
+                cmd.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                cmd.Parameters.AddWithValue("planDigest", planDigest);
+                cmd.Parameters.AddWithValue(
+                    "expectedPhase",
+                    FormatPhase(expectedPhase));
+                if (await cmd.ExecuteNonQueryAsync(token) != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Max-score phase changed before {nextPhase} checkpoint.");
+                }
+            },
+            ct: ct);
+    }
+
+    private async Task BeginRollbackAsync(
+        IMaxScoreMaintenanceLease lease,
+        string manifestDigest,
+        string planDigest,
+        string rollbackDigest,
+        string beforePathFingerprint,
+        CancellationToken ct)
+    {
+        await lease.ExecuteTransactionAsync(
+            "rollback-begin",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                await ConfigureShortTransactionAsync(
+                    connection,
+                    transaction,
+                    token);
+                await using var command =
+                    connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE max_score_maintenance_runs
+                    SET phase = 'rollback_validating',
+                        status = 'running',
+                        rollback_started_at =
+                            COALESCE(
+                                rollback_started_at,
+                                now()),
+                        rollback_before_path_fingerprint =
+                            @beforePathFingerprint,
+                        rollback_failure_stage = NULL,
+                        rollback_failure_detail = NULL,
+                        updated_at = now()
+                    WHERE manifest_sha256 = @manifestSha256
+                      AND plan_digest = @planDigest
+                      AND rollback_snapshot_sha256 =
+                            @rollbackSha256
+                      AND phase IN (
+                          'rollback_captured',
+                          'paths_promoted',
+                          'derived_state_rebuilt',
+                          'notifications_quarantined',
+                          'caches_staged',
+                          'validated')
+                      AND status IN ('running', 'failed')
+                    """;
+                command.Parameters.AddWithValue(
+                    "beforePathFingerprint",
+                    beforePathFingerprint);
+                command.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                command.Parameters.AddWithValue(
+                    "planDigest",
+                    planDigest);
+                command.Parameters.AddWithValue(
+                    "rollbackSha256",
+                    rollbackDigest);
+                if (await command.ExecuteNonQueryAsync(token)
+                    != 1)
+                {
+                    throw new InvalidOperationException(
+                        "Max-score rollback phase could not be started from the exact incomplete run.");
+                }
+            },
+            IsolationLevel.Serializable,
+            ct);
+    }
+
+    private async Task MarkRollbackRunningAsync(
+        IMaxScoreMaintenanceLease lease,
+        string manifestDigest,
+        CancellationToken ct)
+    {
+        await lease.ExecuteTransactionAsync(
+            "rollback-resume-running",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                await using var command =
+                    connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE max_score_maintenance_runs
+                    SET status = 'running',
+                        rollback_failure_stage = NULL,
+                        rollback_failure_detail = NULL,
+                        updated_at = now()
+                    WHERE manifest_sha256 = @manifestSha256
+                      AND phase IN (
+                          'rollback_validating',
+                          'rollback_paths_restored',
+                          'rollback_derived_state_rebuilt',
+                          'rollback_notifications_quarantined',
+                          'rollback_caches_staged',
+                          'rollback_validated')
+                      AND status IN ('running', 'failed')
+                    """;
+                command.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                if (await command.ExecuteNonQueryAsync(token)
+                    != 1)
+                {
+                    throw new InvalidOperationException(
+                        "Resumable max-score rollback run was not found.");
+                }
+            },
+            ct: ct);
+    }
+
+    private async Task RestoreRollbackPathsAsync(
+        IMaxScoreMaintenanceLease lease,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        string planDigest,
+        MaxScoreMaintenanceRollbackSnapshot snapshot,
+        string beforePathFingerprint,
+        string afterPathFingerprint,
+        CancellationToken ct)
+    {
+        BeforeRollbackPathRestoreTestHook?.Invoke();
+        await lease.ExecuteTransactionAsync(
+            "rollback-path-restoration",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                await ConfigureShortTransactionAsync(
+                    connection,
+                    transaction,
+                    token);
+                await LockOwnedFreezeRowAsync(
+                    connection,
+                    transaction,
+                    manifest,
+                    manifestDigest,
+                    token);
+                var current =
+                    await LoadPathStatesForUpdateAsync(
+                        connection,
+                        transaction,
+                        manifest.Songs
+                            .Select(song => song.SongId)
+                            .ToArray(),
+                        token);
+                if (current.Count != manifest.Songs.Count)
+                {
+                    throw new InvalidOperationException(
+                        "Rollback path restoration did not lock the exact manifest song set.");
+                }
+                foreach (var song in manifest.Songs)
+                {
+                    var expected =
+                        song.StagedPath with
+                        {
+                            Revision = checked(
+                                song.CurrentPath.Revision
+                                + 1),
+                        };
+                    if (!current.TryGetValue(
+                            song.SongId,
+                            out var state)
+                        || !PathIdentityMatches(
+                            state,
+                            expected))
+                    {
+                        throw new InvalidOperationException(
+                            $"Current promoted path changed before rollback for {song.SongId}.");
+                    }
+                }
+
+                foreach (var rollbackSong in snapshot.Songs)
+                {
+                    await using var update =
+                        connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = """
+                        UPDATE songs
+                        SET max_lead_score = @lead,
+                            max_bass_score = @bass,
+                            max_drums_score = @drums,
+                            max_vocals_score = @vocals,
+                            max_pro_lead_score = @proLead,
+                            max_pro_bass_score = @proBass,
+                            max_pro_cymbals_score = @proCymbals,
+                            max_pro_drums_score = @proDrums,
+                            dat_file_hash = @datHash,
+                            song_last_modified =
+                                @songLastModified,
+                            paths_generated_at = @generatedAt,
+                            chopt_version = @choptVersion,
+                            chopt_binary_sha256 = @binaryHash,
+                            path_generation_profile = @profile,
+                            path_artifact_generation_id =
+                                @generationId,
+                            path_expected_instruments =
+                                @expectedInstruments,
+                            path_generation_revision =
+                                @restoredRevision,
+                            path_generation_pending = @pending
+                        WHERE song_id = @songId
+                          AND path_generation_revision =
+                                @expectedCurrentRevision
+                        """;
+                    AddRollbackPathRestoreParameters(
+                        update,
+                        rollbackSong,
+                        checked(
+                            manifest.Songs.Single(
+                                    song => string.Equals(
+                                        song.SongId,
+                                        rollbackSong.SongId,
+                                        StringComparison.Ordinal))
+                                .CurrentPath.Revision
+                            + 1));
+                    if (await update.ExecuteNonQueryAsync(token)
+                        != 1)
+                    {
+                        throw new InvalidOperationException(
+                            $"Rollback path update lost the locked row for {rollbackSong.SongId}.");
+                    }
+                }
+
+                await using var checkpoint =
+                    connection.CreateCommand();
+                checkpoint.Transaction = transaction;
+                checkpoint.CommandText = """
+                    UPDATE max_score_maintenance_runs
+                    SET phase = 'rollback_paths_restored',
+                        status = 'running',
+                        rollback_paths_restored_at = now(),
+                        rollback_before_path_fingerprint =
+                            @beforePathFingerprint,
+                        rollback_after_path_fingerprint =
+                            @afterPathFingerprint,
+                        rollback_restored_song_count =
+                            @restoredSongCount,
+                        rollback_failure_stage = NULL,
+                        rollback_failure_detail = NULL,
+                        updated_at = now()
+                    WHERE manifest_sha256 = @manifestSha256
+                      AND plan_digest = @planDigest
+                      AND phase = 'rollback_validating'
+                      AND status IN ('running', 'failed')
+                    """;
+                checkpoint.Parameters.AddWithValue(
+                    "beforePathFingerprint",
+                    beforePathFingerprint);
+                checkpoint.Parameters.AddWithValue(
+                    "afterPathFingerprint",
+                    afterPathFingerprint);
+                checkpoint.Parameters.AddWithValue(
+                    "restoredSongCount",
+                    snapshot.Songs.Count);
+                checkpoint.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                checkpoint.Parameters.AddWithValue(
+                    "planDigest",
+                    planDigest);
+                if (await checkpoint.ExecuteNonQueryAsync(token)
+                    != 1)
+                {
+                    throw new InvalidOperationException(
+                        "Rollback path checkpoint phase changed before commit.");
+                }
+            },
+            IsolationLevel.Serializable,
+            ct);
+    }
+
+    private async Task AdvanceRollbackPhaseAsync(
+        IMaxScoreMaintenanceLease lease,
+        string manifestDigest,
+        string planDigest,
+        MaxScoreMaintenancePhase expectedPhase,
+        MaxScoreMaintenancePhase nextPhase,
+        int? restoredSongCount,
+        int? rebuiltInstrumentCount,
+        MaxScoreMaintenanceNotificationQuarantineResult?
+            notificationResult,
+        long? stagedCacheEntryCount,
+        MaxScoreMaintenanceCacheEvidence? cacheEvidence,
+        long? cachePublicationId,
+        CancellationToken ct)
+    {
+        await lease.ExecuteTransactionAsync(
+            $"rollback-phase-checkpoint:{FormatPhase(nextPhase)}",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                if (nextPhase
+                    == MaxScoreMaintenancePhase
+                        .RollbackCachesStaged)
+                {
+                    if (!cachePublicationId.HasValue
+                        || stagedCacheEntryCount is not > 0
+                        || cacheEvidence is null
+                        || cacheEvidence.EntryCount
+                            != stagedCacheEntryCount.Value)
+                    {
+                        throw new InvalidOperationException(
+                            "Rollback cache checkpoint requires exact publication, count, and evidence.");
+                    }
+                    await MaxScoreMaintenanceCacheEntryEvidenceStore
+                        .CaptureRollbackAsync(
+                            manifestDigest,
+                            cachePublicationId.Value,
+                            stagedCacheEntryCount.Value,
+                            connection,
+                            transaction,
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds);
+                }
+                else if (cachePublicationId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        "Rollback cache publication identity is only valid for cache staging.");
+                }
+
+                await using var command =
+                    connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE max_score_maintenance_runs
+                    SET phase = @nextPhase,
+                        status = 'running',
+                        rollback_restored_song_count =
+                            COALESCE(
+                                @restoredSongCount,
+                                rollback_restored_song_count),
+                        rollback_rebuilt_instrument_count =
+                            COALESCE(
+                                @rebuiltInstrumentCount,
+                                rollback_rebuilt_instrument_count),
+                        rollback_notification_maintenance_run_id =
+                            COALESCE(
+                                @notificationMaintenanceRunId,
+                                rollback_notification_maintenance_run_id),
+                        rollback_quarantined_candidate_count =
+                            COALESCE(
+                                @quarantinedCandidateCount,
+                                rollback_quarantined_candidate_count),
+                        rollback_visible_delivery_count =
+                            COALESCE(
+                                @visibleDeliveryCount,
+                                rollback_visible_delivery_count),
+                        rollback_staged_cache_entry_count =
+                            COALESCE(
+                                @stagedCacheEntryCount,
+                                rollback_staged_cache_entry_count),
+                        rollback_cache_evidence =
+                            COALESCE(
+                                @cacheEvidence,
+                                rollback_cache_evidence),
+                        rollback_derived_state_rebuilt_at =
+                            CASE
+                                WHEN @nextPhase =
+                                    'rollback_derived_state_rebuilt'
+                                    THEN now()
+                                ELSE rollback_derived_state_rebuilt_at
+                            END,
+                        rollback_notifications_quarantined_at =
+                            CASE
+                                WHEN @nextPhase =
+                                    'rollback_notifications_quarantined'
+                                    THEN now()
+                                ELSE rollback_notifications_quarantined_at
+                            END,
+                        rollback_caches_staged_at =
+                            CASE
+                                WHEN @nextPhase =
+                                    'rollback_caches_staged'
+                                    THEN now()
+                                ELSE rollback_caches_staged_at
+                            END,
+                        rollback_validated_at =
+                            CASE
+                                WHEN @nextPhase =
+                                    'rollback_validated'
+                                    THEN now()
+                                ELSE rollback_validated_at
+                            END,
+                        rollback_failure_stage = NULL,
+                        rollback_failure_detail = NULL,
+                        updated_at = now()
+                    WHERE manifest_sha256 = @manifestSha256
+                      AND plan_digest = @planDigest
+                      AND phase = @expectedPhase
+                      AND status IN ('running', 'failed')
+                    """;
+                command.Parameters.AddWithValue(
+                    "nextPhase",
+                    FormatPhase(nextPhase));
+                command.Parameters.AddWithValue(
+                    "expectedPhase",
+                    FormatPhase(expectedPhase));
+                command.Parameters.Add(
+                    "restoredSongCount",
+                    NpgsqlDbType.Integer).Value =
+                    (object?)restoredSongCount
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "rebuiltInstrumentCount",
+                    NpgsqlDbType.Integer).Value =
+                    (object?)rebuiltInstrumentCount
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "notificationMaintenanceRunId",
+                    NpgsqlDbType.Bigint).Value =
+                    (object?)notificationResult
+                        ?.MaintenanceRunId
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "quarantinedCandidateCount",
+                    NpgsqlDbType.Bigint).Value =
+                    (object?)notificationResult
+                        ?.CandidateCount
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "visibleDeliveryCount",
+                    NpgsqlDbType.Integer).Value =
+                    (object?)notificationResult
+                        ?.VisibleDeliveryCount
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "stagedCacheEntryCount",
+                    NpgsqlDbType.Bigint).Value =
+                    (object?)stagedCacheEntryCount
+                    ?? DBNull.Value;
+                command.Parameters.Add(
+                    "cacheEvidence",
+                    NpgsqlDbType.Jsonb).Value =
+                    cacheEvidence is null
+                        ? DBNull.Value
+                        : JsonSerializer.Serialize(
+                            cacheEvidence,
+                            MaxScoreMaintenanceJson.Canonical);
+                command.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                command.Parameters.AddWithValue(
+                    "planDigest",
+                    planDigest);
+                if (await command.ExecuteNonQueryAsync(token)
+                    != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Max-score rollback phase changed before {nextPhase} checkpoint.");
+                }
+            },
+            ct: ct);
+    }
+
+    private async Task RecordRollbackFailureAsync(
+        IMaxScoreMaintenanceLease lease,
+        string manifestDigest,
+        MaxScoreMaintenancePhase phase,
+        Exception error,
+        CancellationToken ct)
+    {
+        await lease.ExecuteTransactionAsync(
+            "rollback-failure-checkpoint",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                await using var command =
+                    connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE max_score_maintenance_runs
+                    SET status = 'failed',
+                        rollback_failure_stage =
+                            @failureStage,
+                        rollback_failure_detail =
+                            @failureDetail,
+                        updated_at = now()
+                    WHERE manifest_sha256 = @manifestSha256
+                      AND phase IN (
+                          'rollback_validating',
+                          'rollback_paths_restored',
+                          'rollback_derived_state_rebuilt',
+                          'rollback_notifications_quarantined',
+                          'rollback_caches_staged',
+                          'rollback_validated')
+                    """;
+                command.Parameters.AddWithValue(
+                    "failureStage",
+                    FormatPhase(phase));
+                command.Parameters.AddWithValue(
+                    "failureDetail",
+                    BoundDetail(error.Message));
+                command.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                await command.ExecuteNonQueryAsync(token);
             },
             ct: ct);
     }
@@ -4248,9 +6213,9 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, tx, token) =>
             {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET status = 'running',
                 failure_stage = NULL,
@@ -4259,14 +6224,14 @@ public sealed class MaxScoreMaintenanceService
             WHERE manifest_sha256 = @manifestSha256
               AND phase <> 'completed'
             """;
-        cmd.Parameters.AddWithValue(
-            "manifestSha256",
-            manifestDigest);
-        if (await cmd.ExecuteNonQueryAsync(token) != 1)
-        {
-            throw new InvalidOperationException(
-                "Resumable max-score maintenance run was not found.");
-        }
+                cmd.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                if (await cmd.ExecuteNonQueryAsync(token) != 1)
+                {
+                    throw new InvalidOperationException(
+                        "Resumable max-score maintenance run was not found.");
+                }
             },
             ct: ct);
     }
@@ -4283,9 +6248,9 @@ public sealed class MaxScoreMaintenanceService
             requireSourceLocks: true,
             async (conn, tx, token) =>
             {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET status = 'failed',
                 failure_stage = @failureStage,
@@ -4294,16 +6259,16 @@ public sealed class MaxScoreMaintenanceService
             WHERE manifest_sha256 = @manifestSha256
               AND phase <> 'completed'
             """;
-        cmd.Parameters.AddWithValue(
-            "failureStage",
-            FormatPhase(phase));
-        cmd.Parameters.AddWithValue(
-            "failureDetail",
-            BoundDetail(error.Message));
-        cmd.Parameters.AddWithValue(
-            "manifestSha256",
-            manifestDigest);
-        await cmd.ExecuteNonQueryAsync(token);
+                cmd.Parameters.AddWithValue(
+                    "failureStage",
+                    FormatPhase(phase));
+                cmd.Parameters.AddWithValue(
+                    "failureDetail",
+                    BoundDetail(error.Message));
+                cmd.Parameters.AddWithValue(
+                    "manifestSha256",
+                    manifestDigest);
+                await cmd.ExecuteNonQueryAsync(token);
             },
             ct: ct);
     }
@@ -4464,6 +6429,171 @@ public sealed class MaxScoreMaintenanceService
             song.Path.PathGenerationPending);
     }
 
+    private static async Task<IReadOnlyDictionary<
+            string,
+            PathGenerationState>>
+        LoadPathStatesForUpdateAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            IReadOnlyCollection<string> songIds,
+            CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT song_id,
+                   path_generation_revision,
+                   dat_file_hash,
+                   song_last_modified,
+                   paths_generated_at,
+                   chopt_version,
+                   chopt_binary_sha256,
+                   path_generation_profile,
+                   path_artifact_generation_id,
+                   path_expected_instruments,
+                   max_lead_score,
+                   max_bass_score,
+                   max_drums_score,
+                   max_vocals_score,
+                   max_pro_lead_score,
+                   max_pro_bass_score,
+                   max_pro_cymbals_score,
+                   max_pro_drums_score,
+                   NULLIF(last_modified, ''),
+                   path_generation_pending
+            FROM songs
+            WHERE song_id = ANY(@songIds)
+            ORDER BY song_id
+            FOR UPDATE
+            """;
+        command.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            songIds.ToArray();
+        var result = new Dictionary<
+            string,
+            PathGenerationState>(
+            StringComparer.Ordinal);
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var state = new PathGenerationState(
+                reader.GetString(0),
+                reader.GetInt64(1),
+                ReadNullableString(reader, 2),
+                ReadNullableString(reader, 3),
+                ReadNullableDateTime(reader, 4),
+                ReadNullableString(reader, 5),
+                ReadNullableString(reader, 6),
+                ReadNullableString(reader, 7),
+                ReadNullableString(reader, 8),
+                reader.GetFieldValue<string[]>(9),
+                new SongMaxScores
+                {
+                    MaxLeadScore =
+                        ReadNullableInt32(reader, 10),
+                    MaxBassScore =
+                        ReadNullableInt32(reader, 11),
+                    MaxDrumsScore =
+                        ReadNullableInt32(reader, 12),
+                    MaxVocalsScore =
+                        ReadNullableInt32(reader, 13),
+                    MaxProLeadScore =
+                        ReadNullableInt32(reader, 14),
+                    MaxProBassScore =
+                        ReadNullableInt32(reader, 15),
+                    MaxProCymbalsScore =
+                        ReadNullableInt32(reader, 16),
+                    MaxProDrumsScore =
+                        ReadNullableInt32(reader, 17),
+                },
+                ReadNullableString(reader, 18),
+                reader.GetBoolean(19));
+            result.Add(state.SongId, state);
+        }
+        return result;
+    }
+
+    private static void AddRollbackPathRestoreParameters(
+        NpgsqlCommand command,
+        MaxScoreMaintenanceRollbackSong song,
+        long expectedCurrentRevision)
+    {
+        command.Parameters.AddWithValue(
+            "songId",
+            song.SongId);
+        command.Parameters.AddWithValue(
+            "expectedCurrentRevision",
+            expectedCurrentRevision);
+        command.Parameters.AddWithValue(
+            "restoredRevision",
+            song.Path.Revision);
+        command.Parameters.AddWithValue(
+            "datHash",
+            (object?)song.Path.DatFileHash
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "songLastModified",
+            (object?)song.Path.SongLastModified
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "generatedAt",
+            (object?)song.Path.GeneratedAtUtc
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "choptVersion",
+            (object?)song.Path.ChoptVersion
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "binaryHash",
+            (object?)song.Path.ChoptBinarySha256
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "profile",
+            (object?)song.Path.GenerationProfile
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "generationId",
+            (object?)song.Path.ArtifactGenerationId
+            ?? DBNull.Value);
+        command.Parameters.Add(
+            "expectedInstruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            song.Path.ExpectedInstruments.ToArray();
+        command.Parameters.AddWithValue(
+            "lead",
+            (object?)song.Path.Maxima.Lead ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "bass",
+            (object?)song.Path.Maxima.Bass ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "drums",
+            (object?)song.Path.Maxima.Drums ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "vocals",
+            (object?)song.Path.Maxima.Vocals ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "proLead",
+            (object?)song.Path.Maxima.ProLead
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "proBass",
+            (object?)song.Path.Maxima.ProBass
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "proCymbals",
+            (object?)song.Path.Maxima.ProCymbals
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "proDrums",
+            (object?)song.Path.Maxima.ProDrums
+            ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "pending",
+            song.Path.PathGenerationPending);
+    }
+
     private static async Task ValidateRollbackRowsAsync(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
@@ -4582,6 +6712,13 @@ public sealed class MaxScoreMaintenanceService
             ? null
             : reader.GetInt32(ordinal);
 
+    private static long? ReadNullableInt64(
+        NpgsqlDataReader reader,
+        int ordinal)
+        => reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetInt64(ordinal);
+
     private static PathGenerationPromotion CreatePromotion(
         MaxScoreMaintenanceManifestSong song)
         => new(
@@ -4637,7 +6774,7 @@ public sealed class MaxScoreMaintenanceService
                 StringComparison.Ordinal))
             .Index;
 
-    private static bool PathIdentityMatches(
+    internal static bool PathIdentityMatches(
         PathGenerationState actual,
         MaxScoreMaintenancePathIdentity expected)
         => actual.Revision == expected.Revision
@@ -4867,6 +7004,302 @@ public sealed class MaxScoreMaintenanceService
             run.FailureStage,
             run.FailureDetail);
 
+    private static MaxScoreMaintenanceApplyReport
+        ToApplyRollbackOwnedRejection(
+            MaxScoreMaintenanceRunState run,
+            bool publicReadsFrozen,
+            Exception error)
+        => new(
+            MaxScoreMaintenanceApplyReport.CurrentReportVersion,
+            Succeeded: false,
+            Resumable: false,
+            publicReadsFrozen,
+            run.ManifestSha256,
+            run.PlanDigest,
+            run.Phase,
+            run.ExpectedPublishedScrapeId,
+            run.ExpectedPublicationId,
+            run.RollbackSnapshotPath,
+            run.RollbackSnapshotSha256,
+            run.PromotedSongCount,
+            run.RebuiltInstrumentCount,
+            run.QuarantinedCandidateCount,
+            run.VisibleDeliveryCount,
+            run.StagedCacheEntryCount,
+            run.CacheEvidence,
+            FailureStage: "rollback_owned",
+            Detail: BoundDetail(error.Message));
+
+    private static MaxScoreMaintenanceRollbackReport
+        CreateRollbackDryRunReport(
+            MaxScoreMaintenanceRunState run,
+            string rollbackDigest,
+            string beforePathFingerprint,
+            string afterPathFingerprint,
+            DateTime startedAtUtc)
+        => new MaxScoreMaintenanceRollbackReport(
+            MaxScoreMaintenanceRollbackReport
+                .CurrentReportVersion,
+            Validated: true,
+            Succeeded: false,
+            DryRun: true,
+            Resumable: true,
+            PublicReadsFrozen: true,
+            CleanupPending: false,
+            run.ManifestSha256,
+            run.PlanDigest,
+            rollbackDigest,
+            MaxScoreMaintenancePhase.RollbackValidating,
+            run.ExpectedPublishedScrapeId,
+            run.ExpectedPublicationId,
+            beforePathFingerprint,
+            afterPathFingerprint,
+            RestoredSongCount: 0,
+            RebuiltInstrumentCount: 0,
+            QuarantinedCandidateCount: 0,
+            VisibleDeliveryCount: 0,
+            StagedCacheEntryCount: 0,
+            CacheEvidence: null,
+            startedAtUtc,
+            CompletedAtUtc: DateTime.UtcNow,
+            Stages:
+            [
+                new MaxScoreMaintenanceRollbackStageReport(
+                    MaxScoreMaintenancePhase
+                        .RollbackValidating,
+                    MaxScoreMaintenanceRollbackStageStatus
+                        .Completed,
+                    startedAtUtc,
+                    DateTime.UtcNow,
+                    beforePathFingerprint,
+                    afterPathFingerprint,
+                    RowCount: 0,
+                    Detail:
+                        "Dry-run validated exact rollback identity without mutation."),
+            ],
+            FailureStage: null,
+            Detail:
+                "Rollback dry-run validation completed; public reads remain frozen.");
+
+    private static MaxScoreMaintenanceRollbackReport
+        CreateRollbackFailureReport(
+            MaxScoreMaintenanceManifest manifest,
+            string manifestDigest,
+            string planDigest,
+            string rollbackDigest,
+            DateTime startedAtUtc,
+            bool publicReadsFrozen,
+            bool dryRun,
+            Exception error)
+        => new MaxScoreMaintenanceRollbackReport(
+            MaxScoreMaintenanceRollbackReport
+                .CurrentReportVersion,
+            Validated: false,
+            Succeeded: false,
+            DryRun: dryRun,
+            Resumable: false,
+            PublicReadsFrozen: publicReadsFrozen,
+            CleanupPending: false,
+            manifestDigest,
+            planDigest,
+            rollbackDigest,
+            MaxScoreMaintenancePhase.None,
+            manifest.ExpectedPublishedScrapeId,
+            manifest.ExpectedPublicationId,
+            BeforePathFingerprint: null,
+            AfterPathFingerprint: null,
+            RestoredSongCount: 0,
+            RebuiltInstrumentCount: 0,
+            QuarantinedCandidateCount: 0,
+            VisibleDeliveryCount: 0,
+            StagedCacheEntryCount: 0,
+            CacheEvidence: null,
+            startedAtUtc,
+            CompletedAtUtc: DateTime.UtcNow,
+            Stages: [],
+            FailureStage: "preflight",
+            Detail: BoundDetail(error.Message));
+
+    private static MaxScoreMaintenanceRollbackReport
+        ToRollbackReport(
+            MaxScoreMaintenanceRunState run,
+            string rollbackDigest,
+            bool dryRun,
+            bool validated,
+            bool succeeded,
+            bool resumable,
+            bool publicReadsFrozen,
+            DateTime startedAtUtc,
+            DateTime? completedAtUtc,
+            bool cleanupPending = false,
+            string? failureStage = null,
+            string? detail = null)
+        => new MaxScoreMaintenanceRollbackReport(
+            MaxScoreMaintenanceRollbackReport
+                .CurrentReportVersion,
+            validated,
+            succeeded,
+            dryRun,
+            resumable,
+            publicReadsFrozen,
+            cleanupPending,
+            run.ManifestSha256,
+            run.PlanDigest,
+            rollbackDigest,
+            run.Phase,
+            run.ExpectedPublishedScrapeId,
+            run.ExpectedPublicationId,
+            run.RollbackBeforePathFingerprint,
+            run.RollbackAfterPathFingerprint,
+            run.RollbackRestoredSongCount,
+            run.RollbackRebuiltInstrumentCount,
+            run.RollbackQuarantinedCandidateCount,
+            run.RollbackVisibleDeliveryCount,
+            run.RollbackStagedCacheEntryCount,
+            run.RollbackCacheEvidence,
+            startedAtUtc,
+            completedAtUtc,
+            BuildRollbackStageReports(run),
+            failureStage,
+            detail);
+
+    private static IReadOnlyList<
+            MaxScoreMaintenanceRollbackStageReport>
+        BuildRollbackStageReports(
+            MaxScoreMaintenanceRunState run)
+    {
+        var stages = new[]
+        {
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackValidating,
+                Started: run.RollbackStartedAtUtc,
+                Completed:
+                    run.RollbackPathsRestoredAtUtc,
+                Before:
+                    run.RollbackBeforePathFingerprint,
+                After:
+                    run.RollbackAfterPathFingerprint,
+                Rows: (long?)null),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackPathsRestored,
+                Started: run.RollbackStartedAtUtc,
+                Completed:
+                    run.RollbackPathsRestoredAtUtc,
+                Before:
+                    run.RollbackBeforePathFingerprint,
+                After:
+                    run.RollbackAfterPathFingerprint,
+                Rows:
+                    (long?)run
+                        .RollbackRestoredSongCount),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackDerivedStateRebuilt,
+                Started:
+                    run.RollbackPathsRestoredAtUtc,
+                Completed:
+                    run
+                        .RollbackDerivedStateRebuiltAtUtc,
+                Before: (string?)null,
+                After: (string?)null,
+                Rows:
+                    (long?)run
+                        .RollbackRebuiltInstrumentCount),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackNotificationsQuarantined,
+                Started:
+                    run
+                        .RollbackDerivedStateRebuiltAtUtc,
+                Completed:
+                    run
+                        .RollbackNotificationsQuarantinedAtUtc,
+                Before: (string?)null,
+                After: (string?)null,
+                Rows:
+                    (long?)run
+                        .RollbackQuarantinedCandidateCount),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackCachesStaged,
+                Started:
+                    run
+                        .RollbackNotificationsQuarantinedAtUtc,
+                Completed:
+                    run.RollbackCachesStagedAtUtc,
+                Before: (string?)null,
+                After:
+                    run.RollbackCacheEvidence
+                        ?.ContentFingerprint,
+                Rows:
+                    (long?)run
+                        .RollbackStagedCacheEntryCount),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase
+                        .RollbackValidated,
+                Started:
+                    run.RollbackCachesStagedAtUtc,
+                Completed:
+                    run.RollbackValidatedAtUtc,
+                Before: (string?)null,
+                After:
+                    run.RollbackCacheEvidence
+                        ?.ContentFingerprint,
+                Rows: (long?)null),
+            (
+                Phase:
+                    MaxScoreMaintenancePhase.RolledBack,
+                Started:
+                    run.RollbackValidatedAtUtc,
+                Completed:
+                    run.RolledBackAtUtc,
+                Before: (string?)null,
+                After:
+                    run.RollbackAfterPathFingerprint,
+                Rows: (long?)null),
+        };
+        return stages
+            .Select(stage =>
+            {
+                var status =
+                    stage.Completed.HasValue
+                        ? MaxScoreMaintenanceRollbackStageStatus
+                            .Completed
+                        : run.Phase == stage.Phase
+                          && string.Equals(
+                              run.Status,
+                              "failed",
+                              StringComparison.Ordinal)
+                            ? MaxScoreMaintenanceRollbackStageStatus
+                                .Failed
+                            : run.Phase >= stage.Phase
+                                ? MaxScoreMaintenanceRollbackStageStatus
+                                    .Running
+                                : MaxScoreMaintenanceRollbackStageStatus
+                                    .Pending;
+                return new MaxScoreMaintenanceRollbackStageReport(
+                    stage.Phase,
+                    status,
+                    stage.Started,
+                    stage.Completed,
+                    stage.Before,
+                    stage.After,
+                    stage.Rows,
+                    run.Phase == stage.Phase
+                        ? run.RollbackFailureDetail
+                        : null);
+            })
+            .ToArray();
+    }
+
     private string ResolveDataPath(string requestedPath)
         => MaxScoreMaintenanceFileStore.ResolveExistingJsonInputPath(
             _options.DataDirectory,
@@ -4999,6 +7432,22 @@ public sealed class MaxScoreMaintenanceService
                 MaxScoreMaintenancePhase.CachesStaged,
             "validated" => MaxScoreMaintenancePhase.Validated,
             "completed" => MaxScoreMaintenancePhase.Completed,
+            "rollback_validating" =>
+                MaxScoreMaintenancePhase.RollbackValidating,
+            "rollback_paths_restored" =>
+                MaxScoreMaintenancePhase.RollbackPathsRestored,
+            "rollback_derived_state_rebuilt" =>
+                MaxScoreMaintenancePhase
+                    .RollbackDerivedStateRebuilt,
+            "rollback_notifications_quarantined" =>
+                MaxScoreMaintenancePhase
+                    .RollbackNotificationsQuarantined,
+            "rollback_caches_staged" =>
+                MaxScoreMaintenancePhase.RollbackCachesStaged,
+            "rollback_validated" =>
+                MaxScoreMaintenancePhase.RollbackValidated,
+            "rolled_back" =>
+                MaxScoreMaintenancePhase.RolledBack,
             _ => throw new InvalidOperationException(
                 $"Unknown max-score maintenance phase '{phase}'."),
         };
@@ -5020,6 +7469,22 @@ public sealed class MaxScoreMaintenanceService
                 "caches_staged",
             MaxScoreMaintenancePhase.Validated => "validated",
             MaxScoreMaintenancePhase.Completed => "completed",
+            MaxScoreMaintenancePhase.RollbackValidating =>
+                "rollback_validating",
+            MaxScoreMaintenancePhase.RollbackPathsRestored =>
+                "rollback_paths_restored",
+            MaxScoreMaintenancePhase
+                .RollbackDerivedStateRebuilt =>
+                "rollback_derived_state_rebuilt",
+            MaxScoreMaintenancePhase
+                .RollbackNotificationsQuarantined =>
+                "rollback_notifications_quarantined",
+            MaxScoreMaintenancePhase.RollbackCachesStaged =>
+                "rollback_caches_staged",
+            MaxScoreMaintenancePhase.RollbackValidated =>
+                "rollback_validated",
+            MaxScoreMaintenancePhase.RolledBack =>
+                "rolled_back",
             _ => throw new ArgumentOutOfRangeException(
                 nameof(phase),
                 phase,
@@ -5050,6 +7515,10 @@ public sealed class MaxScoreMaintenanceService
     private sealed record MaxScoreMaintenanceReadSnapshot(
         IReadOnlyDictionary<string, SongMaxScores>
             PostPromotionMaxScores,
+        IReadOnlyDictionary<string, SongMaxScores>
+            ScoreHistoryEvidenceMaxScores,
+        IReadOnlyDictionary<string, SongMaxScores>
+            RollbackScoreHistoryEvidenceMaxScores,
         IReadOnlyDictionary<
             (string SongId, string Instrument),
             long> Population,
@@ -5057,6 +7526,8 @@ public sealed class MaxScoreMaintenanceService
             PopulationEvidence,
         MaxScoreMaintenanceScoreHistoryEvidence
             ScoreHistoryEvidence,
+        MaxScoreMaintenanceScoreHistoryEvidence
+            RollbackScoreHistoryEvidence,
         IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
             ObservedScoreChecks,
         IReadOnlyList<(
@@ -5118,5 +7589,30 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceCacheEvidence? CacheEvidence,
         string? FailureStage,
         string? FailureDetail,
-        DateTime CreatedAtUtc);
+        DateTime CreatedAtUtc,
+        DateTime? RollbackStartedAtUtc,
+        DateTime? RollbackPathsRestoredAtUtc,
+        DateTime? RollbackDerivedStateRebuiltAtUtc,
+        DateTime? RollbackNotificationsQuarantinedAtUtc,
+        DateTime? RollbackCachesStagedAtUtc,
+        DateTime? RollbackValidatedAtUtc,
+        DateTime? RolledBackAtUtc,
+        string? RollbackBeforePathFingerprint,
+        string? RollbackAfterPathFingerprint,
+        int RollbackRestoredSongCount,
+        int RollbackRebuiltInstrumentCount,
+        long? RollbackNotificationMaintenanceRunId,
+        long RollbackQuarantinedCandidateCount,
+        int RollbackVisibleDeliveryCount,
+        long RollbackStagedCacheEntryCount,
+        MaxScoreMaintenanceCacheEvidence? RollbackCacheEvidence,
+        string? RollbackFailureStage,
+        string? RollbackFailureDetail,
+        DateTime UpdatedAtUtc,
+        DateTime? CompletedAtUtc);
 }
+
+internal sealed record MaxScoreMaintenanceRollbackRuntimeState(
+    int MaintenanceBackendCount,
+    int WorkerBackendCount,
+    int WaitingLockCount);
