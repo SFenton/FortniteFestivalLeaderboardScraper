@@ -2,7 +2,7 @@
 status: roadmap
 owner: data
 last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified_commit: 937868e0
 sources:
   - FSTService/FeatureOptions.cs
   - FSTService/appsettings.json

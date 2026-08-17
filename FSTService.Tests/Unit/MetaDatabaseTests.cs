@@ -1685,14 +1685,14 @@ public sealed class MetaDatabaseTests : IDisposable
         using (var conn = DataSource.OpenConnection())
         using (var legacy = conn.CreateCommand())
         {
-                legacy.CommandText = """
+            legacy.CommandText = """
                     SELECT json_data
                     FROM api_response_cache
                     WHERE cache_key = 'cutover-key'
                     """;
-                Assert.Equal(
-                    new byte[] { 1 },
-                    (byte[]?)legacy.ExecuteScalar());
+            Assert.Equal(
+                new byte[] { 1 },
+                (byte[]?)legacy.ExecuteScalar());
         }
         Assert.Equal(
                 new byte[] { 2 },
@@ -4237,23 +4237,42 @@ public sealed class MetaDatabaseTests : IDisposable
         {
             changes.Add(new ScoreChangeRecord
             {
-                SongId = $"song_{i}", Instrument = "Solo_Guitar", AccountId = "acct_seed",
-                OldScore = null, NewScore = 100_000 + i, OldRank = null, NewRank = i + 1,
-                ScoreAchievedAt = $"2025-01-{(i % 9) + 1:00}T00:00:00Z", AllTimeRank = i + 1,
+                SongId = $"song_{i}",
+                Instrument = "Solo_Guitar",
+                AccountId = "acct_seed",
+                OldScore = null,
+                NewScore = 100_000 + i,
+                OldRank = null,
+                NewRank = i + 1,
+                ScoreAchievedAt = $"2025-01-{(i % 9) + 1:00}T00:00:00Z",
+                AllTimeRank = i + 1,
             });
         }
 
         changes.Add(new ScoreChangeRecord
         {
-            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
-            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 77,
-            ScoreAchievedAt = "2025-02-01T00:00:00Z", AllTimeRank = 77,
+            SongId = "song_dupe",
+            Instrument = "Solo_Guitar",
+            AccountId = "acct_1",
+            OldScore = null,
+            NewScore = 123_456,
+            OldRank = null,
+            NewRank = 77,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z",
+            AllTimeRank = 77,
         });
         changes.Add(new ScoreChangeRecord
         {
-            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
-            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 402,
-            ScoreAchievedAt = "2025-02-01T00:00:00Z", Season = 10, SeasonRank = 402,
+            SongId = "song_dupe",
+            Instrument = "Solo_Guitar",
+            AccountId = "acct_1",
+            OldScore = null,
+            NewScore = 123_456,
+            OldRank = null,
+            NewRank = 402,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z",
+            Season = 10,
+            SeasonRank = 402,
         });
 
         Db.InsertScoreChanges(changes);
@@ -5517,6 +5536,102 @@ public sealed class MetaDatabaseTests : IDisposable
             requireSourceLocks: false);
     }
 
+    [Theory]
+    [InlineData(false, "fst-max-score-rollback")]
+    [InlineData(true, "fst-max-score-resume")]
+    public async Task MaxScoreRecoveryLease_yields_publication_reads_until_each_commit_fence(
+        bool resume,
+        string applicationName)
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        await using var recoveryLease = resume
+            ? await Db
+                .AcquireMaxScoreMaintenanceResumeLeaseAsync(
+                    publicationId)
+            : await Db
+                .AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+                    publicationId);
+        await recoveryLease.VerifyHeldAsync(
+            requireSourceLocks: false);
+
+        await using var readConnection =
+            await DataSource.OpenConnectionAsync();
+        await using var readTransaction =
+            await readConnection.BeginTransactionAsync();
+        await using (var acquireRead = readConnection.CreateCommand())
+        {
+            acquireRead.Transaction = readTransaction;
+            acquireRead.CommandText =
+                "SELECT pg_try_advisory_xact_lock_shared(@lockKey)";
+            acquireRead.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            Assert.True(
+                await acquireRead.ExecuteScalarAsync()
+                    is true);
+        }
+
+        var actionStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var releaseAction =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var mutation = recoveryLease.ExecuteTransactionAsync(
+            "recovery-publication-commit-fence-test",
+            requireSourceLocks: false,
+            async (_, _, token) =>
+            {
+                actionStarted.TrySetResult();
+                await releaseAction.Task.WaitAsync(token);
+            });
+        await actionStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        releaseAction.TrySetResult();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var waitingForPublicationFence = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var probe =
+                await DataSource.OpenConnectionAsync();
+            await using var command = probe.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND application_name =
+                          @applicationName
+                      AND wait_event_type = 'Lock'
+                )
+                """;
+            command.Parameters.AddWithValue(
+                "applicationName",
+                applicationName);
+            waitingForPublicationFence =
+                await command.ExecuteScalarAsync()
+                    is true;
+            if (waitingForPublicationFence)
+                break;
+            await Task.Delay(25);
+        }
+        Assert.True(waitingForPublicationFence);
+        Assert.False(mutation.IsCompleted);
+
+        await readTransaction.CommitAsync();
+        await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task MutationGate_orders_registration_freeze_source_locks_cancellation_and_resume()
     {
@@ -6175,7 +6290,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("dev1", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         Db.EnqueueBackfill("acct1", 50);
         Db.EnqueueHistoryRecon("acct1", 50);
@@ -6196,7 +6313,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("dev2", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         Db.EnqueueBackfill("acct1", 50);
 
@@ -6228,7 +6347,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("web-tracker", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         SetWebRegistrationActivity("acct1", DateTime.UtcNow.AddHours(-8));
 

@@ -725,9 +725,14 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute player {AccountId}", accountId);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute player {AccountId}",
+                        evidenceAccountId);
                     failures.Add(new InvalidOperationException(
-                        $"Player profile precompute failed for {accountId}.",
+                        $"Player profile precompute failed for {evidenceAccountId}.",
                         ex));
                 }
                 return ValueTask.CompletedTask;
@@ -868,7 +873,7 @@ public sealed class ScrapeTimePrecomputer
         {
             _log.LogInformation(
                 "[Precompute.PlayerProfileFallbacks] account={AccountId} current_scores={CurrentScores} fallback_variants={FallbackVariants} rank_tiers={RankTiers} stored_rank_variants={StoredRankVariants} missing_rank_variants={MissingRankVariants}",
-                accountId,
+                FormatEvidenceAccountId(accountId),
                 scores.Count,
                 fallbackVariantCount,
                 fallbackRankTierCount,
@@ -1323,9 +1328,14 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute sub-resources for {AccountId}", accountId);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute sub-resources for {AccountId}",
+                        evidenceAccountId);
                     failures.Add(new InvalidOperationException(
-                        $"Player sub-resource precompute failed for {accountId}.",
+                        $"Player sub-resource precompute failed for {evidenceAccountId}.",
                         ex));
                 }
                 return ValueTask.CompletedTask;
@@ -1811,7 +1821,7 @@ public sealed class ScrapeTimePrecomputer
         {
             _log.LogInformation(
                 "[Precompute.LeaderboardRivals] account={AccountId} persisted_methods={PersistedMethods} live_fallback_methods={LiveFallbackMethods} skipped_methods={SkippedMethods}",
-                accountId,
+                FormatEvidenceAccountId(accountId),
                 persistedMethods,
                 liveFallbackMethods,
                 skippedMethods);
@@ -2194,9 +2204,15 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute neighborhood for {AccountId}/{Instrument}", accountId, instrument);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute neighborhood for {AccountId}/{Instrument}",
+                        evidenceAccountId,
+                        instrument);
                     failures.Add(new InvalidOperationException(
-                        $"Ranking neighborhood precompute failed for {accountId}/{instrument}.",
+                        $"Ranking neighborhood precompute failed for {evidenceAccountId}/{instrument}.",
                         ex));
                 }
             }
@@ -2235,14 +2251,26 @@ public sealed class ScrapeTimePrecomputer
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Failed to precompute composite neighborhood for {AccountId}", accountId);
+                var evidenceAccountId =
+                    FormatEvidenceAccountId(accountId);
+                _log.LogWarning(
+                    ex,
+                    "Failed to precompute composite neighborhood for {AccountId}",
+                    evidenceAccountId);
                 failures.Add(new InvalidOperationException(
-                    $"Composite neighborhood precompute failed for {accountId}.",
+                    $"Composite neighborhood precompute failed for {evidenceAccountId}.",
                     ex));
             }
         }
         ThrowIfPrecomputeFailures("ranking neighborhoods", failures);
     }
+
+    private string FormatEvidenceAccountId(
+        string accountId) =>
+        _strictPublishedSourcesForPrecompute
+            ? MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId)
+            : accountId;
 
     private static void ThrowIfPrecomputeFailures(
         string phase,

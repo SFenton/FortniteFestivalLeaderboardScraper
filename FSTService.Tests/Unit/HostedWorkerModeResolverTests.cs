@@ -91,4 +91,23 @@ public class HostedWorkerModeResolverTests
         Assert.False(plan.RegisterRegistrationBackfill);
         Assert.False(plan.RegisterFullWorkerServices);
     }
+
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, true, false, true)]
+    [InlineData(false, false, true, true)]
+    public void RequiresNoHostedServices_IsolatesStrictOneShotCommands(
+        bool soloFamily,
+        bool leaderboardRivals,
+        bool maxScoreMaintenance,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            HostedWorkerModeResolver.RequiresNoHostedServices(
+                soloFamily,
+                leaderboardRivals,
+                maxScoreMaintenance));
+    }
 }

@@ -129,6 +129,41 @@ post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
 
+Guarded rollback extends the same run with separate rollback timestamps,
+before/after path fingerprints, restored/rebuilt/quarantined/cache counts,
+rollback cache evidence, and rollback-specific failure detail. Apply failure
+fields and apply cache evidence remain unchanged for forensic history.
+Rollback phases progress from `rollback_validating` through
+`rollback_validated`; only phase/status `rolled_back` is terminal.
+`max_score_maintenance_rollback_cache_entries` stores the immutable rollback
+staging key/ETag/JSON hashes separately from apply evidence. Schema migration
+adds these columns, phases/status, constraints, table, and mutation guards
+idempotently; the CLI one-shot still requires a prior release schema
+initialization.
+Either committed apply cache evidence or rollback cache evidence blocks normal
+cache-build leases and non-owner staging mutations for the frozen publication;
+application guards and database triggers enforce the same rule.
+The stronger admission rule starts with the active digest-owned max-score
+freeze, before either evidence field exists, so intermediate apply/rollback
+state cannot be published by an ordinary cache builder.
+It remains fail-closed if a working publication pointer appears unexpectedly;
+active maintenance detection is bound to the current publication/freeze/run,
+not to the absence of that pointer. Scrape allocation rejects the freeze or
+durable mutation token before inserting a new working generation.
+The publication-addressed staging guard is row-scoped for DML: non-owner
+startup retention may delete only rows outside the current, previous, and
+working publication IDs. All current-generation DML and every staging truncate
+remain rejected, allowing FSTService schema initialization to restart safely
+during a freeze without exposing maintenance state.
+
+Notification maintenance candidate JSON includes an `alignmentDirection`
+(`apply` or `rollback`) before hashing. The unique audit key therefore cannot
+reuse a completed apply alignment for rollback merely because both candidate
+sets are identical or empty. Rollback audit insertion/reuse, baseline
+alignment, rollback audit ID/count fields, and the
+`rollback_notifications_quarantined` phase checkpoint commit in the same
+lease transaction.
+
 `max_score_maintenance_rollback_songs` stores every pre-promotion path field,
 all eight maxima, the immutable generation file count, and the exact artifact
 tree SHA-256 for every manifest song. It complements the canonical same-drive
@@ -141,6 +176,54 @@ publication/catalog, and database rollback-song identity. Every post-capture
 resume and final completion reloads canonical bytes and requires the
 checkpointed SHA-256; missing, corrupt, or swapped evidence keeps the freeze
 resumable.
+
+Rollback path restoration and its durable checkpoint share one serializable
+source-locked transaction. It targets only the exact rollback song set and
+requires every locked current path to match the promoted manifest identity
+before replacing all stored path/maxima fields with rollback values. It never
+deletes promoted immutable generations or audit rows. Later derived,
+notification, and cache work is resumable; final validated cache swap,
+`rolled_back` checkpoint, and unfreeze are one serializable lease-owned
+transaction.
+
+Each rollback invocation captures two score-history views in the same
+repeatable-read/source-locked snapshot: the original accepted
+post-promotion selector and the selector implied by the restored maxima. The
+latter covers rows that become fallback-eligible only when a maximum decreases;
+a missing restored maximum has an explicit empty fallback evidence set. Final
+validation recomputes both views. The digest-owned freeze and database mutation
+guards prevent source drift between retries.
+
+Rollback retains the session-owned registration mutation and path-generation
+advisory locks but not the global publication lock. Every lease-owned
+transaction requests the transaction-scoped exclusive publication lock after
+its uncommitted work and immediately before durable commit. This commit fence
+lets cached public reads continue during long computation while ensuring
+readers observe only complete committed units.
+
+Forward resume uses the same commit-fence lease shape under application name
+`fst-max-score-resume`. Initial apply still retains the publication lock while
+creating the freeze; a resume can yield it because the exact digest-owned
+freeze, durable mutation token, worker-offline gate, and source locks already
+fence the current publication.
+
+Affected-account cache evidence orders the public fingerprint tuple by song ID
+and projected combo ID. Raw instrument names are converted before sorting so
+the expected ordering matches the serialized player cache ordering for
+same-song multi-instrument scores.
+Max-score maintenance report/log diagnostics use a `sha256:<16-hex>` evidence
+identifier for registered accounts. The durable cache keys and payloads retain
+their required exact account IDs, but operator evidence and error text do not
+emit them.
+
+Terminal success additionally requires all
+`max_score_mutation_gate_*` ownership fields to be null. If the commit succeeds
+but the original backend disappears before lease disposal, the same rollback
+command acquires a fresh exclusive cleanup lease, replaces the stale owner,
+releases its locks, clears its token, and verifies the row before reporting
+success. An already-`rolled_back` retry performs this reconciliation too.
+When cleanup cannot finish, report v2 represents the committed terminal state
+with `cleanupPending=true` rather than rewriting it as a preflight failure.
 
 Maintenance observed-score bounds, affected-account selection, player-stat
 validation, and ranking/player-stat inputs share the published solo source

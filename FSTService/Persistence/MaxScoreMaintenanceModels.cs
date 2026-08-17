@@ -1444,6 +1444,13 @@ public enum MaxScoreMaintenancePhase
     CachesStaged = 6,
     Validated = 7,
     Completed = 8,
+    RollbackValidating = 9,
+    RollbackPathsRestored = 10,
+    RollbackDerivedStateRebuilt = 11,
+    RollbackNotificationsQuarantined = 12,
+    RollbackCachesStaged = 13,
+    RollbackValidated = 14,
+    RolledBack = 15,
 }
 
 public sealed record MaxScoreMaintenanceApplyReport(
@@ -1517,24 +1524,41 @@ public sealed record MaxScoreMaintenanceApplyReport(
         }
 
         var cacheEvidenceRequired =
-            Phase >= MaxScoreMaintenancePhase.CachesStaged;
-        if (cacheEvidenceRequired)
+            Phase is MaxScoreMaintenancePhase.CachesStaged
+                or MaxScoreMaintenancePhase.Validated
+                or MaxScoreMaintenancePhase.Completed;
+        var rollbackOwnedPhase =
+            Phase >= MaxScoreMaintenancePhase.RollbackValidating;
+        var cacheEvidencePresent =
+            CacheEvidence is not null
+            || StagedCacheEntryCount != 0;
+        var cacheEvidenceValid =
+            CacheEvidence is not null
+            && StagedCacheEntryCount > 0
+            && CacheEvidence.EntryCount
+                == StagedCacheEntryCount
+            && CacheEvidence.PublishedScopeCacheKeyCount >= 0
+            && CacheEvidence.TargetScopeCount >= 0
+            && CacheEvidence.AffectedAccountCount >= 0
+            && CacheEvidence.OverlayOnlyAccountCount >= 0;
+        if (cacheEvidenceRequired && !cacheEvidenceValid)
         {
-            if (CacheEvidence is null
-                || StagedCacheEntryCount <= 0
-                || CacheEvidence.EntryCount
-                    != StagedCacheEntryCount
-                || CacheEvidence.PublishedScopeCacheKeyCount < 0
-                || CacheEvidence.TargetScopeCount < 0
-                || CacheEvidence.AffectedAccountCount < 0
-                || CacheEvidence.OverlayOnlyAccountCount < 0)
-            {
-                throw new ArgumentException(
-                    "Apply report cache evidence is required and must match the staged cache count from caches_staged onward.",
-                    nameof(CacheEvidence));
-            }
+            throw new ArgumentException(
+                "Apply report cache evidence is required and must match the staged cache count from caches_staged onward.",
+                nameof(CacheEvidence));
+        }
+        if (rollbackOwnedPhase
+            && cacheEvidencePresent
+            && !cacheEvidenceValid)
+        {
+            throw new ArgumentException(
+                "Rollback-owned apply rejection reports must preserve internally consistent apply cache evidence when present.",
+                nameof(CacheEvidence));
+        }
+        if (cacheEvidenceValid)
+        {
             MaxScoreMaintenanceManifest.NormalizeSha256(
-                CacheEvidence.ContentFingerprint,
+                CacheEvidence!.ContentFingerprint,
                 nameof(CacheEvidence.ContentFingerprint));
             MaxScoreMaintenanceManifest.NormalizeSha256(
                 CacheEvidence.PublishedScopeCacheKeyFingerprint,
@@ -1549,14 +1573,176 @@ public sealed record MaxScoreMaintenanceApplyReport(
                 CacheEvidence.OverlayOnlyAccountFingerprint,
                 nameof(CacheEvidence.OverlayOnlyAccountFingerprint));
         }
-        else if (CacheEvidence is not null
-                 || StagedCacheEntryCount != 0)
+        else if (!rollbackOwnedPhase
+                 && cacheEvidencePresent)
         {
             throw new ArgumentException(
                 "Apply report cache evidence cannot precede the caches_staged checkpoint.",
                 nameof(CacheEvidence));
         }
 
+        return this;
+    }
+}
+
+public enum MaxScoreMaintenanceRollbackStageStatus
+{
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Skipped,
+}
+
+public sealed record MaxScoreMaintenanceRollbackStageReport(
+    MaxScoreMaintenancePhase Phase,
+    MaxScoreMaintenanceRollbackStageStatus Status,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    string? BeforeFingerprint,
+    string? AfterFingerprint,
+    long? RowCount,
+    string? Detail);
+
+public sealed record MaxScoreMaintenanceRollbackReport(
+    int ReportVersion,
+    bool Validated,
+    bool Succeeded,
+    bool DryRun,
+    bool Resumable,
+    bool PublicReadsFrozen,
+    bool CleanupPending,
+    string ManifestSha256,
+    string PlanDigest,
+    string RollbackSha256,
+    MaxScoreMaintenancePhase Phase,
+    long ExpectedPublishedScrapeId,
+    long ExpectedPublicationId,
+    string? BeforePathFingerprint,
+    string? AfterPathFingerprint,
+    int RestoredSongCount,
+    int RebuiltInstrumentCount,
+    long QuarantinedCandidateCount,
+    int VisibleDeliveryCount,
+    long StagedCacheEntryCount,
+    MaxScoreMaintenanceCacheEvidence? CacheEvidence,
+    DateTime StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    IReadOnlyList<MaxScoreMaintenanceRollbackStageReport> Stages,
+    string? FailureStage,
+    string? Detail)
+{
+    public const int CurrentReportVersion = 2;
+
+    internal MaxScoreMaintenanceRollbackReport ValidateContract()
+    {
+        if (ReportVersion != CurrentReportVersion)
+        {
+            throw new ArgumentException(
+                $"reportVersion must be {CurrentReportVersion}.",
+                nameof(ReportVersion));
+        }
+        if (ExpectedPublishedScrapeId <= 0
+            || ExpectedPublicationId <= 0
+            || StartedAtUtc.Kind != DateTimeKind.Utc
+            || CompletedAtUtc is { Kind: not DateTimeKind.Utc }
+            || RestoredSongCount < 0
+            || RebuiltInstrumentCount < 0
+            || QuarantinedCandidateCount < 0
+            || VisibleDeliveryCount != 0
+            || StagedCacheEntryCount < 0)
+        {
+            throw new ArgumentException(
+                "Rollback report identities, timestamps, and counters are invalid.");
+        }
+        MaxScoreMaintenanceManifest.NormalizeSha256(
+            ManifestSha256,
+            nameof(ManifestSha256));
+        MaxScoreMaintenanceManifest.NormalizeSha256(
+            PlanDigest,
+            nameof(PlanDigest));
+        MaxScoreMaintenanceManifest.NormalizeSha256(
+            RollbackSha256,
+            nameof(RollbackSha256));
+        var terminal =
+            Phase == MaxScoreMaintenancePhase.RolledBack;
+        if (Succeeded
+            && (!terminal
+                || !Validated
+                || DryRun
+                || Resumable
+                || PublicReadsFrozen
+                || CleanupPending
+                || !CompletedAtUtc.HasValue))
+        {
+            throw new ArgumentException(
+                "Rollback report success, terminal phase, freeze, and resume state are inconsistent.");
+        }
+        if (!Succeeded
+            && terminal
+            && (!CleanupPending
+                || !Validated
+                || DryRun
+                || !Resumable
+                || PublicReadsFrozen
+                || !CompletedAtUtc.HasValue))
+        {
+            throw new ArgumentException(
+                "A non-successful terminal rollback report must identify retryable mutation-gate cleanup.");
+        }
+        if (!terminal && CleanupPending)
+        {
+            throw new ArgumentException(
+                "Mutation-gate cleanup can be pending only after rollback committed.");
+        }
+        if (DryRun && Succeeded)
+        {
+            throw new ArgumentException(
+                "Rollback dry-run reports cannot be terminal successes.");
+        }
+        if (DryRun
+            && Validated
+            && (!PublicReadsFrozen
+                || Phase != MaxScoreMaintenancePhase.RollbackValidating))
+        {
+            throw new ArgumentException(
+                "Validated rollback dry-run reports must remain frozen at rollback_validating.");
+        }
+        if (DryRun
+            && !Validated
+            && Phase != MaxScoreMaintenancePhase.None)
+        {
+            throw new ArgumentException(
+                "Rejected rollback dry-run reports must remain at the non-mutating preflight phase.");
+        }
+        if (Phase >= MaxScoreMaintenancePhase.RollbackCachesStaged)
+        {
+            if (CacheEvidence is null
+                || StagedCacheEntryCount <= 0
+                || CacheEvidence.EntryCount != StagedCacheEntryCount)
+            {
+                throw new ArgumentException(
+                    "Rollback cache evidence is required from rollback cache staging onward.");
+            }
+        }
+        else if (CacheEvidence is not null
+                 || StagedCacheEntryCount != 0)
+        {
+            throw new ArgumentException(
+                "Rollback cache evidence cannot precede rollback cache staging.");
+        }
+        if (Stages is null
+            || Stages.Any(stage =>
+                !Enum.IsDefined(stage.Phase)
+                || stage.StartedAtUtc is
+                { Kind: not DateTimeKind.Utc }
+                || stage.CompletedAtUtc is
+                { Kind: not DateTimeKind.Utc }))
+        {
+            throw new ArgumentException(
+                "Rollback stage evidence is invalid.",
+                nameof(Stages));
+        }
         return this;
     }
 }

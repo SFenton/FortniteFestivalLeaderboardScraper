@@ -170,6 +170,10 @@ derived rows while retaining the same published scrape/publication ID.
    before any mutation continues. Any outlier-population drift therefore
    rejects apply/resume even though above-cutoff rows are not compatibility
    blockers.
+   A later resume keeps the mutation/path locks and durable owner but yields the
+   global publication lock between transactions, taking it transactionally
+   only at commit. Frozen cached reads therefore continue during long recovery
+   reads, derived work, or cache generation while MVCC hides uncommitted state.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
@@ -230,7 +234,10 @@ derived rows while retaining the same published scrape/publication ID.
    canonical rollback file SHA/identity matching immutable database rows, zero
    visible delivery, the whole staged-cache hash, and semantic target-scope,
    affected-account, and overlay-only-account cache fingerprints.
-9. A resume from `caches_staged` or `validated` rechecks semantic cache
+9. A resume uses the durable phase as its exact branch selector. From
+   `notifications_quarantined` it skips path/derived/notification mutation and
+   rebuilds only cache staging before validation/finalization. From
+   `caches_staged` or `validated` it rechecks semantic cache
    evidence and both staging tables. Cache-build leases and staging writers
    cannot replace that evidence-owned generation. Cache swap, workflow
    completion, and freeze release then commit
@@ -250,6 +257,37 @@ derived rows while retaining the same published scrape/publication ID.
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument
    support before lookup work, closing the interval before the monitor pass.
+10. Guarded rollback is a distinct one-shot lifecycle. Dry-run validates the
+    exact incomplete promoted-path state, freeze/publication, canonical rollback
+    file/database rows, promoted paths, worker/backends/locks, and artifact
+    identity without taking the mutation lease. Execution moves the durable run
+    into rollback-only phases so apply/resume cannot race it. Path restoration
+    and checkpoint commit atomically; affected rankings/stats/rivals,
+    notification quarantine, and complete publication caches are then rebuilt
+    from rollback maxima plus the unchanged publication source/population.
+    The rollback read snapshot validates both the accepted post-promotion
+    score-history selector and the exact restored-maximum selector, including
+    lower thresholds and a missing pre-apply maximum. Rollback notification
+    alignment includes an explicit `rollback` direction
+    in its audit digest, preventing reuse of an apply audit when candidate sets
+    are identical or empty. Its audit rows, state alignment, rollback audit
+    identity/counts, and durable notification checkpoint share one
+    transaction. Separate rollback cache-entry evidence preserves
+    apply evidence. The registration and path
+    advisory locks remain session-owned, but rollback yields the global
+    publication lock between transactions. Each atomic unit takes the
+    transaction-scoped exclusive publication lock only at commit, so cached
+    public reads do not queue behind long derived/cache work. Only exact final
+    validation and canonical rollback-file revalidation allow one transaction
+    to swap rollback caches, mark `rolled_back`, and release the
+    same-publication freeze. Interruption keeps the freeze and resumes from the
+    last rollback phase. `rollback_captured` is accepted only when current
+    paths prove promotion already committed; otherwise it remains ineligible.
+    The max-score freeze rejects normal cache builders, swaps, and non-owner
+    staging mutations for the entire rollback, preventing an intermediate
+    checkpoint from replacing the prior published cache. This fence does not
+    depend on `working_publication_id` remaining null, and scrape allocation
+    rejects the active max-score freeze/token before creating a generation.
 
 During this maintenance freeze, `/api/songs` may serve its stable process
 cache, immutable current-generation path PNG/JSON files may be served when
@@ -299,6 +337,24 @@ repeats that validation immediately before cache publication/unfreeze.
 Deletion, corruption, noncanonical bytes, SHA mismatch, or a snapshot from a
 different manifest/plan/run/publication/catalog/database rollback identity
 fails resumably and leaves public reads frozen.
+Once rollback begins, apply/resume is rejected. The rollback command validates
+the same canonical file/digest on every retry and never deletes promoted
+immutable generations, original apply evidence, or notification audit rows.
+If the final PostgreSQL commit succeeds but acknowledgement or the immediate
+state reload fails, the command reconciles durable `rolled_back` plus the
+released freeze, reacquires the exclusive mutation gate if necessary, clears a
+proven stale durable owner through normal lease disposal, verifies all owner
+fields are null, and only then emits a successful terminal report. A later
+terminal retry performs the same cleanup.
+Dry-run never performs terminal cleanup; an already-`rolled_back` dry-run is
+rejected without acquiring a lease. Apply/resume after rollback begins emits a
+non-resumable report using the actual rollback phase and freeze state.
+If terminal cleanup remains blocked, report v2 preserves the true
+`rolled_back`/unfrozen state with `cleanupPending=true` and requires an execute
+retry. The report target itself is reserved before any rollback mutation.
+Only an invocation that passed terminal validation and attempted completion or
+cleanup may reconcile an ambiguous commit as success; unrelated terminal
+preflight failures remain failures.
 
 ## Publication-aware API and browser
 

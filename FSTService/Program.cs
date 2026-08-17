@@ -202,6 +202,11 @@ var hostedServicePlan = HostedWorkerModeResolver.ResolveHostedServicePlan(
     rolloutReadOnlyStartupRequested,
     runOnceRequested,
     backfillOnlyRequested);
+var strictOneShotWithoutHostedServices =
+    HostedWorkerModeResolver.RequiresNoHostedServices(
+        soloFamilyRankingBackfillCommand is not null,
+        leaderboardRivalsRecomputeCommand is not null,
+        maxScoreMaintenanceCommand is not null);
 
 builder.Services.AddSingleton<
     IValidateOptions<ScraperOptions>,
@@ -425,7 +430,11 @@ var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
     ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
 var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
 {
-    ApplicationName = soloFamilyRankingBackfillCommand is not null
+    ApplicationName =
+        maxScoreMaintenanceCommand?.Action
+            == MaxScoreMaintenanceAction.Rollback
+        ? "fst-max-score-rollback"
+        : soloFamilyRankingBackfillCommand is not null
         ? "fstservice-solo-family-backfill"
         : hostedWorkerMode switch
         {
@@ -813,8 +822,7 @@ builder.Services.AddCors(opts =>
 
 // StartupInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<StartupInitializer>();
-if (soloFamilyRankingBackfillCommand is not null
-    || leaderboardRivalsRecomputeCommand is not null)
+if (strictOneShotWithoutHostedServices)
 {
     builder.Services.AddHealthChecks();
 }
@@ -1058,6 +1066,21 @@ if (maxScoreMaintenanceCommand is not null)
                 maxScoreMaintenanceCommand.RollbackOutputPath,
                 maxScoreMaintenanceCommand.ReportOutputPath,
                 CancellationToken.None),
+        MaxScoreMaintenanceAction.Rollback =>
+            await maintenance.RollbackAsync(
+                maxScoreMaintenanceCommand
+                    .ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.ManifestPath!,
+                maxScoreMaintenanceCommand
+                    .ExpectedManifestDigest!,
+                maxScoreMaintenanceCommand
+                    .ExpectedPlanDigest!,
+                maxScoreMaintenanceCommand.RollbackFilePath!,
+                maxScoreMaintenanceCommand
+                    .ExpectedRollbackDigest!,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                maxScoreMaintenanceCommand.RollbackDryRun,
+                CancellationToken.None),
         _ => throw new ArgumentOutOfRangeException(),
     };
     Console.WriteLine(
@@ -1074,6 +1097,15 @@ if (maxScoreMaintenanceCommand is not null)
         }
         or MaxScoreMaintenanceApplyReport
         {
+            Succeeded: false,
+        }
+        or MaxScoreMaintenanceRollbackReport
+        {
+            Validated: false,
+        }
+        or MaxScoreMaintenanceRollbackReport
+        {
+            DryRun: false,
             Succeeded: false,
         })
     {

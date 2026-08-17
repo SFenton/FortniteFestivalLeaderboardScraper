@@ -185,6 +185,39 @@ post-freeze failure. Plan failures identify the evidence stage so operators
 can distinguish publication-population, complete score-history, and other
 evidence without exposing SQL or credentials.
 
+For an incomplete post-promotion run, use only the canonical max-score
+rollback dry-run/execute commands from the runbook. Rollback requires exact
+manifest/plan/rollback digests, zero worker/maintenance backends and waiting
+locks, the worker offline, and the original digest-owned freeze. It restores
+paths atomically, rebuilds complete derived/notification/cache state, records
+terminal `rolled_back`, and unfreezes only with exact final validation. Never
+replace it with manual path SQL, phase/status edits, cache swaps, gate clearing,
+or freeze clearing. A rollback failure keeps the freeze and resumes through the
+same command/identities from its durable rollback phase. The executor keeps
+the registration/path locks and durable freeze but yields the global
+publication lock during long work. It takes that lock transactionally only at
+each commit with the existing `5s` lock timeout; contention rolls back that
+unit rather than authorizing prolonged public-read queuing. Keep cached and
+cold route probes active throughout. A `rollback_captured` run is executable
+only when exact current path identity proves promotion committed before the
+missing checkpoint.
+Scrape allocation remains forbidden in code while the max-score freeze or
+durable mutation owner exists, even if the held worker is started accidentally.
+
+Do not choose rollback from an obsolete phase assumption. Re-read the durable
+run first. A phase at or after `notifications_quarantined` has already
+checkpointed the complete forward derived rebuild and notification alignment;
+the reviewed resume path may be materially smaller because it skips those
+families and uses commit-only publication fences. Rollback remains the
+correctness fallback when current derived validation fails, but it repeats the
+full ranking/tier/rivals/band/cache workload.
+
+The accepted publication-1302 phase-5 resume observed an 8.77 GB physical
+free-space excursion despite only 584 MB of WAL growth because final validation
+used large temporary files. Require at least 16 GiB free for a future
+`notifications_quarantined` resume. This does not relax the independent 60.4 GB
+next-scrape capacity gate or the 64 GiB full-rollback requirement.
+
 ## Service availability
 
 `fstworker`, `fstservice`, and `festivalweb` may be restarted or briefly stopped

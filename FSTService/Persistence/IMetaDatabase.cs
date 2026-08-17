@@ -441,6 +441,20 @@ public interface IMetaDatabase : IDisposable
         => Task.FromException<IMaxScoreMaintenanceLease>(
             new NotSupportedException(
                 "Max-score maintenance leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance rollback leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceResumeLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance resume leases are not supported by this metadata store."));
     void BulkSetCachedResponses(
         IEnumerable<(string Key, byte[] Json, string ETag)> entries,
         long? publicationId = null);

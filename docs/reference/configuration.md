@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: 937868e0
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -74,12 +74,12 @@ The option classes are authoritative when a property exists but is omitted from
 
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
-| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume evidence and revalidation |
+| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume/rollback evidence and revalidation |
 
 The production Compose-form override is
 `Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`. The value applies
 uniformly to publication population, complete consumed score-history,
-notification, affected-account, cache, final validation, and apply/resume
+notification, affected-account, cache, final validation, and apply/resume/rollback
 revalidation commands. It does not change ordinary scrape or cleanup command
 timeouts. During final completion, the transaction-local PostgreSQL
 `statement_timeout` uses this value only for the immutable cache-entry
