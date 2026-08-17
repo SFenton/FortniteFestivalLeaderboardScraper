@@ -39,13 +39,13 @@ and separate final drop. Measurements were:
 |---|---:|
 | Original relation | 144,318,464 |
 | Replacement relation | 19,636,224 |
-| Build WAL | 20,453,320 |
+| Build WAL | 20,453,200 |
 | Build temp | 8,421,376 |
-| Observed build filesystem peak | 19,660,800 |
-| Custom archive | 6,703,397 |
+| Observed build filesystem peak | 19,668,992 |
+| Custom archive | 6,703,406 |
 | Restore workspace peak | 264,653,337 |
 | Dropped relation | 144,318,464 |
-| Immediate filesystem return | 144,314,368 |
+| Immediate filesystem return | 144,269,312 |
 
 The swap took `0.047-0.066s` in the scaled drill. That is isolated evidence,
 not a production lock-duration promise.
@@ -55,6 +55,19 @@ after the database or archive action completed, then reran the stage. Every
 stage recognized and verified its already-committed state and produced a
 truthful resumed report; the first reports remain checksummed as interruption
 evidence.
+
+Committed-code evidence is mirrored at
+`/home/sfenton/FortniteFestivalLeaderboardScraper/artifacts/pro-bass-pilot-implementation-20260817T2135Z/`.
+Key SHA-256 values are:
+
+- `drill-summary.json`:
+  `b665291bde35a2d8e49c7ff55d59e1be5d747e6487585385578d626e721e7ced`;
+- `measured-profile.json`:
+  `da61ad32ec23470f42c026208c4fe811feb5854ef6407514b2e0c20a1f3a99d5`;
+- `live-capacity-projection.json`:
+  `890c90f2a6a3d98282f1672d259788f91e48a36a0b28f8f17742951fb4e80356`;
+- `cleanup-proof.json`:
+  `1251973e73d468ecee11a95c9df23955e15f0eacf881a934f04b005d86b44f03`.
 
 The measured ratios applied to the accepted approximately `3.4 GB` retained
 relation estimate require about `72.19-73.06 GB` free, including the
