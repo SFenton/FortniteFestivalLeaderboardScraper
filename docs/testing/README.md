@@ -281,9 +281,12 @@ The first live service-only A/B (`public-api-cache-service-ab-20260817T142445Z`)
 correctly rejected head `5a227954`: cached overview page 5 was semantically
 equal to its uncached endpoint, but two non-ASCII display names were emitted as
 `\u` escapes by alias projection, so exact bytes/ETag diverged. Baseline service
-and cache were restored. Regression coverage now requires raw UTF-8 equality
+and cache were restored. Five protected routes also exceeded the 10% relative
+p95 gate (`+13.1%` to `+109.5%`) while staying below 9 ms absolute.
+Regression coverage now requires raw UTF-8 equality
 for first-page and overview projection plus explicit shared endpoint/precompute
-JSON encoder configuration.
+JSON encoder configuration; the repeat A/B must also satisfy the relative-p95
+gate.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and
