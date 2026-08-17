@@ -185,8 +185,18 @@ rejected the candidate before merge: page-window aliases semantically matched
 the direct endpoint, but alias projection escaped two non-ASCII display names,
 changing exact body SHA-256/ETag. The baseline service and 9,255-row current
 cache were restored. The explicit shared encoder above is the repository repair
-and requires focused review plus another bounded service-only A/B; no scrape is
-needed for that retry.
+and required focused review plus another bounded service-only A/B; no scrape
+was needed for that retry.
+
+The repeat bounded service-only A/B accepted head `cf044631`. A shared JSON
+writer factory and strict UTF-8 validation passed exact byte/ETag cases for
+`Jöhn`, `Łukasz`, raw HTML-sensitive characters, all JSON controls, emoji/
+non-BMP pairs, and invalid surrogate UTF-8. One combined authoritative
+publication/freeze/failure snapshot reduced every protected warm p95 to
+`1.90-3.47 ms`; all 11 measured routes improved `55.76-82.97%` across 120
+interleaved samples with no sustained regression. Service-only promotion is
+accepted; worker publication-switch validation remains assigned to the next
+natural scrape.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

@@ -496,6 +496,12 @@ bytes, and retained the previous generation. The trial was rolled back for an
 API byte-parity issue outside the transaction boundary; atomic staging/swap
 itself passed.
 
+The repaired repeat service-only precompute completed in 210.03 seconds with
+40/40 service and web API monitor ticks returning 200, zero waiting
+locks/long queries, zero PostgreSQL temp bytes, and a 296.66 MB peak
+free-space excursion. This accepts the current-publication service cache path;
+it does not validate a worker-driven publication switch.
+
 ## Service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention

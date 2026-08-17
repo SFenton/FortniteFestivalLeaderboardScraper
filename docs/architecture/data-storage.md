@@ -133,6 +133,14 @@ and PostgreSQL temp-file/byte deltas were zero. The core precompute took
 167.94 seconds. These measurements bind to the rejected Unicode-escaping head;
 the repaired encoder must be remeasured before service promotion.
 
+The accepted repeat A/B on head `cf044631` staged the repaired current cache
+without changing publication/freeze state. After two bounded lazy overview
+rows, current held 15,576 rows and 264,511,124 logical bytes: `+6,321` rows and
+`+19,368,712` logical bytes over baseline. WAL was 469,401,072 bytes,
+PostgreSQL temp delta remained zero, physical database growth was 13,484,032
+bytes, and peak free-space excursion was 296,656,896 bytes. Current and
+previous generations remained intact and staging was empty after swap.
+
 ### Solo ranking denominator ownership
 
 Normal per-instrument ranking denominators are catalog-bound. For each exact

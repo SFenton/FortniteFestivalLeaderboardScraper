@@ -293,6 +293,16 @@ publication/freeze/failed-candidate snapshot is read per warm request, the
 publication provider and L2 are not queried again, and publication ID remains
 part of the L1 identity.
 
+The accepted repeat evidence is
+`public-api-cache-service-ab-repeat-20260817T163341Z`. It records first touch
+separately, runs five warm-up cycles, then 120 interleaved samples per route
+with rotating route order and six 20-sample p95 batches. Candidate warm p95 was
+`1.90-3.47 ms`; all routes improved `55.76-82.97%`, no route met the
+predeclared sustained-regression rule, and every candidate p95 remained below
+500 ms. Exact live cache/direct parity passed for overview and band; composite
+live semantic parity plus image-bound exact projection tests closed the
+remaining incident route.
+
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and
 must retain exact output hashes while cleaning containers and PGDATA.
