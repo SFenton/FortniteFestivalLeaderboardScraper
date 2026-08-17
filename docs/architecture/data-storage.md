@@ -106,7 +106,11 @@ payload. The required `api_response_cache` compatibility mirror holds the
 current generation once more, so steady-state eager payload growth is about
 62.22 MB. If all ten lazy variants exist in both retained generations, their
 current compatibility mirror raises the lazy upper bound to about 4.76 MB;
-table/index overhead is additional.
+table/index overhead is additional. Full precompute writes both compatibility
+and generation staging tables, so the incremental eager staging payload is
+about 41.48 MB before publication. Incremental WAL, table overhead, and
+promotion-copy cost remain full-scrape A/B measurements rather than inferred
+acceptance evidence.
 
 ### Solo ranking denominator ownership
 
