@@ -29,7 +29,6 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
     private static readonly string[] DeprecatedParentIndexNames =
     [
-        "ix_le_song_rank",
         "ix_le_account",
         "ix_be_song_rank",
         "ix_be_song_score",
@@ -41,7 +40,6 @@ public sealed class DatabaseMaintenanceDryRunReporter
     private static readonly string[] WatchIndexNames =
     [
         "leaderboard_staging_pkey",
-        "ix_le_song_rank",
         "ix_le_account",
         "ix_le_account_song",
         "ix_le_song_score",
@@ -1321,7 +1319,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         if (IsDeprecatedIndexName(name))
             return "deprecated parent index name still appears in runtime recreate arrays or legacy schema drift";
         if (tableName.StartsWith("leaderboard_entries_", StringComparison.Ordinal) && indexDef.Contains("song_id, instrument, rank", StringComparison.Ordinal))
-            return "child legacy live rank index inherited from deprecated parent/runtime definition";
+            return "stale partitioned rank-index leaf owned by the exact ix_le_song_rank retirement package";
         if (tableName.StartsWith("leaderboard_entries_", StringComparison.Ordinal) && indexDef.Contains("song_id, instrument, score DESC", StringComparison.Ordinal))
             return "child legacy live score index inherited from current/deprecated parent definition";
         if (tableName.StartsWith("leaderboard_entries_", StringComparison.Ordinal))

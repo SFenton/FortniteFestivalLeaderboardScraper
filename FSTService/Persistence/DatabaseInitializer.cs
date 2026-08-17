@@ -376,11 +376,9 @@ public static class DatabaseInitializer
             ON leaderboard_entries (account_id, song_id, instrument);
         CREATE INDEX IF NOT EXISTS ix_le_song_source
             ON leaderboard_entries (song_id, instrument, source);
-        -- ix_le_song_rank removed 2026-04-23 (Phase 2): idx_scan=0 across all
-        -- 9 partitions for the life of the database. Per-song rank ordering is
-        -- provided instead by the (song_id, instrument, score DESC) index
-        -- (ix_le_song_score), which supports the actual access pattern.
-        -- Saves ~3.9 GB.
+        -- ix_le_song_rank is intentionally absent from bootstrap DDL. Its
+        -- remaining live parent/leaf family is owned only by the guarded
+        -- retirement package after a dated zero-use observation.
 
         CREATE TABLE IF NOT EXISTS instrument_scrape_state (
             instrument         TEXT        PRIMARY KEY,

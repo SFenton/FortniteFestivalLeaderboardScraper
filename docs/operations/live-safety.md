@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-17
+last_verified_commit: 57efc5bd
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -18,6 +18,7 @@ sources:
   - docs/operations/deployment.md
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
+  - tools/postgres-retire-ix-le-song-rank.sh
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -138,6 +139,32 @@ proves the new path has the same data as the old path. Record:
 
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
+
+### Stale solo rank-index retirement
+
+The low-scratch `ix_le_song_rank` package is destructive DDL even though it
+removes no rows. A reviewed execute window requires:
+
+- the exact checksummed check manifest, zero-use observation, and rollback;
+- the production Compose project and PostgreSQL system identifier unchanged;
+- the standard worker start/recreate host lock acquired nonblockingly;
+- publication idle/unfrozen with no working publication;
+- `fstworker` offline and no worker/maintenance backend, running scrape/phase,
+  waiting lock, target relation lock, or matching active query;
+- healthy PostgreSQL, service, web, and full public path;
+- retained filesystem and catalog byte evidence before and after.
+
+PostgreSQL 17 does not support concurrent drop of a partitioned parent. The
+package uses a normal parent drop with a `2s` lock timeout and `30s` statement
+timeout, no `CASCADE`, a shared publication fence, and the exclusive
+registration mutation gate. A timeout must leave all ten family members
+unchanged. Never drop attached leaves individually or lengthen the timeout to
+force the window.
+
+The measured candidate is `5,147,222,016` bytes. That can clear the current
+single-scrape floor only narrowly and does not satisfy preferred two-window
+headroom. Keep the worker held until the normal capacity guard passes. See the
+[retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
 
 ## Current-publication max-score correction
 
