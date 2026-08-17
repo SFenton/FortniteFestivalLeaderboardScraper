@@ -103,7 +103,7 @@ only maintenance cache inventory. Active-only or legacy-only songs/scopes,
 maintenance song keys or completion denominators. Every changed manifest scope
 must exist in the publication snapshot before freeze.
 
-Apply acquires locks in this order:
+Initial apply acquires locks in this order:
 
 1. exclusive registration/backfill/history mutation advisory gate, waiting for
    every active shared lifecycle to drain and blocking later admissions, then
@@ -117,6 +117,16 @@ Apply acquires locks in this order:
    `band_member_stats`, then `leaderboard_population` share locks in that
    fixed order;
 6. publication and song row locks inside that same bounded transaction.
+
+Resume requires the already-owned digest freeze and uses a recovery lease named
+`fst-max-score-resume`. It retains the exclusive registration mutation gate,
+path-generation lock, and durable owner token, but only proves the global
+publication lock is initially available and then yields it between
+transactions. Each resume transaction requests the transaction-scoped
+exclusive publication lock immediately before commit. Long publication input
+capture, derived work, and cache generation therefore run without queueing
+cached public readers; MVCC and the frozen cache-or-`503` gate keep uncommitted
+state invisible until the bounded commit fence.
 
 Band maintenance is the intentional writer for target-song `band_entries`
 threshold flags and affected projection scopes, so the source lock protects
@@ -776,6 +786,20 @@ SHA-256, manifest/plan/run timestamp, publication/catalog, and immutable
 database rollback-song rows. Missing, corrupted, or swapped files leave reads
 frozen and fail at the existing resumable phase.
 
+Phase comparisons are the execution plan. A durable
+`notifications_quarantined` phase skips path promotion, the complete derived
+rebuild, and notification alignment; it restages the complete publication
+cache, validates exact serialized API content and all derived invariants,
+checkpoints `caches_staged`/`validated`, then performs the atomic cache
+swap/completion/unfreeze transaction. The affected-account cache fingerprint
+sorts after converting raw instrument keys to public combo IDs; sorting before
+that projection caused every multi-instrument affected account to mismatch
+otherwise identical staged payloads.
+Maintenance-only cache diagnostics and failure reports represent account
+identities as bounded SHA-256 evidence IDs. Routine non-maintenance precompute
+logs keep their existing behavior; incident evidence does not need raw
+registered account IDs.
+
 A resume whose durable phase is `caches_staged` or `validated` re-runs the
 required cache semantic validation and exact key/ETag/JSON-hash comparison for
 both staging tables before final completion. From `caches_staged` onward,
@@ -868,6 +892,9 @@ gate. It never acquires the mutation lease, edits the durable phase, restores
 paths, stages caches, or unfreezes. Dry-run against an already terminal
 `rolled_back` run is rejected read-only; use the execute form when stale
 terminal-gate reconciliation is required.
+The dry-run detail names the exact durable admission phase/status so an
+operator cannot mistake the synthetic `rollback_validating` report stage for
+the current stored phase.
 
 Execute with the same identities, omit
 `--max-score-maintenance-rollback-dry-run`, and use another new report path:

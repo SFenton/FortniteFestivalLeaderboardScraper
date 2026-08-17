@@ -170,6 +170,10 @@ derived rows while retaining the same published scrape/publication ID.
    before any mutation continues. Any outlier-population drift therefore
    rejects apply/resume even though above-cutoff rows are not compatibility
    blockers.
+   A later resume keeps the mutation/path locks and durable owner but yields the
+   global publication lock between transactions, taking it transactionally
+   only at commit. Frozen cached reads therefore continue during long recovery
+   reads, derived work, or cache generation while MVCC hides uncommitted state.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
@@ -230,7 +234,10 @@ derived rows while retaining the same published scrape/publication ID.
    canonical rollback file SHA/identity matching immutable database rows, zero
    visible delivery, the whole staged-cache hash, and semantic target-scope,
    affected-account, and overlay-only-account cache fingerprints.
-9. A resume from `caches_staged` or `validated` rechecks semantic cache
+9. A resume uses the durable phase as its exact branch selector. From
+   `notifications_quarantined` it skips path/derived/notification mutation and
+   rebuilds only cache staging before validation/finalization. From
+   `caches_staged` or `validated` it rechecks semantic cache
    evidence and both staging tables. Cache-build leases and staging writers
    cannot replace that evidence-owned generation. Cache swap, workflow
    completion, and freeze release then commit
@@ -260,7 +267,8 @@ derived rows while retaining the same published scrape/publication ID.
     from rollback maxima plus the unchanged publication source/population.
     The rollback read snapshot validates both the accepted post-promotion
     score-history selector and the exact restored-maximum selector, including
-    lower thresholds and a missing pre-apply maximum.     Rollback notification alignment includes an explicit `rollback` direction
+    lower thresholds and a missing pre-apply maximum. Rollback notification
+    alignment includes an explicit `rollback` direction
     in its audit digest, preventing reuse of an apply audit when candidate sets
     are identical or empty. Its audit rows, state alignment, rollback audit
     identity/counts, and durable notification checkpoint share one

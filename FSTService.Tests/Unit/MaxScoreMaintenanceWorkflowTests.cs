@@ -16,6 +16,68 @@ namespace FSTService.Tests.Unit;
 public sealed class MaxScoreMaintenanceWorkflowTests
 {
     [Fact]
+    public void Expected_account_cache_rows_sort_after_combo_id_projection()
+    {
+        const string songId = "same-song";
+        var row =
+            MaxScoreMaintenanceService
+                .BuildExpectedAccountCacheRow(
+                    "account",
+                    [
+                        new PlayerScoreDto
+                        {
+                            SongId = songId,
+                            Instrument = "Solo_Bass",
+                            Score = 20,
+                            Rank = 2,
+                        },
+                        new PlayerScoreDto
+                        {
+                            SongId = songId,
+                            Instrument = "Solo_Guitar",
+                            Score = 10,
+                            Rank = 1,
+                        },
+                    ],
+                    new Dictionary<
+                        (string SongId, string Instrument),
+                        long>
+                    {
+                        [(songId, "Solo_Bass")] = 200,
+                        [(songId, "Solo_Guitar")] = 100,
+                    });
+
+        Assert.Equal(
+            ["01", "02"],
+            row.Scores.Select(score =>
+                score.Instrument));
+    }
+
+    [Fact]
+    public void Maintenance_account_evidence_uses_bounded_hashes()
+    {
+        const string accountId =
+            "sensitive-account-identity";
+        var evidenceId =
+            MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId);
+
+        Assert.StartsWith(
+            "sha256:",
+            evidenceId,
+            StringComparison.Ordinal);
+        Assert.Equal(23, evidenceId.Length);
+        Assert.DoesNotContain(
+            accountId,
+            evidenceId,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            evidenceId,
+            MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId));
+    }
+
+    [Fact]
     public async Task Plan_failure_reports_evidence_stage_and_base_exception_message()
     {
         await using var fixture =
@@ -404,6 +466,40 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
+    public async Task Resume_from_notifications_quarantined_skips_derived_rebuild_and_completes_cache_publication()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true);
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.NotificationsQuarantined);
+        var notificationAuditBefore =
+            fixture.ReadNotificationAuditIdentity();
+        fixture.Service.BeforeDerivedRebuildTestHook =
+            () => throw new InvalidOperationException(
+                "Derived rebuild must remain skipped from notifications_quarantined.");
+
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            resumed.Phase);
+        Assert.False(resumed.PublicReadsFrozen);
+        Assert.Equal(
+            notificationAuditBefore,
+            fixture.ReadNotificationAuditIdentity());
+        fixture.AssertPublishedCachesMatchLive();
+    }
+
+    [Fact]
     public async Task ApplyOrResume_builds_cache_inventory_and_completion_from_publication_owned_scopes()
     {
         await using var fixture =
@@ -666,6 +762,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     [Theory]
     [InlineData(MaxScoreMaintenancePhase.PathsPromoted)]
     [InlineData(MaxScoreMaintenancePhase.DerivedStateRebuilt)]
+    [InlineData(MaxScoreMaintenancePhase.NotificationsQuarantined)]
     public async Task Rollback_restores_paths_and_full_derived_state_from_incomplete_run(
         MaxScoreMaintenancePhase interruptedPhase)
     {
@@ -729,6 +826,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     "paths_promoted",
                 MaxScoreMaintenancePhase.DerivedStateRebuilt =>
                     "derived_state_rebuilt",
+                MaxScoreMaintenancePhase.NotificationsQuarantined =>
+                    "notifications_quarantined",
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(interruptedPhase)),
             },
@@ -761,6 +860,10 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.True(report.DryRun);
         Assert.False(report.Succeeded);
         Assert.True(report.PublicReadsFrozen);
+        Assert.Contains(
+            "paths_promoted/failed",
+            report.Detail,
+            StringComparison.Ordinal);
         var state = fixture.ReadSafetyState();
         Assert.Equal("paths_promoted", state.RunPhase);
         Assert.True(state.Frozen);
@@ -1322,6 +1425,54 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             MaxScoreMaintenancePhase.None,
             rejected.Phase);
         Assert.Equal("preflight", rejected.FailureStage);
+    }
+
+    [Fact]
+    public async Task Rollback_terminal_retry_does_not_clear_unrelated_newer_freeze_or_gate()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(completed.Succeeded);
+        fixture.SetUnrelatedFreeze();
+        fixture.SeedStaleMutationGate();
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.False(rejected.Validated);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal("other-owner", fixture.ReadFreezeReason());
+        Assert.False(fixture.IsMutationGateClear());
+    }
+
+    [Fact]
+    public async Task Rollback_completion_refuses_unrelated_replacement_freeze()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.BeforeRollbackCompletionTestHook =
+            fixture.SetUnrelatedFreeze;
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal("other-owner", fixture.ReadFreezeReason());
+        Assert.NotEqual(
+            MaxScoreMaintenancePhase.RolledBack,
+            rejected.Phase);
     }
 
     [Fact]
@@ -2354,6 +2505,41 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             Assert.Equal(1, command.ExecuteNonQuery());
         }
 
+        internal void SetUnrelatedFreeze()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id =
+                        @publishedScrapeId,
+                    public_reads_frozen_reason =
+                        'other-owner',
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                PublishedScrapeId);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        internal string? ReadFreezeReason()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            return command.ExecuteScalar() as string;
+        }
+
         internal (
             long RunCount,
             long DistinctDigestCount,
@@ -3292,6 +3478,35 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 "manifestDigest",
                 Manifest.ComputeDigest());
             return command.ExecuteScalar() as string;
+        }
+
+        internal string ReadNotificationAuditIdentity()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT concat_ws(
+                    ':',
+                    run.notification_maintenance_run_id,
+                    audit.dry_run_digest,
+                    audit.candidate_count,
+                    audit.player_rank_state_rows_updated)
+                FROM max_score_maintenance_runs run
+                JOIN improvement_notification_maintenance_runs
+                    audit
+                  ON audit.maintenance_run_id =
+                     run.notification_maintenance_run_id
+                WHERE run.manifest_sha256 =
+                    @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            return Convert.ToString(
+                       command.ExecuteScalar())
+                   ?? throw new InvalidOperationException(
+                       "Notification maintenance audit identity was unavailable.");
         }
 
         internal int? ReadTargetSongStatsMaximum()

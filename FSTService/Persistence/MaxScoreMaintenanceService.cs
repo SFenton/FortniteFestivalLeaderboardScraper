@@ -37,6 +37,8 @@ public sealed class MaxScoreMaintenanceService
     { get; set; }
     internal Action? BeforeRollbackPathRestoreTestHook
     { get; set; }
+    internal Action? BeforeDerivedRebuildTestHook
+    { get; set; }
     internal Action? BeforeRollbackCompletionTestHook
     { get; set; }
     internal Action<int>? AfterRollbackCompletionTestHook
@@ -522,8 +524,12 @@ public sealed class MaxScoreMaintenanceService
         IDisposable? authoritativeReadPass = null;
         try
         {
-            activeLease =
-                await _metaDatabase
+            activeLease = resume
+                ? await _metaDatabase
+                    .AcquireMaxScoreMaintenanceResumeLeaseAsync(
+                        manifest.ExpectedPublicationId,
+                        ct)
+                : await _metaDatabase
                     .AcquireMaxScoreMaintenanceLeaseAsync(
                         manifest.ExpectedPublicationId,
                         ct);
@@ -883,6 +889,7 @@ public sealed class MaxScoreMaintenanceService
                     < MaxScoreMaintenancePhase.DerivedStateRebuilt)
                 {
                     ValidateWorkerOffline();
+                    BeforeDerivedRebuildTestHook?.Invoke();
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
@@ -1523,6 +1530,7 @@ public sealed class MaxScoreMaintenanceService
                             .RollbackDerivedStateRebuilt)
                     {
                         ValidateWorkerOffline();
+                        BeforeDerivedRebuildTestHook?.Invoke();
                         var derived =
                             await _derivedState.RebuildAsync(
                                 manifest,
@@ -2464,6 +2472,7 @@ public sealed class MaxScoreMaintenanceService
                     COUNT(*) FILTER (
                         WHERE application_name IN (
                             'fst-max-score-maintenance',
+                            'fst-max-score-resume',
                             'fst-max-score-rollback')
                     )::INTEGER,
                     COUNT(*) FILTER (
@@ -4200,12 +4209,27 @@ public sealed class MaxScoreMaintenanceService
                          value => value,
                          StringComparer.OrdinalIgnoreCase))
         {
-            var scores = _persistence
-                .GetCurrentStatePlayerProfile(accountId)
-                .OrderBy(score => score.SongId, StringComparer.Ordinal)
-                .ThenBy(
-                    score => score.Instrument,
-                    StringComparer.Ordinal)
+            rows.Add(BuildExpectedAccountCacheRow(
+                accountId,
+                _persistence
+                    .GetCurrentStatePlayerProfile(accountId),
+                population));
+        }
+        return rows;
+    }
+
+    internal static CacheAccountFingerprintRow
+        BuildExpectedAccountCacheRow(
+            string accountId,
+            IReadOnlyCollection<PlayerScoreDto> profile,
+            IReadOnlyDictionary<
+                (string SongId, string Instrument),
+                long> population)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(population);
+        var scores = profile
                 .Select(score =>
                 {
                     if (!population.TryGetValue(
@@ -4225,12 +4249,16 @@ public sealed class MaxScoreMaintenanceService
                             : score.Rank,
                         totalEntries);
                 })
+                .OrderBy(
+                    score => score.SongId,
+                    StringComparer.Ordinal)
+                .ThenBy(
+                    score => score.Instrument,
+                    StringComparer.Ordinal)
                 .ToArray();
-            rows.Add(new CacheAccountFingerprintRow(
-                accountId,
-                scores));
-        }
-        return rows;
+        return new CacheAccountFingerprintRow(
+            accountId,
+            scores);
     }
 
     private static List<CacheAccountFingerprintRow>
@@ -4249,7 +4277,10 @@ public sealed class MaxScoreMaintenanceService
             if (!payloads.TryGetValue(cacheKey, out var payload))
             {
                 throw new InvalidOperationException(
-                    $"Staged cache is missing affected account key {cacheKey}.");
+                    "Staged cache is missing an affected account key: account="
+                    + MaxScoreMaintenanceAccountIdPolicy
+                        .FormatEvidenceId(accountId)
+                    + ".");
             }
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
@@ -4259,7 +4290,10 @@ public sealed class MaxScoreMaintenanceService
                     StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    $"Staged account cache identity differs for {accountId}.");
+                    "Staged account cache identity differs: account="
+                    + MaxScoreMaintenanceAccountIdPolicy
+                        .FormatEvidenceId(accountId)
+                    + ".");
             }
             var scores = root.GetProperty("scores")
                 .EnumerateArray()
@@ -7081,11 +7115,11 @@ public sealed class MaxScoreMaintenanceService
                     afterPathFingerprint,
                     RowCount: 0,
                     Detail:
-                        "Dry-run validated exact rollback identity without mutation."),
+                        $"Dry-run validated exact rollback identity from durable {FormatPhase(run.Phase)}/{run.Status} without mutation."),
             ],
             FailureStage: null,
             Detail:
-                "Rollback dry-run validation completed; public reads remain frozen.");
+                $"Rollback dry-run validation completed from durable {FormatPhase(run.Phase)}/{run.Status}; public reads remain frozen.");
 
     private static MaxScoreMaintenanceRollbackReport
         CreateRollbackFailureReport(
@@ -7555,14 +7589,14 @@ public sealed class MaxScoreMaintenanceService
         int LocalEntries,
         IReadOnlyList<CacheEntryFingerprintRow> Entries);
 
-    private sealed record CachePlayerScoreFingerprintRow(
+    internal sealed record CachePlayerScoreFingerprintRow(
         string SongId,
         string Instrument,
         int Score,
         int Rank,
         long TotalEntries);
 
-    private sealed record CacheAccountFingerprintRow(
+    internal sealed record CacheAccountFingerprintRow(
         string AccountId,
         IReadOnlyList<CachePlayerScoreFingerprintRow> Scores);
 

@@ -204,6 +204,14 @@ missing checkpoint.
 Scrape allocation remains forbidden in code while the max-score freeze or
 durable mutation owner exists, even if the held worker is started accidentally.
 
+Do not choose rollback from an obsolete phase assumption. Re-read the durable
+run first. A phase at or after `notifications_quarantined` has already
+checkpointed the complete forward derived rebuild and notification alignment;
+the reviewed resume path may be materially smaller because it skips those
+families and uses commit-only publication fences. Rollback remains the
+correctness fallback when current derived validation fails, but it repeats the
+full ranking/tier/rivals/band/cache workload.
+
 ## Service availability
 
 `fstworker`, `fstservice`, and `festivalweb` may be restarted or briefly stopped

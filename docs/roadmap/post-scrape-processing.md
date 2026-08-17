@@ -643,14 +643,16 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. max-score rollback recovery: review and deploy the canonical rollback
-   one-shot, initialize its release schema, pass exact dry-run against the
-   frozen publication-1302 manifest/plan/rollback identities, then execute
-   under continuous API/lock/disk monitoring. Acceptance requires terminal
-   `rolled_back`, publication 1302 unchanged, complete path/derived/cache
-   parity, unfreeze, direct/public route recovery, worker still held, and safe
-   removal of the temporary songs cache. The repository candidate is not live
-   authorization;
+1. max-score phase-aware recovery: durable publication-1302 state is
+   `notifications_quarantined/failed`, with forward derived and notification
+   checkpoints complete. Review the PR #52 resume commit-fence/cache-order fix,
+   then prefer the smaller forward resume (cache restage, validation,
+   completion/unfreeze) with at least 5 GiB free. Use full rollback only if
+   final derived/cache validation rejects resume and after a conservative
+   64 GiB free-space gate. Either path requires continuous API/lock/disk
+   monitoring, publication 1302 unchanged, worker held, exact terminal parity,
+   and safe removal of the temporary songs cache. Repository readiness is not
+   live authorization;
 2. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the

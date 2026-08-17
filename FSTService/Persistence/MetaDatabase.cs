@@ -12011,6 +12011,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
             retainPublicationLock: false,
             ct);
 
+    public async Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceResumeLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => await AcquireMaxScoreMaintenanceLeaseCoreAsync(
+            publicationId,
+            applicationName: "fst-max-score-resume",
+            retainPublicationLock: false,
+            ct);
+
     private async Task<IMaxScoreMaintenanceLease>
         AcquireMaxScoreMaintenanceLeaseCoreAsync(
             long publicationId,

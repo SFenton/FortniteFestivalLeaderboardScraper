@@ -120,6 +120,13 @@ resume. Final-completion coverage verifies that PostgreSQL uses the configured
 timeout for immutable cache validation, retains the `5s` lock timeout and
 serializable transaction, restores the `120s` mutation timeout, and leaves
 validation failures frozen.
+Recovery coverage also proves both resume and rollback leases yield public
+read locks until each commit fence, resume from
+`notifications_quarantined/failed` skips derived rebuild and preserves its
+notification audit, and expected affected-account cache rows sort after combo
+ID projection.
+Evidence-safety coverage pins deterministic bounded account hashes and rejects
+raw maintenance account IDs in diagnostic identifiers.
 
 Rollback coverage starts from `paths_promoted`, partial derived progress, and
 an ambiguous committed promotion still checkpointed as `rollback_captured`;
@@ -143,6 +150,7 @@ whole-freeze cache publisher/staging rejection; terminal validation failures
 that cannot be success-reconciled; schema reinitialization during an active
 freeze; safe removal of unwritten report reservations;
 working-pointer-independent cache fencing plus scrape-allocation rejection; and
+rollback from `notifications_quarantined`, unrelated/newer-freeze refusal; and
 unfreeze only with terminal `rolled_back`. Hosted-mode tests lock rollback into
 the strict no-hosted-service one-shot path.
 

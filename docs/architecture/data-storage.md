@@ -201,6 +201,21 @@ its uncommitted work and immediately before durable commit. This commit fence
 lets cached public reads continue during long computation while ensuring
 readers observe only complete committed units.
 
+Forward resume uses the same commit-fence lease shape under application name
+`fst-max-score-resume`. Initial apply still retains the publication lock while
+creating the freeze; a resume can yield it because the exact digest-owned
+freeze, durable mutation token, worker-offline gate, and source locks already
+fence the current publication.
+
+Affected-account cache evidence orders the public fingerprint tuple by song ID
+and projected combo ID. Raw instrument names are converted before sorting so
+the expected ordering matches the serialized player cache ordering for
+same-song multi-instrument scores.
+Max-score maintenance report/log diagnostics use a `sha256:<16-hex>` evidence
+identifier for registered accounts. The durable cache keys and payloads retain
+their required exact account IDs, but operator evidence and error text do not
+emit them.
+
 Terminal success additionally requires all
 `max_score_mutation_gate_*` ownership fields to be null. If the commit succeeds
 but the original backend disappears before lease disposal, the same rollback

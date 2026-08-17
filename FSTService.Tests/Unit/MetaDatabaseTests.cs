@@ -5536,8 +5536,12 @@ public sealed class MetaDatabaseTests : IDisposable
             requireSourceLocks: false);
     }
 
-    [Fact]
-    public async Task MaxScoreRollbackLease_yields_publication_reads_until_each_commit_fence()
+    [Theory]
+    [InlineData(false, "fst-max-score-rollback")]
+    [InlineData(true, "fst-max-score-resume")]
+    public async Task MaxScoreRecoveryLease_yields_publication_reads_until_each_commit_fence(
+        bool resume,
+        string applicationName)
     {
         var scrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
@@ -5547,11 +5551,14 @@ public sealed class MetaDatabaseTests : IDisposable
         var publicationId =
             Db.GetPublicationPointerState()
                 .CurrentPublicationId!.Value;
-        await using var rollbackLease =
-            await Db
+        await using var recoveryLease = resume
+            ? await Db
+                .AcquireMaxScoreMaintenanceResumeLeaseAsync(
+                    publicationId)
+            : await Db
                 .AcquireMaxScoreMaintenanceRollbackLeaseAsync(
                     publicationId);
-        await rollbackLease.VerifyHeldAsync(
+        await recoveryLease.VerifyHeldAsync(
             requireSourceLocks: false);
 
         await using var readConnection =
@@ -5579,8 +5586,8 @@ public sealed class MetaDatabaseTests : IDisposable
             new TaskCompletionSource(
                 TaskCreationOptions
                     .RunContinuationsAsynchronously);
-        var mutation = rollbackLease.ExecuteTransactionAsync(
-            "rollback-publication-commit-fence-test",
+        var mutation = recoveryLease.ExecuteTransactionAsync(
+            "recovery-publication-commit-fence-test",
             requireSourceLocks: false,
             async (_, _, token) =>
             {
@@ -5604,10 +5611,13 @@ public sealed class MetaDatabaseTests : IDisposable
                     FROM pg_stat_activity
                     WHERE datname = current_database()
                       AND application_name =
-                          'fst-max-score-rollback'
+                          @applicationName
                       AND wait_event_type = 'Lock'
                 )
                 """;
+            command.Parameters.AddWithValue(
+                "applicationName",
+                applicationName);
             waitingForPublicationFence =
                 await command.ExecuteScalarAsync()
                     is true;
