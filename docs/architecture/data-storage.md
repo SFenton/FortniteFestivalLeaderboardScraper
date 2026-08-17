@@ -98,17 +98,22 @@ restart recovery does not rewrite an already-current songs payload.
 
 The current production surface has 9,255 rows and about 245 MB of JSON for one
 publication. The candidate adds at most 6,319 eager rows (one songs row plus
-6,318 published song/instrument top-10 rows) and an estimated 20.74 MB
-(`8.46%`) per publication. The only lazy space is ten finite overview
+6,318 published song/instrument top-10 rows). A read-only stratified sample of
+180 standalone instrument payloads across 20 evenly spaced catalog songs
+measured a `1.09696` standalone-to-leaderboard-all byte ratio, yielding
+19.02 MB logical payload per publication. Keep 20.74 MB as the conservative
+upper bound until a full candidate precompute measures every row. The only lazy space is ten finite overview
 metric/size variants, at most 1.59 MB from measured payloads. Current and
-previous generation rows therefore add an estimated 41.48 MB of eager
-payload. The required `api_response_cache` compatibility mirror holds the
-current generation once more, so steady-state eager payload growth is about
-62.22 MB. If all ten lazy variants exist in both retained generations, their
+previous generation rows plus the required current `api_response_cache`
+compatibility mirror therefore add about 57.06 MB logical payload centrally,
+with 62.22 MB retained as the conservative upper bound. If all ten lazy variants exist in both retained generations, their
 current compatibility mirror raises the lazy upper bound to about 4.76 MB;
 table/index overhead is additional. Full precompute writes both compatibility
-and generation staging tables, so the incremental eager staging payload is
-about 41.48 MB before publication. Incremental WAL, table overhead, and
+and generation staging tables, so incremental eager staging is about 38.04 MB
+centrally and 41.48 MB conservatively. Existing live generation/compatibility
+relations compress logical JSON materially; the current ratios imply roughly
+24.83-27.08 MB steady physical growth, but this is indicative only.
+Incremental WAL, table overhead, and
 promotion-copy cost remain full-scrape A/B measurements rather than inferred
 acceptance evidence.
 

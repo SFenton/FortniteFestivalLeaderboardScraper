@@ -1733,6 +1733,199 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Publication_cache_swap_failure_preserves_current_and_resumable_staging()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "atomic-old",
+                Json: new byte[] { 1 },
+                ETag: "\"old\""),
+        ]);
+        Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        var bindingBefore = Db
+            .GetPublicationSurfaceBindings(
+                publicationId)
+            .Single(binding =>
+                binding.SurfaceName
+                == PublicationSurfaceNames
+                    .ApiResponseCache);
+        Db.BulkSetCachedResponsesStaging(
+        [
+            (
+                Key: "atomic-new",
+                Json: new byte[] { 2 },
+                ETag: "\"new\""),
+        ],
+        publicationId);
+
+        using (var connection =
+               DataSource.OpenConnection())
+        using (var inject = connection.CreateCommand())
+        {
+            inject.CommandText = """
+                CREATE OR REPLACE FUNCTION
+                    fst_test_fail_publication_cache_swap()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF NEW.cache_key = 'atomic-new' THEN
+                        RAISE EXCEPTION
+                            'injected publication cache swap failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+
+                CREATE TRIGGER
+                    fst_test_fail_publication_cache_swap
+                BEFORE INSERT ON
+                    publication_api_response_cache
+                FOR EACH ROW
+                EXECUTE FUNCTION
+                    fst_test_fail_publication_cache_swap();
+                """;
+            inject.ExecuteNonQuery();
+        }
+
+        try
+        {
+            Assert.Throws<PostgresException>(() =>
+                Db.SwapCachedResponsesFromStaging(
+                    publicationId));
+
+            Assert.Equal(
+                new byte[] { 1 },
+                Db.GetCachedResponseEntry(
+                    publicationId,
+                    "atomic-old")?.Json);
+            Assert.Null(
+                Db.GetCachedResponseEntry(
+                    publicationId,
+                    "atomic-new"));
+            using var connection =
+                DataSource.OpenConnection();
+            using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache
+                        WHERE cache_key = 'atomic-old'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache
+                        WHERE cache_key = 'atomic-new'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache_staging
+                        WHERE cache_key = 'atomic-new'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM
+                            publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                          AND cache_key = 'atomic-new'
+                    )
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            using var reader =
+                command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+            Assert.Equal(1L, reader.GetInt64(2));
+            Assert.Equal(1L, reader.GetInt64(3));
+            var bindingAfter = Db
+                .GetPublicationSurfaceBindings(
+                    publicationId)
+                .Single(binding =>
+                    binding.SurfaceName
+                    == PublicationSurfaceNames
+                        .ApiResponseCache);
+            Assert.Equal(
+                bindingBefore.RowCount,
+                bindingAfter.RowCount);
+            Assert.Equal(
+                bindingBefore.ContentHash,
+                bindingAfter.ContentHash);
+        }
+        finally
+        {
+            using var connection =
+                DataSource.OpenConnection();
+            using var cleanup =
+                connection.CreateCommand();
+            cleanup.CommandText = """
+                DROP TRIGGER IF EXISTS
+                    fst_test_fail_publication_cache_swap
+                ON publication_api_response_cache;
+                DROP FUNCTION IF EXISTS
+                    fst_test_fail_publication_cache_swap();
+                """;
+            cleanup.ExecuteNonQuery();
+        }
+
+        Db.SwapCachedResponsesFromStaging(
+            publicationId);
+        Assert.Null(
+            Db.GetCachedResponseEntry(
+                publicationId,
+                "atomic-old"));
+        Assert.Equal(
+            new byte[] { 2 },
+            Db.GetCachedResponseEntry(
+                publicationId,
+                "atomic-new")?.Json);
+        using (var connection =
+               DataSource.OpenConnection())
+        using (var command =
+               connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache_staging
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM
+                            publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                    )
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            using var reader =
+                command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(0L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+        }
+    }
+
+    [Fact]
     public async Task SchemaUpgrade_reconciles_legacy_cache_after_rollback_writer()
     {
         var scrapeId = Db.StartScrapeRun();

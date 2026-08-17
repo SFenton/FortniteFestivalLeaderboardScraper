@@ -170,6 +170,11 @@ Aggregate player scopes intentionally use different formulas:
   L2 is the authoritative current/previous-publication row in
   `publication_api_response_cache`. Cache hits preserve exact bytes and ETag,
   set `X-FST-Publication-Id`, and expose `X-FST-Public-Cache-Tier: l1|l2`.
+- Cache eligibility requires exactly one canonical `PublicationBound`
+  endpoint classification. `OperationalLive`, `AdminPrivate`, unclassified,
+  or conflicting metadata cannot read, build, or write the cache; path/query
+  exclusions remain a second guard. Rate limiting, authentication, and
+  authorization execute before the cache middleware.
 - `/api/songs` uses its existing canonical serializer and stable song ordering.
   The canonical L2 key is eagerly staged with publication caches and rewritten
   after same-publication catalog/path/max-score changes. Unknown query
@@ -181,7 +186,8 @@ Aggregate player scopes intentionally use different formulas:
   the requested contained window. Registered-player default profiles,
   top-10 per-instrument leaderboards, leaderboard-all, and song-band bootstrap
   reads use their canonical eager rows. Selected/high-cardinality variants are
-  excluded.
+  excluded and cannot fall through to a generic canonical alias. Covered hits
+  preserve the endpoint family's `Cache-Control` and content type.
 - Only overview `pageSize=25|50` for the five canonical ranking metrics may
   lazily compute and write through while unfrozen. One process-local
   single-flight owns each publication/key build. Case, query order, and

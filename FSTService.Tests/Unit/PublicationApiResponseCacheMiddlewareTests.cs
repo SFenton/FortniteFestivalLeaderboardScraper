@@ -1,7 +1,10 @@
 using System.Text;
+using System.Text.Json;
 using FSTService.Api;
 using FSTService.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +15,147 @@ namespace FSTService.Tests.Unit;
 
 public sealed class PublicationApiResponseCacheMiddlewareTests
 {
+    [Fact]
+    public async Task Unclassified_route_never_reads_or_writes_cache()
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                "maintenance"));
+        fixture.MetaDb.GetCurrentCacheLookup(
+                Arg.Any<string>())
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(Encoding.UTF8.GetBytes(
+                    "{\"mustNotLeak\":true}"))));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            context =>
+            {
+                nextCalled = true;
+                context.Response.StatusCode =
+                    StatusCodes.Status418ImATeapot;
+                return Task.CompletedTask;
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = ContextWithMetadata(
+            "/api/songs",
+            "/api/songs");
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status418ImATeapot,
+            context.Response.StatusCode);
+        fixture.MetaDb.DidNotReceive()
+            .GetCurrentCacheLookup(
+                Arg.Any<string>());
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Authorized_private_route_outside_deny_patterns_never_caches()
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                "maintenance"));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            context =>
+            {
+                nextCalled = true;
+                context.Response.StatusCode =
+                    StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = ContextWithMetadata(
+            "/api/private-cache-probe",
+            "/api/private-cache-probe",
+            new AdminPrivate(
+                "authorization test route"),
+            new AuthorizeAttribute(),
+            new EnableRateLimitingAttribute(
+                "protected"));
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status401Unauthorized,
+            context.Response.StatusCode);
+        fixture.MetaDb.DidNotReceive()
+            .GetCurrentCacheLookup(
+                Arg.Any<string>());
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Conflicting_future_route_metadata_fails_closed()
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                "maintenance"));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = ContextWithMetadata(
+            "/api/songs",
+            "/api/songs",
+            PublicationBound.Instance,
+            new AdminPrivate(
+                "conflicting drift"));
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.True(nextCalled);
+        fixture.MetaDb.DidNotReceive()
+            .GetCurrentCacheLookup(
+                Arg.Any<string>());
+    }
+
     [Fact]
     public async Task Frozen_songs_hit_serves_L2_without_build()
     {
@@ -289,6 +433,33 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
 
         Assert.Equal(1, builds);
         Assert.Equal(await Body(first), await Body(second));
+        Assert.Equal(
+            first.Response.Headers.ETag.ToString(),
+            second.Response.Headers.ETag.ToString());
+        fixture.MetaDb.Received(1)
+            .TrySetCurrentCachedResponse(
+                42,
+                "rankings:overview:adjusted:25",
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+        Assert.Contains(
+            new[]
+            {
+                first.Response.Headers[
+                    "X-FST-Public-Cache"].ToString(),
+                second.Response.Headers[
+                    "X-FST-Public-Cache"].ToString(),
+            },
+            value => value == "build");
+        Assert.Contains(
+            new[]
+            {
+                first.Response.Headers[
+                    "X-FST-Public-Cache"].ToString(),
+                second.Response.Headers[
+                    "X-FST-Public-Cache"].ToString(),
+            },
+            value => value == "hit");
         Assert.Contains(
             fixture.Telemetry.Snapshot().Operations,
             operation =>
@@ -326,7 +497,7 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
                 Arg.Any<byte[]>(),
                 Arg.Any<string>());
         Assert.Null(fixture.Cache.TryGetCurrent(
-            Plan(context.Request)));
+            Plan(context)));
         Assert.Contains(
             fixture.Telemetry.Snapshot().Operations,
             operation =>
@@ -334,6 +505,109 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
                 == PublicationApiCacheOperation.BuildError
                 && operation.ErrorType
                 == nameof(InvalidOperationException));
+    }
+
+    [Fact]
+    public async Task Cancelled_build_releases_single_flight_and_retry_stores()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        PublicationCachedResponse? stored = null;
+        fixture.MetaDb.GetCurrentCacheLookup(
+                Arg.Any<string>())
+            .Returns(_ => new PublicationCacheLookup(
+                true,
+                stored));
+        fixture.MetaDb.TrySetCurrentCachedResponse(
+                42,
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>())
+            .Returns(call =>
+            {
+                stored = Cached(
+                    call.ArgAt<byte[]>(2)) with
+                {
+                    CacheKey =
+                        call.ArgAt<string>(1),
+                };
+                return stored;
+            });
+        var buildAttempt = 0;
+        var started =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                if (Interlocked.Increment(
+                        ref buildAttempt) == 1)
+                {
+                    started.TrySetResult();
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        context.RequestAborted);
+                    return;
+                }
+
+                context.Response.StatusCode =
+                    StatusCodes.Status200OK;
+                context.Response.ContentType =
+                    "application/json";
+                await context.Response.WriteAsync(
+                    "{\"retry\":true}");
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        using var cancellation =
+            new CancellationTokenSource();
+        var cancelled = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+        cancelled.RequestAborted =
+            cancellation.Token;
+        var cancelledTask = middleware.InvokeAsync(
+            cancelled,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+        await started.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<
+            OperationCanceledException>(
+            () => cancelledTask);
+        Assert.Null(stored);
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+
+        var retry = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+        await middleware.InvokeAsync(
+            retry,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            "{\"retry\":true}",
+            await Body(retry));
+        Assert.NotNull(stored);
+        fixture.MetaDb.Received(1)
+            .TrySetCurrentCachedResponse(
+                42,
+                "rankings:overview:adjusted:25",
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
     }
 
     [Fact]
@@ -360,6 +634,77 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
             trace.CacheKeyHash,
             StringComparison.Ordinal);
         Assert.Equal(16, trace.CacheKeyHash.Length);
+        Assert.Equal(
+            "/api/player/{accountId}",
+            trace.RoutePattern);
+    }
+
+    [Fact]
+    public void Telemetry_snapshot_redacts_profile_team_key_and_error_message()
+    {
+        const string accountId =
+            "account-secret-123";
+        const string teamKey =
+            "team-secret-456";
+        const string profileId =
+            "profile-secret-789";
+        var telemetry =
+            new PublicApiCacheTelemetry();
+        var context = Context(
+            $"/api/player/{accountId}",
+            "/api/player/{accountId}");
+        context.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedProfileIdHeader] =
+            profileId;
+        context.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedBandTeamKeyHeader] =
+            teamKey;
+        var rawCacheKey =
+            $"public-route:/api/player/{accountId}"
+            + $"|profileId={profileId}"
+            + $"|teamKey={teamKey}";
+
+        telemetry.RecordOperation(
+            context,
+            rawCacheKey,
+            42,
+            new string('a', 64),
+            PublicationApiCacheOperation
+                .BuildError,
+            TimeSpan.FromMilliseconds(3),
+            512,
+            new InvalidOperationException(
+                $"must not expose {accountId} {teamKey} {profileId}"));
+
+        var serialized = JsonSerializer.Serialize(
+            telemetry.Snapshot());
+        Assert.DoesNotContain(
+            accountId,
+            serialized,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            teamKey,
+            serialized,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            profileId,
+            serialized,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            rawCacheKey,
+            serialized,
+            StringComparison.Ordinal);
+        var trace = Assert.Single(
+            telemetry.Snapshot().Operations);
+        Assert.Equal(16, trace.CacheKeyHash.Length);
+        Assert.Matches(
+            "^[0-9a-f]{16}$",
+            trace.CacheKeyHash);
+        Assert.Equal(
+            nameof(InvalidOperationException),
+            trace.ErrorType);
         Assert.Equal(
             "/api/player/{accountId}",
             trace.RoutePattern);
@@ -402,7 +747,16 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
 
     private static DefaultHttpContext Context(
         string target,
-        string pattern)
+        string pattern) =>
+        ContextWithMetadata(
+            target,
+            pattern,
+            PublicationBound.Instance);
+
+    private static DefaultHttpContext ContextWithMetadata(
+        string target,
+        string pattern,
+        params object[] endpointMetadata)
     {
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
@@ -415,13 +769,18 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
             context.Request.QueryString =
                 new QueryString(target[separator..]);
         }
+        var metadata = new List<object>
+        {
+            new HttpMethodMetadata(
+                [HttpMethods.Get]),
+        };
+        metadata.AddRange(endpointMetadata);
         context.SetEndpoint(new RouteEndpoint(
             _ => Task.CompletedTask,
             RoutePatternFactory.Parse(pattern),
             0,
             new EndpointMetadataCollection(
-                new HttpMethodMetadata([HttpMethods.Get]),
-                PublicationBound.Instance),
+                metadata),
             pattern));
         context.RequestServices = new ServiceCollection()
             .AddLogging()
@@ -442,12 +801,12 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
     }
 
     private static PublicApiCacheRequestPlan Plan(
-        HttpRequest request)
+        HttpContext context)
     {
         Assert.True(
             PublicApiResponseCachePolicy
                 .TryCreateRequestPlan(
-                    request,
+                    context,
                     out var plan));
         return plan;
     }

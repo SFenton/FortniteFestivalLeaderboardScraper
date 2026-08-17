@@ -4,6 +4,8 @@ using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit.Abstractions;
 
@@ -65,10 +67,19 @@ public sealed class PublicationApiCacheBenchmarkTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/songs";
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/songs"),
+            order: 0,
+            new EndpointMetadataCollection(
+                new HttpMethodMetadata(
+                    [HttpMethods.Get]),
+                PublicationBound.Instance),
+            displayName: "/api/songs"));
         Assert.True(
             PublicApiResponseCachePolicy
                 .TryCreateRequestPlan(
-                    context.Request,
+                    context,
                     out var plan));
 
         var cold = new List<double>();
@@ -95,12 +106,22 @@ public sealed class PublicationApiCacheBenchmarkTests
 
         cold.Sort();
         warm.Sort();
+        var coldP50 = Percentile(
+            cold,
+            0.50);
         var coldP95 = Percentile95(cold);
+        var warmP50 = Percentile(
+            warm,
+            0.50);
         var warmP95 = Percentile95(warm);
         _output.WriteLine(
-            "payloadBytes={0} coldP95Ms={1:F3} warmP95Ms={2:F3}",
+            "dataset=postgres17-current-publication-cache payloadBytes={0} coldSamples={1} warmSamples={2} coldP50Ms={3:F3} coldP95Ms={4:F3} warmP50Ms={5:F3} warmP95Ms={6:F3}",
             json.Length,
+            cold.Count,
+            warm.Count,
+            coldP50,
             coldP95,
+            warmP50,
             warmP95);
         Assert.True(
             coldP95 < 500,
@@ -157,7 +178,10 @@ public sealed class PublicationApiCacheBenchmarkTests
         var p50 = durations[durations.Count / 2];
         var p95 = Percentile95(durations);
         _output.WriteLine(
-            "cacheRows=10000 writeP50Ms={0:F3} writeP95Ms={1:F3}",
+            "dataset=postgres17-current-publication-cache cacheRows=10000 payloadBytes={0} samples={1} writeP50Ms={2:F3} writeP95Ms={3:F3}",
+            Encoding.UTF8.GetByteCount(
+                "{\"variant\":0}"),
+            durations.Count,
             p50,
             p95);
         Assert.True(
@@ -167,7 +191,14 @@ public sealed class PublicationApiCacheBenchmarkTests
 
     private static double Percentile95(
         IReadOnlyList<double> sorted) =>
+        Percentile(sorted, 0.95);
+
+    private static double Percentile(
+        IReadOnlyList<double> sorted,
+        double percentile) =>
         sorted[Math.Max(
             0,
-            (int)Math.Ceiling(sorted.Count * 0.95) - 1)];
+            (int)Math.Ceiling(
+                sorted.Count * percentile)
+            - 1)];
 }

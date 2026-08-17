@@ -481,7 +481,11 @@ later pre-complete state make both staging tables immutable to ordinary cache
 builders/writers; exact maintenance-owner access remains available for resume
 and final publication. Resume and the final
 source-locked transaction compare every staged key/ETag/JSON hash with durable
-entry evidence before swap. API processes invalidate
+entry evidence before swap. The compatibility and generation tables swap in
+one transaction: an injected generation insert failure preserves both old
+current tables and both complete staging copies for retry, while success
+empties staging. Disk staging disposal removes incomplete files/directories
+after producer failure. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client
 refresh.
 

@@ -88,6 +88,66 @@ public sealed class PublicationApiResponseCacheServiceTests
     }
 
     [Fact]
+    public void Publication_switch_never_reuses_previous_L1_entry()
+    {
+        var publicationId = 42L;
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var oldJson = Encoding.UTF8.GetBytes(
+            "{\"publication\":42}");
+        var newJson = Encoding.UTF8.GetBytes(
+            "{\"publication\":43}");
+        metaDb.GetCurrentCacheLookup("canonical")
+            .Returns(
+                new PublicationCacheLookup(
+                    true,
+                    Cached(oldJson) with
+                    {
+                        PublicationId = 42,
+                    }),
+                new PublicationCacheLookup(
+                    true,
+                    Cached(newJson) with
+                    {
+                        PublicationId = 43,
+                        PublishedScrapeId = 1303,
+                    }));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var service =
+            new PublicationApiResponseCacheService(
+                metaDb,
+                gate,
+                () => publicationId,
+                NullLogger<
+                    PublicationApiResponseCacheService>.Instance);
+        var plan = Plan(
+            "requested",
+            "canonical");
+
+        Assert.Equal(
+            oldJson,
+            service.TryGetCurrent(plan)!.Value.Json);
+        Assert.Equal(
+            PublicationApiCacheTier.L1,
+            service.TryGetCurrent(plan)!.Value.Tier);
+
+        publicationId = 43;
+
+        var switched = service.TryGetCurrent(plan);
+        Assert.NotNull(switched);
+        Assert.Equal(43, switched.Value.PublicationId);
+        Assert.Equal(newJson, switched.Value.Json);
+        Assert.Equal(
+            PublicationApiCacheTier.L2,
+            switched.Value.Tier);
+        metaDb.Received(2)
+            .GetCurrentCacheLookup("canonical");
+    }
+
+    [Fact]
     public async Task Single_flight_serializes_same_publication_and_key()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

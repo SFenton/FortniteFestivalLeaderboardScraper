@@ -2,6 +2,8 @@ using FSTService.Api;
 using FortniteFestival.Core;
 using FSTService.Persistence;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -232,10 +234,11 @@ public class SongsCacheServiceTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/songs";
+        SetPublicationBoundEndpoint(context);
         Assert.True(
             PublicApiResponseCachePolicy
                 .TryCreateRequestPlan(
-                    context.Request,
+                    context,
                     out var plan));
         Assert.Null(
             publicationCache.TryGetCurrent(plan));
@@ -318,10 +321,11 @@ public class SongsCacheServiceTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/songs";
+        SetPublicationBoundEndpoint(context);
         Assert.True(
             PublicApiResponseCachePolicy
                 .TryCreateRequestPlan(
-                    context.Request,
+                    context,
                     out var plan));
         Assert.Null(
             publicationCache.TryGetCurrent(plan));
@@ -603,5 +607,99 @@ public class SongsCacheServiceTests
 
         Assert.Equal(["song-a", "song-b"], forward);
         Assert.Equal(forward, reverse);
+    }
+
+    [Fact]
+    public void BuildSongsJson_filters_invalid_rows_and_preserves_revision_fields()
+    {
+        var validB = new Song
+        {
+            track = new Track
+            {
+                su = "song-b",
+                tt = "B",
+            },
+        };
+        var invalid = new Song
+        {
+            track = new Track
+            {
+                su = null!,
+                tt = "Invalid",
+            },
+        };
+        var validA = new Song
+        {
+            track = new Track
+            {
+                su = "song-a",
+                tt = "A",
+            },
+        };
+        var json = SongsCacheService.BuildSongsJson(
+            [validB, invalid, validA],
+            new Dictionary<string, SongMaxScores>
+            {
+                ["song-a"] = new()
+                {
+                    MaxLeadScore = 123_456,
+                    ArtifactGenerationId =
+                        "generation-a",
+                },
+            },
+            currentSeason: 42,
+            popTiers: null,
+            new System.Text.Json.JsonSerializerOptions(
+                System.Text.Json
+                    .JsonSerializerDefaults.Web));
+
+        using var document =
+            System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(
+            2,
+            document.RootElement
+                .GetProperty("count")
+                .GetInt32());
+        Assert.Equal(
+            42,
+            document.RootElement
+                .GetProperty("currentSeason")
+                .GetInt32());
+        var songs = document.RootElement
+            .GetProperty("songs")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(
+            ["song-a", "song-b"],
+            songs.Select(song =>
+                    song.GetProperty("songId")
+                        .GetString()!)
+                .ToArray());
+        Assert.Equal(
+            123_456,
+            songs[0]
+                .GetProperty("maxScores")
+                .GetProperty("Solo_Guitar")
+                .GetInt32());
+        Assert.Equal(
+            "generation-a",
+            songs[0]
+                .GetProperty(
+                    "pathArtifactGenerationId")
+                .GetString());
+    }
+
+    private static void SetPublicationBoundEndpoint(
+        DefaultHttpContext context)
+    {
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/songs"),
+            order: 0,
+            new EndpointMetadataCollection(
+                new HttpMethodMetadata(
+                    [HttpMethods.Get]),
+                PublicationBound.Instance),
+            displayName: "/api/songs"));
     }
 }

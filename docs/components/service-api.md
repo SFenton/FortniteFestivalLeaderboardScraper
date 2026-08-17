@@ -116,6 +116,13 @@ The freeze-safe public API cache has two tiers:
 - L2 is `publication_api_response_cache`, authoritative for covered frozen
   reads and retained for the current and previous publications.
 
+Cache admission first requires exactly one authoritative `PublicationBound`
+endpoint classification from the canonical route catalog. Unclassified,
+operational, private, or conflicting metadata bypasses both cache tiers even
+when its path would pass request-shape checks. The path/query deny-list remains
+defense-in-depth, not the trust boundary. Startup route-catalog validation and
+middleware tests make future classification drift fail closed.
+
 L2 rows retain deterministic JSON bytes, ETag, and `cached_at`; the service
 derives the full SHA-256 and fixed JSON content type on lookup. A service
 restart recovers directly from L2. Same-publication maintenance swaps the
@@ -135,7 +142,9 @@ WebSocket routes keep their established owners.
 
 During any required-cache freeze, covered routes perform L1/L2 reads only. A
 hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
-builds or writes. Unfrozen overview sizes `25` and `50` are the only lazy
+builds or writes. Cache hits retain each covered endpoint family's
+`Cache-Control`, content type, ETag, publication header, and exact response
+bytes. Unfrozen overview sizes `25` and `50` are the only lazy
 write-through variants. They use process single-flight, store only successful
 JSON responses whose measured build is below one second, and reject slow,
 oversized, failed, or transition-raced builds without poisoning L2.
@@ -151,7 +160,7 @@ uncovered cold routes remain fail-closed during max-score maintenance.
 `X-FST-Public-Cache-Tier` distinguishes L1 and L2 hits. Admin telemetry exposes
 route patterns, hashed cache-key IDs, publication/revision, outcome, wait/build
 duration, payload bytes, cached timestamp, and error type without raw account
-or team identifiers.
+or team/profile identifiers, raw cache keys, or exception messages.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

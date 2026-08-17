@@ -36,10 +36,11 @@ public sealed class PublicApiResponseCacheMiddleware
         }
 
         var publicationBound =
-            context.GetEndpoint()?.Metadata.GetMetadata<PublicationBound>() is not null;
+            PublicApiResponseCachePolicy
+                .IsAuthoritativePublicationBound(context);
         var cacheable =
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                context.Request,
+                context,
                 out var plan);
         if (FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
                 context,
@@ -255,14 +256,11 @@ public sealed class PublicApiResponseCacheMiddleware
         PublicationApiCacheHit hit)
     {
         context.Response.ContentType = hit.ContentType;
-        if (plan.LookupCandidates.Any(candidate =>
-                string.Equals(
-                    candidate.CacheKey,
-                    PublicationApiCacheKeys.Songs,
-                    StringComparison.Ordinal)))
+        if (!string.IsNullOrWhiteSpace(
+                plan.ResponseCacheControl))
         {
             context.Response.Headers.CacheControl =
-                "public, max-age=1800, stale-while-revalidate=3600";
+                plan.ResponseCacheControl;
         }
         SetPublicationContext(
             context,

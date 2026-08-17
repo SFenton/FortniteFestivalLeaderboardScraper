@@ -24,7 +24,8 @@ public sealed record PublicApiCacheRequestPlan(
     bool FreezeCritical,
     bool AllowWriteThrough,
     TimeSpan MaxBuildDuration,
-    int MaxPayloadBytes);
+    int MaxPayloadBytes,
+    string? ResponseCacheControl = null);
 
 public static class PublicationApiCacheKeys
 {
@@ -83,10 +84,14 @@ internal static class PublicApiResponseCachePolicy
         StringComparer.OrdinalIgnoreCase);
 
     public static bool TryCreateRequestPlan(
-        HttpRequest request,
+        HttpContext context,
         out PublicApiCacheRequestPlan plan)
     {
         plan = default!;
+        if (!IsAuthoritativePublicationBound(context))
+            return false;
+
+        var request = context.Request;
         if (!IsCacheableRequest(request, out var cacheKey))
             return false;
 
@@ -97,6 +102,7 @@ internal static class PublicApiResponseCachePolicy
             };
         var freezeCritical = false;
         var allowWriteThrough = false;
+        string? responseCacheControl = null;
         string? normalizedRequestCacheKey = null;
         var path = request.Path.Value!;
         var segments = path.Split(
@@ -111,6 +117,8 @@ internal static class PublicApiResponseCachePolicy
             candidates.Add(new(PublicationApiCacheKeys.Songs));
             freezeCritical = true;
             allowWriteThrough = true;
+            responseCacheControl =
+                "public, max-age=1800, stale-while-revalidate=3600";
         }
         else if (TryPlanRankings(
                      request,
@@ -121,6 +129,8 @@ internal static class PublicApiResponseCachePolicy
         {
             freezeCritical = true;
             allowWriteThrough = lazy;
+            responseCacheControl =
+                "public, max-age=1800, stale-while-revalidate=3600";
         }
         else if (TryPlanPlayer(
                      request,
@@ -128,6 +138,8 @@ internal static class PublicApiResponseCachePolicy
                      candidates))
         {
             freezeCritical = true;
+            responseCacheControl =
+                "public, max-age=120, stale-while-revalidate=300";
         }
         else if (TryPlanLeaderboard(
                      request,
@@ -135,6 +147,25 @@ internal static class PublicApiResponseCachePolicy
                      candidates))
         {
             freezeCritical = true;
+            var aggregateLeaderboard =
+                (segments.Length == 4
+                 && string.Equals(
+                     segments[3],
+                     "all",
+                     StringComparison.OrdinalIgnoreCase))
+                || (segments.Length == 5
+                    && string.Equals(
+                        segments[3],
+                        "bands",
+                        StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(
+                        segments[4],
+                        "all",
+                        StringComparison.OrdinalIgnoreCase));
+            responseCacheControl =
+                aggregateLeaderboard
+                    ? "public, max-age=300, stale-while-revalidate=600"
+                    : "public, max-age=300";
         }
 
         plan = new PublicApiCacheRequestPlan(
@@ -150,8 +181,21 @@ internal static class PublicApiResponseCachePolicy
             freezeCritical,
             allowWriteThrough,
             TimeSpan.FromSeconds(1),
-            2 * 1024 * 1024);
+            2 * 1024 * 1024,
+            responseCacheControl);
         return true;
+    }
+
+    internal static bool IsAuthoritativePublicationBound(
+        HttpContext context)
+    {
+        var classifications = context.GetEndpoint()
+            ?.Metadata
+            .GetOrderedMetadata<
+                ApiPublicationClassification>();
+        return classifications is { Count: 1 }
+               && classifications[0]
+                   is PublicationBound;
     }
 
     public static bool IsCacheableRequest(

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -426,6 +427,251 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
     }
 
+    [Fact]
+    public async Task FreezeSafeSongsCache_MatchesEndpointQueryAndSamePublicationRevision()
+    {
+        const string songId = "testSong1";
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var metaDb =
+            services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var dataSource =
+            services.GetRequiredService<NpgsqlDataSource>();
+        var gate =
+            services.GetRequiredService<PublicReadGateService>();
+        var publicationCache =
+            services.GetRequiredService<
+                PublicationApiResponseCacheService>();
+        var songsCache =
+            services.GetRequiredService<SongsCacheService>();
+        var pathStore =
+            services.GetRequiredService<PathDataStore>();
+        var festivalService =
+            services.GetRequiredService<FestivalService>();
+        var persistence =
+            services.GetRequiredService<
+                GlobalLeaderboardPersistence>();
+        var precomputer =
+            services.GetRequiredService<
+                ScrapeTimePrecomputer>();
+        var jsonOptions = services
+            .GetRequiredService<
+                IOptions<
+                    Microsoft.AspNetCore.Http.Json
+                        .JsonOptions>>()
+            .Value.SerializerOptions;
+        var exactKey =
+            PublicApiResponseCachePolicy
+                .BuildCacheKeyForRequestTarget(
+                    "/api/songs");
+        var keys = new[]
+        {
+            PublicationApiCacheKeys.Songs,
+            exactKey,
+        };
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            keys);
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        publicationCache.Reset();
+
+        try
+        {
+            SetPathGeneration(
+                pathStore,
+                songId,
+                "songs-cache-revision-a",
+                111_111,
+                "songs-cache-hash-a");
+            songsCache.InvalidateForContentChange();
+            var expectedA =
+                SongsCacheService.BuildSongsJson(
+                    festivalService,
+                    pathStore,
+                    metaDb,
+                    persistence,
+                    precomputer,
+                    jsonOptions);
+
+            using var baseline = await client.GetAsync(
+                "/api/songs?limit=10&futureFlag=ignored");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                baseline.StatusCode);
+            var baselineBytes =
+                await baseline.Content.ReadAsByteArrayAsync();
+            Assert.Equal(expectedA, baselineBytes);
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedA),
+                baseline.Headers.ETag?.ToString());
+            Assert.Equal(
+                "application/json",
+                baseline.Content.Headers.ContentType
+                    ?.MediaType);
+            Assert.Equal(
+                "public, max-age=1800, stale-while-revalidate=3600",
+                baseline.Headers.CacheControl?.ToString());
+            Assert.Equal(
+                publicationId.ToString(),
+                baseline.Headers.GetValues(
+                    PublicationReadContextMiddleware
+                        .PublicationHeader)
+                    .Single());
+
+            var durableA =
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    PublicationApiCacheKeys.Songs);
+            Assert.NotNull(durableA);
+            Assert.Equal(expectedA, durableA.Json);
+            Assert.Equal(
+                Sha256Hex(expectedA),
+                durableA.ContentSha256);
+
+            using var queryVariant =
+                await client.GetAsync(
+                    $"/api/songs?publicationId={publicationId}&limit=999");
+            Assert.Equal(
+                baselineBytes,
+                await queryVariant.Content
+                    .ReadAsByteArrayAsync());
+            Assert.Equal(
+                baseline.Headers.ETag?.ToString(),
+                queryVariant.Headers.ETag?.ToString());
+
+            using var baselineDocument =
+                JsonDocument.Parse(baselineBytes);
+            var songs = baselineDocument.RootElement
+                .GetProperty("songs")
+                .EnumerateArray()
+                .ToArray();
+            Assert.Equal(
+                songs.Length,
+                baselineDocument.RootElement
+                    .GetProperty("count")
+                    .GetInt32());
+            var songIds = songs
+                .Select(song =>
+                    song.GetProperty("songId")
+                        .GetString()!)
+                .ToArray();
+            Assert.Equal(
+                songIds.Order(
+                    StringComparer.Ordinal),
+                songIds);
+            Assert.DoesNotContain(
+                songs,
+                song =>
+                    string.IsNullOrWhiteSpace(
+                        song.GetProperty("songId")
+                            .GetString()));
+            var revisedSongA = Assert.Single(
+                songs,
+                song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId);
+            Assert.Equal(
+                111_111,
+                revisedSongA
+                    .GetProperty("maxScores")
+                    .GetProperty("Solo_Guitar")
+                    .GetInt32());
+            Assert.Equal(
+                "songs-cache-revision-a",
+                revisedSongA
+                    .GetProperty(
+                        "pathArtifactGenerationId")
+                    .GetString());
+
+            SetPathGeneration(
+                pathStore,
+                songId,
+                "songs-cache-revision-b",
+                222_222,
+                "songs-cache-hash-b");
+            songsCache.InvalidateForContentChange();
+            var expectedB =
+                SongsCacheService.BuildSongsJson(
+                    festivalService,
+                    pathStore,
+                    metaDb,
+                    persistence,
+                    precomputer,
+                    jsonOptions);
+            using var revised = await client.GetAsync(
+                "/api/songs?ignored=still-nonsemantic");
+            var revisedBytes =
+                await revised.Content.ReadAsByteArrayAsync();
+            Assert.Equal(expectedB, revisedBytes);
+            Assert.NotEqual(
+                Sha256Hex(expectedA),
+                Sha256Hex(expectedB));
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedB),
+                revised.Headers.ETag?.ToString());
+            var durableB =
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    PublicationApiCacheKeys.Songs);
+            Assert.NotNull(durableB);
+            Assert.Equal(expectedB, durableB.Json);
+            Assert.Equal(
+                Sha256Hex(expectedB),
+                durableB.ContentSha256);
+
+            metaDb.SetPublicReadFreeze(
+                true,
+                pointers.PublishedScrapeId,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('e', 64));
+            gate.Invalidate();
+            publicationCache.InvalidateAll();
+            songsCache.Invalidate();
+
+            using var frozen = await client.GetAsync(
+                "/api/songs?limit=1");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                frozen.StatusCode);
+            Assert.Equal(
+                "l2",
+                frozen.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                expectedB,
+                await frozen.Content
+                    .ReadAsByteArrayAsync());
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedB),
+                frozen.Headers.ETag?.ToString());
+            Assert.Equal(
+                "public, max-age=1800, stale-while-revalidate=3600",
+                frozen.Headers.CacheControl
+                    ?.ToString());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            publicationCache.Reset();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                keys);
+        }
+    }
+
     [Theory]
     [InlineData(
         "/api/rankings/composite?page=1&pageSize=5",
@@ -443,6 +689,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         "/api/rankings/overview?pageSize=5",
         "/api/rankings/overview?pageSize=10",
         "rankings:overview:adjusted:10")]
+    [InlineData(
+        "/api/rankings/composite?page=2&pageSize=5",
+        "/api/rankings/composite?page=1&pageSize=50",
+        "rankings:composite:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar?rankBy=weighted&page=2&pageSize=5",
+        "/api/rankings/Solo_Guitar?rankBy=weighted&page=1&pageSize=50",
+        "rankings:Solo_Guitar:weighted:1:50")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets?rankBy=weighted&page=2&pageSize=5",
+        "/api/rankings/bands/Band_Duets?rankBy=weighted&page=1&pageSize=50",
+        "rankings:bands:Band_Duets:weighted:1:50")]
+    [InlineData(
+        "/api/rankings/overview?rankBy=maxscore&pageSize=5",
+        "/api/rankings/overview?rankBy=maxscore&pageSize=10",
+        "rankings:overview:maxscore:10")]
     public async Task FreezeSafeFirstPageAlias_IsByteAndEtagEquivalentToUncachedEndpoint(
         string requestedTarget,
         string canonicalTarget,
@@ -548,6 +810,34 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(
                 baselineEtag,
                 frozen.Headers.ETag?.ToString());
+            Assert.Equal(
+                Sha256Hex(baselineBytes),
+                Sha256Hex(
+                    await frozen.Content
+                        .ReadAsByteArrayAsync()));
+            Assert.Equal(
+                baseline.Content.Headers.ContentType
+                    ?.MediaType,
+                frozen.Content.Headers.ContentType
+                    ?.MediaType);
+            Assert.Equal(
+                baseline.Headers.CacheControl?.ToString(),
+                frozen.Headers.CacheControl?.ToString());
+            Assert.Equal(
+                "l2",
+                frozen.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                publicationId.ToString(),
+                frozen.Headers.GetValues(
+                    PublicationReadContextMiddleware
+                        .PublicationHeader)
+                    .Single());
+            Assert.Null(
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    exactKey));
         }
         finally
         {
@@ -558,6 +848,170 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 dataSource,
                 publicationId,
                 keys);
+        }
+    }
+
+    [Fact]
+    public async Task FreezeSafeAliases_DoNotCrossSelectedOrHighCardinalityContexts()
+    {
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var metaDb =
+            services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var dataSource =
+            services.GetRequiredService<NpgsqlDataSource>();
+        var gate =
+            services.GetRequiredService<PublicReadGateService>();
+        var cache = services.GetRequiredService<
+            PublicationApiResponseCacheService>();
+        var requests = new[]
+        {
+            "/api/rankings/bands/Band_Duets?page=1&pageSize=5&accountId=account-secret",
+            "/api/rankings/bands/Band_Duets?page=1&pageSize=5&combo=Solo_Guitar%2BSolo_Bass",
+            "/api/player/account-secret?leeway=1",
+            "/api/rankings/overview?pageSize=5&accountId=account-secret",
+        };
+        var exactKeys = requests
+            .Select(
+                PublicApiResponseCachePolicy
+                    .BuildCacheKeyForRequestTarget)
+            .ToArray();
+        var canonicalKeys = new[]
+        {
+            "rankings:bands:Band_Duets:adjusted:1:50",
+            "player:account-secret:::",
+            "rankings:overview:adjusted:10",
+        };
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            exactKeys.Concat(canonicalKeys)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray());
+        metaDb.BulkSetCachedResponses(
+            canonicalKeys.Select(key =>
+            {
+                var json = Encoding.UTF8.GetBytes(
+                    $"{{\"canonicalMarker\":\"{key}\"}}");
+                return (
+                    Key: key,
+                    Json: json,
+                    ETag: ResponseCacheService
+                        .ComputeETag(json));
+            }).ToArray());
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('f', 64));
+        gate.Invalidate();
+        cache.Reset();
+
+        try
+        {
+            foreach (var target in requests)
+            {
+                using var response =
+                    await client.GetAsync(target);
+                Assert.Equal(
+                    HttpStatusCode.ServiceUnavailable,
+                    response.StatusCode);
+                Assert.DoesNotContain(
+                    "canonicalMarker",
+                    await response.Content
+                        .ReadAsStringAsync(),
+                    StringComparison.Ordinal);
+            }
+
+            foreach (var exactKey in exactKeys)
+            {
+                Assert.Null(
+                    metaDb.GetCachedResponseEntry(
+                        publicationId,
+                        exactKey));
+            }
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            cache.Reset();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                exactKeys.Concat(canonicalKeys)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray());
+        }
+    }
+
+    [Fact]
+    public async Task ProtectedTelemetryAuthenticationExecutesBeforePublicationCache()
+    {
+        const string target =
+            "/api/admin/public-cache-telemetry";
+        var metaDb =
+            _factory.Services
+                .GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var cacheKey =
+            PublicApiResponseCachePolicy
+                .BuildCacheKeyForRequestTarget(target);
+        var dataSource =
+            _factory.Services
+                .GetRequiredService<NpgsqlDataSource>();
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            [cacheKey]);
+        var marker = Encoding.UTF8.GetBytes(
+            "{\"privateCacheLeak\":true}");
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                Key: cacheKey,
+                Json: marker,
+                ETag: ResponseCacheService
+                    .ComputeETag(marker)),
+        ]);
+
+        try
+        {
+            using var unauthorized =
+                await _client.GetAsync(target);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                unauthorized.StatusCode);
+            Assert.DoesNotContain(
+                "privateCacheLeak",
+                await unauthorized.Content
+                    .ReadAsStringAsync(),
+                StringComparison.Ordinal);
+
+            using var authorized =
+                await _authedClient.GetAsync(target);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                authorized.StatusCode);
+            Assert.DoesNotContain(
+                "privateCacheLeak",
+                await authorized.Content
+                    .ReadAsStringAsync(),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                [cacheKey]);
         }
     }
 
@@ -8975,6 +9429,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             PublicationGenerationStatus.Ready,
             DateTime.UtcNow);
     }
+
+    private static string Sha256Hex(byte[] bytes) =>
+        Convert.ToHexString(
+                SHA256.HashData(bytes))
+            .ToLowerInvariant();
 
     private static void DeleteCacheKeys(
         NpgsqlDataSource dataSource,

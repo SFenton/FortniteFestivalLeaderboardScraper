@@ -1,10 +1,51 @@
 using FSTService.Api;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 
 namespace FSTService.Tests.Unit;
 
 public sealed class PublicationApiResponseCachePolicyTests
 {
+    [Fact]
+    public void Eligibility_requires_exactly_one_publication_bound_classification()
+    {
+        var unclassified = Context(
+            "/api/songs",
+            endpointMetadata: []);
+        var privateRoute = Context(
+            "/api/private-cache-probe",
+            endpointMetadata:
+            [
+                new AdminPrivate(
+                    "private test route"),
+            ]);
+        var conflicting = Context(
+            "/api/songs",
+            endpointMetadata:
+            [
+                PublicationBound.Instance,
+                new AdminPrivate(
+                    "conflicting route drift"),
+            ]);
+
+        Assert.False(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    unclassified,
+                    out _));
+        Assert.False(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    privateRoute,
+                    out _));
+        Assert.False(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    conflicting,
+                    out _));
+    }
+
     [Theory]
     [InlineData("/api/songs", "public-api:songs:v1")]
     [InlineData(
@@ -33,12 +74,46 @@ public sealed class PublicationApiResponseCachePolicyTests
 
         Assert.True(
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                context.Request,
+                context,
                 out var plan));
         Assert.True(plan.FreezeCritical);
         Assert.Contains(
             plan.LookupCandidates,
             candidate => candidate.CacheKey == canonicalKey);
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/songs",
+        "public, max-age=1800, stale-while-revalidate=3600")]
+    [InlineData(
+        "/api/rankings/overview?pageSize=25",
+        "public, max-age=1800, stale-while-revalidate=3600")]
+    [InlineData(
+        "/api/player/account-1",
+        "public, max-age=120, stale-while-revalidate=300")]
+    [InlineData(
+        "/api/leaderboard/song-1/Solo_Guitar?top=10",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/leaderboard/song-1/all?top=10",
+        "public, max-age=300, stale-while-revalidate=600")]
+    [InlineData(
+        "/api/leaderboard/song-1/bands/all?top=10",
+        "public, max-age=300, stale-while-revalidate=600")]
+    public void Covered_routes_preserve_endpoint_cache_control(
+        string target,
+        string expected)
+    {
+        var context = Context(target);
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan));
+        Assert.Equal(
+            expected,
+            plan.ResponseCacheControl);
     }
 
     [Fact]
@@ -49,10 +124,10 @@ public sealed class PublicationApiResponseCachePolicyTests
             "/api/songs?limit=10&publicationId=42");
 
         PublicApiResponseCachePolicy.TryCreateRequestPlan(
-            plain.Request,
+            plain,
             out var plainPlan);
         PublicApiResponseCachePolicy.TryCreateRequestPlan(
-            query.Request,
+            query,
             out var queryPlan);
 
         Assert.Equal(
@@ -84,7 +159,7 @@ public sealed class PublicationApiResponseCachePolicyTests
 
         var cacheable =
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                context.Request,
+                context,
                 out var plan);
         Assert.True(!cacheable || !plan.FreezeCritical);
     }
@@ -96,7 +171,7 @@ public sealed class PublicationApiResponseCachePolicyTests
             "/api/rankings/overview?pageSize=25&rankBy=weighted");
 
         PublicApiResponseCachePolicy.TryCreateRequestPlan(
-            context.Request,
+            context,
             out var plan);
 
         Assert.True(plan.FreezeCritical);
@@ -114,11 +189,11 @@ public sealed class PublicationApiResponseCachePolicyTests
 
         Assert.True(
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                canonical.Request,
+                canonical,
                 out var canonicalPlan));
         Assert.True(
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                lexicalVariant.Request,
+                lexicalVariant,
                 out var variantPlan));
 
         Assert.Equal(
@@ -152,7 +227,7 @@ public sealed class PublicationApiResponseCachePolicyTests
 
         Assert.True(
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
-                context.Request,
+                context,
                 out var plan));
         Assert.Contains(
             plan.LookupCandidates,
@@ -178,7 +253,9 @@ public sealed class PublicationApiResponseCachePolicyTests
                 selected.Request));
     }
 
-    private static DefaultHttpContext Context(string target)
+    private static DefaultHttpContext Context(
+        string target,
+        object[]? endpointMetadata = null)
     {
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
@@ -191,6 +268,25 @@ public sealed class PublicationApiResponseCachePolicyTests
             context.Request.QueryString =
                 new QueryString(target[separator..]);
         }
+        var metadata = new List<object>
+        {
+            new HttpMethodMetadata(
+                [HttpMethods.Get]),
+        };
+        metadata.AddRange(
+            endpointMetadata
+            ??
+            [
+                PublicationBound.Instance,
+            ]);
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse(
+                context.Request.Path.Value!),
+            order: 0,
+            new EndpointMetadataCollection(
+                metadata),
+            displayName: target));
         return context;
     }
 }

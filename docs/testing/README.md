@@ -258,17 +258,24 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --logger 'console;verbosity=detailed'
 ```
 
-Coverage includes publication/current-previous identity, same-publication
-revision invalidation, exact serializer/byte/ETag parity, service-restart L2
-recovery, frozen hit/miss and no-write behavior, finite route normalization,
-single-flight concurrency, failed/slow build rejection, current/previous
-cleanup, eager maintenance staging, telemetry redaction, and unchanged route
+Coverage includes authoritative publication classification, private/
+unclassified/conflicting fail-closed admission, rate-limit/auth middleware
+order, publication/current-previous identity, same-publication revision
+invalidation, exact serializer/body-SHA/byte/ETag/header/query/order/filter
+parity, service-restart L2 recovery, frozen hit/miss and no-write behavior,
+finite route normalization, canonical alias context isolation, single-flight
+waiter sharing, failed/cancelled build recovery, current/previous cleanup,
+atomic staging/swap failure recovery, telemetry redaction, and unchanged route
 classification/rate limiting.
 
-The measured 723 KB fixture produced L2 cold p95 `2.634 ms`, L1 warm p95
-`0.315 ms`, and 10,000-row write-through p95 `11.683 ms`. Read-only production
-computation probes for every lazy overview metric at sizes 25/50 measured
-p95 `6.758-10.067 ms`, all below both the 500 ms target and 1,000 ms hard gate.
+The refreshed 722,994-byte fixture produced L2 cold p50/p95
+`1.452/3.273 ms`, L1 warm p50/p95 `0.199/0.313 ms`, and 10,000-row
+write-through p50/p95 `8.366/11.149 ms`. Twenty read-only production samples
+per lazy overview variant measured p50 `5.890-8.122 ms` and p95
+`6.707-11.114 ms`; every body SHA-256/ETag/size was stable and every variant
+remained below the 500 ms target and 1,000 ms hard gate. Provenance and
+pre/post safety checks live under
+`public-api-cache-review-completion-20260817T133332Z`.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and
