@@ -2655,7 +2655,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private static readonly string[] SoloDroppableIndexes =
     [
         "ix_le_song_score",
-        "ix_le_song_rank",
         "ix_le_account",
         "ix_le_account_song",
         "ix_le_song_source",

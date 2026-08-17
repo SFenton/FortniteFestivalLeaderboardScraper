@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-08-17
+last_verified_commit: 57efc5bd
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -20,6 +20,7 @@ sources:
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
+  - tools/postgres-retire-ix-le-song-rank.test.py
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -221,6 +222,26 @@ Tests also require output/comparison version `3`, explicit deterministic and
 option-parity profiles, profile-specific timing reasons, operation metrics,
 `productionComparableTiming=false`, canonical hash sensitivity, and rejection
 of relabeled production-comparable or unknown-profile packages.
+
+Focused stale solo rank-index retirement validation:
+
+```bash
+bash -n tools/postgres-retire-ix-le-song-rank.sh
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-ix-le-song-rank.test.py
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests
+```
+
+The Python suite uses deterministic fake project/catalog probes. It covers
+wrong project/cluster identity, changed definitions/OIDs/bytes, constraint
+ownership, active queries/locks/backends, offline-worker enforcement,
+unsupported concurrent parent drop, short-timeout transaction failure,
+partial-catalog failure, idempotent absence, exact rollback order, reviewed
+artifact digests, and truthful byte reporting. A separate isolated PostgreSQL
+17 mechanics run must prove 10 objects before, rejection of concurrent parent
+drop, zero objects after normal parent drop, and `10|9` after generated
+rollback and attachment.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

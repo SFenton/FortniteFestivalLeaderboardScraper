@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-08-17
+last_verified_commit: 57efc5bd
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -11,6 +11,9 @@ sources:
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-tier1-replay-drill.sh
   - tools/postgres-tier1-replay-drill.test.mjs
+  - tools/postgres-retire-ix-le-song-rank.sh
+  - tools/postgres-retire-ix-le-song-rank.py
+  - tools/postgres-retire-ix-le-song-rank.test.py
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -74,6 +77,37 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Exact stale solo rank-index retirement
+
+`tools/postgres-retire-ix-le-song-rank.sh` is the only supported retirement
+entry point for `public.ix_le_song_rank` and its nine attached leaves. It has
+no arbitrary index-name option.
+
+`--check` is read-only and emits a checksummed manifest, dated zero-use
+observation, exact drop plan, and exact rollback DDL beneath the FST evidence
+root. `--execute` requires the reviewed manifest, observation, rollback, and
+all three SHA-256 values. It revalidates production project/cluster identity,
+idle/unfrozen publication state, offline worker state, locks/activity, exact
+OIDs/definitions/dependencies/bytes, and zero scans before one short-timeout
+normal parent drop. The package holds the standard nonblocking worker
+start/recreate host lock for the complete execute lifecycle; check mode only
+records whether the lock is available or already held by the external worker
+hold.
+
+The parent cannot use `DROP INDEX CONCURRENTLY` on PostgreSQL 17. Rollback
+creates the parent `ON ONLY`, builds nine leaves concurrently, then attaches
+them. Follow the
+[living runbook](../database/StaleSoloRankIndexRetirementRunbook.md); the
+repository package does not authorize live execution.
+
+Validate structure with:
+
+```bash
+bash -n tools/postgres-retire-ix-le-song-rank.sh
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-ix-le-song-rank.test.py
+```
 
 ### Max-score rollback one-shot
 

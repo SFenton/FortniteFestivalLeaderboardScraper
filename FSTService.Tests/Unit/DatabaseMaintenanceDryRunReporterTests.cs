@@ -149,6 +149,18 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
     }
 
     [Fact]
+    public void RetiredSongRankIndex_HasNoScrapeOrGenericMaintenanceOwnership()
+    {
+        var droppable = GetPrivateStaticStringArray("SoloDroppableIndexes");
+        var deprecated = GetReporterPrivateStaticArray<string>("DeprecatedParentIndexNames");
+        var watched = GetReporterPrivateStaticArray<string>("WatchIndexNames");
+
+        Assert.DoesNotContain("ix_le_song_rank", droppable);
+        Assert.DoesNotContain("ix_le_song_rank", deprecated);
+        Assert.DoesNotContain("ix_le_song_rank", watched);
+    }
+
+    [Fact]
     public void RetentionHelperIndexDefinitions_GenerateConcurrentSqlForExplicitTargets()
     {
         var definitions = GetReporterPrivateStaticArray<RetentionHelperIndexDefinition>("RetentionHelperIndexDefinitions");

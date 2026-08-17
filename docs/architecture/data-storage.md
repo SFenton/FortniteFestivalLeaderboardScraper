@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-08-17
+last_verified_commit: 57efc5bd
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - tools/postgres-retire-ix-le-song-rank.py
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RegisteredBandProcessing.cs
@@ -102,6 +103,24 @@ The exact relation inventory is intentionally source-driven because it changes
 frequently. `DatabaseInitializer` and its tests are the schema inventory;
 canonical documentation describes ownership and invariants instead of copying
 volatile table counts.
+
+### Legacy solo rank-index retirement
+
+`ix_le_song_rank` is not bootstrap schema and is not a scrape-time droppable or
+recreated index. The remaining physical partitioned family is an operational
+retirement candidate, not schema ownership.
+
+Only `tools/postgres-retire-ix-le-song-rank.sh` may prepare or execute its
+retirement. The tool binds the production Compose project, PostgreSQL system
+identifier, publication, exact parent plus nine leaf OIDs/definitions and
+attachments, dependency/constraint inventory, bytes, and dated zero-use
+observation. It generates the exact rollback before any execute command.
+
+Removing this non-constraint index changes no rows, rankings, publication
+pointers, or API contract. Legacy rank predicates remain logically correct
+without it. The worker must remain offline for execution, and public API roles
+continue to read published/current projection sources. See the
+[stale solo rank index retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
 
 ### Max-score maintenance evidence
 
