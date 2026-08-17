@@ -453,6 +453,54 @@ public sealed class PublicationApiResponseCacheServiceTests
             hit.Value.ETag);
     }
 
+    [Fact]
+    public void Alias_projection_preserves_relaxed_unicode_bytes()
+    {
+        var firstPageSource = Encoding.UTF8.GetBytes(
+            "{\"page\":1,\"pageSize\":50,\"entries\":["
+            + "{\"displayName\":\"Jöhn\"},"
+            + "{\"displayName\":\"Łukasz\"}]}");
+        var firstPageExpected = Encoding.UTF8.GetBytes(
+            "{\"page\":1,\"pageSize\":1,\"entries\":["
+            + "{\"displayName\":\"Jöhn\"}]}");
+        var overviewSource = Encoding.UTF8.GetBytes(
+            "{\"rankBy\":\"adjusted\",\"pageSize\":10,"
+            + "\"instruments\":{\"Solo_Guitar\":{"
+            + "\"totalAccounts\":2,\"entries\":["
+            + "{\"displayName\":\"Jöhn\"},"
+            + "{\"displayName\":\"Łukasz\"}]}}}");
+        var overviewExpected = Encoding.UTF8.GetBytes(
+            "{\"rankBy\":\"adjusted\",\"pageSize\":1,"
+            + "\"instruments\":{\"Solo_Guitar\":{"
+            + "\"totalAccounts\":2,\"entries\":["
+            + "{\"displayName\":\"Jöhn\"}]}}}");
+
+        var firstPage =
+            CacheHelper.ProjectFirstPageSubset(
+                firstPageSource,
+                requestedPage: 1,
+                requestedPageSize: 1);
+        var overview =
+            CacheHelper.ProjectOverviewSubset(
+                overviewSource,
+                requestedPageSize: 1);
+
+        Assert.Equal(
+            firstPageExpected,
+            firstPage);
+        Assert.Equal(
+            overviewExpected,
+            overview);
+        Assert.DoesNotContain(
+            "\\u",
+            Encoding.UTF8.GetString(firstPage!),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "\\u",
+            Encoding.UTF8.GetString(overview!),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static PublicationCachedResponse Cached(byte[] json) => new(
         42,
         1302,

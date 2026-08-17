@@ -489,6 +489,13 @@ after producer failure. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client
 refresh.
 
+The bounded publication-1302 service-only trial exercised this same
+precompute/swap path without a scrape or worker. It staged 15,574 records,
+completed the core precompute in 167.94 seconds, used zero PostgreSQL temp
+bytes, and retained the previous generation. The trial was rolled back for an
+API byte-parity issue outside the transaction boundary; atomic staging/swap
+itself passed.
+
 ## Service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention

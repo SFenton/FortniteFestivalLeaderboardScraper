@@ -79,6 +79,33 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public void HttpJsonAndPrecomputeSerializerUseRelaxedUnicodeEncoding()
+    {
+        var options = _factory.Services
+            .GetRequiredService<
+                IOptions<
+                    Microsoft.AspNetCore.Http.Json
+                        .JsonOptions>>()
+            .Value.SerializerOptions;
+        var json = JsonSerializer.SerializeToUtf8Bytes(
+            new
+            {
+                displayName = "Jöhn Łukasz",
+            },
+            options);
+        var text = Encoding.UTF8.GetString(json);
+
+        Assert.Contains(
+            "Jöhn Łukasz",
+            text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "\\u",
+            text,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Host_resolves_post_scrape_orchestrator_without_retired_dependencies()
     {
         using var scope = _factory.Services.CreateScope();

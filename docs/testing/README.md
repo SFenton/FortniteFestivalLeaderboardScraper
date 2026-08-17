@@ -277,6 +277,14 @@ remained below the 500 ms target and 1,000 ms hard gate. Provenance and
 pre/post safety checks live under
 `public-api-cache-review-completion-20260817T133332Z`.
 
+The first live service-only A/B (`public-api-cache-service-ab-20260817T142445Z`)
+correctly rejected head `5a227954`: cached overview page 5 was semantically
+equal to its uncached endpoint, but two non-ASCII display names were emitted as
+`\u` escapes by alias projection, so exact bytes/ETag diverged. Baseline service
+and cache were restored. Regression coverage now requires raw UTF-8 equality
+for first-page and overview projection plus explicit shared endpoint/precompute
+JSON encoder configuration.
+
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and
 must retain exact output hashes while cleaning containers and PGDATA.

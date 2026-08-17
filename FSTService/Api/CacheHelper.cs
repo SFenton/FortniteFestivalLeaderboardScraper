@@ -9,6 +9,14 @@ namespace FSTService.Api;
 /// </summary>
 internal static class CacheHelper
 {
+    private static readonly JsonWriterOptions
+        ProjectionWriterOptions = new()
+        {
+            Encoder = System.Text.Encodings.Web
+                .JavaScriptEncoder
+                .UnsafeRelaxedJsonEscaping,
+        };
+
     /// <summary>
     /// If <paramref name="entry"/> is non-null, sets the ETag header and returns
     /// either 304 (if the client already has it) or the cached JSON bytes.
@@ -71,7 +79,9 @@ internal static class CacheHelper
                 return null;
 
             using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(stream))
+            using (var writer = new Utf8JsonWriter(
+                       stream,
+                       ProjectionWriterOptions))
             {
                 writer.WriteStartObject();
                 foreach (var property in document.RootElement.EnumerateObject())
@@ -135,7 +145,9 @@ internal static class CacheHelper
             }
 
             using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(stream))
+            using (var writer = new Utf8JsonWriter(
+                       stream,
+                       ProjectionWriterOptions))
             {
                 writer.WriteStartObject();
                 foreach (var property in document.RootElement

@@ -130,6 +130,9 @@ complete L2 generation before unfreeze, while catalog/path mutation explicitly
 invalidates L1 and durably rewrites the canonical songs row. Catalog refresh
 compares the exact provider snapshot hash, not only song count, so metadata
 changes and removals invalidate the same-publication row as well as additions.
+HTTP JSON serialization, precompute serialization, and alias projection share
+an explicit relaxed Unicode encoder. This keeps non-ASCII display-name bytes
+and therefore ETags identical between a direct endpoint and its cached alias.
 
 Freeze-critical coverage is intentionally bounded: `/api/songs`, page-1
 per-instrument/composite/generic-band rankings, overview bootstrap sizes,
@@ -162,6 +165,14 @@ route patterns, hashed cache-key IDs, publication/revision, outcome, wait/build
 duration, payload bytes, cached timestamp, and error type without raw account
 or team/profile identifiers, raw cache keys/revisions, or exception messages.
 Cache and revision identifiers are independent bounded hashes.
+
+The first bounded service-only production A/B of PR #55 head `5a227954`
+rejected the candidate before merge: page-window aliases semantically matched
+the direct endpoint, but alias projection escaped two non-ASCII display names,
+changing exact body SHA-256/ETag. The baseline service and 9,255-row current
+cache were restored. The explicit shared encoder above is the repository repair
+and requires focused review plus another bounded service-only A/B; no scrape is
+needed for that retry.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

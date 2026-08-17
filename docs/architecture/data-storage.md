@@ -117,6 +117,17 @@ Incremental WAL, table overhead, and
 promotion-copy cost remain full-scrape A/B measurements rather than inferred
 acceptance evidence.
 
+The rejected service-only A/B on publication 1302 measured the full current
+cache build directly. Head `5a227954` staged 15,574 rows and 267,948,123
+logical JSON bytes, then atomically swapped current while retaining publication
+77. Relative to the 9,255-row baseline, current generation and compatibility
+mirror each added 6,319 rows and 22,805,709 logical bytes. Physical database
+growth was 24,453,120 bytes and filesystem growth 24,596,480 bytes. Peak
+staging/free-space excursion was 409,980,928 bytes, WAL was 466,458,000 bytes,
+and PostgreSQL temp-file/byte deltas were zero. The core precompute took
+167.94 seconds. These measurements bind to the rejected Unicode-escaping head;
+the repaired encoder must be remeasured before service promotion.
+
 ### Solo ranking denominator ownership
 
 Normal per-instrument ranking denominators are catalog-bound. For each exact

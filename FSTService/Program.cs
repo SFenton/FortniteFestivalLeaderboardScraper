@@ -67,6 +67,9 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
 {
     opts.SerializerOptions.DefaultIgnoreCondition =
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    opts.SerializerOptions.Encoder =
+        System.Text.Encodings.Web.JavaScriptEncoder
+            .UnsafeRelaxedJsonEscaping;
 });
 
 // ─── Response compression ───────────────────────────────────

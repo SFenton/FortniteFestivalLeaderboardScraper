@@ -187,7 +187,9 @@ Aggregate player scopes intentionally use different formulas:
   top-10 per-instrument leaderboards, leaderboard-all, and song-band bootstrap
   reads use their canonical eager rows. Selected/high-cardinality variants are
   excluded and cannot fall through to a generic canonical alias. Covered hits
-  preserve the endpoint family's `Cache-Control` and content type.
+  preserve the endpoint family's `Cache-Control` and content type. Direct,
+  precomputed, and projected JSON use the same explicit relaxed Unicode
+  encoder so non-ASCII strings preserve exact UTF-8 bytes and ETags.
 - Only overview `pageSize=25|50` for the five canonical ranking metrics may
   lazily compute and write through while unfrozen. One process-local
   single-flight owns each publication/key build. Case, query order, and
