@@ -42,18 +42,6 @@ public sealed class PublicApiResponseCacheMiddleware
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
                 context,
                 out var plan);
-        if (FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
-                context,
-                gate)
-            && (!cacheable || !plan.FreezeCritical))
-        {
-            if (publicationBound)
-                telemetry.Record(context, PublicApiCacheOutcome.Bypassed);
-            context.Response.Headers["X-FST-Public-Cache"] =
-                "endpoint";
-            await _next(context);
-            return;
-        }
 
         if (!cacheable)
         {
@@ -65,8 +53,22 @@ public sealed class PublicApiResponseCacheMiddleware
             return;
         }
 
+        var safety = gate.GetCacheSafetySnapshot();
+        if (FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
+                context,
+                safety.FailedCandidateIsolationActive)
+            && !plan.FreezeCritical)
+        {
+            if (publicationBound)
+                telemetry.Record(context, PublicApiCacheOutcome.Bypassed);
+            context.Response.Headers["X-FST-Public-Cache"] =
+                "endpoint";
+            await _next(context);
+            return;
+        }
+
         var shouldLookup =
-            gate.IsFrozen
+            safety.IsFrozen
             || plan.FreezeCritical;
         if (shouldLookup)
         {
@@ -76,7 +78,8 @@ public sealed class PublicApiResponseCacheMiddleware
                     context,
                     plan,
                     cacheService,
-                    publicationService);
+                    publicationService,
+                    safety);
             if (serviceHit is not null)
             {
                 await ServeHitAsync(
@@ -89,7 +92,7 @@ public sealed class PublicApiResponseCacheMiddleware
                 return;
             }
 
-            if (cacheService is null && gate.IsFrozen)
+            if (cacheService is null && safety.IsFrozen)
             {
                 var cacheKey = plan.RequestCacheKey;
                 var publicationContext =
@@ -167,7 +170,7 @@ public sealed class PublicApiResponseCacheMiddleware
                     payloadBytes: 0);
             }
 
-            if (gate.IsFrozen)
+            if (safety.IsFrozen)
             {
                 if (await BlockFrozenMissIfRequiredAsync(
                         context,
@@ -181,7 +184,7 @@ public sealed class PublicApiResponseCacheMiddleware
             }
         }
 
-        if (!gate.IsFrozen
+        if (!safety.IsFrozen
             && plan.FreezeCritical
             && plan.AllowWriteThrough
             && cacheService is not null
@@ -206,7 +209,8 @@ public sealed class PublicApiResponseCacheMiddleware
         HttpContext context,
         PublicApiCacheRequestPlan plan,
         PublicationApiResponseCacheService cacheService,
-        PublicationReadContextService? publicationService)
+        PublicationReadContextService? publicationService,
+        PublicReadCacheSafetySnapshot safety)
     {
         if (PublicationReadContextMiddleware
                 .TryReadRequestedPublicationId(
@@ -218,12 +222,15 @@ public sealed class PublicApiResponseCacheMiddleware
             if (publicationService?.PinningConfigured
                 != true)
             {
-                return cacheService.TryGetCurrent(plan);
+                return cacheService.TryGetCurrent(
+                    plan,
+                    safety);
             }
 
             var hit = cacheService.TryGet(
                 requestedPublicationId.Value,
-                plan);
+                plan,
+                safety);
             if (hit is null)
                 return null;
             var cached = new PublicationCachedResponse(
@@ -244,7 +251,9 @@ public sealed class PublicApiResponseCacheMiddleware
                     : null;
         }
 
-        return cacheService.TryGetCurrent(plan);
+        return cacheService.TryGetCurrent(
+            plan,
+            safety);
     }
 
     private async Task ServeHitAsync(
@@ -332,7 +341,11 @@ public sealed class PublicApiResponseCacheMiddleware
                 payloadBytes: 0);
         }
 
-        var existing = cacheService.TryGetCurrent(plan);
+        var retrySafety =
+            gate.GetCacheSafetySnapshot();
+        var existing = cacheService.TryGetCurrent(
+            plan,
+            retrySafety);
         if (existing is not null)
         {
             await ServeHitAsync(
@@ -577,8 +590,17 @@ public sealed class PublicApiResponseCacheMiddleware
     private static Task RecordSelectedActivityAsync(
         HttpContext context,
         IMetaDatabase metaDb,
-        PublicReadGateService gate) =>
-        SelectedProfileActivityMiddleware
+        PublicReadGateService gate)
+    {
+        if (!SelectedProfileHeaders.TryParse(
+                context.Request.Headers,
+                out var selection)
+            || selection is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return SelectedProfileActivityMiddleware
             .RecordActivityIfNeededAsync(
                 context,
                 metaDb,
@@ -593,6 +615,7 @@ public sealed class PublicApiResponseCacheMiddleware
                 == true,
                 gate.GetState().MaxScoreMaintenance,
                 context.RequestAborted);
+    }
 
     private static bool CanServePinnedCacheHit(
         HttpContext context,

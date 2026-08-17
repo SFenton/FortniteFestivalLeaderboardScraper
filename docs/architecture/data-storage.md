@@ -78,6 +78,11 @@ required read and uniqueness path; no additional index or schema rewrite is
 needed. Each row stores deterministic JSON bytes, ETag, and `cached_at`.
 Service lookup derives the full SHA-256 and fixed JSON content type and combines
 those with publication ID and the public-read safety revision for L1 identity.
+The warm current-publication L1 path reads current publication, durable freeze,
+and failed-candidate isolation through one combined PostgreSQL snapshot query.
+No schema/index is added. Publication ID remains in the L1 key, and any
+publication/freeze/failure change increments the process safety revision and
+clears current L1 entries.
 
 Publication cleanup retains only current and previous generations. Full
 precompute uses staging and atomic swap. Same-publication max-score maintenance

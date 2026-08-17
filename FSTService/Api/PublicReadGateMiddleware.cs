@@ -200,7 +200,14 @@ internal static class FailedCandidateReadRoutingPolicy
     internal static bool EndpointHandlesRead(
         HttpContext context,
         PublicReadGateService gate)
-        => gate.FailedCandidateIsolationActive
+        => EndpointHandlesRead(
+            context,
+            gate.FailedCandidateIsolationActive);
+
+    internal static bool EndpointHandlesRead(
+        HttpContext context,
+        bool failedCandidateIsolationActive)
+        => failedCandidateIsolationActive
            && context.GetEndpoint()?.Metadata
                .GetMetadata<EndpointHandlesFailedCandidateRead>() is not null;
 }

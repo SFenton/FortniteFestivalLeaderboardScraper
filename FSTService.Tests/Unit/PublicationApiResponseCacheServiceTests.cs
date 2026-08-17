@@ -14,6 +14,11 @@ public sealed class PublicationApiResponseCacheServiceTests
         var metaDb = Substitute.For<IMetaDatabase>();
         metaDb.GetPublicReadFreezeState()
             .Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetPublicReadCacheDatabaseState()
+            .Returns(new PublicReadCacheDatabaseState(
+                42,
+                PublicReadFreezeState.NotFrozen,
+                PublicReadFreezeState.NotFrozen));
         var json = Encoding.UTF8.GetBytes("{\"ok\":true}");
         var cached = new PublicationCachedResponse(
             42,
@@ -48,6 +53,55 @@ public sealed class PublicationApiResponseCacheServiceTests
         metaDb.Received(1).GetCurrentCacheLookup("canonical");
         Assert.Equal(json, second.Value.Json);
         Assert.Equal(cached.ETag, second.Value.ETag);
+    }
+
+    [Fact]
+    public void Current_L1_read_does_not_requery_publication_provider()
+    {
+        var providerCalls = 0;
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetPublicReadCacheDatabaseState()
+            .Returns(new PublicReadCacheDatabaseState(
+                42,
+                PublicReadFreezeState.NotFrozen,
+                PublicReadFreezeState.NotFrozen));
+        var json = Encoding.UTF8.GetBytes(
+            "{\"cached\":true}");
+        metaDb.GetCurrentCacheLookup("canonical")
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var service =
+            new PublicationApiResponseCacheService(
+                metaDb,
+                gate,
+                () =>
+                {
+                    Interlocked.Increment(
+                        ref providerCalls);
+                    return 42;
+                },
+                NullLogger<
+                    PublicationApiResponseCacheService>.Instance);
+        var plan = Plan(
+            "requested",
+            "canonical");
+
+        Assert.Equal(
+            PublicationApiCacheTier.L2,
+            service.TryGetCurrent(plan)!.Value.Tier);
+        Assert.Equal(
+            PublicationApiCacheTier.L1,
+            service.TryGetCurrent(plan)!.Value.Tier);
+
+        Assert.Equal(0, providerCalls);
+        metaDb.Received(1)
+            .GetCurrentCacheLookup("canonical");
     }
 
     [Fact]

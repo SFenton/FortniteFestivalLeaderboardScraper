@@ -221,6 +221,63 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
     }
 
     [Fact]
+    public async Task Warm_L1_hit_reads_one_safety_snapshot_and_no_L2()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var json = Encoding.UTF8.GetBytes(
+            "{\"rankBy\":\"adjusted\","
+            + "\"pageSize\":25}");
+        fixture.MetaDb.GetCurrentCacheLookup(
+                "rankings:overview:adjusted:25")
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        var primeContext = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+        var plan = Plan(primeContext);
+        Assert.Equal(
+            PublicationApiCacheTier.L2,
+            fixture.Cache.TryGetCurrent(plan)!
+                .Value.Tier);
+        fixture.MetaDb.ClearReceivedCalls();
+        var nextCalled = false;
+        var middleware =
+            new PublicApiResponseCacheMiddleware(
+                _ =>
+                {
+                    nextCalled = true;
+                    return Task.CompletedTask;
+                },
+                NullLogger<
+                    PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            "l1",
+            context.Response.Headers[
+                "X-FST-Public-Cache-Tier"]);
+        fixture.MetaDb.Received(1)
+            .GetPublicReadFreezeState();
+        fixture.MetaDb.Received(1)
+            .GetFailedCandidateReadIsolationState();
+        fixture.MetaDb.DidNotReceive()
+            .GetCurrentCacheLookup(
+                Arg.Any<string>());
+    }
+
+    [Fact]
     public async Task Frozen_miss_fails_closed_without_write_or_next()
     {
         var fixture = Fixture(

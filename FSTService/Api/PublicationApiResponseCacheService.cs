@@ -31,6 +31,9 @@ public sealed class PublicationApiResponseCacheService
     private readonly ILogger<PublicationApiResponseCacheService> _log;
     private readonly ConcurrentDictionary<L1Key, PublicationApiCacheHit>
         _l1 = new();
+    private readonly ConcurrentDictionary<
+        CurrentL1Key,
+        PublicationApiCacheHit> _currentL1 = new();
     private readonly ConcurrentDictionary<BuildKey, SemaphoreSlim>
         _buildGates = new();
     private readonly ConcurrentDictionary<string, byte>
@@ -54,24 +57,88 @@ public sealed class PublicationApiResponseCacheService
         _publicationIdProvider();
 
     public PublicationApiCacheHit? TryGetCurrent(
-        PublicApiCacheRequestPlan plan)
+        PublicApiCacheRequestPlan plan) =>
+        TryGetCurrent(
+            plan,
+            _gate.GetCacheSafetySnapshot());
+
+    internal PublicationApiCacheHit? TryGetCurrent(
+        PublicApiCacheRequestPlan plan,
+        PublicReadCacheSafetySnapshot safety)
     {
-        var publicationId = _publicationIdProvider();
-        return publicationId.HasValue
-            ? TryGetCore(
-                publicationId.Value,
-                plan,
-                currentPublication: true)
-            : null;
+        RefreshSafetyRevision(safety);
+        var publicationId =
+            safety.CurrentPublicationId
+            ?? _publicationIdProvider();
+        if (!publicationId.HasValue)
+            return null;
+
+        var l1Key = new CurrentL1Key(
+            publicationId.Value,
+            safety.Revision,
+            plan.RequestCacheKey);
+        if (!safety.FailedCandidateIsolationActive
+            && _currentL1.TryGetValue(
+                l1Key,
+                out var l1))
+        {
+            return l1 with
+            {
+                Tier = PublicationApiCacheTier.L1,
+            };
+        }
+
+        foreach (var candidate in plan.LookupCandidates)
+        {
+            if (!safety.IsFrozen
+                && _staleCurrentKeys.ContainsKey(
+                    candidate.CacheKey))
+            {
+                continue;
+            }
+
+            var cached = _metaDb
+                .GetCurrentCacheLookup(
+                    candidate.CacheKey)
+                ?.CachedResponse;
+            if (cached is null)
+                continue;
+            if (cached.PublicationId
+                != publicationId.Value)
+            {
+                continue;
+            }
+
+            var transformed = Transform(
+                cached,
+                candidate);
+            if (transformed is null)
+                continue;
+
+            if (!safety.FailedCandidateIsolationActive)
+                _currentL1[l1Key] = transformed.Value;
+            return transformed;
+        }
+
+        return null;
     }
 
     public PublicationApiCacheHit? TryGet(
         long publicationId,
         PublicApiCacheRequestPlan plan) =>
+        TryGet(
+            publicationId,
+            plan,
+            _gate.GetCacheSafetySnapshot());
+
+    internal PublicationApiCacheHit? TryGet(
+        long publicationId,
+        PublicApiCacheRequestPlan plan,
+        PublicReadCacheSafetySnapshot safety) =>
         TryGetCore(
             publicationId,
             plan,
-            currentPublication: false);
+            safety);
 
     public PublicationCachedResponse? TryStoreCurrent(
         long expectedPublicationId,
@@ -154,7 +221,6 @@ public sealed class PublicationApiResponseCacheService
             return null;
         }
         InvalidateAll();
-        InvalidateAll();
         return stored;
     }
 
@@ -178,11 +244,13 @@ public sealed class PublicationApiResponseCacheService
     public void InvalidateAll()
     {
         _l1.Clear();
+        _currentL1.Clear();
     }
 
     public void Reset()
     {
         _l1.Clear();
+        _currentL1.Clear();
         _staleCurrentKeys.Clear();
     }
 
@@ -191,6 +259,7 @@ public sealed class PublicationApiResponseCacheService
         ArgumentException.ThrowIfNullOrWhiteSpace(cacheKey);
         _staleCurrentKeys[cacheKey] = 0;
         _l1.Clear();
+        _currentL1.Clear();
     }
 
     public void ClearCurrentKeyStale(string cacheKey)
@@ -202,9 +271,8 @@ public sealed class PublicationApiResponseCacheService
     private PublicationApiCacheHit? TryGetCore(
         long publicationId,
         PublicApiCacheRequestPlan plan,
-        bool currentPublication)
+        PublicReadCacheSafetySnapshot safety)
     {
-        var safety = _gate.GetCacheSafetySnapshot();
         RefreshSafetyRevision(safety);
 
         var l1Key = new L1Key(
@@ -217,28 +285,9 @@ public sealed class PublicationApiResponseCacheService
 
         foreach (var candidate in plan.LookupCandidates)
         {
-            if (currentPublication
-                && !safety.IsFrozen
-                && _staleCurrentKeys.ContainsKey(
-                    candidate.CacheKey))
-            {
-                continue;
-            }
-
-            PublicationCachedResponse? cached;
-            if (currentPublication)
-            {
-                var lookup =
-                    _metaDb.GetCurrentCacheLookup(
-                        candidate.CacheKey);
-                cached = lookup?.CachedResponse;
-            }
-            else
-            {
-                cached = _metaDb.GetCachedResponseEntry(
-                    publicationId,
-                    candidate.CacheKey);
-            }
+            var cached = _metaDb.GetCachedResponseEntry(
+                publicationId,
+                candidate.CacheKey);
             if (cached is null
                 || cached.PublicationId != publicationId)
             {
@@ -325,6 +374,7 @@ public sealed class PublicationApiResponseCacheService
                 return;
 
             _l1.Clear();
+            _currentL1.Clear();
             Volatile.Write(
                 ref _lastSafetyRevision,
                 safety.Revision);
@@ -332,6 +382,11 @@ public sealed class PublicationApiResponseCacheService
     }
 
     private readonly record struct L1Key(
+        long PublicationId,
+        long SafetyRevision,
+        string CacheKey);
+
+    private readonly record struct CurrentL1Key(
         long PublicationId,
         long SafetyRevision,
         string CacheKey);

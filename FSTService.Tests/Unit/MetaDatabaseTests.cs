@@ -395,6 +395,19 @@ public sealed class MetaDatabaseTests : IDisposable
         var isolation = Db.GetFailedCandidateReadIsolationState();
         Assert.True(isolation.IsFrozen);
         Assert.Equal(candidateId, isolation.ScrapeId);
+        var combined =
+            Db.GetPublicReadCacheDatabaseState();
+        Assert.NotNull(combined);
+        Assert.Equal(
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId,
+            combined.CurrentPublicationId);
+        Assert.False(combined.FreezeState.IsFrozen);
+        Assert.True(
+            combined.FailedCandidateState.IsFrozen);
+        Assert.Equal(
+            candidateId,
+            combined.FailedCandidateState.ScrapeId);
     }
 
     [Fact]

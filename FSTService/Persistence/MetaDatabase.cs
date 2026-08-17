@@ -1354,6 +1354,98 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
+    public PublicReadCacheDatabaseState?
+        GetPublicReadCacheDatabaseState()
+    {
+        var injectedFailure =
+            PublicReadFreezeReadTestHook?.Invoke();
+        if (injectedFailure is not null)
+            throw injectedFailure;
+
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                WITH publication AS (
+                    SELECT
+                        current_publication_id,
+                        published_scrape_id,
+                        public_reads_frozen,
+                        public_reads_frozen_at,
+                        public_reads_frozen_scrape_id,
+                        public_reads_frozen_reason
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                )
+                SELECT
+                    publication.current_publication_id,
+                    publication.public_reads_frozen,
+                    publication.public_reads_frozen_at,
+                    publication.public_reads_frozen_scrape_id,
+                    publication.public_reads_frozen_reason,
+                    failed.failed_at,
+                    failed.id
+                FROM publication
+                LEFT JOIN LATERAL (
+                    SELECT scrape.failed_at, scrape.id
+                    FROM scrape_log scrape
+                    WHERE scrape.id > COALESCE(
+                            publication.published_scrape_id,
+                            0)
+                      AND scrape.status = 'failed'
+                      AND scrape.failure_phase =
+                            ANY(@failurePhases)
+                    ORDER BY scrape.id DESC
+                    LIMIT 1
+                ) failed ON TRUE
+                """;
+            cmd.Parameters.AddWithValue(
+                "failurePhases",
+                NpgsqlDbType.Array | NpgsqlDbType.Text,
+                FailedCandidateReadIsolationFailurePhases);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return null;
+
+            var freezeState = reader.GetBoolean(1)
+                ? new PublicReadFreezeState(
+                    true,
+                    reader.IsDBNull(2)
+                        ? null
+                        : reader.GetDateTime(2),
+                    reader.IsDBNull(3)
+                        ? null
+                        : reader.GetInt64(3),
+                    reader.IsDBNull(4)
+                        ? null
+                        : reader.GetString(4))
+                : PublicReadFreezeState.NotFrozen;
+            var failedState = reader.IsDBNull(6)
+                ? PublicReadFreezeState.NotFrozen
+                : new PublicReadFreezeState(
+                    true,
+                    reader.IsDBNull(5)
+                        ? null
+                        : reader.GetDateTime(5),
+                    reader.GetInt64(6),
+                    FailedCandidateReadIsolationReason);
+            return new PublicReadCacheDatabaseState(
+                reader.IsDBNull(0)
+                    ? null
+                    : reader.GetInt64(0),
+                freezeState,
+                failedState);
+        }
+        catch (PostgresException ex)
+            when (ex.SqlState
+                is PostgresErrorCodes.UndefinedTable
+                or PostgresErrorCodes.UndefinedColumn)
+        {
+            return null;
+        }
+    }
+
     public bool IsBandCurrentProjectionGloballyPublished()
     {
         try

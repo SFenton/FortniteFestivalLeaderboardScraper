@@ -288,6 +288,11 @@ for first-page and overview projection plus explicit shared endpoint/precompute
 JSON encoder configuration; the repeat A/B must also satisfy the relative-p95
 gate.
 
+L1 latency regression coverage also asserts that one authoritative combined
+publication/freeze/failed-candidate snapshot is read per warm request, the
+publication provider and L2 are not queried again, and publication ID remains
+part of the L1 identity.
+
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and
 must retain exact output hashes while cleaning containers and PGDATA.

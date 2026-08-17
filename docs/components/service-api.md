@@ -162,6 +162,13 @@ Metric, instrument, band-type, query-order, and numeric spellings normalize to
 one semantic lazy/canonical key; request spelling cannot expand the bounded
 variant set.
 
+The hot L1 path obtains current publication, durable freeze, and failed-
+candidate isolation in one authoritative PostgreSQL safety snapshot. The
+current-publication ID participates in the L1 key, so publication rotation
+cannot reuse an old entry, while a warm hit avoids redundant publication
+pointer and L2 lookups. Selected-profile activity performs its additional gate
+probe only when selection headers are actually present.
+
 Path PNG/JSON remains immutable-file owned. Missing artifacts, syntactically
 valid stale generation IDs retained by a pre-promotion songs cache, and
 uncovered cold routes remain fail-closed during max-score maintenance.
