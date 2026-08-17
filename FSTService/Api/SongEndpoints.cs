@@ -98,12 +98,15 @@ public static partial class ApiEndpoints
                     var writeResult = songsCache.TrySetIfBuildTokenUnchanged(
                         jsonBytes,
                         token,
-                        out etag);
+                        out etag,
+                        persistPublicationCache: true);
                     if (writeResult == SongsCacheWriteResult.Stored)
                     {
                         break;
                     }
-                    if (writeResult == SongsCacheWriteResult.Blocked)
+                    if (writeResult is
+                        SongsCacheWriteResult.Blocked or
+                        SongsCacheWriteResult.DurableStoreFailed)
                     {
                         httpContext.Response.Headers.CacheControl = "no-store";
                         httpContext.Response.Headers["Retry-After"] = "30";

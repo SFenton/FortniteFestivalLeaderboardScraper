@@ -880,6 +880,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             plan.PlanDigest,
             "rollback.json");
         Assert.True(applied.Succeeded);
+        fixture.Service.RollbackRuntimeStateTestHook =
+            static () =>
+                new MaxScoreMaintenanceRollbackRuntimeState(
+                    0,
+                    0,
+                    0);
 
         var rejected = await fixture.RollbackAsync(
             plan.PlanDigest);

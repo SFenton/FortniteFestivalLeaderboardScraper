@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -11,6 +11,8 @@ sources:
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -72,6 +74,10 @@ diagnostic or replay data without becoming the published generation.
      critical failures retain the existing enforcement policy.
    - PostgreSQL finalization does not schedule retired wrapper checkpoint or
      rankings-cache-warm calls.
+   - Publication precompute stages canonical freeze-critical JSON: songs,
+     page-1 rankings, registered-player defaults, leaderboard bootstrap rows,
+     and existing derived cache families. Request aliases project contained
+     ranking windows from canonical rows instead of duplicating payloads.
    - Dedicated registration workers and the run-once drain own durable
      registration backlog/history work; the retired deferred post-scrape sync
      is not a publication phase.
@@ -217,7 +223,9 @@ derived rows while retaining the same published scrape/publication ID.
    relevant state is aligned, visible delivery remains zero, and the
    publication's completed notification marker is not reopened.
 8. The strict published-source-plus-overlay read context remains active while
-   a complete current-publication API cache is built and validated in staging;
+   a complete current-publication API cache is built and validated in staging,
+   including canonical songs and per-song/per-instrument top-10 leaderboard
+   rows;
    active snapshots, worker projection rows, and legacy fallback are forbidden.
    Base, leeway, and rank-offset keys must exactly match the frozen
    publication scopes. Both staging tables must match, and every key, ETag,
@@ -366,6 +374,14 @@ The browser bootstraps through `/api/publication`. When publication changes it
 clears React Query and song caches, reconnects the application WebSocket, and
 remounts the application against the new publication. Request pinning remains
 effective only when configured and every required surface reports ready.
+
+Covered service reads first resolve an L1 entry bound to publication and the
+current safety revision, then the authoritative current/previous L2 row.
+During a required-cache freeze, misses never compute or write. Unfrozen bounded
+overview variants may single-flight, compute once, and write through only when
+the measured response is successful JSON below the one-second/2 MiB gates.
+Same-publication maintenance changes the L2 surface hash/bytes before unfreeze;
+API monitors clear L1 on that safety transition.
 
 ## Selective execution
 

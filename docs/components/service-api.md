@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -15,6 +15,9 @@ sources:
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/PublicApiResponseCacheMiddleware.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicApiCacheTelemetry.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
@@ -106,16 +109,94 @@ require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
 
-A digest-owned max-score maintenance freeze requires published cache hits or
-`503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
-forms are included even though they are normally live endpoint code. A warm
-`SongsCacheService` response may serve the prior publication; an existing
-immutable current-generation path PNG/JSON may also be served. Missing path
-artifacts, syntactically valid stale generation IDs retained by a warm
-pre-promotion songs cache, and cold exact solo leaderboard reads, including
-leeway requests, return `503`/`Retry-After: 30`. Path endpoints never serve
-the requested old immutable generation. Outer-cache exact leaderboard hits
-remain available.
+The freeze-safe public API cache has two tiers:
+
+- L1 is a process-local accelerator keyed by publication, public-read safety
+  revision, and normalized request identity.
+- L2 is `publication_api_response_cache`, authoritative for covered frozen
+  reads and retained for the current and previous publications.
+
+Cache admission first requires exactly one authoritative `PublicationBound`
+endpoint classification from the canonical route catalog. Unclassified,
+operational, private, or conflicting metadata bypasses both cache tiers even
+when its path would pass request-shape checks. The path/query deny-list remains
+defense-in-depth, not the trust boundary. Startup route-catalog validation and
+middleware tests make future classification drift fail closed.
+
+L2 rows retain deterministic JSON bytes, ETag, and `cached_at`; the service
+derives the full SHA-256 and fixed JSON content type on lookup. A service
+restart recovers directly from L2. Same-publication maintenance swaps the
+complete L2 generation before unfreeze, while catalog/path mutation explicitly
+invalidates L1 and durably rewrites the canonical songs row. Catalog refresh
+compares the exact provider snapshot hash, not only song count, so metadata
+changes and removals invalidate the same-publication row as well as additions.
+HTTP JSON serialization, precompute serialization, and alias projection share
+an explicit relaxed Unicode encoder. This keeps non-ASCII display-name bytes
+and therefore ETags identical between a direct endpoint and its cached alias.
+The `application/json` contract intentionally permits raw Unicode and raw
+HTML-sensitive characters such as `<`, `>`, `&`, `'`, and `+`; JSON controls
+remain escaped and non-BMP characters remain valid surrogate pairs. This is
+safe for HTTP JSON consumers and `Response.json()`/`res.json()` parsing.
+Any future boundary that embeds these bytes inside HTML or an inline
+`<script>` must apply context-appropriate HTML/script escaping rather than
+concatenating cached JSON directly.
+
+Freeze-critical coverage is intentionally bounded: `/api/songs`, page-1
+per-instrument/composite/generic-band rankings, overview bootstrap sizes,
+registered-player default profiles, top-10 song/instrument leaderboards, and
+existing leaderboard-all/song-band bootstrap rows. Request aliases resolve
+canonical precompute keys and project contained page windows without duplicating
+large JSON rows. Selected account/team overlays, arbitrary pages/filters,
+search/history/notification variants, paths, shop, operational, private, and
+WebSocket routes keep their established owners.
+
+During any required-cache freeze, covered routes perform L1/L2 reads only. A
+hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
+builds or writes. Cache hits retain each covered endpoint family's
+`Cache-Control`, content type, ETag, publication header, and exact response
+bytes. Unfrozen overview sizes `25` and `50` are the only lazy
+write-through variants. They use process single-flight, store only successful
+JSON responses whose measured build is below one second, and reject slow,
+oversized, failed, or transition-raced builds without poisoning L2.
+Metric, instrument, band-type, query-order, and numeric spellings normalize to
+one semantic lazy/canonical key; request spelling cannot expand the bounded
+variant set.
+
+The hot L1 path obtains current publication, durable freeze, and failed-
+candidate isolation in one authoritative PostgreSQL safety snapshot. The
+current-publication ID participates in the L1 key, so publication rotation
+cannot reuse an old entry, while a warm hit avoids redundant publication
+pointer and L2 lookups. Selected-profile activity performs its additional gate
+probe only when selection headers are actually present.
+
+Path PNG/JSON remains immutable-file owned. Missing artifacts, syntactically
+valid stale generation IDs retained by a pre-promotion songs cache, and
+uncovered cold routes remain fail-closed during max-score maintenance.
+
+`X-FST-Public-Cache` reports `hit`, `miss`, or `build`;
+`X-FST-Public-Cache-Tier` distinguishes L1 and L2 hits. Admin telemetry exposes
+route patterns, hashed cache-key IDs, publication/revision, outcome, wait/build
+duration, payload bytes, cached timestamp, and error type without raw account
+or team/profile identifiers, raw cache keys/revisions, or exception messages.
+Cache and revision identifiers are independent bounded hashes.
+
+The first bounded service-only production A/B of PR #55 head `5a227954`
+rejected the candidate before merge: page-window aliases semantically matched
+the direct endpoint, but alias projection escaped two non-ASCII display names,
+changing exact body SHA-256/ETag. The baseline service and 9,255-row current
+cache were restored. The explicit shared encoder above is the repository repair
+and required focused review plus another bounded service-only A/B; no scrape
+was needed for that retry.
+
+The repeat bounded service-only A/B accepted head `cf044631`. A shared JSON
+writer factory and strict UTF-8 validation passed exact byte/ETag cases for
+`Jöhn`, `Łukasz`, raw HTML-sensitive characters, all JSON controls, emoji/
+non-BMP pairs, and invalid surrogate UTF-8. One combined authoritative
+publication/freeze/failure snapshot reduced every protected warm p95 to
+`1.90-3.47 ms`; all 11 measured routes improved `55.76-82.97%` across 120
+interleaved samples with no sustained regression. Service-only promotion is
+accepted; worker publication-switch validation remains assigned to the next
+natural scrape.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

@@ -70,6 +70,8 @@ public interface IMetaDatabase : IDisposable
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     PublicReadFreezeState GetFailedCandidateReadIsolationState();
+    PublicReadCacheDatabaseState?
+        GetPublicReadCacheDatabaseState();
     PublicationPointerState GetPublicationPointerState();
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
@@ -429,6 +431,14 @@ public interface IMetaDatabase : IDisposable
     PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);
+    PublicationCachedResponse? GetCachedResponseEntry(
+        long publicationId,
+        string cacheKey);
+    PublicationCachedResponse? TrySetCurrentCachedResponse(
+        long expectedPublicationId,
+        string cacheKey,
+        byte[] json,
+        string etag);
     IDisposable AcquirePublicationCacheBuildLease(
         long publicationId,
         bool requireCurrentPublication);

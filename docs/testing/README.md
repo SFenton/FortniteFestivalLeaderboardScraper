@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: dffca41c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -16,6 +16,10 @@ sources:
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/BandCurrentProjectionOptimizationTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheServiceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheMiddlewareTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
+  - FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
@@ -242,6 +246,62 @@ artifact digests, and truthful byte reporting. A separate isolated PostgreSQL
 17 mechanics run must prove 10 objects before, rejection of concurrent parent
 drop, zero objects after normal parent drop, and `10|9` after generated
 rollback and attachment.
+
+Focused freeze-safe publication API cache validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~PublicationApiResponseCache|FullyQualifiedName~Lazy_publication_cache|FullyQualifiedName~SongsCache|FullyQualifiedName~PublicReadGateTests|FullyQualifiedName~FreezeSafePublicationCache|FullyQualifiedName~FreezeSafeFirstPageAlias|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MaxScoreMaintenanceWorkflowTests'
+
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
+  --logger 'console;verbosity=detailed'
+```
+
+Coverage includes authoritative publication classification, private/
+unclassified/conflicting fail-closed admission, rate-limit/auth middleware
+order, publication/current-previous identity, same-publication revision
+invalidation, exact serializer/body-SHA/byte/ETag/header/query/order/filter
+parity, service-restart L2 recovery, frozen hit/miss and no-write behavior,
+finite route normalization, canonical alias context isolation, single-flight
+waiter sharing, failed/cancelled build recovery, current/previous cleanup,
+atomic staging/swap failure recovery, telemetry redaction, and unchanged route
+classification/rate limiting.
+
+The refreshed 722,994-byte fixture produced L2 cold p50/p95
+`1.452/3.273 ms`, L1 warm p50/p95 `0.199/0.313 ms`, and 10,000-row
+write-through p50/p95 `8.366/11.149 ms`. Twenty read-only production samples
+per lazy overview variant measured p50 `5.890-8.122 ms` and p95
+`6.707-11.114 ms`; every body SHA-256/ETag/size was stable and every variant
+remained below the 500 ms target and 1,000 ms hard gate. Provenance and
+pre/post safety checks live under
+`public-api-cache-review-completion-20260817T133332Z`.
+
+The first live service-only A/B (`public-api-cache-service-ab-20260817T142445Z`)
+correctly rejected head `5a227954`: cached overview page 5 was semantically
+equal to its uncached endpoint, but two non-ASCII display names were emitted as
+`\u` escapes by alias projection, so exact bytes/ETag diverged. Baseline service
+and cache were restored. Five protected routes also exceeded the 10% relative
+p95 gate (`+13.1%` to `+109.5%`) while staying below 9 ms absolute.
+Regression coverage now requires raw UTF-8 equality
+for first-page and overview projection plus explicit shared endpoint/precompute
+JSON encoder configuration; the repeat A/B must also satisfy the relative-p95
+gate.
+
+L1 latency regression coverage also asserts that one authoritative combined
+publication/freeze/failed-candidate snapshot is read per warm request, the
+publication provider and L2 are not queried again, and publication ID remains
+part of the L1 identity.
+
+The accepted repeat evidence is
+`public-api-cache-service-ab-repeat-20260817T163341Z`. It records first touch
+separately, runs five warm-up cycles, then 120 interleaved samples per route
+with rotating route order and six 20-sample p95 batches. Candidate warm p95 was
+`1.90-3.47 ms`; all routes improved `55.76-82.97%`, no route met the
+predeclared sustained-regression rule, and every candidate p95 remained below
+500 ms. Exact live cache/direct parity passed for overview and band; composite
+live semantic parity plus image-bound exact projection tests closed the
+remaining incident route.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

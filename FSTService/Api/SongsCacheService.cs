@@ -17,6 +17,7 @@ internal enum SongsCacheWriteResult
     Stored,
     Stale,
     Blocked,
+    DurableStoreFailed,
 }
 
 /// <summary>
@@ -29,6 +30,8 @@ public sealed class SongsCacheService
     private readonly object _lock = new();
     private readonly Func<PublicReadCacheSafetySnapshot> _safetyProvider;
     private readonly Func<long?>? _publicationIdProvider;
+    private readonly PublicationApiResponseCacheService?
+        _publicationApiCache;
     private readonly TimeSpan _cacheTtl;
     private byte[]? _cachedJson;
     private string? _etag;
@@ -37,19 +40,27 @@ public sealed class SongsCacheService
     private long _safetyRevision;
     private long _contentRevision;
     private int _contentMutationDepth;
+    private Action? _durableRefresh;
+    private volatile bool _durableRefreshPending;
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
 
     public SongsCacheService(
         PublicReadGateService? publicReadGate = null,
-        Func<long?>? publicationIdProvider = null)
+        Func<long?>? publicationIdProvider = null,
+        PublicationApiResponseCacheService?
+            publicationApiCache = null)
         : this(
             publicReadGate is null
                 ? static () => default
                 : publicReadGate.GetCacheSafetySnapshot,
             DefaultCacheTtl,
-            publicationIdProvider)
+            publicationIdProvider,
+            publicationApiCache)
     {
     }
+
+    public bool DurableRefreshPending =>
+        _durableRefreshPending;
 
     public SongsCacheService(Func<bool> isFrozen, TimeSpan cacheTtl)
         : this(
@@ -58,6 +69,7 @@ public sealed class SongsCacheService
                 false,
                 0),
             cacheTtl,
+            null,
             null)
     {
     }
@@ -73,19 +85,23 @@ public sealed class SongsCacheService
                 isFailedCandidateIsolation(),
                 0),
             cacheTtl,
-            publicationIdProvider)
+            publicationIdProvider,
+            null)
     {
     }
 
     internal SongsCacheService(
         Func<PublicReadCacheSafetySnapshot> safetyProvider,
         TimeSpan cacheTtl,
-        Func<long?>? publicationIdProvider = null)
+        Func<long?>? publicationIdProvider = null,
+        PublicationApiResponseCacheService?
+            publicationApiCache = null)
     {
         _safetyProvider =
             safetyProvider
             ?? throw new ArgumentNullException(nameof(safetyProvider));
         _publicationIdProvider = publicationIdProvider;
+        _publicationApiCache = publicationApiCache;
         _cacheTtl = cacheTtl;
     }
 
@@ -139,6 +155,7 @@ public sealed class SongsCacheService
     {
         var etag = ResponseCacheService.ComputeETag(json);
         var safety = _safetyProvider();
+        long? publicationId;
         lock (_lock)
         {
             if (ClearForFailedCandidateIsolation(safety))
@@ -150,7 +167,9 @@ public sealed class SongsCacheService
             _cachedJson = json;
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
-            _publicationId = _publicationIdProvider?.Invoke();
+            publicationId =
+                _publicationIdProvider?.Invoke();
+            _publicationId = publicationId;
             _safetyRevision = safety.Revision;
         }
         return etag;
@@ -169,6 +188,15 @@ public sealed class SongsCacheService
             _publicationId = null;
             _safetyRevision = 0;
         }
+        _publicationApiCache?.InvalidateAll();
+    }
+
+    public void InvalidateForContentChange()
+    {
+        Invalidate();
+        _durableRefreshPending = true;
+        _publicationApiCache?.MarkCurrentKeyStale(
+            PublicationApiCacheKeys.Songs);
     }
 
     internal SongsCacheBuildToken CaptureBuildToken()
@@ -188,11 +216,13 @@ public sealed class SongsCacheService
     internal SongsCacheWriteResult TrySetIfBuildTokenUnchanged(
         byte[] json,
         SongsCacheBuildToken token,
-        out string etag)
+        out string etag,
+        bool persistPublicationCache = false)
     {
         etag = ResponseCacheService.ComputeETag(json);
         var safety = _safetyProvider();
         var publicationId = _publicationIdProvider?.Invoke();
+        long installedContentRevision = 0;
         lock (_lock)
         {
             if (_contentRevision != token.ContentRevision ||
@@ -213,13 +243,55 @@ public sealed class SongsCacheService
             }
 
             _contentRevision++;
+            installedContentRevision = _contentRevision;
             _cachedJson = json;
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
             _publicationId = publicationId;
             _safetyRevision = safety.Revision;
-            return SongsCacheWriteResult.Stored;
         }
+        if (persistPublicationCache
+            && publicationId.HasValue
+            && _publicationApiCache?.TryStoreCurrent(
+                publicationId.Value,
+                PublicationApiCacheKeys.Songs,
+                json,
+                etag) is null)
+        {
+            Invalidate();
+            _durableRefreshPending = true;
+            _publicationApiCache?.MarkCurrentKeyStale(
+                PublicationApiCacheKeys.Songs);
+            return SongsCacheWriteResult.DurableStoreFailed;
+        }
+        if (persistPublicationCache)
+        {
+            var racedContentMutation = false;
+            lock (_lock)
+            {
+                if (_contentRevision
+                        != installedContentRevision
+                    || _contentMutationDepth > 0)
+                {
+                    _durableRefreshPending = true;
+                    racedContentMutation = true;
+                }
+                else
+                {
+                    _durableRefreshPending = false;
+                    _publicationApiCache
+                        ?.ClearCurrentKeyStale(
+                            PublicationApiCacheKeys.Songs);
+                }
+            }
+            if (racedContentMutation)
+            {
+                _publicationApiCache?.MarkCurrentKeyStale(
+                    PublicationApiCacheKeys.Songs);
+                return SongsCacheWriteResult.Stale;
+            }
+        }
+        return SongsCacheWriteResult.Stored;
     }
 
     internal IDisposable BeginContentMutation()
@@ -232,13 +304,25 @@ public sealed class SongsCacheService
             _etag = null;
             _publicationId = null;
             _safetyRevision = 0;
+            _durableRefreshPending = true;
         }
 
+        _publicationApiCache?.InvalidateAll();
+        _publicationApiCache?.MarkCurrentKeyStale(
+            PublicationApiCacheKeys.Songs);
         return new ContentMutationLease(this);
+    }
+
+    public void SetDurableRefresh(Action durableRefresh)
+    {
+        _durableRefresh = durableRefresh
+            ?? throw new ArgumentNullException(
+                nameof(durableRefresh));
     }
 
     private void EndContentMutation()
     {
+        var refresh = false;
         lock (_lock)
         {
             if (_contentMutationDepth <= 0)
@@ -250,7 +334,10 @@ public sealed class SongsCacheService
             _etag = null;
             _publicationId = null;
             _safetyRevision = 0;
+            refresh = _contentMutationDepth == 0;
         }
+        if (refresh)
+            _durableRefresh?.Invoke();
     }
 
     private bool ClearForFailedCandidateIsolation(
@@ -312,7 +399,8 @@ public sealed class SongsCacheService
         IMetaDatabase metaDb,
         GlobalLeaderboardPersistence persistence,
         ScrapeTimePrecomputer precomputer,
-        JsonSerializerOptions jsonOpts)
+        JsonSerializerOptions jsonOpts,
+        bool persistPublicationCache = false)
     {
         while (true)
         {
@@ -327,11 +415,18 @@ public sealed class SongsCacheService
             var result = TrySetIfBuildTokenUnchanged(
                 jsonBytes,
                 token,
-                out _);
+                out _,
+                persistPublicationCache);
             if (result is SongsCacheWriteResult.Stored
                 or SongsCacheWriteResult.Blocked)
             {
                 return;
+            }
+            if (result
+                == SongsCacheWriteResult.DurableStoreFailed)
+            {
+                throw new InvalidOperationException(
+                    "The durable publication songs cache could not be updated.");
             }
         }
     }
@@ -357,7 +452,25 @@ public sealed class SongsCacheService
         var instrumentMax = persistence.GetMaxSeasonAcrossInstruments() ?? 0;
         var currentSeason = Math.Max(metaSeason, instrumentMax);
         var popTiers = precomputer.GetPopulationTiers();
-        var allSongs = service.Songs;
+        return BuildSongsJson(
+            service.Songs,
+            maxScoresMap,
+            currentSeason,
+            popTiers,
+            jsonOpts);
+    }
+
+    internal static byte[] BuildSongsJson(
+        IReadOnlyCollection<Song> sourceSongs,
+        IReadOnlyDictionary<string, SongMaxScores>
+            maxScoresMap,
+        int currentSeason,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            PopulationTierData>? popTiers,
+        JsonSerializerOptions jsonOpts)
+    {
+        var allSongs = sourceSongs;
         var droppedSongs = allSongs.Where(s => s.track?.su is null).ToList();
         if (droppedSongs.Count > 0)
         {

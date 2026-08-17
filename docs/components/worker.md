@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -26,6 +26,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
@@ -461,18 +462,45 @@ Role defaults intentionally differ:
   is generation-addressable.
 
 A digest-owned max-score maintenance freeze is stricter than a normal scrape
-freeze: affected publication-bound cache misses, including `/api/songs` and
-both path routes, return `503`. After derived validation a complete cache swap,
-workflow completion, and unfreeze commit together. Maintenance precompute uses
-only frozen-catalog publication scopes and their captured populations for song
-keys and completion denominators. The `caches_staged` checkpoint and every
+freeze: covered publication-bound cache misses, including `/api/songs`, return
+`503`; immutable path files keep their established endpoint ownership.
+After derived validation a complete cache swap, workflow completion, and
+unfreeze commit together. Maintenance precompute uses only frozen-catalog
+publication scopes and their captured populations for song keys and completion
+denominators.
+
+Precompute now stages the canonical `/api/songs` bytes from the same serializer
+as the endpoint and one top-10 per-song/per-instrument leaderboard payload from
+data already loaded for leaderboard-all. Existing overview, composite, generic
+band, registered-player, leaderboard-all, and song-band rows are reused by
+request aliases rather than duplicated. The extra eager surface is bounded by
+the publication catalog/scope set and adds no ranking/query pass.
+
+The `caches_staged` checkpoint and every
 later pre-complete state make both staging tables immutable to ordinary cache
 builders/writers; exact maintenance-owner access remains available for resume
 and final publication. Resume and the final
 source-locked transaction compare every staged key/ETag/JSON hash with durable
-entry evidence before swap. API processes invalidate
+entry evidence before swap. The compatibility and generation tables swap in
+one transaction: an injected generation insert failure preserves both old
+current tables and both complete staging copies for retry, while success
+empties staging. Disk staging disposal removes incomplete files/directories
+after producer failure. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client
 refresh.
+
+The bounded publication-1302 service-only trial exercised this same
+precompute/swap path without a scrape or worker. It staged 15,574 records,
+completed the core precompute in 167.94 seconds, used zero PostgreSQL temp
+bytes, and retained the previous generation. The trial was rolled back for an
+API byte-parity issue outside the transaction boundary; atomic staging/swap
+itself passed.
+
+The repaired repeat service-only precompute completed in 210.03 seconds with
+40/40 service and web API monitor ticks returning 200, zero waiting
+locks/long queries, zero PostgreSQL temp bytes, and a 296.66 MB peak
+free-space excursion. This accepts the current-publication service cache path;
+it does not validate a worker-driven publication switch.
 
 ## Service-level retention planning
 

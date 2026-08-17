@@ -809,10 +809,10 @@ public class PublicReadGateTests
         });
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
-        context.Request.Path = "/api/player/account";
+        context.Request.Path = "/api/player/account/stats";
         SetPublicationEndpoint(
             context,
-            "/api/player/{accountId}",
+            "/api/player/{accountId}/stats",
             handlesFailedCandidateRead: true);
         context.RequestServices = new ServiceCollection()
             .AddLogging()
@@ -942,7 +942,7 @@ public class PublicReadGateTests
     [InlineData("/api/player/account/notifications", false)]
     [InlineData("/api/leaderboard-population", true)]
     [InlineData("/api/songs/member-score-filter", true)]
-    [InlineData("/api/songs", false)]
+    [InlineData("/api/songs", true)]
     [InlineData("/api/shop", false)]
     [InlineData("/api/paths/song/Solo_Guitar/Expert", false)]
     [InlineData("/api/status", false)]
@@ -2037,10 +2037,10 @@ public class PublicReadGateTests
         }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
-        context.Request.Path = "/api/player/account";
+        context.Request.Path = "/api/player/account/stats";
         SetPublicationEndpoint(
             context,
-            "/api/player/{accountId}",
+            "/api/player/{accountId}/stats",
             handlesFailedCandidateRead: true);
         context.RequestServices = new ServiceCollection()
             .AddLogging()
