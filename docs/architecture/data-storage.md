@@ -14,6 +14,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceAccountIdPolicy.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -27,6 +28,7 @@ sources:
   - FSTService/Scraping/RegisteredPlayerBandDiscovery.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/Replay/
   - FSTService/FeatureOptions.cs
@@ -261,6 +263,26 @@ instrument tiers while leaving unrelated accounts untouched. Maintenance cache
 serialization admits `Overall` plus only instruments present in the frozen
 publication scope; unrelated accounts may retain other durable tier rows, but
 those rows cannot leak into the maintenance cache generation.
+
+Blank or whitespace-only affected account IDs are invalid selector output.
+They are removed consistently from score-history affected sets, tier chunks,
+registered cache account sets, cache evidence, and final player-tier
+validation. When a changed published source contains such a row, maintenance
+first proves that no matching blank identity exists in `score_history`,
+`registered_users`, or account-specific API cache keys. This guard keeps the
+plan-digest v6 contract unchanged for a source-only blank row with no consumed
+history, allowing a previously frozen run to resume with its existing digest;
+an identity or evidence conflict remains fail-closed.
+
+Leaderboard-rivals maintenance is scoped by the manifest's changed
+instruments. Each affected instrument loads account rankings once, derives all
+registered-user neighborhoods in memory, deduplicates users and neighbors, and
+performs one authoritative published-snapshot-plus-overlay profile query.
+Existing C# calculations still own all five rank methods, above/below
+directions, shared-song counts, signed deltas, and the top-200 samples. Each
+user/instrument replacement remains transactional. Rival rows, samples, and
+state for instruments outside the manifest receive no delete, update, or
+insert.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and

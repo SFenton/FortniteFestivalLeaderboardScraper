@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified_commit: bf770d49
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -12,6 +12,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceAccountIdPolicy.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommandTimeout.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -26,6 +27,7 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
@@ -33,6 +35,9 @@ sources:
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
 update_triggers:
   - Max-score stage, plan, apply, resume, rollback, freeze, notification, cache, validation, or rollback-evidence behavior changes.
 ---
@@ -123,8 +128,23 @@ freeze publication-bound song, path, ranking, player, and band reads use an
 already-built published cache or return `503`; the candidate state is never
 served live. Exact solo leaderboard requests, including every leeway/max-score
 query, follow the same cache-or-`503` rule. A warm `SongsCacheService` response
-may be served, but path artifacts without a separately safe published response
-remain blocked.
+may be served. An already-present immutable path PNG or JSON artifact for the
+current generation may also be served; a missing path artifact returns
+`503`/`Retry-After: 30` rather than a maintenance-time `404`. These
+max-score-dependent routes defer publication read-context and boundary-lease
+acquisition to the cache/route gate, so the exclusive maintenance lock cannot
+turn a cache hit or intentional `503` into a statement-timeout `500`.
+Ordinary publication commit/freeze read leases retain their existing order and
+behavior.
+
+After `paths_promoted`, a process-local `/api/songs` cache warmed before
+promotion can still advertise the previous generation ID. Treat that as an
+expected temporary skew: both path PNG and JSON requests with the old valid ID
+must return `503`/`Retry-After: 30`, never `400`, `500`, or the old immutable
+artifact. Requests with no generation ID or the current ID may serve only an
+already-present current artifact. Keep the freeze intact; final release
+invalidates songs/path caches, exposes the current ID, and restores the
+ordinary stale-ID `400` and missing-artifact `404` behavior.
 
 The same freeze rejects `POST /api/player/{accountId}/track`,
 `POST /api/backfill/{accountId}`, and the registration-changing band
@@ -665,8 +685,23 @@ Apply:
   rebuilds dependent band rankings without rank-history snapshots;
 - atomically replaces the complete tier-row set for each affected player-stat
   account, removing stale active-only instruments while preserving unrelated
-  accounts, then rebuilds every registered player's
-  leaderboard rivals. Per-instrument completion denominators come from the
+  accounts. Empty or whitespace-only affected account IDs are invalid source
+  rows and are excluded from score-history selectors, tier work, cache account
+  sets, and final validation. Before allowing that exclusion, plan/apply/resume
+  verifies that no blank account identity exists in score history,
+  registration, or account-specific API cache keys. The plan-digest v6 inputs
+  are unchanged: the affected-account list is not a digest field, and a blank
+  source row with no consumed history therefore remains compatible with an
+  already-frozen v6 run. Any blank identity or consumed-history difference
+  fails closed instead of adopting the old run.
+- rebuilds registered-player leaderboard rivals only for the manifest's
+  changed instruments. For each such instrument it loads the ranking
+  neighborhoods for all registered users, deduplicates users plus neighbors,
+  performs one authoritative published-snapshot-plus-overlay profile batch
+  read, applies the existing five rank methods, directions, and top-200 sample
+  rules in C#, and commits each user/instrument replacement atomically.
+  Unlisted instrument rival rows, samples, and completion state are not
+  deleted or rewritten. Per-instrument completion denominators come from the
   frozen publication scopes, the overall denominator is the exact published
   song/instrument scope count, and the cached top-level song total is the
   distinct publication-owned song count. Player-stat cache payloads include
@@ -758,6 +793,14 @@ mutations. A validation or timeout-transition failure aborts the transaction,
 so missing, changed, deleted, or extra rows remain frozen and resumable;
 restore the exact checkpointed staging generation before retrying.
 
+A run durably stopped at `paths_promoted` has no derived-state checkpoint.
+Resume may therefore rerun affected rankings and complete player tiers before
+the batched changed-instrument rivals pass. Existing complete tier rows are
+safe: affected account chunks are replaced transactionally and the result is
+validated idempotently. Keep using the existing manifest and plan digest when
+the blank-account identity validation passes; do not generate or substitute a
+new digest for that frozen run.
+
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase
 checkpoint. Final cache publication and unfreeze are likewise refused. The
@@ -779,13 +822,16 @@ After success, verify:
   is unchanged; every affected-instrument published scope has a row, including
   zero-entry scopes, active-only old rows are absent, and unaffected
   instruments remain unchanged;
-- affected rankings, player stats, rivals, band rankings, and precomputed
+- affected rankings, player stats, changed-instrument rivals, band rankings,
+  and precomputed
   responses are current; target leaderboard/player cache fingerprints match
   the exact published source plus overlays, including every registered
   overlay-only affected account, affected player tiers contain no active-only
   instrument, unrelated account tier rows remain durable, cached tier payloads
   contain only `Overall` plus frozen-scope instruments, and publication-only
-  song scopes have their expected keys while active-only scopes have none;
+  song scopes have their expected keys while active-only scopes have none.
+  Rival rows, samples, and state for every instrument absent from the manifest
+  remain byte-for-byte unchanged;
 - the maintenance notification audit has `visible_delivery_count=0`;
 - no player/band visible event or publication notification marker/cursor was
   rewritten; and

@@ -147,7 +147,8 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         INSERT INTO fst_max_score_evidence_registered_accounts (
             account_id)
         SELECT account_id
-        FROM registered_users;
+        FROM registered_users
+        WHERE btrim(account_id) <> '';
 
         CREATE INDEX
             fst_max_score_evidence_registered_accounts_account_idx
@@ -157,6 +158,81 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         ANALYZE fst_max_score_evidence_maxima;
         ANALYZE fst_max_score_evidence_sources;
         ANALYZE fst_max_score_evidence_registered_accounts;
+        """;
+
+    private const string ValidateBlankAffectedAccountIdentitySql = """
+        WITH blank_source_rows AS (
+            SELECT snapshot.account_id
+            FROM fst_max_score_evidence_sources source
+            JOIN fst_max_score_evidence_maxima maxima
+              ON maxima.song_id = source.song_id
+             AND maxima.instrument = source.instrument
+             AND maxima.is_changed
+            JOIN leaderboard_entries_snapshot snapshot
+              ON source.source_kind = 'snapshot'
+             AND source.source_snapshot_id = snapshot.snapshot_id
+             AND source.song_id = snapshot.song_id
+             AND source.instrument = snapshot.instrument
+            WHERE btrim(snapshot.account_id) = ''
+            UNION ALL
+            SELECT overlay.account_id
+            FROM fst_max_score_evidence_sources source
+            JOIN fst_max_score_evidence_maxima maxima
+              ON maxima.song_id = source.song_id
+             AND maxima.instrument = source.instrument
+             AND maxima.is_changed
+            JOIN leaderboard_entries_overlay overlay
+              ON source.song_id = overlay.song_id
+             AND source.instrument = overlay.instrument
+            WHERE btrim(overlay.account_id) = ''
+        ), blank_source_ids AS MATERIALIZED (
+            SELECT DISTINCT account_id
+            FROM blank_source_rows
+        ), cache_rows AS (
+            SELECT cache_key
+            FROM api_response_cache
+            UNION ALL
+            SELECT cache_key
+            FROM api_response_cache_staging
+            UNION ALL
+            SELECT cache_key
+            FROM publication_api_response_cache
+            UNION ALL
+            SELECT cache_key
+            FROM publication_api_response_cache_staging
+        )
+        SELECT
+            (SELECT COUNT(*)::BIGINT
+             FROM blank_source_rows),
+            (SELECT COUNT(*)::BIGINT
+             FROM score_history history
+             JOIN blank_source_ids blank
+               ON blank.account_id = history.account_id),
+            (SELECT COUNT(*)::BIGINT
+             FROM registered_users registered
+             JOIN blank_source_ids blank
+               ON blank.account_id =
+                    registered.account_id),
+            (SELECT COUNT(*)::BIGINT
+             FROM cache_rows cache
+             JOIN blank_source_ids blank
+               ON cache.cache_key IN (
+                      'player:' || blank.account_id || ':::',
+                      'playerstats:' || blank.account_id,
+                      'history:v2:' || blank.account_id,
+                      'syncstatus:' || blank.account_id,
+                      'rivals-overview:' || blank.account_id,
+                      'rivals-all:' || blank.account_id)
+               OR cache.cache_key LIKE
+                      'rivals-list:' || blank.account_id || ':%'
+               OR cache.cache_key LIKE
+                      'lb-rivals:' || blank.account_id || ':%'
+               OR cache.cache_key LIKE
+                      'neighborhood:%:' || blank.account_id || ':5'
+               OR cache.cache_key LIKE
+                      'public-route:/api/player/'
+                      || blank.account_id
+                      || '/%')
         """;
 
     private const string ValidateSelectorsSql = """
@@ -246,6 +322,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         WHERE snapshot.snapshot_id = @sourceSnapshotId
           AND snapshot.song_id = @songId
           AND snapshot.instrument = @instrument
+          AND btrim(snapshot.account_id) <> ''
         ON CONFLICT (account_id) DO NOTHING;
         """;
 
@@ -268,6 +345,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
         FROM leaderboard_entries_overlay overlay
         WHERE overlay.song_id = @songId
           AND overlay.instrument = @instrument
+          AND btrim(overlay.account_id) <> ''
         ON CONFLICT (account_id) DO UPDATE
         SET is_overlay_only =
                 affected.is_overlay_only
@@ -406,6 +484,7 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                is_registered,
                is_overlay_only
         FROM fst_max_score_evidence_affected_accounts
+        WHERE btrim(account_id) <> ''
         ORDER BY account_id;
         """;
 
@@ -803,6 +882,46 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
             connection,
             transaction,
             deadline);
+        await ValidateBlankAffectedAccountIdentityAsync(
+            connection,
+            transaction,
+            deadline);
+    }
+
+    private static async Task
+        ValidateBlankAffectedAccountIdentityAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            SharedCommandDeadline deadline)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        deadline.Configure(command);
+        command.CommandText =
+            ValidateBlankAffectedAccountIdentitySql;
+        await using var reader =
+            await command.ExecuteReaderAsync(deadline.Token);
+        if (!await reader.ReadAsync(deadline.Token))
+        {
+            throw new InvalidOperationException(
+                "Blank affected-account validation was unavailable.");
+        }
+
+        var blankSourceRows = reader.GetInt64(0);
+        if (blankSourceRows == 0)
+            return;
+
+        var historyRows = reader.GetInt64(1);
+        var registrationRows = reader.GetInt64(2);
+        var cacheRows = reader.GetInt64(3);
+        if (historyRows != 0
+            || registrationRows != 0
+            || cacheRows != 0)
+        {
+            throw new InvalidOperationException(
+                "Blank affected-account source rows cannot be ignored because a blank account identity exists in score history, registration, or API cache state: "
+                + $"sourceRows={blankSourceRows}, historyRows={historyRows}, registrationRows={registrationRows}, cacheRows={cacheRows}.");
+        }
     }
 
     private static async Task ValidateSelectorsAsync(
@@ -1198,9 +1317,12 @@ internal static class MaxScoreMaintenanceScoreHistoryEvidenceCalculator
                 overlayOnly.Add(accountId);
         }
         return new AffectedAccounts(
-            affected,
-            registered,
-            overlayOnly);
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(affected),
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(registered),
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(overlayOnly));
     }
 
     private static async Task<BranchEvidence> AggregateAsync(

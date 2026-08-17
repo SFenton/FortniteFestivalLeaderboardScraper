@@ -551,6 +551,34 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             dataSource,
             manifest,
             overlayScore: 50_000);
+        await using (var blankSource =
+                     dataSource.CreateCommand(
+                         """
+                         INSERT INTO leaderboard_entries_snapshot (
+                             snapshot_id,
+                             song_id,
+                             instrument,
+                             account_id,
+                             score,
+                             first_seen_at,
+                             last_updated_at)
+                         VALUES (
+                             @scrapeId,
+                             'song-a',
+                             'Solo_Guitar',
+                             '',
+                             1,
+                             now(),
+                             now())
+                         """))
+        {
+            blankSource.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            Assert.Equal(
+                1,
+                await blankSource.ExecuteNonQueryAsync());
+        }
 
         await using var connection =
             await dataSource.OpenConnectionAsync();
@@ -569,6 +597,8 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
         Assert.Equal(
             ["account-base", "account-overlay"],
             affected);
+        var affectedWithInvalidBlanks =
+            affected.Concat(["", "   "]).ToArray();
 
         await using (var seedStats =
                      connection.CreateCommand())
@@ -592,7 +622,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             1,
             await MaxScoreMaintenanceDerivedStateService
                 .CountInvalidPlayerStatsAccountsAsync(
-                    affected,
+                    affectedWithInvalidBlanks,
                     ["Solo_Guitar"],
                     rebuildStartedAt,
                     connection,
@@ -629,7 +659,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             1,
             await MaxScoreMaintenanceDerivedStateService
                 .CountInvalidPlayerStatsAccountsAsync(
-                    affected,
+                    affectedWithInvalidBlanks,
                     ["Solo_Guitar"],
                     rebuildStartedAt,
                     connection,
@@ -651,7 +681,7 @@ public sealed partial class MaxScoreMaintenancePersistenceTests
             0,
             await MaxScoreMaintenanceDerivedStateService
                 .CountInvalidPlayerStatsAccountsAsync(
-                    affected,
+                    affectedWithInvalidBlanks,
                     ["Solo_Guitar"],
                     rebuildStartedAt,
                     connection,

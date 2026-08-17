@@ -14,6 +14,14 @@ public sealed record ResolvedPathArtifact(
     string? GenerationId,
     bool IsLegacy);
 
+internal enum PathArtifactResolutionFailure
+{
+    None,
+    InvalidPath,
+    RequestedGenerationUnavailable,
+    UnavailableInCurrentGeneration,
+}
+
 internal sealed record ValidatedPathGeneration(
     string GenerationDirectory,
     PathArtifactManifest Manifest,
@@ -45,7 +53,36 @@ public sealed class PathArtifactResolver
         string difficulty,
         string extension,
         string? requestedGenerationId = null)
+        => Resolve(
+            songId,
+            instrument,
+            difficulty,
+            extension,
+            requestedGenerationId,
+            out _);
+
+    internal ResolvedPathArtifact? Resolve(
+        string songId,
+        string instrument,
+        string difficulty,
+        string extension,
+        string? requestedGenerationId,
+        out PathArtifactResolutionFailure failure)
     {
+        failure = PathArtifactResolutionFailure.InvalidPath;
+        if (!IsSafePathSegment(songId) ||
+            (requestedGenerationId is not null &&
+             !IsSafePathSegment(requestedGenerationId)) ||
+            !PathGenerationInstruments.Definitions.Any(
+                definition => definition.Instrument == instrument) ||
+            !PathGenerationInstruments.Difficulties.Contains(
+                difficulty,
+                StringComparer.OrdinalIgnoreCase) ||
+            extension is not ("png" or "json"))
+        {
+            return null;
+        }
+
         var state = _store.GetPathGenerationState(songId);
         var currentGenerationId = state?.ArtifactGenerationId;
         if (requestedGenerationId is not null &&
@@ -54,6 +91,9 @@ public sealed class PathArtifactResolver
                 currentGenerationId,
                 StringComparison.Ordinal))
         {
+            failure =
+                PathArtifactResolutionFailure
+                    .RequestedGenerationUnavailable;
             return null;
         }
 
@@ -70,40 +110,22 @@ public sealed class PathArtifactResolver
              PathGenerationProfiles.HasInvalidPlasticDrumsScores(
                  state!.GenerationProfile)))
         {
+            failure =
+                PathArtifactResolutionFailure
+                    .UnavailableInCurrentGeneration;
             return null;
         }
 
-        return Resolve(
+        var artifact = Resolve(
             _options.Value.DataDirectory,
             songId,
             instrument,
             difficulty,
             extension,
             generationId);
-    }
-
-    public bool IsUnavailableInCurrentGeneration(
-        string songId,
-        string instrument,
-        string? requestedGenerationId)
-    {
-        if (!PathGenerationInstruments.IsPlasticDrumsInstrument(instrument))
-        {
-            return false;
-        }
-
-        var state = _store.GetPathGenerationState(songId);
-        return state?.ArtifactGenerationId is { } currentGenerationId &&
-               (requestedGenerationId is null ||
-                string.Equals(
-                    requestedGenerationId,
-                    currentGenerationId,
-                    StringComparison.Ordinal)) &&
-               (PathGenerationProfiles.HasInvalidPlasticDrumsScores(
-                    state.GenerationProfile) ||
-                !state.ExpectedInstruments.Contains(
-                    instrument,
-                    StringComparer.Ordinal));
+        if (artifact is not null)
+            failure = PathArtifactResolutionFailure.None;
+        return artifact;
     }
 
     internal static ResolvedPathArtifact? Resolve(

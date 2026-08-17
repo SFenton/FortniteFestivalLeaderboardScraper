@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: bf770d49
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -112,6 +112,17 @@ The publication-bound routes are:
 - `GET /api/paths/{songId}/{instrument}/{difficulty}/data` for JSON.
 
 An optional `generationId` query must equal the song's current generation.
+Ordinarily, a different valid generation returns `400` and an absent current
+artifact returns `404`. During a digest-owned max-score maintenance freeze,
+the stable `/api/songs` process cache can still advertise the pre-promotion
+generation after the current pointer advances. PNG and JSON requests carrying
+that stale ID return `503` with `Retry-After: 30`; they never read the old
+immutable directory. Requests with no generation ID or the current ID may
+serve the current immutable artifact if present, while a missing current
+artifact also returns `503`. Freeze release invalidates the songs/path caches,
+after which the refreshed songs response advertises the current generation and
+the ordinary `400`/`404` contract resumes.
+
 The browser's Text view renders exactly one row per activation. It shows the
 structured fret cue, beat, time, Overdrive, and score fields without exposing
 raw CHOpt instruction notation.

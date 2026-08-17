@@ -168,10 +168,17 @@ public sealed class PublicReadGateMiddleware
 
     private static bool EndpointHandlesMaxScoreMaintenanceRead(
         HttpRequest request)
-        => string.Equals(
-            request.Path.Value,
-            "/api/songs",
-            StringComparison.OrdinalIgnoreCase);
+    {
+        var path = request.Path.Value;
+        return string.Equals(
+                   path,
+                   "/api/songs",
+                   StringComparison.OrdinalIgnoreCase)
+               || !string.IsNullOrEmpty(path)
+               && path.StartsWith(
+                   "/api/paths/",
+                   StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsPublishedSoloLeaderboardPath(string path)
     {

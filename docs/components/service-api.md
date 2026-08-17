@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-08-16
+last_verified_commit: bf770d49
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -13,6 +13,10 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
+  - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -51,6 +55,15 @@ After CORS, WebSockets, and forwarded headers, the service applies:
 7. selected-profile activity tracking.
 
 This order is part of the read-safety contract.
+
+The digest-owned max-score freeze has one narrow short circuit within that
+order. After the outer public-response cache gets the first chance to serve,
+max-score-dependent song/path/exact-solo requests defer publication
+read-context and boundary-lease acquisition to the public-read/endpoint gate.
+This permits a stable cache or immutable path hit and makes every cold result
+an explicit `503` with `Retry-After`, even while maintenance holds the
+publication advisory lock. Other freeze reasons and ordinary publication
+commit/read-lease behavior keep the listed order unchanged.
 
 ## Endpoint organization
 
@@ -96,9 +109,13 @@ instead of silently reading candidate state.
 A digest-owned max-score maintenance freeze requires published cache hits or
 `503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
 forms are included even though they are normally live endpoint code. A warm
-`SongsCacheService` response may serve the prior publication; cold path reads
-and cold exact solo leaderboard reads, including leeway requests, return
-`503`. Outer-cache exact leaderboard hits remain available.
+`SongsCacheService` response may serve the prior publication; an existing
+immutable current-generation path PNG/JSON may also be served. Missing path
+artifacts, syntactically valid stale generation IDs retained by a warm
+pre-promotion songs cache, and cold exact solo leaderboard reads, including
+leeway requests, return `503`/`Retry-After: 30`. Path endpoints never serve
+the requested old immutable generation. Outer-cache exact leaderboard hits
+remain available.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

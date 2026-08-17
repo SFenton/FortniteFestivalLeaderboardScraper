@@ -80,11 +80,9 @@ public static class PlayerStatsTierRebuilder
             return new PlayerStatsTierRebuildResult(0, 0, 0);
         }
 
-        var normalizedAccountIds = accountIds
-            .Where(accountId => !string.IsNullOrWhiteSpace(accountId))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(accountId => accountId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var normalizedAccountIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(accountIds);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = maintenanceLease is null
             ? pathDataStore.GetAllMaxScores()

@@ -200,35 +200,43 @@ public static partial class ApiEndpoints
 
         // ── Path images ─────────────────────────────────────────
         app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}", (
+            HttpContext httpContext,
             string songId,
             string instrument,
             string difficulty,
             string? generationId,
-            PathArtifactResolver resolver) =>
+            PathArtifactResolver resolver,
+            PublicReadGateService publicReadGate) =>
             GetPathArtifactResult(
                 songId,
                 instrument,
                 difficulty,
                 "png",
                 generationId,
-                resolver))
+                resolver,
+                httpContext,
+                publicReadGate))
         .WithTags("Paths")
         .RequireRateLimiting("public");
 
         // ── Path JSON data (structured activation/score/OD data per difficulty) ─
         app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}/data", (
+            HttpContext httpContext,
             string songId,
             string instrument,
             string difficulty,
             string? generationId,
-            PathArtifactResolver resolver) =>
+            PathArtifactResolver resolver,
+            PublicReadGateService publicReadGate) =>
             GetPathArtifactResult(
                 songId,
                 instrument,
                 difficulty,
                 "json",
                 generationId,
-                resolver))
+                resolver,
+                httpContext,
+                publicReadGate))
         .WithTags("Paths")
         .RequireRateLimiting("public");
     }
@@ -239,7 +247,9 @@ public static partial class ApiEndpoints
         string difficulty,
         string extension,
         string? generationId,
-        PathArtifactResolver resolver)
+        PathArtifactResolver resolver,
+        HttpContext? httpContext = null,
+        PublicReadGateService? publicReadGate = null)
     {
         if (!PathGenerationInstruments.Definitions.Any(
                 definition => definition.Instrument == instrument))
@@ -262,26 +272,47 @@ public static partial class ApiEndpoints
             instrument,
             difficulty,
             extension,
-            generationId);
+            generationId,
+            out var resolutionFailure);
         if (artifact is null)
         {
-            if (resolver.IsUnavailableInCurrentGeneration(
-                    songId,
-                    instrument,
-                    generationId))
+            if (resolutionFailure is
+                PathArtifactResolutionFailure
+                    .RequestedGenerationUnavailable or
+                PathArtifactResolutionFailure
+                    .UnavailableInCurrentGeneration)
             {
-                return Results.NotFound(new
+                var unavailable =
+                    ServePathUnavailableDuringMaxScoreMaintenance(
+                        httpContext,
+                        publicReadGate);
+                if (unavailable is not null)
+                    return unavailable;
+
+                if (resolutionFailure ==
+                    PathArtifactResolutionFailure
+                        .UnavailableInCurrentGeneration)
                 {
-                    error = extension == "png"
-                        ? "Path image not yet generated for this song/instrument/difficulty."
-                        : "Path data not yet generated for this song/instrument/difficulty.",
-                });
+                    return Results.NotFound(new
+                    {
+                        error = extension == "png"
+                            ? "Path image not yet generated for this song/instrument/difficulty."
+                            : "Path data not yet generated for this song/instrument/difficulty.",
+                    });
+                }
             }
 
             return Results.BadRequest(new { error = "Invalid path." });
         }
         if (!File.Exists(artifact.FilePath))
         {
+            var unavailable =
+                ServePathUnavailableDuringMaxScoreMaintenance(
+                    httpContext,
+                    publicReadGate);
+            if (unavailable is not null)
+                return unavailable;
+
             return Results.NotFound(new
             {
                 error = extension == "png"
@@ -293,5 +324,35 @@ public static partial class ApiEndpoints
         return Results.File(
             artifact.FilePath,
             extension == "png" ? "image/png" : "application/json");
+    }
+
+    private static IResult?
+        ServePathUnavailableDuringMaxScoreMaintenance(
+            HttpContext? httpContext,
+            PublicReadGateService? publicReadGate)
+    {
+        if (httpContext is null
+            || publicReadGate is null)
+        {
+            return null;
+        }
+
+        var state = publicReadGate.GetState();
+        if (!state.MaxScoreMaintenance
+            || !state.RequiresCachedReads)
+        {
+            return null;
+        }
+
+        httpContext.Response.Headers.CacheControl =
+            "no-store";
+        httpContext.Response.Headers["Retry-After"] =
+            "30";
+        return Results.Problem(
+            title: "Published path unavailable",
+            detail:
+                "The requested published path artifact is not available while max-score maintenance owns the current publication. Retry after maintenance completes.",
+            statusCode:
+                StatusCodes.Status503ServiceUnavailable);
     }
 }

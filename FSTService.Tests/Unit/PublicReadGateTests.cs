@@ -436,6 +436,88 @@ public class PublicReadGateTests
                     context.Request));
     }
 
+    [Theory]
+    [InlineData("/api/songs")]
+    [InlineData("/api/paths/song/Solo_Guitar/expert")]
+    [InlineData("/api/leaderboard/song/Solo_Guitar")]
+    public async Task PublicationReadContextMiddleware_MaxScoreMaintenanceDefersBeforeLease(
+        string path)
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('a', 64)));
+        metaDb.GetFailedCandidateReadIsolationState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                dataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = true,
+                }));
+        using var lockConnection =
+            dataSource.OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction =
+                lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+        var nextCalled = false;
+        var middleware =
+            new PublicationReadContextMiddleware(
+                context =>
+                {
+                    nextCalled = true;
+                    context.Response.StatusCode =
+                        StatusCodes.Status204NoContent;
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = path;
+        SetPublicationEndpoint(
+            context,
+            path);
+        context.RequestServices =
+            new ServiceCollection()
+                .AddLogging()
+                .BuildServiceProvider();
+
+        await middleware.InvokeAsync(
+                context,
+                publicationService,
+                gate)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
+        lockTransaction.Rollback();
+    }
+
     [Fact]
     public async Task PublicReadGateMiddleware_AllowsClassifiedRoutesDuringScrapeFreeze()
     {
@@ -545,16 +627,20 @@ public class PublicReadGateTests
     [Theory]
     [InlineData(
         "/api/paths/song/Solo_Guitar/expert",
-        "/api/paths/{songId}/{instrument}/{difficulty}")]
+        "/api/paths/{songId}/{instrument}/{difficulty}",
+        true)]
     [InlineData(
         "/api/leaderboard/song/Solo_Guitar",
-        "/api/leaderboard/{songId}/{instrument}")]
+        "/api/leaderboard/{songId}/{instrument}",
+        false)]
     [InlineData(
         "/api/rankings/Solo_Guitar",
-        "/api/rankings/{instrument}")]
-    public async Task PublicReadGateMiddleware_FailsClosedForMaxScoreMaintenanceRoutes(
+        "/api/rankings/{instrument}",
+        false)]
+    public async Task PublicReadGateMiddleware_RoutesMaxScoreMaintenanceReadsToCacheOrEndpointGate(
         string path,
-        string pattern)
+        string pattern,
+        bool endpointHandlesRead)
     {
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
@@ -572,11 +658,14 @@ public class PublicReadGateTests
             metaDb,
             NullLogger<PublicReadGateService>.Instance);
         var nextCalled = false;
-        var middleware = new PublicReadGateMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        });
+        var middleware = new PublicReadGateMiddleware(
+            nextContext =>
+            {
+                nextCalled = true;
+                nextContext.Response.StatusCode =
+                    StatusCodes.Status204NoContent;
+                return Task.CompletedTask;
+            });
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = path;
@@ -588,9 +677,11 @@ public class PublicReadGateTests
 
         await middleware.InvokeAsync(context, gate);
 
-        Assert.False(nextCalled);
+        Assert.Equal(endpointHandlesRead, nextCalled);
         Assert.Equal(
-            StatusCodes.Status503ServiceUnavailable,
+            endpointHandlesRead
+                ? StatusCodes.Status204NoContent
+                : StatusCodes.Status503ServiceUnavailable,
             context.Response.StatusCode);
         Assert.Equal(
             reason,
