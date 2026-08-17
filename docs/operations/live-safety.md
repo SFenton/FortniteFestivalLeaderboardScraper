@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: bd11b749
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -140,10 +140,19 @@ proves the new path has the same data as the old path. Record:
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
 
-### Stale solo rank-index retirement
+### Completed stale solo rank-index retirement
 
-The low-scratch `ix_le_song_rank` package is destructive DDL even though it
-removes no rows. A reviewed execute window requires:
+The guarded `ix_le_song_rank` package removed the exact parent plus nine leaves
+on 2026-08-17. Catalog removal was `5,147,222,016` bytes and immediate
+filesystem return was `5,147,246,592` bytes. Publication `1302` remained
+unfrozen, all monitored public requests succeeded, and unrelated
+indexes/constraints and the representative score-index plan remained exact.
+
+The rollback DDL is retained in the checksummed execution evidence and was not
+run. Check mode is now idempotent `already_absent`; a partial reappearance must
+fail closed.
+
+Any future restore/retirement cycle still requires:
 
 - the exact checksummed check manifest, zero-use observation, and rollback;
 - the production Compose project and PostgreSQL system identifier unchanged;
@@ -161,9 +170,10 @@ registration mutation gate. A timeout must leave all ten family members
 unchanged. Never drop attached leaves individually or lengthen the timeout to
 force the window.
 
-The measured candidate is `5,147,222,016` bytes. That can clear the current
-single-scrape floor only narrowly and does not satisfy preferred two-window
-headroom. Keep the worker held until the normal capacity guard passes. See the
+Post-action free space is `64,785,661,952` bytes: `4,392,662,149` above the
+single-scrape floor but `56,000,337,654` below preferred two-window headroom.
+The worker remains held despite the capacity guard's
+`accepted_with_capacity_alert` result. See the
 [retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
 
 ## Current-publication max-score correction

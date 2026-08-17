@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: bd11b749
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -107,18 +107,19 @@ volatile table counts.
 ### Legacy solo rank-index retirement
 
 `ix_le_song_rank` is not bootstrap schema and is not a scrape-time droppable or
-recreated index. The remaining physical partitioned family is an operational
-retirement candidate, not schema ownership.
+recreated index. Its parent plus nine leaves were removed from production on
+2026-08-17; no current physical family remains.
 
-Only `tools/postgres-retire-ix-le-song-rank.sh` may prepare or execute its
-retirement. The tool binds the production Compose project, PostgreSQL system
-identifier, publication, exact parent plus nine leaf OIDs/definitions and
-attachments, dependency/constraint inventory, bytes, and dated zero-use
-observation. It generates the exact rollback before any execute command.
+Only `tools/postgres-retire-ix-le-song-rank.sh` may validate absence or perform
+an explicitly reviewed restore/retirement cycle. The tool binds the production
+Compose project, PostgreSQL system identifier, publication, exact parent plus
+nine leaf OIDs/definitions and attachments, dependency/constraint inventory,
+bytes, and dated zero-use observation. It generates the exact rollback before
+any execute command.
 
-Removing this non-constraint index changes no rows, rankings, publication
-pointers, or API contract. Legacy rank predicates remain logically correct
-without it. The worker must remain offline for execution, and public API roles
+The completed removal changed no rows, rankings, publication pointers, API
+contract, unrelated index/constraint, or representative score-index plan.
+Legacy rank predicates remain logically correct without it. Public API roles
 continue to read published/current projection sources. See the
 [stale solo rank index retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
 
