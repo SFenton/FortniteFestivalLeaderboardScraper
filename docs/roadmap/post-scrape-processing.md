@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: bd11b749
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -47,11 +47,6 @@ update_triggers:
   report-only snapshot-retention planner must fail closed on incomplete
   statistics, and exact reclaim/workspace evidence must pass the current gate
   before any rewrite proposal.
-- The first low-scratch capacity action is the exact default-unexecuted
-  `ix_le_song_rank` retirement package. Its dated check measured
-  `5,147,222,016` bytes across one parent and nine leaves with zero observed
-  scans. Execution remains pending focused review and would still leave less
-  than preferred two-window scrape headroom.
 - After a safe capacity window exists, use the accepted timing foundation to
   optimize measured bottlenecks rather than inferred phase cost. The first
   BandMaintenance target remains current projection refresh.
@@ -649,10 +644,10 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. review and deploy the exact `ix_le_song_rank` retirement package, regenerate
-   its production-bound manifest, and execute only in a quiet guarded window;
-   require all ten objects absent, measured filesystem return, publication/API
-   parity, and the worker still held until the normal capacity guard passes;
+1. implement durable publication-keyed API caching for freeze-critical eager
+   keys and bounded compute-once variants. Require exact JSON/ETag parity,
+   current-plus-previous generation retention, hit/miss/build telemetry, and
+   protected cold/warm latency before changing eager precompute ownership;
 2. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
@@ -778,7 +773,6 @@ metrics. Correctness/publication differences reject regardless of speed.
 | Complete BandMaintenance and complete rankings are independent | Rejected | Band prune writes `band_entries`; band rankings read it |
 | Blind DOP increase | Rejected | Prior PostgreSQL OOM and current WAL/IO risks |
 | Immediate snapshot rewrite/reclaim | Blocked | Exact planner evidence and live-scrape parity are absent; current free space is below the configured rewrite gate |
-| Immediate `ix_le_song_rank` drop from an ad-hoc session | Rejected | The reviewed exact-family package must bind cluster/project/catalog/digests, use short timeouts, retain rollback, and prove post-drop public health |
 | Restore removed ranking-delta/harness code unchanged | Rejected | Historical removal is evidence of obsolete complexity, not a current implementation template |
 
 ## Unresolved evidence gaps and next probes
@@ -787,7 +781,6 @@ metrics. Correctness/publication differences reject regardless of speed.
 |---|---|---|---|
 | Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
-| Exact stale-index filesystem return | Prepared, unexecuted | Run the reviewed `ix_le_song_rank` execute package and compare catalog plus host free bytes | No ad-hoc DDL; worker offline; publication/API parity required |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
 | Rival tail cause | Unknown | Per-account decisions/query counts/timing | No concurrency change before attribution |
 | Precompute subphase cost | Unknown | Stable subphase timing and cache counts | No parallel flag promotion |
@@ -807,8 +800,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- Reviewed `ix_le_song_rank` retirement is the next active low-scratch capacity
-  action; broader snapshot-capacity recovery remains next.
+- Durable publication-keyed API caching is the next active implementation;
+  broader snapshot-capacity recovery remains separately gated.
 - Current-projection optimization remains a separate later full-scrape A/B.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.

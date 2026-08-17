@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: bd11b749
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -98,8 +98,11 @@ hold.
 The parent cannot use `DROP INDEX CONCURRENTLY` on PostgreSQL 17. Rollback
 creates the parent `ON ONLY`, builds nine leaves concurrently, then attaches
 them. Follow the
-[living runbook](../database/StaleSoloRankIndexRetirementRunbook.md); the
-repository package does not authorize live execution.
+[living runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
+
+Production retirement completed on 2026-08-17. Current check mode returns
+`already_absent`; execute is idempotent for that exact state. The checksummed
+rollback remains retained but was not run.
 
 Validate structure with:
 

@@ -2,7 +2,7 @@
 status: living-runbook
 owner: operations
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: bd11b749
 sources:
   - tools/postgres-retire-ix-le-song-rank.sh
   - tools/postgres-retire-ix-le-song-rank.py
@@ -21,14 +21,14 @@ update_triggers:
 
 ## Status and scope
 
-This package owns only `public.ix_le_song_rank` and its nine attached
+This package owns only `public.ix_le_song_rank` and its nine former attached
 partition indexes. It cannot accept another index name.
 
-The repository candidate is **not live authorization**. Merge, deploy, and
-destructive execution require separate review. Until an accepted execution
-report proves the family absent, the live index remains present.
+The family was retired successfully on 2026-08-17. The current production
+catalog contains none of the ten exact names, and check mode returns
+`already_absent` without DDL.
 
-The dated 2026-08-17 read-only package observed:
+The accepted pre-execution package observed:
 
 - one partitioned parent and nine attached leaves;
 - `5,147,222,016` catalog-measured bytes;
@@ -45,6 +45,38 @@ records `pg_stat_database.stats_reset`, `pg_postmaster_start_time()`, every
 per-index counter, and the caveat that a reset, crash, or immediate shutdown
 can shorten retained statistics history.
 
+## Executed result
+
+- PR `#53` merged as `bd11b74958191e26e2b06297d842a600cd4ed7bb`.
+- Official service/held-worker image:
+  `sha256:11e4735cc23a308ac7f7e050cb5716a7c283c0b0588e801ab2bcd56e7108bed3`.
+- Guarded command wall time: `0.291500732` seconds.
+- Catalog bytes removed: `5,147,222,016`.
+- Immediate filesystem free-byte increase: `5,147,246,592`.
+- PostgreSQL database-size decrease: `5,147,287,552`; the additional
+  `65,536` bytes were table auxiliary-size movement, while every unrelated
+  index, constraint, table heap identity, and representative score-index plan
+  remained exact.
+- WAL delta: `368,151` bytes; cumulative temp-byte delta: `0`.
+- The 90-second public monitor recorded `324` samples with zero HTTP failures.
+  Songs p95 was `8.402 ms`; the maximum sampled songs latency was `32.009 ms`.
+- Publication `80` / scrape `1302` remained authoritative and unfrozen.
+  Direct/web songs, rankings, path, leaderboard, and player payloads remained
+  byte-identical where paired.
+- Capacity check returned `accepted_with_capacity_alert`: free bytes
+  `64,785,661,952`, one-scrape surplus `4,392,662,149`, preferred two-window
+  shortfall `56,000,337,654`, and projected headroom `0.54` days.
+- `fstworker` remains `Created`/offline under the reacquired capacity hold.
+- Rollback was preserved with SHA-256
+  `e588ea1c51355bdc3a5cf405276e9449060bac0bc4019417a5e96c0902537bd7`
+  and was not executed.
+
+Checksummed execution evidence:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/ix-le-song-rank-execution-20260817T074541Z/
+```
+
 ## Why current roles do not own the index
 
 `DatabaseInitializer` does not create the family.
@@ -57,8 +89,8 @@ writes. Remaining legacy rank predicates are correctness-preserving fallback
 or supplemental code paths and have no explicit index dependency; their
 planner use remains governed by current indexes and ordinary sorting.
 
-The exact check still refuses execution if any active query or lock touches
-the target relations.
+The exact check remains available for idempotent absence proof. Execute mode
+still refuses any partial family, active query, or lock.
 
 ## Read-only package
 
@@ -174,14 +206,14 @@ The catalog removal is exact. The host free-space delta is reported
 independently because concurrent filesystem activity can obscure a byte-for-
 byte `df` delta.
 
-`5,147,222,016` bytes is approximately `5.15 GB` decimal (`4.79 GiB`). From
-the 2026-08-17 baseline it would cross the single-scrape floor by only about
-`4.4 GB`; it remains far below the preferred `120,785,999,606`-byte two-window
-headroom. Keep the worker held until the normal capacity guard passes.
+The completed reclaim crossed the single-scrape floor by about `4.39 GB` but
+remains `56.00 GB` below the preferred `120,785,999,606`-byte two-window
+headroom. The capacity guard allows a scrape with an alert, but the operator
+keeps the worker held for the preferred-window policy.
 
 ## Rollback
 
-Rollback is not automatic. The generated script:
+Rollback is retained but was not needed. The generated script:
 
 1. creates the empty partitioned parent with `ON ONLY`;
 2. builds all nine exact leaf indexes with `CREATE INDEX CONCURRENTLY`;
