@@ -502,6 +502,10 @@ locks/long queries, zero PostgreSQL temp bytes, and a 296.66 MB peak
 free-space excursion. This accepts the current-publication service cache path;
 it does not validate a worker-driven publication switch.
 
+The held worker definition is updated to official merge image `2bc7e9f9` but
+remains Created/offline. Its first publication-switch validation is deferred
+to the next natural capacity-permitted scrape card.
+
 ## Service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention
