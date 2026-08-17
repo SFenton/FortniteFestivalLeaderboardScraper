@@ -2,10 +2,11 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified_commit: dffca41c
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Api/PublicApiCacheTelemetry.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -77,6 +78,28 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Publication API cache evidence
+
+The protected `GET /api/admin/public-cache-telemetry` snapshot reports the
+existing route hit/miss counters plus a bounded 256-operation trace for the
+two-tier cache. Trace rows contain route pattern, SHA-256-derived cache-key ID,
+publication and content revision, L1/L2/miss/build/wait/error outcome, duration,
+payload bytes, cached timestamp, and error type. They never expose the raw key,
+account ID, team key, or response body.
+
+Candidate performance evidence uses:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
+  --logger 'console;verbosity=detailed'
+```
+
+The benchmark exercises a 723 KB songs payload against PostgreSQL L2 and L1,
+then a 10,000-row publication surface write-through. Production read-only
+probes separately measure every allowed lazy overview metric at page sizes 25
+and 50. These artifacts are candidate evidence only, not deployment approval.
 
 ### Exact stale solo rank-index retirement
 

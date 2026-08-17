@@ -1,5 +1,6 @@
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -1315,6 +1316,121 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("generation_cache_table", cacheBinding.BindingKind);
         Assert.Equal(1, cacheBinding.RowCount);
         Assert.False(string.IsNullOrWhiteSpace(cacheBinding.ContentHash));
+    }
+
+    [Fact]
+    public void Lazy_publication_cache_write_persists_metadata_and_refuses_freeze()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "seed",
+                Json: new byte[] { 1 },
+                ETag: "\"seed\""),
+        ]);
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = Db.GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+        var json = System.Text.Encoding.UTF8.GetBytes(
+            "{\"lazy\":true}");
+        var etag = ResponseCacheService.ComputeETag(json);
+
+        var stored = Db.TrySetCurrentCachedResponse(
+            publicationId,
+            "public-route:/api/rankings/overview?pageSize=25",
+            json,
+            etag);
+
+        Assert.NotNull(stored);
+        Assert.Equal(publicationId, stored.PublicationId);
+        Assert.Equal(scrapeId, stored.PublishedScrapeId);
+        Assert.Equal("application/json", stored.ContentType);
+        Assert.Equal(
+            Convert.ToHexString(
+                System.Security.Cryptography.SHA256
+                    .HashData(json))
+                .ToLowerInvariant(),
+            stored.ContentSha256);
+        Assert.NotNull(stored.CachedAtUtc);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                publicationId,
+                stored.CacheKey!)?.Json);
+
+        Db.SetPublicReadFreeze(
+            true,
+            scrapeId,
+            "test-freeze");
+        Assert.Null(Db.TrySetCurrentCachedResponse(
+            publicationId,
+            "blocked",
+            new byte[] { 9 },
+            "\"blocked\""));
+        Assert.Null(Db.GetCachedResponseEntry(
+            publicationId,
+            "blocked"));
+    }
+
+    [Fact]
+    public void Lazy_publication_cache_row_is_retained_for_current_and_previous()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "seed",
+                Json: new byte[] { 1 },
+                ETag: "\"seed\""),
+        ]);
+        Db.CompleteScrapeRun(
+            firstScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+        var firstPublicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        var json = new byte[] { 7, 8, 9 };
+        Assert.NotNull(Db.TrySetCurrentCachedResponse(
+            firstPublicationId,
+            "lazy-retained",
+            json,
+            "\"lazy\""));
+
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            secondScrapeId,
+            1,
+            20,
+            2,
+            200);
+        Db.PublishScrapeRun(
+            secondScrapeId,
+            promoteCachedResponses: false);
+        var pointers = Db.GetPublicationPointerState();
+
+        Assert.Equal(
+            firstPublicationId,
+            pointers.PreviousPublicationId);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                firstPublicationId,
+                "lazy-retained")?.Json);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                pointers.CurrentPublicationId!.Value,
+                "lazy-retained")?.Json);
     }
 
     [Fact]

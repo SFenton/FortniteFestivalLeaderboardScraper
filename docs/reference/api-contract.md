@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -14,6 +14,8 @@ sources:
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/SongEndpoints.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
@@ -164,12 +166,35 @@ Aggregate player scopes intentionally use different formulas:
   per second per client outside tests.
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
+- Covered freeze-critical JSON routes use a two-tier cache. L1 is process-local;
+  L2 is the authoritative current/previous-publication row in
+  `publication_api_response_cache`. Cache hits preserve exact bytes and ETag,
+  set `X-FST-Publication-Id`, and expose `X-FST-Public-Cache-Tier: l1|l2`.
+- `/api/songs` uses its existing canonical serializer and stable song ordering.
+  The canonical L2 key is eagerly staged with publication caches and rewritten
+  after same-publication catalog/path/max-score changes. Unknown query
+  parameters remain nonsemantic exactly as in the endpoint implementation;
+  `publicationId` affects generation selection but not the cache key. L1/L2
+  hits retain the endpoint's public 30-minute `Cache-Control` policy.
+- Page-1 per-instrument, composite, and generic band rankings plus overview
+  sizes up to 10 resolve existing canonical rows and deterministically project
+  the requested contained window. Registered-player default profiles,
+  top-10 per-instrument leaderboards, leaderboard-all, and song-band bootstrap
+  reads use their canonical eager rows. Selected/high-cardinality variants are
+  excluded.
+- Only overview `pageSize=25|50` for the five canonical ranking metrics may
+  lazily compute and write through while unfrozen. One process-local
+  single-flight owns each publication/key build. Case, query order, and
+  equivalent integer spellings normalize to one semantic key. Responses at or above one
+  second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
+  if otherwise valid but are not cached.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
-  publication-bound route may serve only an existing published cache hit.
+  covered publication-bound route may serve only an existing L1/L2 published
+  cache hit; the cache never builds or writes while frozen.
   Otherwise affected song/path/ranking/player/band surfaces return `503` with
   `Retry-After`; path and `/api/songs` are explicitly included even though
-  they normally use live endpoint code. `/api/songs` may serve its existing
-  stable process cache. A current-generation immutable path PNG or JSON file
+  they normally use live endpoint code. `/api/songs` may serve its exact
+  publication L1/L2 row. A current-generation immutable path PNG or JSON file
   may be served when it already exists. A stale but syntactically valid
   generation ID from a warm pre-promotion songs cache and any unavailable
   current path return `503`/`Retry-After: 30` for the duration of maintenance;

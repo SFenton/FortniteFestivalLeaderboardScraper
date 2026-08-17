@@ -537,7 +537,9 @@ builder.Services.AddSingleton(sp =>
         () => sp
             .GetRequiredService<FSTService.Api.PublicationReadContextService>()
             .GetPointers()
-            .CurrentPublicationId));
+            .CurrentPublicationId,
+        sp.GetRequiredService<
+            FSTService.Api.PublicationApiResponseCacheService>()));
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<
     FSTService.Api.PublicationRecoveryCoordinator>();
@@ -556,6 +558,17 @@ builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =
         sp.GetRequiredService<IOptions<FeatureOptions>>(),
         sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
+builder.Services.AddSingleton(sp =>
+    new FSTService.Api.PublicationApiResponseCacheService(
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<
+            FSTService.Api.PublicReadGateService>(),
+        () => sp.GetRequiredService<
+                FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId,
+        sp.GetRequiredService<ILogger<
+            FSTService.Api.PublicationApiResponseCacheService>>()));
 builder.Services.AddSingleton<FSTService.Api.RolloutReadOnlyViolationMonitor>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
@@ -680,7 +693,8 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<IOptions<FeatureOptions>>().Value,
         sp.GetRequiredService<IOptions<ScraperOptions>>().Value,
         sp.GetRequiredService<LeaderboardRivalsCalculator>(),
-        sp.GetRequiredService<SoloCurrentProjectionBuilder>());
+        sp.GetRequiredService<SoloCurrentProjectionBuilder>(),
+        sp.GetRequiredService<FestivalService>());
 });
 
 builder.Services.AddHttpClient<ItemShopService>()
@@ -1214,6 +1228,38 @@ shopService.SetJsonSerializerOptions(jsonOpts);
 notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
+if (hostedWorkerMode is HostedWorkerMode.ApiOnly
+    or HostedWorkerMode.FrontendOnly)
+{
+    var pathDataStore =
+        app.Services.GetRequiredService<IPathDataStore>();
+    var persistence =
+        app.Services.GetRequiredService<
+            GlobalLeaderboardPersistence>();
+    var precomputer =
+        app.Services.GetRequiredService<
+            ScrapeTimePrecomputer>();
+    songsCacheService.SetDurableRefresh(() =>
+    {
+        try
+        {
+            songsCacheService.Prime(
+                festivalService,
+                pathDataStore,
+                persistence.Meta,
+                persistence,
+                precomputer,
+                jsonOpts,
+                persistPublicationCache: true);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(
+                ex,
+                "Failed to refresh the durable publication songs cache after a same-publication content mutation.");
+        }
+    });
+}
 notificationService.SetMetaDatabase(app.Services.GetRequiredService<IMetaDatabase>());
 
 app.UseCors();

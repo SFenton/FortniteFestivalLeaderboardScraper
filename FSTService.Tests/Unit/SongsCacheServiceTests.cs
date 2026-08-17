@@ -1,6 +1,9 @@
 using FSTService.Api;
 using FortniteFestival.Core;
 using FSTService.Persistence;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -125,6 +128,224 @@ public class SongsCacheServiceTests
         publicationId = 2;
 
         Assert.Null(cache.Get());
+    }
+
+    [Fact]
+    public void Stable_songs_write_is_persisted_to_current_publication()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var json = System.Text.Encoding.UTF8.GetBytes(
+            "{\"songs\":[]}");
+        var etag = ResponseCacheService.ComputeETag(json);
+        metaDb.TrySetCurrentCachedResponse(
+                42,
+                PublicationApiCacheKeys.Songs,
+                json,
+                etag)
+            .Returns(new PublicationCachedResponse(
+                42,
+                1302,
+                DateTime.UtcNow,
+                json,
+                etag));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationCache =
+            new PublicationApiResponseCacheService(
+                metaDb,
+                gate,
+                () => 42,
+                NullLogger<
+                    PublicationApiResponseCacheService>.Instance);
+        var cache = new SongsCacheService(
+            gate.GetCacheSafetySnapshot,
+            TimeSpan.FromMinutes(5),
+            () => 42,
+            publicationCache);
+        var token = cache.CaptureBuildToken();
+
+        var result = cache.TrySetIfBuildTokenUnchanged(
+            json,
+            token,
+            out var actualEtag,
+            persistPublicationCache: true);
+
+        Assert.Equal(SongsCacheWriteResult.Stored, result);
+        Assert.Equal(etag, actualEtag);
+        Assert.False(cache.DurableRefreshPending);
+        metaDb.Received(1).TrySetCurrentCachedResponse(
+            42,
+            PublicationApiCacheKeys.Songs,
+            json,
+            etag);
+    }
+
+    [Fact]
+    public void Failed_durable_songs_write_hides_prior_L2_until_recovery()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var oldJson = System.Text.Encoding.UTF8.GetBytes(
+            "{\"revision\":\"old\"}");
+        metaDb.GetCurrentCacheLookup(
+                PublicationApiCacheKeys.Songs)
+            .Returns(new PublicationCacheLookup(
+                true,
+                new PublicationCachedResponse(
+                    42,
+                    1302,
+                    DateTime.UtcNow,
+                    oldJson,
+                    ResponseCacheService.ComputeETag(
+                        oldJson))));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationCache =
+            new PublicationApiResponseCacheService(
+                metaDb,
+                gate,
+                () => 42,
+                NullLogger<
+                    PublicationApiResponseCacheService>.Instance);
+        var cache = new SongsCacheService(
+            gate.GetCacheSafetySnapshot,
+            TimeSpan.FromMinutes(5),
+            () => 42,
+            publicationCache);
+        var newJson = System.Text.Encoding.UTF8.GetBytes(
+            "{\"revision\":\"new\"}");
+
+        Assert.Equal(
+            SongsCacheWriteResult.DurableStoreFailed,
+            cache.TrySetIfBuildTokenUnchanged(
+                newJson,
+                cache.CaptureBuildToken(),
+                out _,
+                persistPublicationCache: true));
+        Assert.True(cache.DurableRefreshPending);
+
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/songs";
+        Assert.True(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    context.Request,
+                    out var plan));
+        Assert.Null(
+            publicationCache.TryGetCurrent(plan));
+    }
+
+    [Fact]
+    public async Task Content_mutation_racing_durable_store_keeps_L2_stale()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var json = System.Text.Encoding.UTF8.GetBytes(
+            "{\"revision\":\"old\"}");
+        var storeStarted = new ManualResetEventSlim();
+        var releaseStore = new ManualResetEventSlim();
+        metaDb.TrySetCurrentCachedResponse(
+                42,
+                PublicationApiCacheKeys.Songs,
+                json,
+                Arg.Any<string>())
+            .Returns(_ =>
+            {
+                storeStarted.Set();
+                releaseStore.Wait();
+                return new PublicationCachedResponse(
+                    42,
+                    1302,
+                    DateTime.UtcNow,
+                    json,
+                    ResponseCacheService.ComputeETag(
+                        json));
+            });
+        metaDb.GetCurrentCacheLookup(
+                PublicationApiCacheKeys.Songs)
+            .Returns(
+                new PublicationCacheLookup(
+                    true,
+                    null),
+                new PublicationCacheLookup(
+                    true,
+                    new PublicationCachedResponse(
+                        42,
+                        1302,
+                        DateTime.UtcNow,
+                        json,
+                        ResponseCacheService.ComputeETag(
+                            json))));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationCache =
+            new PublicationApiResponseCacheService(
+                metaDb,
+                gate,
+                () => 42,
+                NullLogger<
+                    PublicationApiResponseCacheService>.Instance);
+        var cache = new SongsCacheService(
+            gate.GetCacheSafetySnapshot,
+            TimeSpan.FromMinutes(5),
+            () => 42,
+            publicationCache);
+        var token = cache.CaptureBuildToken();
+        var storeTask = Task.Run(() =>
+            cache.TrySetIfBuildTokenUnchanged(
+                json,
+                token,
+                out _,
+                persistPublicationCache: true));
+        Assert.True(
+            storeStarted.Wait(TimeSpan.FromSeconds(5)));
+
+        using var mutation = cache.BeginContentMutation();
+        releaseStore.Set();
+
+        Assert.Equal(
+            SongsCacheWriteResult.Stale,
+            await storeTask);
+        Assert.True(cache.DurableRefreshPending);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/songs";
+        Assert.True(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    context.Request,
+                    out var plan));
+        Assert.Null(
+            publicationCache.TryGetCurrent(plan));
+    }
+
+    [Fact]
+    public void Content_mutation_completion_triggers_one_durable_refresh()
+    {
+        var cache = new SongsCacheService();
+        var refreshes = 0;
+        cache.SetDurableRefresh(
+            () => Interlocked.Increment(ref refreshes));
+
+        using (cache.BeginContentMutation())
+        {
+            using (cache.BeginContentMutation())
+            {
+                Assert.Equal(0, refreshes);
+            }
+            Assert.Equal(0, refreshes);
+        }
+
+        Assert.Equal(1, refreshes);
+        Assert.True(cache.DurableRefreshPending);
     }
 
     [Fact]

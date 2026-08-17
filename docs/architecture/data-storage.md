@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified_commit: dffca41c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -22,6 +22,8 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - tools/postgres-retire-ix-le-song-rank.py
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
@@ -67,6 +69,44 @@ surface is not the production service persistence model.
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
+
+### Freeze-safe publication API cache
+
+`publication_api_response_cache` is the authoritative L2 for covered JSON
+responses. Its primary key `(publication_id, cache_key)` already owns the
+required read and uniqueness path; no additional index or schema rewrite is
+needed. Each row stores deterministic JSON bytes, ETag, and `cached_at`.
+Service lookup derives the full SHA-256 and fixed JSON content type and combines
+those with publication ID and the public-read safety revision for L1 identity.
+
+Publication cleanup retains only current and previous generations. Full
+precompute uses staging and atomic swap. Same-publication max-score maintenance
+rebuilds and swaps the same surface before unfreeze. Stable song catalog/path
+changes write the canonical songs row only after a content-mutation token
+remains current; service L1 is invalidated before mutation and after the
+durable update. API catalog refresh compares the canonical provider snapshot
+hash before and after sync, preventing same-count metadata changes from
+retaining an old songs row.
+
+Bounded lazy writes use the shared publication advisory lock, require the
+expected current publication, no working publication, and unfrozen reads, then
+upsert both generation and compatibility rows in one short transaction.
+The surface binding row count/hash/timestamp is updated in the same commit.
+Frozen or transition-raced writes return no row and cannot poison L1.
+An exact current byte/ETag match is returned without an upsert, so service
+restart recovery does not rewrite an already-current songs payload.
+
+The current production surface has 9,255 rows and about 245 MB of JSON for one
+publication. The candidate adds at most 6,319 eager rows (one songs row plus
+6,318 published song/instrument top-10 rows) and an estimated 20.74 MB
+(`8.46%`) per publication. The only lazy space is ten finite overview
+metric/size variants, at most 1.59 MB from measured payloads. Current and
+previous generation rows therefore add an estimated 41.48 MB of eager
+payload. The required `api_response_cache` compatibility mirror holds the
+current generation once more, so steady-state eager payload growth is about
+62.22 MB. If all ten lazy variants exist in both retained generations, their
+current compatibility mirror raises the lazy upper bound to about 4.76 MB;
+table/index overhead is additional.
 
 ### Solo ranking denominator ownership
 

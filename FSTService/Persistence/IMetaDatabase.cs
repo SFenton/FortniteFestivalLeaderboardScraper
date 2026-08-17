@@ -429,6 +429,14 @@ public interface IMetaDatabase : IDisposable
     PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);
+    PublicationCachedResponse? GetCachedResponseEntry(
+        long publicationId,
+        string cacheKey);
+    PublicationCachedResponse? TrySetCurrentCachedResponse(
+        long expectedPublicationId,
+        string cacheKey,
+        byte[] json,
+        string etag);
     IDisposable AcquirePublicationCacheBuildLease(
         long publicationId,
         bool requireCurrentPublication);

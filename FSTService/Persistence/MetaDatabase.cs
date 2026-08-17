@@ -11586,6 +11586,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     // ── API response cache ───────────────────────────────────────────
 
+    private static string ComputeSha256Hex(byte[] json) =>
+        Convert.ToHexString(SHA256.HashData(json))
+            .ToLowerInvariant();
+
     public PublicationCacheLookup GetCurrentCacheLookup(
         string cacheKey)
     {
@@ -11596,7 +11600,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                    publication.published_scrape_id,
                    publication.published_at,
                    cache.json_data,
-                   cache.etag
+                   cache.etag,
+                   cache.cached_at
             FROM scrape_publication_state publication
             LEFT JOIN publication_api_response_cache cache
               ON cache.publication_id =
@@ -11618,7 +11623,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 Convert.ToInt64(reader.GetValue(1)),
                 reader.IsDBNull(2) ? null : reader.GetDateTime(2),
                 (byte[])reader[3],
-                reader.GetString(4));
+                reader.GetString(4),
+                reader.GetDateTime(5),
+                ContentType: "application/json",
+                ContentSha256: ComputeSha256Hex((byte[])reader[3]),
+                CacheKey: cacheKey);
         return new PublicationCacheLookup(true, cachedResponse);
     }
 
@@ -11662,20 +11671,242 @@ public sealed partial class MetaDatabase : IMetaDatabase
         long publicationId,
         string cacheKey)
     {
+        var cached = GetCachedResponseEntry(
+            publicationId,
+            cacheKey);
+        return cached is null
+            ? null
+            : (cached.Json, cached.ETag);
+    }
+
+    public PublicationCachedResponse? GetCachedResponseEntry(
+        long publicationId,
+        string cacheKey)
+    {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT json_data, etag
-            FROM publication_api_response_cache
-            WHERE publication_id = @publicationId
-              AND cache_key = @key
+            SELECT generation.publication_id,
+                   generation.scrape_id,
+                   generation.published_at,
+                   cache.json_data,
+                   cache.etag,
+                   cache.cached_at
+            FROM publication_api_response_cache cache
+            JOIN publication_generations generation
+              ON generation.publication_id = cache.publication_id
+            WHERE cache.publication_id = @publicationId
+              AND cache.cache_key = @key
             """;
         cmd.Parameters.AddWithValue("publicationId", publicationId);
         cmd.Parameters.AddWithValue("key", cacheKey);
         using var reader = cmd.ExecuteReader();
-        return reader.Read()
-            ? ((byte[])reader[0], reader.GetString(1))
-            : null;
+        if (!reader.Read())
+            return null;
+
+        var json = (byte[])reader[3];
+        return new PublicationCachedResponse(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+            json,
+            reader.GetString(4),
+            reader.GetDateTime(5),
+            ContentType: "application/json",
+            ContentSha256: ComputeSha256Hex(json),
+            CacheKey: cacheKey);
+    }
+
+    public PublicationCachedResponse? TrySetCurrentCachedResponse(
+        long expectedPublicationId,
+        string cacheKey,
+        byte[] json,
+        string etag)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cacheKey);
+        ArgumentNullException.ThrowIfNull(json);
+        ArgumentException.ThrowIfNullOrWhiteSpace(etag);
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var timeout = conn.CreateCommand())
+        {
+            timeout.Transaction = tx;
+            timeout.CommandText = """
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '5s';
+                """;
+            timeout.ExecuteNonQuery();
+        }
+
+        using (var publicationLock = conn.CreateCommand())
+        {
+            publicationLock.Transaction = tx;
+            publicationLock.CommandText = """
+                SELECT pg_try_advisory_xact_lock_shared(@lockKey)
+                """;
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            if (publicationLock.ExecuteScalar() is not true)
+            {
+                tx.Rollback();
+                return null;
+            }
+        }
+
+        long publishedScrapeId;
+        DateTime? publishedAtUtc;
+        using (var state = conn.CreateCommand())
+        {
+            state.Transaction = tx;
+            state.CommandText = """
+                SELECT published_scrape_id,
+                       published_at
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                  AND current_publication_id = @publicationId
+                  AND published_scrape_id IS NOT NULL
+                  AND working_publication_id IS NULL
+                  AND public_reads_frozen = FALSE
+                FOR SHARE
+                """;
+            state.Parameters.AddWithValue(
+                "publicationId",
+                expectedPublicationId);
+            using var reader = state.ExecuteReader();
+            if (!reader.Read())
+            {
+                return null;
+            }
+
+            publishedScrapeId =
+                Convert.ToInt64(reader.GetValue(0));
+            publishedAtUtc = reader.IsDBNull(1)
+                ? null
+                : reader.GetDateTime(1);
+        }
+
+        using (var legacy = conn.CreateCommand())
+        {
+            legacy.Transaction = tx;
+            legacy.CommandText = """
+                INSERT INTO api_response_cache (
+                    cache_key, json_data, etag, cached_at)
+                VALUES (@key, @json, @etag, now())
+                ON CONFLICT (cache_key) DO UPDATE SET
+                    json_data = EXCLUDED.json_data,
+                    etag = EXCLUDED.etag,
+                    cached_at = EXCLUDED.cached_at
+                """;
+            legacy.Parameters.AddWithValue("key", cacheKey);
+            legacy.Parameters.AddWithValue("json", json);
+            legacy.Parameters.AddWithValue("etag", etag);
+            legacy.ExecuteNonQuery();
+        }
+
+        using (var generation = conn.CreateCommand())
+        {
+            generation.Transaction = tx;
+            generation.CommandText = """
+                INSERT INTO publication_api_response_cache (
+                    publication_id, cache_key, json_data, etag, cached_at)
+                VALUES (@publicationId, @key, @json, @etag, now())
+                ON CONFLICT (publication_id, cache_key) DO UPDATE SET
+                    json_data = EXCLUDED.json_data,
+                    etag = EXCLUDED.etag,
+                    cached_at = EXCLUDED.cached_at
+                """;
+            generation.Parameters.AddWithValue(
+                "publicationId",
+                expectedPublicationId);
+            generation.Parameters.AddWithValue("key", cacheKey);
+            generation.Parameters.AddWithValue("json", json);
+            generation.Parameters.AddWithValue("etag", etag);
+            generation.ExecuteNonQuery();
+        }
+
+        using (var binding = conn.CreateCommand())
+        {
+            binding.Transaction = tx;
+            binding.CommandText = """
+                INSERT INTO publication_surface_bindings (
+                    publication_id,
+                    surface_name,
+                    binding_kind,
+                    binding_json,
+                    row_count,
+                    content_hash,
+                    status,
+                    built_at)
+                VALUES (
+                    @publicationId,
+                    'api_response_cache',
+                    'generation_cache_table',
+                    jsonb_build_object(
+                        'table',
+                        'publication_api_response_cache',
+                        'publicationId',
+                        @publicationId),
+                    (
+                        SELECT COUNT(*)
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId),
+                    (
+                        SELECT md5(COALESCE(
+                            string_agg(
+                                cache_key || ':' || etag,
+                                '|' ORDER BY cache_key),
+                            ''))
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId),
+                    'ready',
+                    now())
+                ON CONFLICT (
+                    publication_id,
+                    surface_name)
+                DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at
+                """;
+            binding.Parameters.AddWithValue(
+                "publicationId",
+                expectedPublicationId);
+            binding.ExecuteNonQuery();
+        }
+
+        DateTime cachedAtUtc;
+        using (var read = conn.CreateCommand())
+        {
+            read.Transaction = tx;
+            read.CommandText = """
+                SELECT cached_at
+                FROM publication_api_response_cache
+                WHERE publication_id = @publicationId
+                  AND cache_key = @key
+                """;
+            read.Parameters.AddWithValue(
+                "publicationId",
+                expectedPublicationId);
+            read.Parameters.AddWithValue("key", cacheKey);
+            cachedAtUtc = (DateTime)read.ExecuteScalar()!;
+        }
+
+        tx.Commit();
+        return new PublicationCachedResponse(
+            expectedPublicationId,
+            publishedScrapeId,
+            publishedAtUtc,
+            json,
+            etag,
+            cachedAtUtc,
+            ContentType: "application/json",
+            ContentSha256: ComputeSha256Hex(json),
+            CacheKey: cacheKey);
     }
 
     public IDisposable AcquirePublicationCacheBuildLease(

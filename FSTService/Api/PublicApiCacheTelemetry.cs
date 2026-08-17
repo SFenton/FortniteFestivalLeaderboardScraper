@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Routing;
 
 namespace FSTService.Api;
@@ -11,10 +13,25 @@ public enum PublicApiCacheOutcome
     Bypassed,
 }
 
+public enum PublicationApiCacheOperation
+{
+    L1Hit,
+    L2Hit,
+    Miss,
+    SingleFlightWait,
+    BuildStored,
+    BuildRejectedSlow,
+    BuildRejectedResponse,
+    BuildError,
+}
+
 public sealed class PublicApiCacheTelemetry
 {
+    private const int MaxOperations = 256;
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
     private readonly ConcurrentDictionary<RouteKey, RouteCounters> _routes = new();
+    private readonly ConcurrentQueue<PublicationApiCacheTrace>
+        _operations = new();
 
     public void Record(HttpContext context, PublicApiCacheOutcome outcome)
     {
@@ -48,7 +65,53 @@ public sealed class PublicApiCacheTelemetry
             rows.Sum(row => row.MissesContinued),
             rows.Sum(row => row.MissesBlocked),
             rows.Sum(row => row.Bypassed),
-            rows);
+            rows,
+            _operations.ToArray());
+    }
+
+    public void RecordOperation(
+        HttpContext context,
+        string cacheKey,
+        long? publicationId,
+        string? revision,
+        PublicationApiCacheOperation operation,
+        TimeSpan duration,
+        int payloadBytes,
+        Exception? error = null,
+        DateTime? cachedAtUtc = null)
+    {
+        var endpoint = context.GetEndpoint() as RouteEndpoint;
+        var routePattern = endpoint?.RoutePattern.RawText
+            is { } rawPattern
+                ? ApiPublicationEndpointDescriptions
+                    .CanonicalizeRoutePattern(rawPattern)
+                : context.Request.Path.Value
+                    ?? string.Empty;
+        _operations.Enqueue(new PublicationApiCacheTrace(
+            DateTime.UtcNow,
+            routePattern,
+            HashKey(cacheKey),
+            publicationId,
+            string.IsNullOrWhiteSpace(revision)
+                ? null
+                : revision[..Math.Min(16, revision.Length)],
+            operation,
+            duration.TotalMilliseconds,
+            payloadBytes,
+            error?.GetType().Name,
+            cachedAtUtc));
+        while (_operations.Count > MaxOperations
+               && _operations.TryDequeue(out _))
+        {
+        }
+    }
+
+    internal static string HashKey(string cacheKey)
+    {
+        var hash = SHA256.HashData(
+            Encoding.UTF8.GetBytes(cacheKey));
+        return Convert.ToHexString(hash, 0, 8)
+            .ToLowerInvariant();
     }
 
     private readonly record struct RouteKey(
@@ -102,7 +165,8 @@ public sealed record PublicApiCacheTelemetrySnapshot(
     long MissesContinued,
     long MissesBlocked,
     long Bypassed,
-    IReadOnlyList<PublicApiCacheTelemetryRoute> Routes)
+    IReadOnlyList<PublicApiCacheTelemetryRoute> Routes,
+    IReadOnlyList<PublicationApiCacheTrace> Operations)
 {
     public long Total => Hits + MissesContinued + MissesBlocked + Bypassed;
 }
@@ -118,3 +182,15 @@ public sealed record PublicApiCacheTelemetryRoute(
 {
     public long Total => Hits + MissesContinued + MissesBlocked + Bypassed;
 }
+
+public sealed record PublicationApiCacheTrace(
+    DateTime CapturedAtUtc,
+    string RoutePattern,
+    string CacheKeyHash,
+    long? PublicationId,
+    string? Revision,
+    PublicationApiCacheOperation Operation,
+    double DurationMs,
+    int PayloadBytes,
+    string? ErrorType,
+    DateTime? CachedAtUtc);

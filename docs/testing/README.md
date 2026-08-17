@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified_commit: dffca41c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -16,6 +16,10 @@ sources:
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/BandCurrentProjectionOptimizationTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheServiceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheMiddlewareTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
+  - FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
@@ -242,6 +246,29 @@ artifact digests, and truthful byte reporting. A separate isolated PostgreSQL
 17 mechanics run must prove 10 objects before, rejection of concurrent parent
 drop, zero objects after normal parent drop, and `10|9` after generated
 rollback and attachment.
+
+Focused freeze-safe publication API cache validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~PublicationApiResponseCache|FullyQualifiedName~Lazy_publication_cache|FullyQualifiedName~SongsCache|FullyQualifiedName~PublicReadGateTests|FullyQualifiedName~FreezeSafePublicationCache|FullyQualifiedName~FreezeSafeFirstPageAlias|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MaxScoreMaintenanceWorkflowTests'
+
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
+  --logger 'console;verbosity=detailed'
+```
+
+Coverage includes publication/current-previous identity, same-publication
+revision invalidation, exact serializer/byte/ETag parity, service-restart L2
+recovery, frozen hit/miss and no-write behavior, finite route normalization,
+single-flight concurrency, failed/slow build rejection, current/previous
+cleanup, eager maintenance staging, telemetry redaction, and unchanged route
+classification/rate limiting.
+
+The measured 723 KB fixture produced L2 cold p95 `2.634 ms`, L1 warm p95
+`0.315 ms`, and 10,000-row write-through p95 `11.683 ms`. Read-only production
+computation probes for every lazy overview metric at sizes 25/50 measured
+p95 `6.758-10.067 ms`, all below both the 500 ms target and 1,000 ms hard gate.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

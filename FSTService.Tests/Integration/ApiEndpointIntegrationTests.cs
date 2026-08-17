@@ -276,6 +276,292 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task FreezeSafePublicationCache_ServesSongsAndRankingAliases()
+    {
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId!.Value;
+        var songsJson = Encoding.UTF8.GetBytes(
+            "{\"source\":\"durable-songs\"}");
+        var compositeJson = Encoding.UTF8.GetBytes(
+            "{\"page\":1,\"pageSize\":50,\"totalAccounts\":10,"
+            + "\"entries\":[1,2,3,4,5,6,7,8,9,10]}");
+        var overviewJson = Encoding.UTF8.GetBytes(
+            "{\"rankBy\":\"adjusted\",\"pageSize\":10,"
+            + "\"instruments\":{\"Solo_Guitar\":{"
+            + "\"totalAccounts\":10,"
+            + "\"entries\":[1,2,3,4,5,6,7,8,9,10]}}}");
+        var keys = new[]
+        {
+            PublicationApiCacheKeys.Songs,
+            "rankings:composite:adjusted:1:50",
+            "rankings:overview:adjusted:10",
+        };
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                keys[0],
+                songsJson,
+                ResponseCacheService.ComputeETag(
+                    songsJson)),
+            (
+                keys[1],
+                compositeJson,
+                ResponseCacheService.ComputeETag(
+                    compositeJson)),
+            (
+                keys[2],
+                overviewJson,
+                ResponseCacheService.ComputeETag(
+                    overviewJson)),
+        ]);
+        metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('c', 64));
+        var gate = _factory.Services
+            .GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+        var cache = _factory.Services
+            .GetRequiredService<
+                PublicationApiResponseCacheService>();
+        cache.InvalidateAll();
+
+        try
+        {
+            var songs = await _client.GetAsync(
+                "/api/songs");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                songs.StatusCode);
+            Assert.Equal(
+                "l2",
+                songs.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                Encoding.UTF8.GetString(songsJson),
+                await songs.Content.ReadAsStringAsync());
+
+            var composite = await _client.GetAsync(
+                "/api/rankings/composite?page=1&pageSize=5");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                composite.StatusCode);
+            var compositeBody =
+                await composite.Content.ReadFromJsonAsync<
+                    JsonElement>();
+            Assert.Equal(
+                5,
+                compositeBody.GetProperty("pageSize")
+                    .GetInt32());
+            Assert.Equal(
+                5,
+                compositeBody.GetProperty("entries")
+                    .GetArrayLength());
+
+            var overview = await _client.GetAsync(
+                "/api/rankings/overview?pageSize=5");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                overview.StatusCode);
+            var overviewBody =
+                await overview.Content.ReadFromJsonAsync<
+                    JsonElement>();
+            Assert.Equal(
+                5,
+                overviewBody.GetProperty("pageSize")
+                    .GetInt32());
+            Assert.Equal(
+                5,
+                overviewBody.GetProperty("instruments")
+                    .GetProperty("Solo_Guitar")
+                    .GetProperty("entries")
+                    .GetArrayLength());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(
+                _factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
+            cache.InvalidateAll();
+            using var connection = _factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+            using var cleanup = connection.CreateCommand();
+            cleanup.CommandText = """
+                DELETE FROM api_response_cache
+                WHERE cache_key = ANY(@keys);
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId
+                  AND cache_key = ANY(@keys);
+                """;
+            cleanup.Parameters.AddWithValue("keys", keys);
+            cleanup.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            cleanup.ExecuteNonQuery();
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/rankings/composite?page=1&pageSize=5",
+        "/api/rankings/composite?page=1&pageSize=50",
+        "rankings:composite:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar?page=1&pageSize=5",
+        "/api/rankings/Solo_Guitar?page=1&pageSize=50",
+        "rankings:Solo_Guitar:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets?page=1&pageSize=5",
+        "/api/rankings/bands/Band_Duets?page=1&pageSize=50",
+        "rankings:bands:Band_Duets:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/overview?pageSize=5",
+        "/api/rankings/overview?pageSize=10",
+        "rankings:overview:adjusted:10")]
+    public async Task FreezeSafeFirstPageAlias_IsByteAndEtagEquivalentToUncachedEndpoint(
+        string requestedTarget,
+        string canonicalTarget,
+        string canonicalKey)
+    {
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId!.Value;
+        var requestedUri = new Uri(
+            "http://localhost" + requestedTarget);
+        var requestContext = new DefaultHttpContext();
+        requestContext.Request.Method = HttpMethods.Get;
+        requestContext.Request.Path =
+            requestedUri.AbsolutePath;
+        requestContext.Request.QueryString =
+            new QueryString(requestedUri.Query);
+        var exactKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                requestContext.Request);
+        var keys = new[] { canonicalKey, exactKey };
+        var dataSource = factory.Services
+            .GetRequiredService<NpgsqlDataSource>();
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            keys);
+        var gate = factory.Services
+            .GetRequiredService<PublicReadGateService>();
+        var cache = factory.Services
+            .GetRequiredService<
+                PublicationApiResponseCacheService>();
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        cache.InvalidateAll();
+
+        try
+        {
+            var baseline = await client.GetAsync(
+                requestedTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                baseline.StatusCode);
+            var baselineBytes =
+                await baseline.Content.ReadAsByteArrayAsync();
+            var baselineEtag =
+                baseline.Headers.ETag?.ToString()
+                ?? ResponseCacheService.ComputeETag(
+                    baselineBytes);
+
+            var canonical = await client.GetAsync(
+                canonicalTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                canonical.StatusCode);
+            var canonicalBytes =
+                await canonical.Content.ReadAsByteArrayAsync();
+            metaDb.BulkSetCachedResponses(
+            [
+                (
+                    canonicalKey,
+                    canonicalBytes,
+                    ResponseCacheService.ComputeETag(
+                        canonicalBytes)),
+            ]);
+            cache.InvalidateAll();
+            metaDb.SetPublicReadFreeze(
+                true,
+                publishedScrapeId,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('d', 64));
+            gate.Invalidate();
+
+            var frozen = await client.GetAsync(
+                requestedTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                frozen.StatusCode);
+            Assert.Equal(
+                baselineBytes,
+                await frozen.Content.ReadAsByteArrayAsync());
+            Assert.Equal(
+                baselineEtag,
+                frozen.Headers.ETag?.ToString());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            cache.InvalidateAll();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                keys);
+        }
+    }
+
+    [Fact]
     public async Task PublicationCommitIntent_ServesExactCacheHitAndFailsMissFast()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
@@ -497,7 +783,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             cachedGenerationId,
             100_000,
             "cached-generation-hash");
-        songsCache.Invalidate();
+        songsCache.InvalidateForContentChange();
         using var prePromotionSongs =
             await client.GetAsync("/api/songs");
         Assert.Equal(
@@ -649,11 +935,16 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 .GetAsync("/api/songs")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
-                HttpStatusCode.ServiceUnavailable,
+                HttpStatusCode.OK,
                 coldSongs.StatusCode);
             Assert.Equal(
-                TimeSpan.FromSeconds(30),
-                coldSongs.Headers.RetryAfter?.Delta);
+                "l2",
+                coldSongs.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                warmSongsJson,
+                await coldSongs.Content.ReadAsByteArrayAsync());
 
             var serviceInfo = await client
                 .GetAsync("/api/service-info")
@@ -699,7 +990,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             GenerationQuery(unavailableGenerationId),
             HttpStatusCode.NotFound);
 
-        songsCache.Invalidate();
+        songsCache.InvalidateForContentChange();
         var refreshedSongs =
             await client.GetFromJsonAsync<JsonElement>(
                 "/api/songs");
@@ -2005,14 +2296,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.DoesNotContain(900_000, isolatedScores);
 
         var isolatedSongsResponse = await client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, isolatedSongsResponse.StatusCode);
         Assert.Equal(
-            "published-catalog-fallback",
-            isolatedSongsResponse.Headers.GetValues(
-                "X-FST-Songs-Source").Single());
-        Assert.Equal(
-            "no-store",
-            isolatedSongsResponse.Headers.CacheControl?.ToString());
+            HttpStatusCode.ServiceUnavailable,
+            isolatedSongsResponse.StatusCode);
 
         var isolatedPlayerResponse = await client.GetAsync(
             "/api/player/acct_published");
@@ -2026,7 +2312,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var pendingPlayerResponse = await client.GetAsync(
             "/api/player/acct_pending");
         Assert.Equal(
-            HttpStatusCode.Accepted,
+            HttpStatusCode.ServiceUnavailable,
             pendingPlayerResponse.StatusCode);
         Assert.Equal(
             "no-store",
@@ -8688,6 +8974,27 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             },
             PublicationGenerationStatus.Ready,
             DateTime.UtcNow);
+    }
+
+    private static void DeleteCacheKeys(
+        NpgsqlDataSource dataSource,
+        long publicationId,
+        string[] keys)
+    {
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM api_response_cache
+            WHERE cache_key = ANY(@keys);
+            DELETE FROM publication_api_response_cache
+            WHERE publication_id = @publicationId
+              AND cache_key = ANY(@keys);
+            """;
+        command.Parameters.AddWithValue("keys", keys);
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        command.ExecuteNonQuery();
     }
 
     // ═══════════════════════════════════════════════════════════════

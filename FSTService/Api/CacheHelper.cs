@@ -118,6 +118,107 @@ internal static class CacheHelper
         }
     }
 
+    internal static byte[]? ProjectOverviewSubset(
+        byte[] json,
+        int requestedPageSize)
+    {
+        if (requestedPageSize is < 1 or > 10)
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind
+                != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                foreach (var property in document.RootElement
+                             .EnumerateObject())
+                {
+                    if (property.NameEquals("pageSize"))
+                    {
+                        writer.WriteNumber(
+                            property.Name,
+                            requestedPageSize);
+                        continue;
+                    }
+
+                    if (property.NameEquals("instruments")
+                        && property.Value.ValueKind
+                        == JsonValueKind.Object)
+                    {
+                        writer.WritePropertyName(property.Name);
+                        writer.WriteStartObject();
+                        foreach (var instrument in property.Value
+                                     .EnumerateObject())
+                        {
+                            writer.WritePropertyName(
+                                instrument.Name);
+                            WriteOverviewInstrument(
+                                writer,
+                                instrument.Value,
+                                requestedPageSize);
+                        }
+                        writer.WriteEndObject();
+                        continue;
+                    }
+
+                    property.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+
+            return stream.ToArray();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static void WriteOverviewInstrument(
+        Utf8JsonWriter writer,
+        JsonElement instrument,
+        int requestedPageSize)
+    {
+        if (instrument.ValueKind != JsonValueKind.Object)
+        {
+            instrument.WriteTo(writer);
+            return;
+        }
+
+        writer.WriteStartObject();
+        foreach (var property in instrument.EnumerateObject())
+        {
+            if (!property.NameEquals("entries")
+                || property.Value.ValueKind
+                != JsonValueKind.Array)
+            {
+                property.WriteTo(writer);
+                continue;
+            }
+
+            writer.WritePropertyName(property.Name);
+            writer.WriteStartArray();
+            var written = 0;
+            foreach (var entry in property.Value
+                         .EnumerateArray())
+            {
+                if (written++ >= requestedPageSize)
+                    break;
+                entry.WriteTo(writer);
+            }
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
+    }
+
     public static IResult? ServeUnavailableIfFrozen(HttpContext httpContext, ResponseCacheService cache)
     {
         if (!cache.RequiresCachedReads) return null;

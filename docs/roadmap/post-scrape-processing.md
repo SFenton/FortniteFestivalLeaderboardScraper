@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified_commit: dffca41c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -644,10 +644,12 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. implement durable publication-keyed API caching for freeze-critical eager
-   keys and bounded compute-once variants. Require exact JSON/ETag parity,
-   current-plus-previous generation retention, hit/miss/build telemetry, and
-   protected cold/warm latency before changing eager precompute ownership;
+1. review and qualify the freeze-safe publication API cache candidate. The
+   repository implementation reuses canonical rows, eagerly adds songs plus
+   bounded top-10 song/instrument rows, and lazily admits only overview sizes
+   25/50 after sub-11 ms measured compute p95. Promotion still requires one
+   full scrape/publication window, same-publication freeze injection, exact
+   key/JSON/ETag parity, and no protected precompute/WAL/API regression;
 2. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the

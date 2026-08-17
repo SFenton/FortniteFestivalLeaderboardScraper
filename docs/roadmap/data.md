@@ -2,7 +2,7 @@
 status: roadmap
 owner: data
 last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified_commit: dffca41c
 sources:
   - FSTService/FeatureOptions.cs
   - FSTService/appsettings.json
@@ -27,7 +27,7 @@ These are verified gaps, not automatic implementation approvals.
 | Finish snapshot/current-state ownership migration | Snapshot-overlay worker reads and unchanged-snapshot skipping remain disabled | Complete scrape A/B parity, replay evidence, rollback, and storage/resource comparison |
 | Revalidate snapshot reuse | The living runbook contains evaluation history but no blanket promotion | Fresh matched baseline and candidate on current schema/code |
 | Evaluate bounded artifact analytics | DuckDB/Parquet is routed as an artifact-only option, not a production source of truth | Bounded export/replay benchmark that preserves PostgreSQL publication correctness and stays on the FST drive |
-| Implement durable publication-keyed API cache | The freeze incident proved process-local or incomplete route caching cannot guarantee all public reads; current precomputation does not yet provide the complete compute-once/current-plus-previous contract | Exact JSON/ETag parity, publication-keyed current and previous generations, freeze-critical eager keys, bounded lazy variants, hit/miss/build telemetry, rollback, and protected cold/warm latency |
+| Promote freeze-safe publication API cache candidate | The unmerged candidate adds L1/L2 recovery, eager songs and top-10 leaderboard rows, canonical ranking/player/leaderboard aliases, ten finite lazy overview variants, single-flight, redacted telemetry, and current/previous retention. Measured L2/L1/write p95 is `2.634/0.315/11.683 ms`; every lazy live compute p95 is `6.758-10.067 ms`. Estimated eager payload is 20.74 MB per publication, or about 62.22 MB steady-state across current, previous, and the required current compatibility mirror. | Focused review and green CI, full-scrape candidate cache-key/JSON/ETag/publication parity, same-publication maintenance freeze injection, no >10% protected API or precompute/WAL/resource regression, rollback image/config, then separate promotion |
 | Produce an exact snapshot-capacity/reclaim plan | Report-only retention planning is already enabled, but its exact protected generations, candidate partitions, purge/retained bytes, rewrite workspace, runtime cost, and rollback objects are not persisted in current evidence; rewrite remains off and current free space is below the 500 GiB gate | Run the existing planner read-only after a safe scrape boundary, preserve its exact output, prove planner load is safe, then require current live-scrape parity and rollback before any rewrite/reclaim |
 
 Detailed post-scrape phase, progress, replay, deployment, A/B, and optimization

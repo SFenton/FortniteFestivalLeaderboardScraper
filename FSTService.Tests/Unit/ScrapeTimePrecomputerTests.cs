@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -591,6 +592,18 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
                     FROM publication_api_response_cache_staging
                     WHERE publication_id = @publicationId
                       AND cache_key = @cacheKey
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @songsCacheKey
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @instrumentCacheKey
                 )
             """;
         command.Parameters.AddWithValue("songId", songId);
@@ -603,6 +616,16 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         command.Parameters.AddWithValue(
             "cacheKey",
             $"lb:{songId}:10:");
+        command.Parameters.AddWithValue(
+            "songsCacheKey",
+            PublicationApiCacheKeys.Songs);
+        command.Parameters.AddWithValue(
+            "instrumentCacheKey",
+            PublicationApiCacheKeys.InstrumentLeaderboard(
+                songId,
+                instrument,
+                10,
+                leeway: null));
         using var reader = command.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal(100, reader.GetInt32(0));
@@ -617,6 +640,26 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal(
             100,
             guitar.GetProperty("totalEntries").GetInt32());
+        var songsJson =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(2));
+        Assert.Equal(
+            songId,
+            songsJson.RootElement
+                .GetProperty("songs")[0]
+                .GetProperty("songId")
+                .GetString());
+        var instrumentJson =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(3));
+        Assert.Equal(
+            instrument,
+            instrumentJson.RootElement
+                .GetProperty("instrument")
+                .GetString());
+        Assert.Equal(
+            100,
+            instrumentJson.RootElement
+                .GetProperty("totalEntries")
+                .GetInt32());
         Assert.Equal(
             200,
             _metaDb.GetLeaderboardPopulation(
