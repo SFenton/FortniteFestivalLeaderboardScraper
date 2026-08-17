@@ -198,6 +198,11 @@ interleaved samples with no sustained regression. Service-only promotion is
 accepted; worker publication-switch validation remains assigned to the next
 natural scrape.
 
+PR #55 merged as `2bc7e9f9`; the official service image
+`sha256:4fad543b...976564` is deployed and healthy on publication 1302. Web is
+unchanged. The worker definition uses the same official image but remains
+Created/offline.
+
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the
 registration-changing band sync-status route. The manual endpoint holds the

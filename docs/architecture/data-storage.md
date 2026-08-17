@@ -141,6 +141,10 @@ PostgreSQL temp delta remained zero, physical database growth was 13,484,032
 bytes, and peak free-space excursion was 296,656,896 bytes. Current and
 previous generations remained intact and staging was empty after swap.
 
+The accepted cache remains current on publication 80 with 15,576 rows and
+264,511,124 logical JSON bytes; publication 77 remains retained and staging is
+empty. Official deployment did not move publication/freeze pointers.
+
 ### Solo ranking denominator ownership
 
 Normal per-instrument ranking denominators are catalog-bound. For each exact
