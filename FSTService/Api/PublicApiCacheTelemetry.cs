@@ -94,7 +94,8 @@ public sealed class PublicApiCacheTelemetry
             publicationId,
             string.IsNullOrWhiteSpace(revision)
                 ? null
-                : revision[..Math.Min(16, revision.Length)],
+                : HashKey(
+                    "revision:" + revision),
             operation,
             duration.TotalMilliseconds,
             payloadBytes,

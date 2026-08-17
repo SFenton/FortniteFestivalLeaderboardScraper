@@ -160,7 +160,8 @@ uncovered cold routes remain fail-closed during max-score maintenance.
 `X-FST-Public-Cache-Tier` distinguishes L1 and L2 hits. Admin telemetry exposes
 route patterns, hashed cache-key IDs, publication/revision, outcome, wait/build
 duration, payload bytes, cached timestamp, and error type without raw account
-or team/profile identifiers, raw cache keys, or exception messages.
+or team/profile identifiers, raw cache keys/revisions, or exception messages.
+Cache and revision identifiers are independent bounded hashes.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the

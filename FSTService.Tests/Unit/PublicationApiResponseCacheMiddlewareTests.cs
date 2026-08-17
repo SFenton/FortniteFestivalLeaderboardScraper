@@ -702,6 +702,13 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
         Assert.Matches(
             "^[0-9a-f]{16}$",
             trace.CacheKeyHash);
+        Assert.NotNull(trace.Revision);
+        Assert.Matches(
+            "^[0-9a-f]{16}$",
+            trace.Revision);
+        Assert.NotEqual(
+            new string('a', 16),
+            trace.Revision);
         Assert.Equal(
             nameof(InvalidOperationException),
             trace.ErrorType);
