@@ -133,6 +133,13 @@ changes and removals invalidate the same-publication row as well as additions.
 HTTP JSON serialization, precompute serialization, and alias projection share
 an explicit relaxed Unicode encoder. This keeps non-ASCII display-name bytes
 and therefore ETags identical between a direct endpoint and its cached alias.
+The `application/json` contract intentionally permits raw Unicode and raw
+HTML-sensitive characters such as `<`, `>`, `&`, `'`, and `+`; JSON controls
+remain escaped and non-BMP characters remain valid surrogate pairs. This is
+safe for HTTP JSON consumers and `Response.json()`/`res.json()` parsing.
+Any future boundary that embeds these bytes inside HTML or an inline
+`<script>` must apply context-appropriate HTML/script escaping rather than
+concatenating cached JSON directly.
 
 Freeze-critical coverage is intentionally bounded: `/api/songs`, page-1
 per-instrument/composite/generic-band rankings, overview bootstrap sizes,

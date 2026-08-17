@@ -9,14 +9,6 @@ namespace FSTService.Api;
 /// </summary>
 internal static class CacheHelper
 {
-    private static readonly JsonWriterOptions
-        ProjectionWriterOptions = new()
-        {
-            Encoder = System.Text.Encodings.Web
-                .JavaScriptEncoder
-                .UnsafeRelaxedJsonEscaping,
-        };
-
     /// <summary>
     /// If <paramref name="entry"/> is non-null, sets the ETag header and returns
     /// either 304 (if the client already has it) or the cached JSON bytes.
@@ -69,6 +61,8 @@ internal static class CacheHelper
         int requestedPageSize)
     {
         if (requestedPage < 1 || requestedPageSize < 1) return null;
+        if (!PublicApiJsonContract.IsValidUtf8(json))
+            return null;
         var offset = (requestedPage - 1) * requestedPageSize;
         if (offset < 0 || offset + requestedPageSize > 50) return null;
 
@@ -79,9 +73,9 @@ internal static class CacheHelper
                 return null;
 
             using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(
-                       stream,
-                       ProjectionWriterOptions))
+            using (var writer =
+                   PublicApiJsonContract
+                       .CreateProjectionWriter(stream))
             {
                 writer.WriteStartObject();
                 foreach (var property in document.RootElement.EnumerateObject())
@@ -134,6 +128,8 @@ internal static class CacheHelper
     {
         if (requestedPageSize is < 1 or > 10)
             return null;
+        if (!PublicApiJsonContract.IsValidUtf8(json))
+            return null;
 
         try
         {
@@ -145,9 +141,9 @@ internal static class CacheHelper
             }
 
             using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(
-                       stream,
-                       ProjectionWriterOptions))
+            using (var writer =
+                   PublicApiJsonContract
+                       .CreateProjectionWriter(stream))
             {
                 writer.WriteStartObject();
                 foreach (var property in document.RootElement
