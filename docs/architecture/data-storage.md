@@ -703,8 +703,8 @@ drop is a separate guarded stage and the restore-drilled archive remains on
 the 8 TB device through acceptance and a later explicit retention decision.
 
 The final 360,000-row scaled drill measured a 144,318,464-byte original,
-19,636,224-byte replacement, 20,453,200 WAL bytes, 8,421,376 temp bytes,
-19,668,992 peak filesystem growth, and 144,269,312 immediate bytes returned.
+19,636,224-byte replacement, 20,453,512 WAL bytes, 8,421,376 temp bytes,
+19,664,896 peak filesystem growth, and 144,322,560 immediate bytes returned.
 Both rename-back rollback and final-drop paths passed.
 
 Applying the measured ratios to the accepted approximately `3.4 GB` retained

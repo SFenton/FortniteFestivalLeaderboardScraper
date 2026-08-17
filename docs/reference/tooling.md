@@ -264,8 +264,8 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
 
 The final accepted isolated drill retained two restore-drilled archives and
 proved both rename-back and final-drop paths. It measured a 144,318,464-byte
-source, 19,636,224-byte replacement, 20,453,200 WAL bytes, 8,421,376 temp
-bytes, 19,668,992 peak build growth, and 144,269,312 filesystem bytes returned.
+source, 19,636,224-byte replacement, 20,453,512 WAL bytes, 8,421,376 temp
+bytes, 19,664,896 peak build growth, and 144,322,560 filesystem bytes returned.
 The rollback lane also proves archive/build/swap/rollback resume after a
 simulated missing terminal report while preserving the first checksummed
 reports.
