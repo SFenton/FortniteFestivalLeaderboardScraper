@@ -25,6 +25,8 @@ sources:
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
   - tools/postgres-retire-ix-le-song-rank.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite-drill.py
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -61,6 +63,44 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+
+Focused snapshot-retention policy validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests|FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests'
+```
+
+This proves current, previous, and working publication physical source IDs are
+protected through the publication-generation-to-scrape mapping, while stale
+source maps for unnamed generations do not remain protected forever.
+
+Pro-bass pilot structural and isolated lifecycle validation:
+
+```bash
+bash -n \
+  tools/postgres-pro-bass-snapshot-rewrite.sh \
+  tools/postgres-pro-bass-snapshot-rewrite-drill.sh
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-pro-bass-snapshot-rewrite.test.py
+
+mkdir -p artifacts/pro-bass-pilot-drills
+tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
+  --work-root "$PWD/artifacts/pro-bass-pilot-drills/<utc-run>" \
+  --image postgres:17 \
+  --purge-rows 300000 \
+  --retained-rows 30000
+```
+
+The drill must report exact archive/restore and catalog parity, successful
+rename-back rollback, successful separate final drop, matching fingerprints,
+immediate filesystem reclaim, removed transient containers/PGDATA, retained
+archives, and truthful archive/build/swap/rollback recovery after simulating a
+missing terminal acknowledgement. Its measured profile must contain at least
+100,000 total and 10,000 retained rows before production capacity planning
+accepts it. It is isolated evidence only and never authorizes a production
+rewrite.
 
 Focused dead/no-op phase cleanup validation:
 

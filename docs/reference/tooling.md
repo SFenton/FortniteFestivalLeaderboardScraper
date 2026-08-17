@@ -15,6 +15,10 @@ sources:
   - tools/postgres-retire-ix-le-song-rank.sh
   - tools/postgres-retire-ix-le-song-rank.py
   - tools/postgres-retire-ix-le-song-rank.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite.sh
+  - tools/postgres-pro-bass-snapshot-rewrite.py
+  - tools/postgres-pro-bass-snapshot-rewrite-drill.sh
+  - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -210,6 +214,68 @@ merged Compose command review, read-only verification, bounded resource
 monitor, exact JSON result, and checksums on the FST drive. The current
 publication-`1293` observation took `94 ms`, produced nine blocked plans, and
 kept API/web/PostgreSQL healthy.
+
+### Exact pro-bass snapshot archive/rewrite pilot
+
+`tools/postgres-pro-bass-snapshot-rewrite.sh` is the only supported entry point
+for the candidate rewrite of
+`public.leaderboard_entries_snapshot_pro_bass`. It has no table, partition,
+instrument, or SQL input.
+
+The typed stages are `check`, `plan`, `archive`, `drill`, `build`, `swap`,
+`validate`, `drop`, and `rollback`. Each successful stage writes one immutable
+checksummed report; failures write separately typed failure reports.
+
+The package:
+
+- protects active, projection, rollback, and current/previous/working
+  publication physical source IDs;
+- rejects stale/incomplete/missing scrape ownership;
+- streams a PostgreSQL custom archive directly to the explicitly authorized
+  8 TB scratch device;
+- restores and verifies the archive in network-none PostgreSQL 17;
+- builds only in `pg_default` on the 4 TB FST drive;
+- retains the detached original through exact validation;
+- supports rename-back rollback before a separately guarded final drop;
+- never uses `CASCADE`.
+
+Run structural tests with:
+
+```bash
+bash -n \
+  tools/postgres-pro-bass-snapshot-rewrite.sh \
+  tools/postgres-pro-bass-snapshot-rewrite-drill.sh
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-pro-bass-snapshot-rewrite.test.py
+```
+
+Run the scaled isolated lifecycle with:
+
+```bash
+mkdir -p artifacts/pro-bass-pilot-drills
+
+tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
+  --work-root "$PWD/artifacts/pro-bass-pilot-drills/<utc-run>" \
+  --image postgres:17 \
+  --purge-rows 300000 \
+  --retained-rows 30000
+```
+
+The final accepted isolated drill retained two restore-drilled archives and
+proved both rename-back and final-drop paths. It measured a 144,318,464-byte
+source, 19,636,224-byte replacement, 20,453,320 WAL bytes, 8,421,376 temp
+bytes, 19,660,800 peak build growth, and 144,314,368 filesystem bytes returned.
+The rollback lane also proves archive/build/swap/rollback resume after a
+simulated missing terminal report while preserving the first checksummed
+reports.
+The generated production-planning profile is synthetic evidence; live
+execution still needs an exact source plan and currently fails the
+approximately `72.19-73.06 GB` free-space requirement.
+
+Follow the
+[living runbook](../database/ProBassSnapshotRewritePilot.md). The archive
+retention/deletion decision remains deliberately outside this candidate.
 
 ### Worker Compose guard
 

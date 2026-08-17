@@ -32,6 +32,34 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
     }
 
     [Fact]
+    public void SnapshotPolicy_KeepsCurrentPreviousAndWorkingPhysicalSources()
+    {
+        var policy = SnapshotRetentionPolicy.Create(
+            activeSnapshotIds: [900],
+            projectionSourceSnapshotIds: [899],
+            scrapes:
+            [
+                Completed(900),
+                Completed(899),
+                Completed(700),
+                Completed(699),
+            ],
+            rollbackCompletedSnapshotsToKeep: 0,
+            publishedSourceSnapshotIds: [700, 699]);
+
+        var decisions = policy
+            .Classify([900, 899, 700, 699])
+            .ToDictionary(decision => decision.SnapshotId);
+
+        Assert.Equal(SnapshotCleanupAction.Keep, decisions[700].Action);
+        Assert.Equal(SnapshotCleanupAction.Keep, decisions[699].Action);
+        Assert.Contains(
+            "current/previous/working publication physical source",
+            decisions[700].Reasons);
+        Assert.Equal([900, 899, 700, 699], policy.ProtectedSnapshotIds);
+    }
+
+    [Fact]
     public void SnapshotPolicy_ClassifiesIncompleteWithNewerScrapeAsPurgeCandidate()
     {
         var policy = SnapshotRetentionPolicy.Create(

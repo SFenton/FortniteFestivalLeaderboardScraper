@@ -19,6 +19,8 @@ sources:
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-retire-ix-le-song-rank.sh
+  - tools/postgres-pro-bass-snapshot-rewrite.sh
+  - docs/database/ProBassSnapshotRewritePilot.md
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -33,6 +35,9 @@ update_triggers:
 - All database data, scratch, exports, migration artifacts, repacks, and
   retention work stay on the 4 TB FST drive unless the operator explicitly
   overrides the rule.
+- The only current alternate-device override is the temporary pro-bass pilot
+  archive/restore workspace on `/dev/nvme2n1p2`, mounted at `/`. It does not
+  authorize a permanent FST store or PostgreSQL tablespace there.
 - Keep secrets out of commands, logs, documentation, artifacts, e-mail, and
   commits.
 
@@ -139,6 +144,52 @@ proves the new path has the same data as the old path. Record:
 
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
+
+### Temporary pro-bass archive/rewrite pilot
+
+The repository candidate is not live execution authorization. No production
+archive, rewrite, swap, or drop occurred during its implementation.
+
+The tool accepts only
+`public.leaderboard_entries_snapshot_pro_bass`. Before each live stage it binds
+the exact production Compose project/working directory, PostgreSQL container,
+system identifier, database/parent OIDs, 4 TB data mount, current/previous
+publication, unfrozen state, offline worker, and zero running scrape/phase,
+worker/pilot backend, waiting lock, or target lock.
+
+The explicitly operator-created `--scratch-root` must resolve to
+`/dev/nvme2n1p2` with the recorded `MAJ:MIN` identity. Symlinks, non-local
+filesystems, foreign files, Docker/FST roots, and temporary-system directories
+are rejected. Scratch contains only:
+
+- the custom archive and immutable manifest/catalog/TOC;
+- isolated restore-drill PGDATA, removed after verification;
+- immutable stage reports and measured capacity profile.
+
+The replacement always uses `pg_default` on the 4 TB drive. The archive remains
+on 8 TB scratch through acceptance and a later explicit product-retention
+decision. Do not delete it merely because the detached source relation was
+dropped.
+
+Production build requires the candidate-specific measured gate:
+
+```text
+60,392,999,803-byte emergency floor
++ replacement heap/indexes
++ measured WAL and temp
++ one replacement-sized failure reserve
+```
+
+The current approximately `66 GB` free does not meet the isolated projection:
+required free is `72.19-73.06 GB`. Do not run `build`, `swap`, or `drop` unless
+a fresh exact plan passes. This does not lower the global `500 GiB` retention
+policy.
+
+Swap/rollback/drop use maintenance and publication advisory locks, a `2s`
+lock timeout, a `30s` statement timeout, and no `CASCADE`. The old detached
+relation remains until validation. A mismatch or timeout aborts the attempt;
+do not lengthen timeouts or retry blindly. Follow the
+[pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
 
 ### Completed stale solo rank-index retirement
 

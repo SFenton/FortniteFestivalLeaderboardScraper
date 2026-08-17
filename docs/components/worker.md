@@ -37,6 +37,7 @@ sources:
   - deploy/config/fstworker-role.env
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
+  - tools/postgres-pro-bass-snapshot-rewrite.py
 update_triggers:
   - Worker registration, phase selection, scrape sequencing, background coordination, recovery, or publication changes.
 ---
@@ -512,7 +513,10 @@ The service-level database maintenance worker may produce snapshot-retention
 plans while rewrite execution remains disabled. Planning uses bounded
 PostgreSQL catalog/statistics queries and does not scan snapshot partitions.
 
-Plans retain active, projection-source, rollback, and policy-blocked IDs.
+Plans retain active, projection-source, rollback, publication-physical-source,
+and policy-blocked IDs. Publication physical sources are limited to the scrape
+IDs behind the current, previous, and working publication generations; stale
+source maps for unnamed generations do not remain protected forever.
 Missing protected-ID estimates, partial MCV coverage, unknown or negative
 `n_distinct` semantics, stale row estimates, or row/byte reconciliation gaps
 make the plan non-executable. In that state purge rows/bytes are withheld and
@@ -525,6 +529,14 @@ partitions in `94 ms`, emitted zero executable plans, held publication
 `1293` unfrozen, and left the worker offline. Every partition was blocked by
 missing protected-ID MCV estimates and incomplete/stale statistics; no rewrite
 or metadata cleanup ran.
+
+The exact pro-bass pilot is not a worker phase and cannot overlap a scrape or
+post-processing pass. Its guards require the worker container held offline,
+durable worker status offline/idle/stopped, no running scrape or phase attempt,
+no working publication, unfrozen public reads, and zero worker backend or
+target lock. The generic service retention setting and global `500 GiB` gate
+remain unchanged. See the
+[pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
 
 See [Scrape and publication flow](../architecture/data-publication-flow.md),
 [CLI reference](../reference/cli.md), and

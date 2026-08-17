@@ -33,6 +33,7 @@ sources:
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -103,6 +104,11 @@ diagnostic or replay data without becoming the published generation.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
    - Build required published scope-source mappings and notification plans.
+   - Physical snapshot IDs in those mappings are retention pins only while
+     their generation is named as current, previous, or working. Publication
+     IDs resolve through `publication_generations.scrape_id`; older unnamed
+     source maps remain historical evidence but do not pin hot partitions
+     forever.
    - Prepare the next publication generation outside the final commit.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the

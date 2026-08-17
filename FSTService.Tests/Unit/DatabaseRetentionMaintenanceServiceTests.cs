@@ -118,6 +118,88 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
         Assert.False(result.MetadataCleanup.Enabled);
     }
 
+    [Fact]
+    public async Task DryRun_ProtectsOnlySourceMapsForNamedPublicationGenerations()
+    {
+        foreach (var scrapeId in new long[]
+                 {
+                     600, 698, 699, 700, 897, 898, 899, 900,
+                 })
+        {
+            ScrapeRunTestHelper.EnsureAllocated(
+                _fixture.DataSource,
+                scrapeId,
+                completed: true,
+                startedAtUtc: DateTime.UtcNow.AddDays(-10),
+                completedAtUtc: DateTime.UtcNow.AddDays(-9));
+        }
+
+        Execute("""
+            UPDATE publication_generations
+            SET status = CASE scrape_id
+                WHEN 900 THEN 'current'
+                WHEN 899 THEN 'retained'
+                WHEN 898 THEN 'building'
+                ELSE 'retained'
+            END
+            WHERE scrape_id IN (897, 898, 899, 900);
+
+            INSERT INTO scrape_publication_state (
+                id, published_scrape_id, public_reads_frozen,
+                current_publication_id, previous_publication_id,
+                working_publication_id, updated_at)
+            VALUES (
+                true, 900, false,
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 900),
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 899),
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 898),
+                now())
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id = EXCLUDED.published_scrape_id,
+                current_publication_id =
+                    EXCLUDED.current_publication_id,
+                previous_publication_id =
+                    EXCLUDED.previous_publication_id,
+                working_publication_id =
+                    EXCLUDED.working_publication_id,
+                updated_at = now();
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id, song_id, instrument, scope_kind,
+                source_kind, source_snapshot_id, source_scrape_id,
+                row_count, content_fingerprint, coverage_fingerprint,
+                reported_total_entries, reported_total_pages,
+                is_complete, created_at, validated_at)
+            VALUES
+                (900, 'current', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 700, 700, 1, 'current', 'current',
+                 1, 1, true, now(), now()),
+                (899, 'previous', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 699, 699, 1, 'previous', 'previous',
+                 1, 1, true, now(), now()),
+                (898, 'working', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 698, 698, 1, 'working', 'working',
+                 1, 1, true, now(), now()),
+                (897, 'stale', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 600, 600, 1, 'stale', 'stale',
+                 1, 1, true, now(), now());
+            """);
+
+        var report = await new DatabaseMaintenanceDryRunReporter(
+                _fixture.DataSource)
+            .BuildReportAsync();
+
+        Assert.Equal(
+            [700, 699, 698],
+            report.Snapshots.PublishedSourceSnapshotIds);
+        Assert.DoesNotContain(
+            600,
+            report.Snapshots.PublishedSourceSnapshotIds);
+    }
+
     private DatabaseRetentionMaintenanceService CreateSut(DatabaseMaintenanceOptions options)
     {
         return new DatabaseRetentionMaintenanceService(

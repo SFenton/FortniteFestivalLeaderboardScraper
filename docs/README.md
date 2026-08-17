@@ -9,6 +9,7 @@ sources:
   - .github/instructions/documentation.instructions.md
   - docs/architecture/replay-artifacts.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/ProBassSnapshotRewritePilot.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -52,6 +53,7 @@ again. Verify their preconditions and current code before execution.
 
 - [Improvement notification recovery](database/ImprovementNotificationRecoveryRunbook.md)
 - [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
+- [Pro-bass snapshot archive/rewrite pilot](database/ProBassSnapshotRewritePilot.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)

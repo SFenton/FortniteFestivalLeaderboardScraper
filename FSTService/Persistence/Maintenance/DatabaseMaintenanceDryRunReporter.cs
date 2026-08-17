@@ -139,13 +139,16 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var capturedAtUtc = DateTime.UtcNow;
         var activeSnapshotIds = await LoadActiveSnapshotIdsAsync(conn, ct);
         var projectionSourceSnapshotIds = await LoadProjectionSourceSnapshotIdsAsync(conn, ct);
+        var publishedSourceSnapshotIds =
+            await LoadPublishedSourceSnapshotIdsAsync(conn, ct);
         var scrapes = await LoadScrapesAsync(conn, ct);
         var snapshotPartitions = await LoadSnapshotPartitionStatsAsync(conn, ct);
         var policy = SnapshotRetentionPolicy.Create(
             activeSnapshotIds,
             projectionSourceSnapshotIds,
             scrapes,
-            options.RollbackCompletedSnapshotsToKeep);
+            options.RollbackCompletedSnapshotsToKeep,
+            publishedSourceSnapshotIds);
         snapshotPartitions = AttachMissingProtectedSnapshotIds(snapshotPartitions, policy.ProtectedSnapshotIds);
         var observedSnapshotIds = snapshotPartitions
             .SelectMany(partition => partition.SnapshotEstimates.Select(estimate => estimate.SnapshotId))
@@ -159,6 +162,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var snapshotSummary = BuildSnapshotSummary(
             activeSnapshotIds,
             projectionSourceSnapshotIds,
+            publishedSourceSnapshotIds,
             scrapes,
             snapshotPartitions,
             snapshotDecisions,
@@ -322,13 +326,16 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
         var activeSnapshotIds = await LoadActiveSnapshotIdsAsync(conn, ct);
         var projectionSourceSnapshotIds = await LoadProjectionSourceSnapshotIdsAsync(conn, ct);
+        var publishedSourceSnapshotIds =
+            await LoadPublishedSourceSnapshotIdsAsync(conn, ct);
         var scrapes = await LoadScrapesAsync(conn, ct);
         var snapshotPartitions = await LoadSnapshotPartitionStatsAsync(conn, ct);
         var policy = SnapshotRetentionPolicy.Create(
             activeSnapshotIds,
             projectionSourceSnapshotIds,
             scrapes,
-            options.RollbackCompletedSnapshotsToKeep);
+            options.RollbackCompletedSnapshotsToKeep,
+            publishedSourceSnapshotIds);
         snapshotPartitions = AttachMissingProtectedSnapshotIds(snapshotPartitions, policy.ProtectedSnapshotIds);
         var observedSnapshotIds = snapshotPartitions
             .SelectMany(partition => partition.SnapshotEstimates.Select(estimate => estimate.SnapshotId))
@@ -438,6 +445,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
     private static SnapshotDryRunSummary BuildSnapshotSummary(
         IReadOnlyList<long> activeSnapshotIds,
         IReadOnlyList<long> projectionSourceSnapshotIds,
+        IReadOnlyList<long> publishedSourceSnapshotIds,
         IReadOnlyList<ScrapeSummary> scrapes,
         IReadOnlyList<SnapshotPartitionStats> partitions,
         IReadOnlyList<SnapshotRetentionDecision> snapshotDecisions,
@@ -490,6 +498,8 @@ public sealed class DatabaseMaintenanceDryRunReporter
             EstimatedUnknownRows = estimatedUnknownRows,
             EstimatedUnknownBytes = estimatedUnknownBytes,
             EstimatesComplete = estimatesComplete,
+            PublishedSourceSnapshotIds =
+                publishedSourceSnapshotIds,
         };
     }
 
@@ -758,13 +768,16 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
         var activeSnapshotIds = await LoadActiveSnapshotIdsAsync(conn, ct);
         var projectionSourceSnapshotIds = await LoadProjectionSourceSnapshotIdsAsync(conn, ct);
+        var publishedSourceSnapshotIds =
+            await LoadPublishedSourceSnapshotIdsAsync(conn, ct);
         var scrapes = await LoadScrapesAsync(conn, ct);
         var exactSnapshotIds = await LoadDistinctSnapshotIdsAsync(conn, partitionName, ct);
         var policy = SnapshotRetentionPolicy.Create(
             activeSnapshotIds,
             projectionSourceSnapshotIds,
             scrapes,
-            options.RollbackCompletedSnapshotsToKeep);
+            options.RollbackCompletedSnapshotsToKeep,
+            publishedSourceSnapshotIds);
         var decisions = policy.Classify(exactSnapshotIds);
         var keepIds = decisions
             .Where(decision => decision.Action != SnapshotCleanupAction.PurgeCandidate)
@@ -873,6 +886,67 @@ public sealed class DatabaseMaintenanceDryRunReporter
         while (await reader.ReadAsync(ct))
             ids.Add(reader.GetInt64(0));
 
+        return ids;
+    }
+
+    private static async Task<IReadOnlyList<long>>
+        LoadPublishedSourceSnapshotIdsAsync(
+            NpgsqlConnection conn,
+            CancellationToken ct)
+    {
+        if (!await TableExistsAsync(
+                conn,
+                "scrape_publication_state",
+                ct)
+            || !await TableExistsAsync(
+                conn,
+                "leaderboard_published_scope_source",
+                ct)
+            || !await TableExistsAsync(
+                conn,
+                "publication_generations",
+                ct))
+        {
+            return [];
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH protected_publications AS (
+                SELECT DISTINCT publication_id
+                FROM scrape_publication_state state
+                CROSS JOIN LATERAL unnest(
+                    ARRAY[
+                        state.current_publication_id,
+                        state.previous_publication_id,
+                        state.working_publication_id
+                    ]
+                ) publication_id
+                WHERE state.id = TRUE
+                  AND publication_id IS NOT NULL
+            ),
+            protected_scrapes AS (
+                SELECT DISTINCT generation.scrape_id
+                FROM publication_generations generation
+                JOIN protected_publications publication
+                  ON publication.publication_id =
+                        generation.publication_id
+                WHERE generation.scrape_id IS NOT NULL
+            )
+            SELECT DISTINCT source.source_snapshot_id
+            FROM leaderboard_published_scope_source source
+            JOIN protected_scrapes scrape
+              ON scrape.scrape_id =
+                    source.published_scrape_id
+            WHERE source.source_snapshot_id IS NOT NULL
+            ORDER BY source.source_snapshot_id DESC
+            """;
+
+        var ids = new List<long>();
+        await using var reader =
+            await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            ids.Add(reader.GetInt64(0));
         return ids;
     }
 
@@ -2210,6 +2284,7 @@ public sealed record SnapshotDryRunSummary(
     long EstimatedPurgeBytes,
     long EstimatedBlockedBytes)
 {
+    public IReadOnlyList<long> PublishedSourceSnapshotIds { get; init; } = [];
     public long EstimatedTotalRows { get; init; }
     public long EstimatedRetainedRows { get; init; } = checked(EstimatedKeepRows + EstimatedBlockedRows);
     public long EstimatedRetainedBytes { get; init; } = checked(EstimatedKeepBytes + EstimatedBlockedBytes);
@@ -2439,6 +2514,7 @@ public sealed class SnapshotRetentionPolicy
 {
     private readonly HashSet<long> _activeSnapshotIds;
     private readonly HashSet<long> _projectionSourceSnapshotIds;
+    private readonly HashSet<long> _publishedSourceSnapshotIds;
     private readonly HashSet<long> _rollbackSnapshotIds;
     private readonly IReadOnlyDictionary<long, ScrapeSummary> _scrapesById;
     private readonly long? _maxScrapeId;
@@ -2446,12 +2522,15 @@ public sealed class SnapshotRetentionPolicy
     private SnapshotRetentionPolicy(
         IReadOnlyCollection<long> activeSnapshotIds,
         IReadOnlyCollection<long> projectionSourceSnapshotIds,
+        IReadOnlyCollection<long> publishedSourceSnapshotIds,
         IReadOnlyCollection<long> rollbackSnapshotIds,
         IReadOnlyDictionary<long, ScrapeSummary> scrapesById,
         long? maxScrapeId)
     {
         _activeSnapshotIds = activeSnapshotIds.ToHashSet();
         _projectionSourceSnapshotIds = projectionSourceSnapshotIds.ToHashSet();
+        _publishedSourceSnapshotIds =
+            publishedSourceSnapshotIds.ToHashSet();
         _rollbackSnapshotIds = rollbackSnapshotIds.ToHashSet();
         _scrapesById = scrapesById;
         _maxScrapeId = maxScrapeId;
@@ -2461,14 +2540,21 @@ public sealed class SnapshotRetentionPolicy
         IReadOnlyCollection<long> activeSnapshotIds,
         IReadOnlyCollection<long> projectionSourceSnapshotIds,
         IReadOnlyCollection<ScrapeSummary> scrapes,
-        int rollbackCompletedSnapshotsToKeep)
+        int rollbackCompletedSnapshotsToKeep,
+        IReadOnlyCollection<long>? publishedSourceSnapshotIds = null)
     {
         if (rollbackCompletedSnapshotsToKeep < 0)
             throw new ArgumentOutOfRangeException(nameof(rollbackCompletedSnapshotsToKeep), "Rollback keep count cannot be negative.");
 
         var active = activeSnapshotIds.ToHashSet();
         var projectionSources = projectionSourceSnapshotIds.ToHashSet();
-        var pinned = active.Concat(projectionSources).ToHashSet();
+        var publishedSources =
+            (publishedSourceSnapshotIds ?? [])
+            .ToHashSet();
+        var pinned = active
+            .Concat(projectionSources)
+            .Concat(publishedSources)
+            .ToHashSet();
         var rollback = scrapes
             .Where(scrape => scrape.IsCompleted && !pinned.Contains(scrape.Id))
             .OrderByDescending(scrape => scrape.Id)
@@ -2479,6 +2565,7 @@ public sealed class SnapshotRetentionPolicy
         return new SnapshotRetentionPolicy(
             active,
             projectionSources,
+            publishedSources,
             rollback,
             scrapes.ToDictionary(scrape => scrape.Id),
             scrapes.Count == 0 ? null : scrapes.Max(scrape => scrape.Id));
@@ -2496,6 +2583,7 @@ public sealed class SnapshotRetentionPolicy
     public IReadOnlyList<long> ProtectedSnapshotIds =>
         _activeSnapshotIds
             .Concat(_projectionSourceSnapshotIds)
+            .Concat(_publishedSourceSnapshotIds)
             .Concat(_rollbackSnapshotIds)
             .Distinct()
             .OrderByDescending(snapshotId => snapshotId)
@@ -2510,6 +2598,8 @@ public sealed class SnapshotRetentionPolicy
             reasons.Add("active snapshot state");
         if (_projectionSourceSnapshotIds.Contains(snapshotId))
             reasons.Add("current projection source");
+        if (_publishedSourceSnapshotIds.Contains(snapshotId))
+            reasons.Add("current/previous/working publication physical source");
         if (_rollbackSnapshotIds.Contains(snapshotId))
             reasons.Add("rollback completed snapshot");
 
