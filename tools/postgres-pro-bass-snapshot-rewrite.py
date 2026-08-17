@@ -43,6 +43,11 @@ WORKER_CONTAINER = "fstworker"
 DATABASE_NAME = "fstservice"
 DATABASE_USER = "fst"
 APPLICATION_NAME = "fst-pro-bass-snapshot-rewrite-pilot"
+PLAN_QUERY_PGOPTIONS = (
+    "-c work_mem=64MB "
+    "-c temp_file_limit=262144kB "
+    "-c max_parallel_workers_per_gather=0"
+)
 WORKSPACE_MARKER = ".fst-pro-bass-pilot-workspace.json"
 LOCK_FILE = ".fst-pro-bass-pilot.lock"
 REPORTS_DIR = "reports"
@@ -423,17 +428,20 @@ class Database:
         self.user = user
         self.database = database
 
-    def psql(self, sql, *, timeout=3600):
+    def psql(self, sql, *, timeout=3600, pgoptions=None):
+        options = (
+            "PGOPTIONS=-c row_security=off "
+            f"-c application_name={APPLICATION_NAME}"
+        )
+        if pgoptions:
+            options += f" {pgoptions}"
         arguments = [
             "docker",
             "exec",
             "-e",
             "PGCONNECT_TIMEOUT=10",
             "-e",
-            (
-                "PGOPTIONS=-c row_security=off "
-                f"-c application_name={APPLICATION_NAME}"
-            ),
+            options,
             self.container,
             "psql",
             "-X",
@@ -454,8 +462,12 @@ class Database:
             timeout=timeout,
         ).stdout.strip()
 
-    def json(self, sql, *, timeout=3600):
-        output = self.psql(sql, timeout=timeout)
+    def json(self, sql, *, timeout=3600, pgoptions=None):
+        output = self.psql(
+            sql,
+            timeout=timeout,
+            pgoptions=pgoptions,
+        )
         if not output:
             raise PilotError("database query returned no JSON")
         try:
@@ -465,8 +477,12 @@ class Database:
                 f"database query returned invalid JSON: {output[:500]}"
             ) from error
 
-    def scalar(self, sql, *, timeout=3600):
-        return self.psql(sql, timeout=timeout)
+    def scalar(self, sql, *, timeout=3600, pgoptions=None):
+        return self.psql(
+            sql,
+            timeout=timeout,
+            pgoptions=pgoptions,
+        )
 
 
 class FilesystemMonitor:
@@ -1373,17 +1389,12 @@ def inventory_query():
         ),
         rows_by_snapshot AS (
             SELECT
-                   GROUPING(snapshot.snapshot_id) AS is_whole,
                    snapshot.snapshot_id,
                    COUNT(*)::bigint AS row_count,
-                   MIN(snapshot.snapshot_id) AS snapshot_id_min,
-                   MAX(snapshot.snapshot_id) AS snapshot_id_max,
                    MIN(snapshot.song_id) AS song_id_min,
                    MAX(snapshot.song_id) AS song_id_max,
-                   md5(MIN(snapshot.account_id)) AS
-                       account_id_min_hash,
-                   md5(MAX(snapshot.account_id)) AS
-                       account_id_max_hash,
+                   MIN(snapshot.account_id) AS account_id_min,
+                   MAX(snapshot.account_id) AS account_id_max,
                    MIN(snapshot.score) AS score_min,
                    MAX(snapshot.score) AS score_max,
                    COALESCE(bit_xor(hashtextextended(
@@ -1391,12 +1402,10 @@ def inventory_query():
                    COALESCE(bit_xor(hashtextextended(
                        {row_expression}, 1)), 0) AS hash_xor_1,
                    COALESCE(SUM(hashtextextended(
-                       {row_expression}, 2)::numeric), 0)::text AS
+                       {row_expression}, 2)::numeric), 0) AS
                        hash_sum_2
             FROM {qualified(TARGET_PARTITION)} snapshot
-            GROUP BY GROUPING SETS (
-                (snapshot.snapshot_id),
-                ())
+            GROUP BY snapshot.snapshot_id
         ),
         source_ownership AS (
             SELECT source.source_snapshot_id AS snapshot_id,
@@ -1427,14 +1436,14 @@ def inventory_query():
                             'songIdMin', rows.song_id_min,
                             'songIdMax', rows.song_id_max,
                             'accountIdMinHash',
-                                rows.account_id_min_hash,
+                                md5(rows.account_id_min),
                             'accountIdMaxHash',
-                                rows.account_id_max_hash,
+                                md5(rows.account_id_max),
                             'scoreMin', rows.score_min,
                             'scoreMax', rows.score_max,
                             'hashXor0', rows.hash_xor_0,
                             'hashXor1', rows.hash_xor_1,
-                            'hashSum2', rows.hash_sum_2,
+                            'hashSum2', rows.hash_sum_2::text,
                             'scrapeLogPresent',
                                 scrape.id IS NOT NULL,
                             'scrapeCompletedAt',
@@ -1464,25 +1473,28 @@ def inventory_query():
                   ON scrape.id = rows.snapshot_id
                 LEFT JOIN source_ownership ownership
                   ON ownership.snapshot_id = rows.snapshot_id
-                WHERE rows.is_whole = 0),
+                ),
             'wholeFingerprint', (
                 SELECT json_build_object(
-                    'rowCount', rows.row_count,
-                    'snapshotIdMin', rows.snapshot_id_min,
-                    'snapshotIdMax', rows.snapshot_id_max,
-                    'songIdMin', rows.song_id_min,
-                    'songIdMax', rows.song_id_max,
+                    'rowCount', COALESCE(
+                        SUM(rows.row_count), 0),
+                    'snapshotIdMin', MIN(rows.snapshot_id),
+                    'snapshotIdMax', MAX(rows.snapshot_id),
+                    'songIdMin', MIN(rows.song_id_min),
+                    'songIdMax', MAX(rows.song_id_max),
                     'accountIdMinHash',
-                        rows.account_id_min_hash,
+                        md5(MIN(rows.account_id_min)),
                     'accountIdMaxHash',
-                        rows.account_id_max_hash,
-                    'scoreMin', rows.score_min,
-                    'scoreMax', rows.score_max,
-                    'hashXor0', rows.hash_xor_0,
-                    'hashXor1', rows.hash_xor_1,
-                    'hashSum2', rows.hash_sum_2)
-                FROM rows_by_snapshot rows
-                WHERE rows.is_whole = 1))
+                        md5(MAX(rows.account_id_max)),
+                    'scoreMin', MIN(rows.score_min),
+                    'scoreMax', MAX(rows.score_max),
+                    'hashXor0', COALESCE(
+                        bit_xor(rows.hash_xor_0), 0),
+                    'hashXor1', COALESCE(
+                        bit_xor(rows.hash_xor_1), 0),
+                    'hashSum2', COALESCE(
+                        SUM(rows.hash_sum_2), 0)::text)
+                FROM rows_by_snapshot rows))
     """
 
 
@@ -1755,6 +1767,7 @@ def stage_plan(args, runner):
     inventory_bundle = database.json(
         inventory_query(),
         timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
     )
     inventory = inventory_bundle["inventory"]
     classification = classify_inventory(protected, inventory)
@@ -1788,6 +1801,7 @@ def stage_plan(args, runner):
     retained_fingerprint = database.json(
         fingerprint_sql(TARGET_PARTITION, keep_predicate),
         timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
     )
     whole_fingerprint = inventory_bundle["wholeFingerprint"]
     catalog = database.json(catalog_query())

@@ -56,6 +56,16 @@ class MountRunner:
         raise AssertionError(f"unexpected command: {arguments}")
 
 
+class CaptureRunner:
+    def __init__(self, stdout="{}"):
+        self.stdout = stdout
+        self.calls = []
+
+    def run(self, arguments, **kwargs):
+        self.calls.append((arguments, kwargs))
+        return Completed(self.stdout)
+
+
 def plan_fixture():
     return {
         "planIdentity": {
@@ -113,6 +123,38 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertNotIn("table", option_destinations)
         self.assertNotIn("relation", option_destinations)
         self.assertNotIn("sql", option_destinations)
+
+    def test_inventory_query_avoids_full_grouping_sets(self):
+        sql = tool.inventory_query()
+
+        self.assertNotIn("GROUPING SETS", sql)
+        self.assertIn("GROUP BY snapshot.snapshot_id", sql)
+        self.assertIn("SUM(rows.row_count)", sql)
+        self.assertIn("bit_xor(rows.hash_xor_0)", sql)
+        self.assertIn("SUM(rows.hash_sum_2)", sql)
+
+    def test_plan_query_options_bound_temp_and_parallelism(self):
+        self.assertIn(
+            "temp_file_limit=262144kB",
+            tool.PLAN_QUERY_PGOPTIONS,
+        )
+        self.assertIn(
+            "max_parallel_workers_per_gather=0",
+            tool.PLAN_QUERY_PGOPTIONS,
+        )
+        self.assertIn("work_mem=64MB", tool.PLAN_QUERY_PGOPTIONS)
+
+        runner = CaptureRunner()
+        database = tool.Database(runner, "postgres", "fst", "fstservice")
+
+        database.json(
+            "SELECT '{}'::json",
+            pgoptions=tool.PLAN_QUERY_PGOPTIONS,
+        )
+
+        arguments = runner.calls[0][0]
+        options = arguments[arguments.index("-e") + 3]
+        self.assertIn(tool.PLAN_QUERY_PGOPTIONS, options)
 
     def test_source_query_protects_only_named_publication_generations(self):
         sql = tool.protected_sources_query(1)

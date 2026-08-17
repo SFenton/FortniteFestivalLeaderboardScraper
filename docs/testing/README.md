@@ -93,6 +93,11 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
   --retained-rows 30000
 ```
 
+The unit suite locks the production planning-query shape: one aggregate per
+snapshot ID, no `GROUPING SETS`, no parallel gather, and a 256 MB PostgreSQL
+temp-file limit. This prevents a planning-only query from consuming the FST
+emergency free-space reserve.
+
 The drill must report exact archive/restore and catalog parity, successful
 rename-back rollback, successful separate final drop, matching fingerprints,
 immediate filesystem reclaim, removed transient containers/PGDATA, retained

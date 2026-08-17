@@ -98,6 +98,28 @@ Report-only planning remains statistics-based and fail-closed. It is not the
 pilot execution plan. The pilot `plan` stage performs exact target-local ID,
 row-count, range, ownership, reference, and content fingerprints.
 
+### Production plan-query safety
+
+The first live `plan` attempt from commit `05bf8d1f` was cancelled before it
+completed. Its `GROUPING SETS` query hashed the full partition twice and
+spilled temporary files on the 4 TB PostgreSQL filesystem, reducing free space
+from about 66 GB to about 5 GB in roughly three minutes. The exact planning
+backends were cancelled, PostgreSQL released the temporary files immediately,
+free space returned to about 66 GB, public probes remained HTTP 200, and no
+archive or database mutation occurred.
+
+The corrected plan query:
+
+- aggregates each snapshot ID once;
+- derives the whole-partition fingerprint from those per-snapshot aggregates;
+- disables parallel gather for the plan session;
+- uses `work_mem=64MB`;
+- enforces `temp_file_limit=256MB`.
+
+Any future query-shape regression must therefore fail at the bounded temp limit
+instead of consuming the emergency scrape reserve. Do not use the original
+`05bf8d1f` planning query for production work.
+
 ## Temporary 8 TB scratch exception
 
 The operator has authorized one temporary workspace on

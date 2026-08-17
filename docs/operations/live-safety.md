@@ -150,6 +150,13 @@ authorization.
 The repository candidate is not live execution authorization. No production
 archive, rewrite, swap, or drop occurred during its implementation.
 
+The production `plan` stage must use the bounded per-snapshot aggregate query:
+no `GROUPING SETS`, no parallel gather, `work_mem=64MB`, and
+`temp_file_limit=256MB`. A prior unbounded planning query spilled about 61 GB
+of temporary data before it was cancelled; PostgreSQL released the files and
+no live data changed. Stop only the exact pilot backends if the temp limit,
+filesystem monitor, or public-health monitor reports a violation.
+
 The tool accepts only
 `public.leaderboard_entries_snapshot_pro_bass`. Before each live stage it binds
 the exact production Compose project/working directory, PostgreSQL container,
