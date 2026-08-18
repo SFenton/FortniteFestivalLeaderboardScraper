@@ -125,9 +125,13 @@ shared backend allows exclusive maintenance to claim its durable owner token.
 This covers registration-only hosting, including the interval before a
 publication monitor observes a same-publication release. Exclusive maintenance
 admission waits for active holders, blocks later holders, and remains
-fail-closed across cancellation/resume. Ordinary scrape freezes continue to
-use the existing background-work boundary rather than this max-score-only
-rejection.
+fail-closed across cancellation/resume. During normal exclusive-lease disposal,
+a queued shared holder may briefly acquire the advisory lock before the live
+owner clears its durable token; it releases and retries that owner-active
+handoff rather than surfacing a false maintenance rejection. A bounded
+try-acquire or orphaned durable token still fails immediately. Ordinary scrape
+freezes continue to use the existing background-work boundary rather than this
+max-score-only rejection.
 
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the

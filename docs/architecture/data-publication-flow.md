@@ -264,9 +264,12 @@ derived rows while retaining the same published scrape/publication ID.
    validate or restore the bounded timeout rolls back without releasing the
    freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
-   clearing the token. Queued holders cannot pass the advisory gate early, and
-   stale direct entry or population writers remain durably blocked throughout
-   the handoff.
+   clearing the token. A normal queued registration holder that acquires the
+   shared advisory lock during that short handoff checks the durable owner
+   backend identity, releases the shared lock, and retries until the live owner
+   clears the token. Bounded try-acquire still rejects immediately, and an
+   orphaned token whose owner backend is gone remains fail-closed. Stale direct
+   entry or population writers remain durably blocked throughout the handoff.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument

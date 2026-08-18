@@ -198,6 +198,10 @@ notification audit, and expected affected-account cache rows sort after combo
 ID projection.
 Evidence-safety coverage pins deterministic bounded account hashes and rejects
 raw maintenance account IDs in diagnostic identifiers.
+Mutation-gate handoff coverage deliberately pauses a live max-score owner after
+exclusive advisory-lock release but before durable-token cleanup. A normal
+queued registration acquisition must release/retry and then succeed; bounded
+try-acquire and orphan-token cases remain fail-closed.
 
 Rollback coverage starts from `paths_promoted`, partial derived progress, and
 an ambiguous committed promotion still checkpointed as `rollback_captured`;
