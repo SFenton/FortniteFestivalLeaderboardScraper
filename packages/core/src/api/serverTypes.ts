@@ -635,10 +635,26 @@ export type FeatureFlagsResponse = {
   appManual: boolean;
 };
 
+export type ServiceInfoSubphaseProgress = {
+  schemaVersion: number;
+  id: string | null;
+  epoch: number;
+  sequence: number;
+  kind: 'exact' | 'indeterminate' | 'not_applicable' | string;
+  unitsKind?: string | null;
+  unitsCompleted?: number | null;
+  unitsTotal?: number | null;
+  unitsTotalFinal: boolean;
+  percent?: number | null;
+  startedAt?: string | null;
+  lastProgressAt?: string | null;
+};
+
 export type ServiceInfoResponse = {
   contractVersion?: 2 | number;
   phasePlan?: {
     version: string;
+    subphaseCatalogVersion?: string;
     phases: ServiceInfoPhaseDescriptor[];
   };
   lastCompletedUpdate: {
@@ -681,6 +697,7 @@ export type ServiceInfoResponse = {
     etaUpperSeconds?: number | null;
     etaConfidence?: 'low' | 'medium' | 'high' | string | null;
     etaSampleCount?: number | null;
+    subphaseProgress?: ServiceInfoSubphaseProgress | null;
     heartbeatAt?: string | null;
     lastProgressAt?: string | null;
     branches?: Array<{
@@ -703,6 +720,7 @@ export type ServiceInfoResponse = {
     frozenScrapeId: number | null;
     freezeReason: string | null;
   };
+
   workerStatus: {
     workerKey: string;
     status: 'online' | 'offline' | 'stale' | 'starting' | 'stopping' | 'unknown' | string;
@@ -781,6 +799,7 @@ export type ServiceInfoWorkerOperation = {
   etaSampleCount?: number | null;
   heartbeatAt?: string | null;
   lastProgressAt?: string | null;
+  subphaseProgress?: ServiceInfoSubphaseProgress | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */

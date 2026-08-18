@@ -97,7 +97,7 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
-| Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
+| Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
@@ -253,21 +253,6 @@ protection vary.
 bytes, purge bytes, rewrite workspace, and rollback objects. The report-only
 planner is already enabled, but its exact result is not currently persisted in
 available evidence.
-
-### Current progress defect
-
-**Verified:**
-
-- `/api/progress` is process-local and was empty in `fstservice` while the
-  separate worker was actively scraping.
-- `/api/service-info` had no progress percent or ETA after more than an hour of
-  network work.
-- worker liveness heartbeats intentionally preserve operation progress
-  timestamps.
-- post-process durable updates hard-code `PostScrapeEnrichment`.
-- Settings assigns static weights that do not reflect measured duration and
-  can move overall progress backward as durable ranking child operations
-  replace the parent operation.
 
 ## Exact current dependency map
 

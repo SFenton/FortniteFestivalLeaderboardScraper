@@ -1697,6 +1697,16 @@ public class DatabaseInitializerTests : IDisposable
                 "eta_upper_seconds",
                 "eta_confidence",
                 "eta_sample_count",
+                "current_subphase_epoch",
+                "subphase_sequence",
+                "subphase_progress_kind",
+                "subphase_units_kind",
+                "subphase_units_completed",
+                "subphase_units_total",
+                "subphase_units_total_final",
+                "subphase_percent",
+                "subphase_started_at",
+                "subphase_last_progress_at",
                 "started_at",
                 "last_progress_at",
                 "heartbeat_at",
@@ -1712,6 +1722,8 @@ public class DatabaseInitializerTests : IDisposable
                 "int8", "text", "int4", "text", "int4", "text", "text",
                 "text", "text", "text", "int8", "int8", "bool", "float8",
                 "text", "float8", "text", "float8", "float8", "text", "int4",
+                "int4", "int8", "text", "text", "int8", "int8", "bool",
+                "float8", "timestamptz", "timestamptz",
                 "timestamptz", "timestamptz", "timestamptz", "timestamptz",
                 "text", "text", "text", "text",
             ],
@@ -1721,13 +1733,19 @@ public class DatabaseInitializerTests : IDisposable
             [
                 "NO", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO",
                 "YES", "YES", "YES", "NO", "YES", "NO", "YES", "YES",
-                "YES", "YES", "YES", "YES", "NO", "NO", "NO", "YES",
                 "YES", "YES", "YES", "YES",
+                "NO", "NO", "NO", "YES", "YES", "YES", "NO", "YES",
+                "YES", "YES",
+                "NO", "NO", "NO", "YES", "YES", "YES", "YES", "YES",
             ],
             nullability);
         var defaults = reader.GetFieldValue<string[]>(3);
         Assert.Equal("false", defaults[12]);
         Assert.Contains("indeterminate", defaults[14]);
+        Assert.Equal("0", defaults[21]);
+        Assert.Equal("0", defaults[22]);
+        Assert.Contains("indeterminate", defaults[23]);
+        Assert.Equal("false", defaults[27]);
 
         reader.Close();
         using (var constraints = conn.CreateCommand())
@@ -1744,7 +1762,7 @@ public class DatabaseInitializerTests : IDisposable
             Assert.True(constraintReader.Read());
             Assert.Equal(1, constraintReader.GetInt64(0));
             Assert.Equal(0, constraintReader.GetInt64(1));
-            Assert.True(constraintReader.GetInt64(2) >= 10);
+            Assert.True(constraintReader.GetInt64(2) >= 11);
         }
         using var indexes = conn.CreateCommand();
         indexes.CommandText = """
@@ -1871,6 +1889,160 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public void Scrape_phase_subphase_progress_is_fenced_and_sequence_ordered()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var startedAt = DateTime.UtcNow.AddSeconds(-5);
+        var attempt = _metaFixture.Db.StartScrapePhaseAttempt(
+            new ScrapePhaseAttemptStart(
+                scrapeId,
+                "scrape.leaderboards",
+                "scrape.update",
+                100,
+                PhaseProgressCatalog.PlanVersion,
+                "instance-a",
+                "fetching_leaderboards",
+                "running",
+                "leaderboards",
+                null,
+                null,
+                false,
+                null,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                startedAt,
+                startedAt,
+                startedAt,
+                "build-test",
+                "config-test",
+                CurrentSubphaseEpoch: 1,
+                SubphaseStartedAtUtc: startedAt,
+                SubphaseLastProgressAtUtc: startedAt));
+        var progressedAt = startedAt.AddSeconds(2);
+
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "fetching_leaderboards",
+                "leaderboards",
+                5,
+                10,
+                true,
+                50,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                progressedAt,
+                progressedAt,
+                WorkerInstanceId: "instance-a",
+                CurrentSubphaseEpoch: 1,
+                SubphaseSequence: 1,
+                SubphaseProgressKind: "exact",
+                SubphaseUnitsKind: "leaderboards",
+                SubphaseUnitsCompleted: 5,
+                SubphaseUnitsTotal: 10,
+                SubphaseUnitsTotalFinal: true,
+                SubphasePercent: 50,
+                SubphaseStartedAtUtc: startedAt,
+                SubphaseLastProgressAtUtc: progressedAt)));
+
+        Assert.False(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "fetching_leaderboards",
+                "leaderboards",
+                6,
+                10,
+                true,
+                60,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                progressedAt,
+                progressedAt,
+                WorkerInstanceId: "instance-a",
+                CurrentSubphaseEpoch: 1,
+                SubphaseSequence: 1)));
+
+        Assert.False(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                10,
+                10,
+                true,
+                100,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                progressedAt,
+                progressedAt,
+                WorkerInstanceId: "instance-b",
+                CurrentSubphaseEpoch: 2,
+                SubphaseSequence: 2)));
+
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                10,
+                10,
+                true,
+                100,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                progressedAt,
+                progressedAt,
+                WorkerInstanceId: "instance-a",
+                CurrentSubphaseEpoch: 2,
+                SubphaseSequence: 2,
+                SubphaseProgressKind: "indeterminate",
+                SubphaseStartedAtUtc: progressedAt,
+                SubphaseLastProgressAtUtc: progressedAt)));
+
+        var current = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey)
+                .CurrentPhaseAttempt);
+        Assert.Equal(2, current.CurrentSubphaseEpoch);
+        Assert.Equal(2, current.SubphaseSequence);
+        Assert.Equal("indeterminate", current.SubphaseProgressKind);
+        Assert.Null(current.SubphasePercent);
+    }
+
+    [Fact]
     public void Scrape_phase_attempt_progress_timestamp_remains_monotonic_across_clock_regression()
     {
         var scrapeId = _metaFixture.Db.StartScrapeRun();
@@ -1974,6 +2146,74 @@ public class DatabaseInitializerTests : IDisposable
                 subsequentAt,
                 null,
                 null)));
+    }
+
+    [Fact]
+    public void Service_runtime_selects_lowest_ordinal_parallel_phase()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var now = DateTime.UtcNow;
+
+        _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "post.compute_rankings",
+            "scrape.update",
+            310,
+            PhaseProgressCatalog.PlanVersion,
+            "parallel-instance",
+            "per_instrument_rankings",
+            "running",
+            "instruments",
+            1,
+            8,
+            true,
+            12.5,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            now,
+            "build-test",
+            "config-test"));
+        _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "post.first_seen_season",
+            "scrape.update",
+            210,
+            PhaseProgressCatalog.PlanVersion,
+            "parallel-instance",
+            "enriching_parallel_tail",
+            "running",
+            "songs",
+            2,
+            10,
+            true,
+            20,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now.AddSeconds(1),
+            now.AddSeconds(1),
+            now.AddSeconds(1),
+            "build-test",
+            "config-test"));
+
+        var current = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey)
+                .CurrentPhaseAttempt);
+
+        Assert.Equal("post.first_seen_season", current.PhaseId);
+        Assert.Equal(210, current.PhaseOrdinal);
     }
 
     [Fact]
