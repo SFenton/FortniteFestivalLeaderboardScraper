@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Services;
 using FSTService;
 using FSTService.Api;
 using FSTService.Persistence;
@@ -28,6 +29,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly ScraperOptions _scraperOptions;
     private readonly LeaderboardRivalsCalculator? _leaderboardRivalsCalculator;
     private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
+    private readonly FestivalService? _festivalService;
     private bool _currentProjectionAuthoritativeForPrecompute;
     private bool _strictPublishedSourcesForPrecompute;
 
@@ -53,8 +55,9 @@ public sealed class ScrapeTimePrecomputer
         JsonSerializerOptions jsonOpts,
         FeatureOptions features,
         LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null,
-        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null)
-        : this(persistence, metaDb, pathStore, progress, log, loggerFactory, jsonOpts, features, new ScraperOptions(), leaderboardRivalsCalculator, soloCurrentProjectionBuilder)
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
+        FestivalService? festivalService = null)
+        : this(persistence, metaDb, pathStore, progress, log, loggerFactory, jsonOpts, features, new ScraperOptions(), leaderboardRivalsCalculator, soloCurrentProjectionBuilder, festivalService)
     {
     }
 
@@ -69,7 +72,8 @@ public sealed class ScrapeTimePrecomputer
         FeatureOptions features,
         ScraperOptions scraperOptions,
         LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null,
-        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null)
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
+        FestivalService? festivalService = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -82,6 +86,7 @@ public sealed class ScrapeTimePrecomputer
         _scraperOptions = scraperOptions;
         _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
         _soloCurrentProjectionBuilder = soloCurrentProjectionBuilder;
+        _festivalService = festivalService;
     }
 
     /// <summary>Returns a precomputed response if available, else null.</summary>
@@ -328,6 +333,10 @@ public sealed class ScrapeTimePrecomputer
         var tiers = leewayMetadata.PopulationTiers;
         _populationTiers = tiers;
         StoreLeaderboardRankOffsets(leewayMetadata.RankOffsets);
+        PrecomputeSongs(
+            maintenanceCatalogSongs,
+            allMaxScores,
+            tiers);
         _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs and rank offsets for {OffsetCount} pairs in {Elapsed}ms.",
             tiers.Count, leewayMetadata.RankOffsets.Count, sw.ElapsedMilliseconds);
 
@@ -605,6 +614,33 @@ public sealed class ScrapeTimePrecomputer
         }
     }
 
+    private void PrecomputeSongs(
+        IReadOnlyCollection<Song>? maintenanceCatalogSongs,
+        IReadOnlyDictionary<string, SongMaxScores>
+            allMaxScores,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            PopulationTierData> populationTiers)
+    {
+        IReadOnlyCollection<Song>? songs =
+            maintenanceCatalogSongs
+            ?? _festivalService?.Songs;
+        if (songs is null)
+            return;
+
+        var currentSeason = Math.Max(
+            _metaDb.GetCurrentSeason(),
+            _persistence.GetMaxSeasonAcrossInstruments()
+            ?? 0);
+        var json = SongsCacheService.BuildSongsJson(
+            songs,
+            allMaxScores,
+            currentSeason,
+            populationTiers,
+            _jsonOpts);
+        Store(PublicationApiCacheKeys.Songs, json);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Band Scores Cache (shared across player precomputation)
     // ═══════════════════════════════════════════════════════════════
@@ -725,9 +761,14 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute player {AccountId}", accountId);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute player {AccountId}",
+                        evidenceAccountId);
                     failures.Add(new InvalidOperationException(
-                        $"Player profile precompute failed for {accountId}.",
+                        $"Player profile precompute failed for {evidenceAccountId}.",
                         ex));
                 }
                 return ValueTask.CompletedTask;
@@ -868,7 +909,7 @@ public sealed class ScrapeTimePrecomputer
         {
             _log.LogInformation(
                 "[Precompute.PlayerProfileFallbacks] account={AccountId} current_scores={CurrentScores} fallback_variants={FallbackVariants} rank_tiers={RankTiers} stored_rank_variants={StoredRankVariants} missing_rank_variants={MissingRankVariants}",
-                accountId,
+                FormatEvidenceAccountId(accountId),
                 scores.Count,
                 fallbackVariantCount,
                 fallbackRankTierCount,
@@ -1074,6 +1115,72 @@ public sealed class ScrapeTimePrecomputer
         }
 
         var names = _metaDb.GetDisplayNames(allAccountIds);
+
+        if (!leeway.HasValue)
+        {
+            foreach (var ri in rawInstruments)
+            {
+                var endpointEntries = ri.Entries.Select(e => new
+                {
+                    e.AccountId,
+                    DisplayName =
+                        names.GetValueOrDefault(e.AccountId),
+                    e.Score,
+                    Rank = ri.UseFilteredRank
+                        ? LeaderboardResponseRanks.Resolve(
+                            e.ApiRank,
+                            e.Rank,
+                            e.Rank,
+                            true,
+                            ri.ExactRemovedAbove)
+                        : e.Rank,
+                    LocalRank = ri.UseFilteredRank
+                        ? e.Rank
+                        : (int?)null,
+                    ApiRank = e.ApiRank > 0
+                        ? e.ApiRank
+                        : (int?)null,
+                    RankSource = ri.UseFilteredRank
+                        ? LeaderboardResponseRanks.ResolveSource(
+                            e.ApiRank,
+                            e.Rank,
+                            e.Rank,
+                            true,
+                            ri.ExactRemovedAbove)
+                        : LeaderboardResponseRanks
+                            .ComputedRankSource,
+                    e.Accuracy,
+                    e.IsFullCombo,
+                    e.Stars,
+                    e.Difficulty,
+                    e.Season,
+                    e.Percentile,
+                    e.EndTime,
+                    e.Source,
+                }).ToList();
+                var endpointPayload = new
+                {
+                    songId,
+                    instrument = ri.Instrument,
+                    showLeaderboardEntryTotals,
+                    count = endpointEntries.Count,
+                    totalEntries = ri.TotalEntries,
+                    localEntries = ri.DbCount,
+                    entries = endpointEntries,
+                };
+                Store(
+                    PublicationApiCacheKeys
+                        .InstrumentLeaderboard(
+                            songId,
+                            ri.Instrument,
+                            LeaderboardCacheKeys
+                                .SongDetailPreviewTop,
+                            leeway: null),
+                    JsonSerializer.SerializeToUtf8Bytes(
+                        endpointPayload,
+                        _jsonOpts));
+            }
+        }
 
         var instruments = rawInstruments.Select(ri => new
         {
@@ -1323,9 +1430,14 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute sub-resources for {AccountId}", accountId);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute sub-resources for {AccountId}",
+                        evidenceAccountId);
                     failures.Add(new InvalidOperationException(
-                        $"Player sub-resource precompute failed for {accountId}.",
+                        $"Player sub-resource precompute failed for {evidenceAccountId}.",
                         ex));
                 }
                 return ValueTask.CompletedTask;
@@ -1811,7 +1923,7 @@ public sealed class ScrapeTimePrecomputer
         {
             _log.LogInformation(
                 "[Precompute.LeaderboardRivals] account={AccountId} persisted_methods={PersistedMethods} live_fallback_methods={LiveFallbackMethods} skipped_methods={SkippedMethods}",
-                accountId,
+                FormatEvidenceAccountId(accountId),
                 persistedMethods,
                 liveFallbackMethods,
                 skippedMethods);
@@ -1978,6 +2090,9 @@ public sealed class ScrapeTimePrecomputer
                     vocals = e.VocalsAdjustedSkill.HasValue ? new { skill = e.VocalsAdjustedSkill, rank = e.VocalsSkillRank } : null,
                     proGuitar = e.ProGuitarAdjustedSkill.HasValue ? new { skill = e.ProGuitarAdjustedSkill, rank = e.ProGuitarSkillRank } : null,
                     proBass = e.ProBassAdjustedSkill.HasValue ? new { skill = e.ProBassAdjustedSkill, rank = e.ProBassSkillRank } : null,
+                    proVocals = e.ProVocalsAdjustedSkill.HasValue ? new { skill = e.ProVocalsAdjustedSkill, rank = e.ProVocalsSkillRank } : null,
+                    proCymbals = e.ProCymbalsAdjustedSkill.HasValue ? new { skill = e.ProCymbalsAdjustedSkill, rank = e.ProCymbalsSkillRank } : null,
+                    proDrums = e.ProDrumsAdjustedSkill.HasValue ? new { skill = e.ProDrumsAdjustedSkill, rank = e.ProDrumsSkillRank } : null,
                 },
                 e.ComputedAt,
             }).ToList();
@@ -2067,10 +2182,12 @@ public sealed class ScrapeTimePrecomputer
                     {
                         e.AccountId,
                         displayName = names.GetValueOrDefault(e.AccountId),
+                        e.RawSkillRating,
                         e.AdjustedSkillRating,
                         e.AdjustedSkillRank,
                         e.WeightedRating,
                         e.WeightedRank,
+                        e.RawWeightedRating,
                         e.FcRate,
                         e.FcRateRank,
                         e.TotalScore,
@@ -2194,9 +2311,15 @@ public sealed class ScrapeTimePrecomputer
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Failed to precompute neighborhood for {AccountId}/{Instrument}", accountId, instrument);
+                    var evidenceAccountId =
+                        FormatEvidenceAccountId(accountId);
+                    _log.LogWarning(
+                        ex,
+                        "Failed to precompute neighborhood for {AccountId}/{Instrument}",
+                        evidenceAccountId,
+                        instrument);
                     failures.Add(new InvalidOperationException(
-                        $"Ranking neighborhood precompute failed for {accountId}/{instrument}.",
+                        $"Ranking neighborhood precompute failed for {evidenceAccountId}/{instrument}.",
                         ex));
                 }
             }
@@ -2235,14 +2358,26 @@ public sealed class ScrapeTimePrecomputer
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Failed to precompute composite neighborhood for {AccountId}", accountId);
+                var evidenceAccountId =
+                    FormatEvidenceAccountId(accountId);
+                _log.LogWarning(
+                    ex,
+                    "Failed to precompute composite neighborhood for {AccountId}",
+                    evidenceAccountId);
                 failures.Add(new InvalidOperationException(
-                    $"Composite neighborhood precompute failed for {accountId}.",
+                    $"Composite neighborhood precompute failed for {evidenceAccountId}.",
                     ex));
             }
         }
         ThrowIfPrecomputeFailures("ranking neighborhoods", failures);
     }
+
+    private string FormatEvidenceAccountId(
+        string accountId) =>
+        _strictPublishedSourcesForPrecompute
+            ? MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId)
+            : accountId;
 
     private static void ThrowIfPrecomputeFailures(
         string phase,

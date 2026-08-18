@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -23,6 +23,7 @@ sources:
   - docs/architecture/data-storage.md
   - docs/components/worker.md
   - docs/database/SnapshotReuseRunbook.md
+  - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/decisions/0005-post-scrape-modular-monolith.md
 update_triggers:
   - A post-scrape phase, dependency, criticality, progress contract, replay path, deployment gate, overlap decision, or measured baseline changes.
@@ -628,11 +629,17 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. snapshot-capacity recovery investigation: refresh the read-only protected
+1. review and qualify the freeze-safe publication API cache candidate. The
+   repository implementation reuses canonical rows, eagerly adds songs plus
+   bounded top-10 song/instrument rows, and lazily admits only overview sizes
+   25/50 after sub-11 ms measured compute p95. Promotion still requires one
+   full scrape/publication window, same-publication freeze injection, exact
+   key/JSON/ETag parity, and no protected precompute/WAL/API regression;
+2. snapshot-capacity recovery investigation: refresh the read-only protected
    generation, row-distribution, relation-size, and exact workspace evidence;
    do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
    existing parity/capacity contract passes;
-2. BandMaintenance current projection refresh. PR #47 merges the
+3. BandMaintenance current projection refresh. PR #47 merges the
    implementation default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
    Schema and fixture tests prove `member_index` uniqueness inside the query
@@ -646,14 +653,14 @@ Order is evidence-driven:
    Production enablement remains pending, not accepted: capacity must first
    restore a full-scrape window, then a matched full-scrape A/B must pass exact
    publication/data parity and the protected `>10%` regression rule;
-3. solo current-projection write reduction;
-4. rank-history query path and one-variable concurrency/overlap experiment;
-5. leaderboard-rivals batching/fingerprints;
-6. precompute input reuse/selective concurrency;
-7. best-effort cleanup reorder;
-8. snapshot activation consolidation;
-9. storage-retention execution after parity/capacity gates;
-10. capture-only overlap research after architecture/storage redesign.
+4. solo current-projection write reduction;
+5. rank-history query path and one-variable concurrency/overlap experiment;
+6. leaderboard-rivals batching/fingerprints;
+7. precompute input reuse/selective concurrency;
+8. best-effort cleanup reorder;
+9. snapshot activation consolidation;
+10. storage-retention execution after parity/capacity gates;
+11. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 
@@ -780,7 +787,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- Snapshot-capacity recovery evidence is the next active priority.
+- Durable publication-keyed API caching is the next active implementation;
+  broader snapshot-capacity recovery remains separately gated.
 - Current-projection optimization remains a separate later full-scrape A/B.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.

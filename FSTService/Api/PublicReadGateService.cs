@@ -6,7 +6,10 @@ namespace FSTService.Api;
 public readonly record struct PublicReadCacheSafetySnapshot(
     bool IsFrozen,
     bool FailedCandidateIsolationActive,
-    long Revision);
+    long Revision)
+{
+    public long? CurrentPublicationId { get; init; }
+}
 
 public sealed class PublicReadGateService
 {
@@ -20,6 +23,7 @@ public sealed class PublicReadGateService
     private PublicReadFreezeState _cachedState = PublicReadFreezeState.NotFrozen;
     private bool _cachedRequiresCachedReads;
     private bool _cachedFailedCandidateIsolation;
+    private long? _cachedCurrentPublicationId;
     private PublicReadFreezeState? _localFailClosedState;
     private DateTime _cachedAtUtc = DateTime.MinValue;
     private long _stateRevision;
@@ -74,7 +78,11 @@ public sealed class PublicReadGateService
             return new PublicReadCacheSafetySnapshot(
                 state.IsFrozen,
                 _cachedFailedCandidateIsolation,
-                _stateRevision);
+                _stateRevision)
+            {
+                CurrentPublicationId =
+                    _cachedCurrentPublicationId,
+            };
         }
     }
 
@@ -96,7 +104,12 @@ public sealed class PublicReadGateService
                 var previousRequiresCachedReads = _cachedRequiresCachedReads;
                 var previousFailedCandidateIsolation =
                     _cachedFailedCandidateIsolation;
-                var freezeState = _metaDb.GetPublicReadFreezeState();
+                var previousCurrentPublicationId =
+                    _cachedCurrentPublicationId;
+                var databaseState = _metaDb
+                    .GetPublicReadCacheDatabaseState();
+                var freezeState = databaseState?.FreezeState
+                    ?? _metaDb.GetPublicReadFreezeState();
                 if (freezeState.PublicationFailureIsolationPending
                     || freezeState.PublicationCommitPending
                     && (!freezeState.FrozenAt.HasValue
@@ -106,8 +119,12 @@ public sealed class PublicReadGateService
                     _recoveryCoordinator?.Trigger();
                 }
                 var failedCandidateIsolation =
-                    _metaDb.GetFailedCandidateReadIsolationState()
+                    databaseState?.FailedCandidateState
+                    ?? _metaDb
+                        .GetFailedCandidateReadIsolationState()
                     ?? PublicReadFreezeState.NotFrozen;
+                _cachedCurrentPublicationId =
+                    databaseState?.CurrentPublicationId;
                 _cachedFailedCandidateIsolation =
                     failedCandidateIsolation.IsFrozen;
                 _cachedRequiresCachedReads =
@@ -134,7 +151,9 @@ public sealed class PublicReadGateService
                 if (previousState != _cachedState ||
                     previousRequiresCachedReads != _cachedRequiresCachedReads ||
                     previousFailedCandidateIsolation
-                        != _cachedFailedCandidateIsolation)
+                        != _cachedFailedCandidateIsolation ||
+                    previousCurrentPublicationId
+                        != _cachedCurrentPublicationId)
                 {
                     _stateRevision++;
                 }
@@ -149,6 +168,7 @@ public sealed class PublicReadGateService
                     "read-safety-state-unavailable");
                 _cachedRequiresCachedReads = true;
                 _cachedFailedCandidateIsolation = false;
+                _cachedCurrentPublicationId = null;
                 _stateRevision++;
             }
 

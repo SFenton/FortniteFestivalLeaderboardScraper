@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/FeatureOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - docker-compose.yml
   - .env.example
   - deploy/docker-compose.yml
@@ -52,6 +53,24 @@ overrides intentionally diverge between the public service and mutation worker.
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
 
+## Publication API cache safety bounds
+
+Freeze-safe cache coverage is code-owned rather than a deployment feature flag.
+This prevents a role override from widening request-time cache writes or
+weakening fail-closed behavior.
+
+| Bound | Value | Purpose |
+|---|---:|---|
+| Lazy route family | overview only | Excludes arbitrary/high-cardinality routes |
+| Lazy page sizes | `25`, `50` | Ten finite metric/size variants |
+| Maximum measured build | `< 1000 ms` | Hard admission limit; target is `< 500 ms` |
+| Maximum lazy payload | `2 MiB` | Bounds memory, PostgreSQL row size, and response capture |
+| Operation telemetry | last `256` | Bounded diagnostics without raw cache keys |
+| L2 retention | current + previous publication | Existing publication cleanup contract |
+
+Changing these bounds is an API/publication behavior change requiring matched
+benchmarks, freeze tests, documentation, and a separate promotion decision.
+
 ## Path generation
 
 | Key | Default | Purpose |
@@ -74,12 +93,12 @@ The option classes are authoritative when a property exists but is omitted from
 
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
-| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume evidence and revalidation |
+| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume/rollback evidence and revalidation |
 
 The production Compose-form override is
 `Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`. The value applies
 uniformly to publication population, complete consumed score-history,
-notification, affected-account, cache, final validation, and apply/resume
+notification, affected-account, cache, final validation, and apply/resume/rollback
 revalidation commands. It does not change ordinary scrape or cleanup command
 timeouts. During final completion, the transaction-local PostgreSQL
 `statement_timeout` uses this value only for the immutable cache-entry

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -16,10 +16,15 @@ sources:
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/BandCurrentProjectionOptimizationTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheServiceTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheMiddlewareTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
+  - FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
+  - tools/postgres-retire-ix-le-song-rank.test.py
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -105,7 +110,7 @@ This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
 replacement, unrelated-account preservation, frozen-scope cache filtering,
-strict plan report/digest version 5 cutoff serialization/rejection, strict
+strict plan report/digest version 6 cutoff serialization/rejection, strict
 apply/resume report version 3 compatibility/rejection, null/exact/boundary
 observed-score cases, integer-floor rounding, live-shaped promotion evidence,
 the `2,045,222,521` pass/`2,045,222,522` reject boundary for all eight maximum
@@ -120,6 +125,39 @@ resume. Final-completion coverage verifies that PostgreSQL uses the configured
 timeout for immutable cache validation, retains the `5s` lock timeout and
 serializable transaction, restores the `120s` mutation timeout, and leaves
 validation failures frozen.
+Recovery coverage also proves both resume and rollback leases yield public
+read locks until each commit fence, resume from
+`notifications_quarantined/failed` skips derived rebuild and preserves its
+notification audit, and expected affected-account cache rows sort after combo
+ID projection.
+Evidence-safety coverage pins deterministic bounded account hashes and rejects
+raw maintenance account IDs in diagnostic identifiers.
+
+Rollback coverage starts from `paths_promoted`, partial derived progress, and
+an ambiguous committed promotion still checkpointed as `rollback_captured`;
+the same phase with pre-promotion paths is rejected.
+It proves dry-run non-mutation; strict CLI/file/digest/report contracts;
+schema upgrade; wrong manifest/plan/rollback/publication/freeze/path/rollback
+row/extra-song rejection; active backend/worker/waiting-lock rejection; exact
+atomic path restoration; complete derived, tier, notification, and cache
+parity; unrelated scope/tier preservation; transaction and final-completion
+failure recovery; interruption retry; idempotent already-rolled-back handling;
+post-commit acknowledgement reconciliation; final rollback-file revalidation;
+restored-maximum-only score-history drift detection; publication-lock yielding
+between transaction commit fences; direction-specific apply/rollback
+notification audits; stale terminal mutation-gate cleanup; original
+apply-audit preservation; atomic notification alignment/checkpoint retry;
+terminal dry-run non-mutation; truthful apply/resume rejection from resumable
+and terminal rollback phases; pre-mutation report-path reservation; normal
+cache-build rejection from rollback cache evidence; truthful terminal
+`cleanupPending` reporting and retry;
+whole-freeze cache publisher/staging rejection; terminal validation failures
+that cannot be success-reconciled; schema reinitialization during an active
+freeze; safe removal of unwritten report reservations;
+working-pointer-independent cache fencing plus scrape-allocation rejection; and
+rollback from `notifications_quarantined`, unrelated/newer-freeze refusal; and
+unfreeze only with terminal `rolled_back`. Hosted-mode tests lock rollback into
+the strict no-hosted-service one-shot path.
 
 The focused score-history matrix compares the optimized selector/branch
 aggregates with the exact pre-optimization SQL on a deterministic randomized
@@ -188,6 +226,82 @@ Tests also require output/comparison version `3`, explicit deterministic and
 option-parity profiles, profile-specific timing reasons, operation metrics,
 `productionComparableTiming=false`, canonical hash sensitivity, and rejection
 of relabeled production-comparable or unknown-profile packages.
+
+Focused stale solo rank-index retirement validation:
+
+```bash
+bash -n tools/postgres-retire-ix-le-song-rank.sh
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-ix-le-song-rank.test.py
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests
+```
+
+The Python suite uses deterministic fake project/catalog probes. It covers
+wrong project/cluster identity, changed definitions/OIDs/bytes, constraint
+ownership, active queries/locks/backends, offline-worker enforcement,
+unsupported concurrent parent drop, short-timeout transaction failure,
+partial-catalog failure, idempotent absence, exact rollback order, reviewed
+artifact digests, and truthful byte reporting. A separate isolated PostgreSQL
+17 mechanics run must prove 10 objects before, rejection of concurrent parent
+drop, zero objects after normal parent drop, and `10|9` after generated
+rollback and attachment.
+
+Focused freeze-safe publication API cache validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~PublicationApiResponseCache|FullyQualifiedName~Lazy_publication_cache|FullyQualifiedName~SongsCache|FullyQualifiedName~PublicReadGateTests|FullyQualifiedName~FreezeSafePublicationCache|FullyQualifiedName~FreezeSafeFirstPageAlias|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MaxScoreMaintenanceWorkflowTests'
+
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
+  --logger 'console;verbosity=detailed'
+```
+
+Coverage includes authoritative publication classification, private/
+unclassified/conflicting fail-closed admission, rate-limit/auth middleware
+order, publication/current-previous identity, same-publication revision
+invalidation, exact serializer/body-SHA/byte/ETag/header/query/order/filter
+parity, service-restart L2 recovery, frozen hit/miss and no-write behavior,
+finite route normalization, canonical alias context isolation, single-flight
+waiter sharing, failed/cancelled build recovery, current/previous cleanup,
+atomic staging/swap failure recovery, telemetry redaction, and unchanged route
+classification/rate limiting.
+
+The refreshed 722,994-byte fixture produced L2 cold p50/p95
+`1.452/3.273 ms`, L1 warm p50/p95 `0.199/0.313 ms`, and 10,000-row
+write-through p50/p95 `8.366/11.149 ms`. Twenty read-only production samples
+per lazy overview variant measured p50 `5.890-8.122 ms` and p95
+`6.707-11.114 ms`; every body SHA-256/ETag/size was stable and every variant
+remained below the 500 ms target and 1,000 ms hard gate. Provenance and
+pre/post safety checks live under
+`public-api-cache-review-completion-20260817T133332Z`.
+
+The first live service-only A/B (`public-api-cache-service-ab-20260817T142445Z`)
+correctly rejected head `5a227954`: cached overview page 5 was semantically
+equal to its uncached endpoint, but two non-ASCII display names were emitted as
+`\u` escapes by alias projection, so exact bytes/ETag diverged. Baseline service
+and cache were restored. Five protected routes also exceeded the 10% relative
+p95 gate (`+13.1%` to `+109.5%`) while staying below 9 ms absolute.
+Regression coverage now requires raw UTF-8 equality
+for first-page and overview projection plus explicit shared endpoint/precompute
+JSON encoder configuration; the repeat A/B must also satisfy the relative-p95
+gate.
+
+L1 latency regression coverage also asserts that one authoritative combined
+publication/freeze/failed-candidate snapshot is read per warm request, the
+publication provider and L2 are not queried again, and publication ID remains
+part of the L1 identity.
+
+The accepted repeat evidence is
+`public-api-cache-service-ab-repeat-20260817T163341Z`. It records first touch
+separately, runs five warm-up cycles, then 120 interleaved samples per route
+with rotating route order and six 20-sample p95 batches. Candidate warm p95 was
+`1.90-3.47 ms`; all routes improved `55.76-82.97%`, no route met the
+predeclared sustained-regression rule, and every candidate p95 remained below
+500 ms. Exact live cache/direct parity passed for overview and band; composite
+live semantic parity plus image-bound exact projection tests closed the
+remaining incident route.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

@@ -141,6 +141,33 @@ public sealed class SongsCachePrimeTests
         Assert.Equal("profile-v3", song.GetProperty("pathGenerationProfile").GetString());
     }
 
+    [Fact]
+    public void Resolved_source_serializer_is_byte_identical_to_endpoint_serializer()
+    {
+        using var fx = new BuildSongsJsonFixture();
+        fx.AddSongWithPathMetadata(
+            "path-song",
+            "generation-42");
+        var expected = fx.Invoke();
+        using var document = JsonDocument.Parse(expected);
+        var currentSeason = document.RootElement
+            .GetProperty("currentSeason")
+            .GetInt32();
+
+        var actual = SongsCacheService.BuildSongsJson(
+            fx.FestivalSvc.Songs,
+            fx.PathStore.GetAllMaxScores(),
+            currentSeason,
+            fx.Precomputer.GetPopulationTiers(),
+            new JsonSerializerOptions(
+                JsonSerializerDefaults.Web));
+
+        Assert.Equal(expected, actual);
+        Assert.Equal(
+            ResponseCacheService.ComputeETag(expected),
+            ResponseCacheService.ComputeETag(actual));
+    }
+
     private sealed class BuildSongsJsonFixture : IDisposable
     {
         private readonly InMemoryMetaDatabase _metaFixture = new();

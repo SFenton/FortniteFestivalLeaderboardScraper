@@ -1,5 +1,6 @@
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -394,6 +395,19 @@ public sealed class MetaDatabaseTests : IDisposable
         var isolation = Db.GetFailedCandidateReadIsolationState();
         Assert.True(isolation.IsFrozen);
         Assert.Equal(candidateId, isolation.ScrapeId);
+        var combined =
+            Db.GetPublicReadCacheDatabaseState();
+        Assert.NotNull(combined);
+        Assert.Equal(
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId,
+            combined.CurrentPublicationId);
+        Assert.False(combined.FreezeState.IsFrozen);
+        Assert.True(
+            combined.FailedCandidateState.IsFrozen);
+        Assert.Equal(
+            candidateId,
+            combined.FailedCandidateState.ScrapeId);
     }
 
     [Fact]
@@ -1383,6 +1397,121 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Lazy_publication_cache_write_persists_metadata_and_refuses_freeze()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "seed",
+                Json: new byte[] { 1 },
+                ETag: "\"seed\""),
+        ]);
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = Db.GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+        var json = System.Text.Encoding.UTF8.GetBytes(
+            "{\"lazy\":true}");
+        var etag = ResponseCacheService.ComputeETag(json);
+
+        var stored = Db.TrySetCurrentCachedResponse(
+            publicationId,
+            "public-route:/api/rankings/overview?pageSize=25",
+            json,
+            etag);
+
+        Assert.NotNull(stored);
+        Assert.Equal(publicationId, stored.PublicationId);
+        Assert.Equal(scrapeId, stored.PublishedScrapeId);
+        Assert.Equal("application/json", stored.ContentType);
+        Assert.Equal(
+            Convert.ToHexString(
+                System.Security.Cryptography.SHA256
+                    .HashData(json))
+                .ToLowerInvariant(),
+            stored.ContentSha256);
+        Assert.NotNull(stored.CachedAtUtc);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                publicationId,
+                stored.CacheKey!)?.Json);
+
+        Db.SetPublicReadFreeze(
+            true,
+            scrapeId,
+            "test-freeze");
+        Assert.Null(Db.TrySetCurrentCachedResponse(
+            publicationId,
+            "blocked",
+            new byte[] { 9 },
+            "\"blocked\""));
+        Assert.Null(Db.GetCachedResponseEntry(
+            publicationId,
+            "blocked"));
+    }
+
+    [Fact]
+    public void Lazy_publication_cache_row_is_retained_for_current_and_previous()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "seed",
+                Json: new byte[] { 1 },
+                ETag: "\"seed\""),
+        ]);
+        Db.CompleteScrapeRun(
+            firstScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+        var firstPublicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        var json = new byte[] { 7, 8, 9 };
+        Assert.NotNull(Db.TrySetCurrentCachedResponse(
+            firstPublicationId,
+            "lazy-retained",
+            json,
+            "\"lazy\""));
+
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            secondScrapeId,
+            1,
+            20,
+            2,
+            200);
+        Db.PublishScrapeRun(
+            secondScrapeId,
+            promoteCachedResponses: false);
+        var pointers = Db.GetPublicationPointerState();
+
+        Assert.Equal(
+            firstPublicationId,
+            pointers.PreviousPublicationId);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                firstPublicationId,
+                "lazy-retained")?.Json);
+        Assert.Equal(
+            json,
+            Db.GetCachedResponseEntry(
+                pointers.CurrentPublicationId!.Value,
+                "lazy-retained")?.Json);
+    }
+
+    [Fact]
     public void PublishScrapeRun_rotates_publication_generations_and_records_surface_bindings()
     {
         var firstScrapeId = Db.StartScrapeRun();
@@ -1682,6 +1811,199 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Publication_cache_swap_failure_preserves_current_and_resumable_staging()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "atomic-old",
+                Json: new byte[] { 1 },
+                ETag: "\"old\""),
+        ]);
+        Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        var bindingBefore = Db
+            .GetPublicationSurfaceBindings(
+                publicationId)
+            .Single(binding =>
+                binding.SurfaceName
+                == PublicationSurfaceNames
+                    .ApiResponseCache);
+        Db.BulkSetCachedResponsesStaging(
+        [
+            (
+                Key: "atomic-new",
+                Json: new byte[] { 2 },
+                ETag: "\"new\""),
+        ],
+        publicationId);
+
+        using (var connection =
+               DataSource.OpenConnection())
+        using (var inject = connection.CreateCommand())
+        {
+            inject.CommandText = """
+                CREATE OR REPLACE FUNCTION
+                    fst_test_fail_publication_cache_swap()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF NEW.cache_key = 'atomic-new' THEN
+                        RAISE EXCEPTION
+                            'injected publication cache swap failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+
+                CREATE TRIGGER
+                    fst_test_fail_publication_cache_swap
+                BEFORE INSERT ON
+                    publication_api_response_cache
+                FOR EACH ROW
+                EXECUTE FUNCTION
+                    fst_test_fail_publication_cache_swap();
+                """;
+            inject.ExecuteNonQuery();
+        }
+
+        try
+        {
+            Assert.Throws<PostgresException>(() =>
+                Db.SwapCachedResponsesFromStaging(
+                    publicationId));
+
+            Assert.Equal(
+                new byte[] { 1 },
+                Db.GetCachedResponseEntry(
+                    publicationId,
+                    "atomic-old")?.Json);
+            Assert.Null(
+                Db.GetCachedResponseEntry(
+                    publicationId,
+                    "atomic-new"));
+            using var connection =
+                DataSource.OpenConnection();
+            using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache
+                        WHERE cache_key = 'atomic-old'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache
+                        WHERE cache_key = 'atomic-new'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache_staging
+                        WHERE cache_key = 'atomic-new'
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM
+                            publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                          AND cache_key = 'atomic-new'
+                    )
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            using var reader =
+                command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+            Assert.Equal(1L, reader.GetInt64(2));
+            Assert.Equal(1L, reader.GetInt64(3));
+            var bindingAfter = Db
+                .GetPublicationSurfaceBindings(
+                    publicationId)
+                .Single(binding =>
+                    binding.SurfaceName
+                    == PublicationSurfaceNames
+                        .ApiResponseCache);
+            Assert.Equal(
+                bindingBefore.RowCount,
+                bindingAfter.RowCount);
+            Assert.Equal(
+                bindingBefore.ContentHash,
+                bindingAfter.ContentHash);
+        }
+        finally
+        {
+            using var connection =
+                DataSource.OpenConnection();
+            using var cleanup =
+                connection.CreateCommand();
+            cleanup.CommandText = """
+                DROP TRIGGER IF EXISTS
+                    fst_test_fail_publication_cache_swap
+                ON publication_api_response_cache;
+                DROP FUNCTION IF EXISTS
+                    fst_test_fail_publication_cache_swap();
+                """;
+            cleanup.ExecuteNonQuery();
+        }
+
+        Db.SwapCachedResponsesFromStaging(
+            publicationId);
+        Assert.Null(
+            Db.GetCachedResponseEntry(
+                publicationId,
+                "atomic-old"));
+        Assert.Equal(
+            new byte[] { 2 },
+            Db.GetCachedResponseEntry(
+                publicationId,
+                "atomic-new")?.Json);
+        using (var connection =
+               DataSource.OpenConnection())
+        using (var command =
+               connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM api_response_cache_staging
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM
+                            publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                    )
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            using var reader =
+                command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(0L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+        }
+    }
+
+    [Fact]
     public async Task SchemaUpgrade_reconciles_legacy_cache_after_rollback_writer()
     {
         var scrapeId = Db.StartScrapeRun();
@@ -1750,14 +2072,14 @@ public sealed class MetaDatabaseTests : IDisposable
         using (var conn = DataSource.OpenConnection())
         using (var legacy = conn.CreateCommand())
         {
-                legacy.CommandText = """
+            legacy.CommandText = """
                     SELECT json_data
                     FROM api_response_cache
                     WHERE cache_key = 'cutover-key'
                     """;
-                Assert.Equal(
-                    new byte[] { 1 },
-                    (byte[]?)legacy.ExecuteScalar());
+            Assert.Equal(
+                new byte[] { 1 },
+                (byte[]?)legacy.ExecuteScalar());
         }
         Assert.Equal(
                 new byte[] { 2 },
@@ -4302,23 +4624,42 @@ public sealed class MetaDatabaseTests : IDisposable
         {
             changes.Add(new ScoreChangeRecord
             {
-                SongId = $"song_{i}", Instrument = "Solo_Guitar", AccountId = "acct_seed",
-                OldScore = null, NewScore = 100_000 + i, OldRank = null, NewRank = i + 1,
-                ScoreAchievedAt = $"2025-01-{(i % 9) + 1:00}T00:00:00Z", AllTimeRank = i + 1,
+                SongId = $"song_{i}",
+                Instrument = "Solo_Guitar",
+                AccountId = "acct_seed",
+                OldScore = null,
+                NewScore = 100_000 + i,
+                OldRank = null,
+                NewRank = i + 1,
+                ScoreAchievedAt = $"2025-01-{(i % 9) + 1:00}T00:00:00Z",
+                AllTimeRank = i + 1,
             });
         }
 
         changes.Add(new ScoreChangeRecord
         {
-            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
-            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 77,
-            ScoreAchievedAt = "2025-02-01T00:00:00Z", AllTimeRank = 77,
+            SongId = "song_dupe",
+            Instrument = "Solo_Guitar",
+            AccountId = "acct_1",
+            OldScore = null,
+            NewScore = 123_456,
+            OldRank = null,
+            NewRank = 77,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z",
+            AllTimeRank = 77,
         });
         changes.Add(new ScoreChangeRecord
         {
-            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
-            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 402,
-            ScoreAchievedAt = "2025-02-01T00:00:00Z", Season = 10, SeasonRank = 402,
+            SongId = "song_dupe",
+            Instrument = "Solo_Guitar",
+            AccountId = "acct_1",
+            OldScore = null,
+            NewScore = 123_456,
+            OldRank = null,
+            NewRank = 402,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z",
+            Season = 10,
+            SeasonRank = 402,
         });
 
         Db.InsertScoreChanges(changes);
@@ -5582,6 +5923,102 @@ public sealed class MetaDatabaseTests : IDisposable
             requireSourceLocks: false);
     }
 
+    [Theory]
+    [InlineData(false, "fst-max-score-rollback")]
+    [InlineData(true, "fst-max-score-resume")]
+    public async Task MaxScoreRecoveryLease_yields_publication_reads_until_each_commit_fence(
+        bool resume,
+        string applicationName)
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        await using var recoveryLease = resume
+            ? await Db
+                .AcquireMaxScoreMaintenanceResumeLeaseAsync(
+                    publicationId)
+            : await Db
+                .AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+                    publicationId);
+        await recoveryLease.VerifyHeldAsync(
+            requireSourceLocks: false);
+
+        await using var readConnection =
+            await DataSource.OpenConnectionAsync();
+        await using var readTransaction =
+            await readConnection.BeginTransactionAsync();
+        await using (var acquireRead = readConnection.CreateCommand())
+        {
+            acquireRead.Transaction = readTransaction;
+            acquireRead.CommandText =
+                "SELECT pg_try_advisory_xact_lock_shared(@lockKey)";
+            acquireRead.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            Assert.True(
+                await acquireRead.ExecuteScalarAsync()
+                    is true);
+        }
+
+        var actionStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var releaseAction =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var mutation = recoveryLease.ExecuteTransactionAsync(
+            "recovery-publication-commit-fence-test",
+            requireSourceLocks: false,
+            async (_, _, token) =>
+            {
+                actionStarted.TrySetResult();
+                await releaseAction.Task.WaitAsync(token);
+            });
+        await actionStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        releaseAction.TrySetResult();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var waitingForPublicationFence = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var probe =
+                await DataSource.OpenConnectionAsync();
+            await using var command = probe.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND application_name =
+                          @applicationName
+                      AND wait_event_type = 'Lock'
+                )
+                """;
+            command.Parameters.AddWithValue(
+                "applicationName",
+                applicationName);
+            waitingForPublicationFence =
+                await command.ExecuteScalarAsync()
+                    is true;
+            if (waitingForPublicationFence)
+                break;
+            await Task.Delay(25);
+        }
+        Assert.True(waitingForPublicationFence);
+        Assert.False(mutation.IsCompleted);
+
+        await readTransaction.CommitAsync();
+        await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task MutationGate_orders_registration_freeze_source_locks_cancellation_and_resume()
     {
@@ -6240,7 +6677,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("dev1", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         Db.EnqueueBackfill("acct1", 50);
         Db.EnqueueHistoryRecon("acct1", 50);
@@ -6261,7 +6700,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("dev2", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         Db.EnqueueBackfill("acct1", 50);
 
@@ -6293,7 +6734,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RegisterUser("web-tracker", "acct1");
         Db.UpsertPlayerStats(new PlayerStatsDto
         {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+            AccountId = "acct1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 10,
         });
         SetWebRegistrationActivity("acct1", DateTime.UtcNow.AddHours(-8));
 

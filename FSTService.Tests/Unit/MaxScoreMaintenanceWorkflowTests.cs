@@ -16,6 +16,68 @@ namespace FSTService.Tests.Unit;
 public sealed class MaxScoreMaintenanceWorkflowTests
 {
     [Fact]
+    public void Expected_account_cache_rows_sort_after_combo_id_projection()
+    {
+        const string songId = "same-song";
+        var row =
+            MaxScoreMaintenanceService
+                .BuildExpectedAccountCacheRow(
+                    "account",
+                    [
+                        new PlayerScoreDto
+                        {
+                            SongId = songId,
+                            Instrument = "Solo_Bass",
+                            Score = 20,
+                            Rank = 2,
+                        },
+                        new PlayerScoreDto
+                        {
+                            SongId = songId,
+                            Instrument = "Solo_Guitar",
+                            Score = 10,
+                            Rank = 1,
+                        },
+                    ],
+                    new Dictionary<
+                        (string SongId, string Instrument),
+                        long>
+                    {
+                        [(songId, "Solo_Bass")] = 200,
+                        [(songId, "Solo_Guitar")] = 100,
+                    });
+
+        Assert.Equal(
+            ["01", "02"],
+            row.Scores.Select(score =>
+                score.Instrument));
+    }
+
+    [Fact]
+    public void Maintenance_account_evidence_uses_bounded_hashes()
+    {
+        const string accountId =
+            "sensitive-account-identity";
+        var evidenceId =
+            MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId);
+
+        Assert.StartsWith(
+            "sha256:",
+            evidenceId,
+            StringComparison.Ordinal);
+        Assert.Equal(23, evidenceId.Length);
+        Assert.DoesNotContain(
+            accountId,
+            evidenceId,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            evidenceId,
+            MaxScoreMaintenanceAccountIdPolicy
+                .FormatEvidenceId(accountId));
+    }
+
+    [Fact]
     public async Task Plan_failure_reports_evidence_stage_and_base_exception_message()
     {
         await using var fixture =
@@ -247,11 +309,11 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             (stage, checks) =>
                 stage == "apply-resume"
                     ? checks.Select(check => check with
-                        {
-                            AboveValidCutoffCount =
+                    {
+                        AboveValidCutoffCount =
                                 check.AboveValidCutoffCount + 1,
-                            Passed = true,
-                        })
+                        Passed = true,
+                    })
                         .ToArray()
                     : checks;
         var rejectedResume = await fixture.ApplyAsync(
@@ -401,6 +463,40 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             2 * LeaderboardRivalsCalculator
                 .RankMethods.Length,
             fixture.ReadChangedInstrumentRivalStateCount());
+    }
+
+    [Fact]
+    public async Task Resume_from_notifications_quarantined_skips_derived_rebuild_and_completes_cache_publication()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true);
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.NotificationsQuarantined);
+        var notificationAuditBefore =
+            fixture.ReadNotificationAuditIdentity();
+        fixture.Service.BeforeDerivedRebuildTestHook =
+            () => throw new InvalidOperationException(
+                "Derived rebuild must remain skipped from notifications_quarantined.");
+
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            resumed.Phase);
+        Assert.False(resumed.PublicReadsFrozen);
+        Assert.Equal(
+            notificationAuditBefore,
+            fixture.ReadNotificationAuditIdentity());
+        fixture.AssertPublishedCachesMatchLive();
     }
 
     [Fact]
@@ -663,6 +759,930 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.False(completedState.LiveSentinelPresent);
     }
 
+    [Theory]
+    [InlineData(MaxScoreMaintenancePhase.PathsPromoted)]
+    [InlineData(MaxScoreMaintenancePhase.DerivedStateRebuilt)]
+    [InlineData(MaxScoreMaintenancePhase.NotificationsQuarantined)]
+    public async Task Rollback_restores_paths_and_full_derived_state_from_incomplete_run(
+        MaxScoreMaintenancePhase interruptedPhase)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        Assert.True(plan.CanApply);
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase == interruptedPhase)
+                {
+                    throw new InvalidOperationException(
+                        $"Stop after {phase}.");
+                }
+            };
+        var interrupted = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+        Assert.False(interrupted.Succeeded);
+        Assert.True(interrupted.PublicReadsFrozen);
+
+        fixture.Service.AfterPhaseCheckpointTestHook = null;
+        var rolledBack = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(
+            rolledBack.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.True(rolledBack.Validated);
+        Assert.False(rolledBack.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RolledBack,
+            rolledBack.Phase);
+        Assert.NotNull(rolledBack.BeforePathFingerprint);
+        Assert.NotNull(rolledBack.AfterPathFingerprint);
+        Assert.NotEqual(
+            rolledBack.BeforePathFingerprint,
+            rolledBack.AfterPathFingerprint);
+        Assert.All(
+            rolledBack.Stages,
+            stage => Assert.Equal(
+                MaxScoreMaintenanceRollbackStageStatus.Completed,
+                stage.Status));
+        var state = fixture.ReadWorkflowState();
+        Assert.False(state.Frozen);
+        Assert.Equal("rolled_back", state.RunStatus);
+        Assert.Equal("rolled_back", state.RunPhase);
+        Assert.Equal(
+            fixture.Manifest.Songs[0]
+                .CurrentPath.Maxima.Lead,
+            state.SongStatsMaximum);
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].CurrentPath);
+        fixture.AssertPublishedCachesMatchLive();
+        Assert.Equal(
+            interruptedPhase switch
+            {
+                MaxScoreMaintenancePhase.PathsPromoted =>
+                    "paths_promoted",
+                MaxScoreMaintenancePhase.DerivedStateRebuilt =>
+                    "derived_state_rebuilt",
+                MaxScoreMaintenancePhase.NotificationsQuarantined =>
+                    "notifications_quarantined",
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(interruptedPhase)),
+            },
+            fixture.ReadOriginalFailureStage());
+    }
+
+    [Fact]
+    public async Task Rollback_dry_run_validates_without_mutation()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase == MaxScoreMaintenancePhase.PathsPromoted)
+                    throw new InvalidOperationException("stop");
+            };
+        _ = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            "rollback.json");
+        fixture.Service.AfterPhaseCheckpointTestHook = null;
+
+        var report = await fixture.RollbackAsync(
+            plan.PlanDigest,
+            dryRun: true);
+
+        Assert.True(report.Validated);
+        Assert.True(report.DryRun);
+        Assert.False(report.Succeeded);
+        Assert.True(report.PublicReadsFrozen);
+        Assert.Contains(
+            "paths_promoted/failed",
+            report.Detail,
+            StringComparison.Ordinal);
+        var state = fixture.ReadSafetyState();
+        Assert.Equal("paths_promoted", state.RunPhase);
+        Assert.True(state.Frozen);
+    }
+
+    [Fact]
+    public async Task Rollback_rejects_successfully_completed_apply()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        var applied = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            "rollback.json");
+        Assert.True(applied.Succeeded);
+        fixture.Service.RollbackRuntimeStateTestHook =
+            static () =>
+                new MaxScoreMaintenanceRollbackRuntimeState(
+                    0,
+                    0,
+                    0);
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.False(rejected.PublicReadsFrozen);
+        Assert.Contains(
+            "successfully completed",
+            fixture.LastFailure?.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("manifest")]
+    [InlineData("plan")]
+    [InlineData("rollback")]
+    public async Task Rollback_rejects_wrong_cli_digest(
+        string identity)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest,
+            expectedManifestDigest:
+                identity == "manifest"
+                    ? new string('f', 64)
+                    : null,
+            expectedPlanDigest:
+                identity == "plan"
+                    ? new string('f', 64)
+                    : null,
+            expectedRollbackDigest:
+                identity == "rollback"
+                    ? new string('f', 64)
+                    : null);
+        Assert.False(rejected.Validated);
+        Assert.False(rejected.Succeeded);
+        Assert.Equal("preflight", rejected.FailureStage);
+        var state = fixture.ReadSafetyState();
+        Assert.True(state.Frozen);
+        Assert.Equal("paths_promoted", state.RunPhase);
+    }
+
+    [Theory]
+    [InlineData("freeze")]
+    [InlineData("publication")]
+    [InlineData("current-path")]
+    [InlineData("rollback-row")]
+    [InlineData("extra-song")]
+    public async Task Rollback_rejects_changed_live_identity(
+        string mutation)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.MutateRollbackPrecondition(mutation);
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.NotNull(fixture.LastFailure);
+        var state = fixture.ReadSafetyState();
+        Assert.True(state.Frozen);
+        Assert.NotEqual("rolled_back", state.RunPhase);
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0)]
+    [InlineData(0, 1, 0)]
+    [InlineData(0, 0, 1)]
+    public async Task Rollback_rejects_active_backend_or_waiting_lock(
+        int maintenanceBackends,
+        int workerBackends,
+        int waitingLocks)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.Service.RollbackRuntimeStateTestHook =
+            () => new MaxScoreMaintenanceRollbackRuntimeState(
+                maintenanceBackends,
+                workerBackends,
+                waitingLocks);
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Contains(
+            "zero maintenance/worker backends",
+            fixture.LastFailure?.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Rollback_interruption_resumes_without_double_restore()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackPathsRestored)
+                {
+                    throw new InvalidOperationException(
+                        "Stop after rollback path commit.");
+                }
+            };
+
+        var interrupted = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.False(interrupted.Succeeded);
+        Assert.True(interrupted.Resumable);
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].CurrentPath);
+
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            null;
+        var resumed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            fixture.Manifest.Songs.Count,
+            resumed.RestoredSongCount);
+    }
+
+    [Fact]
+    public async Task Rollback_accepts_promoted_paths_after_ambiguous_apply_checkpoint()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.RollbackCaptured);
+        await fixture.PromotePathsWithoutCheckpointAsync();
+
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(
+            completed.Succeeded,
+            fixture.LastFailure?.ToString());
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].CurrentPath);
+    }
+
+    [Fact]
+    public async Task Rollback_rejects_rollback_captured_before_path_promotion()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.RollbackCaptured);
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Contains(
+            "path",
+            fixture.LastFailure?.Message,
+            StringComparison.OrdinalIgnoreCase);
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].CurrentPath);
+    }
+
+    [Fact]
+    public async Task Rollback_transaction_failure_keeps_promoted_path_and_freeze()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.Service.BeforeRollbackPathRestoreTestHook =
+            () => throw new InvalidOperationException(
+                "injected path transaction failure");
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.Resumable);
+        Assert.True(rejected.PublicReadsFrozen);
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].StagedPath with
+            {
+                Revision =
+                    fixture.Manifest.Songs[0]
+                        .CurrentPath.Revision + 1,
+            });
+    }
+
+    [Fact]
+    public async Task Rollback_post_validation_failure_resumes_and_unfreezes_once()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.BeforeRollbackCompletionTestHook =
+            () => throw new InvalidOperationException(
+                "injected final rollback failure");
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.Validated);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackValidated,
+            rejected.Phase);
+
+        fixture.Service.BeforeRollbackCompletionTestHook =
+            null;
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        var repeated = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(completed.Succeeded);
+        Assert.True(repeated.Succeeded);
+        Assert.False(completed.PublicReadsFrozen);
+        Assert.False(repeated.PublicReadsFrozen);
+    }
+
+    [Fact]
+    public async Task Rollback_revalidates_canonical_file_before_terminal_unfreeze()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        var canonicalRollback =
+            await File.ReadAllBytesAsync(
+                fixture.RollbackPath);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackValidated)
+                {
+                    File.WriteAllText(
+                        fixture.RollbackPath,
+                        "{}");
+                }
+            };
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.Validated);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackValidated,
+            rejected.Phase);
+
+        await File.WriteAllBytesAsync(
+            fixture.RollbackPath,
+            canonicalRollback);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            null;
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(
+            completed.Succeeded,
+            fixture.LastFailure?.ToString());
+    }
+
+    [Fact]
+    public async Task Rollback_reserves_report_path_before_mutation()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => fixture.RollbackAsync(
+                plan.PlanDigest,
+                reportOutputPath: "rollback.json"));
+
+        var state = fixture.ReadSafetyState();
+        Assert.True(state.Frozen);
+        Assert.Equal("paths_promoted", state.RunPhase);
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].StagedPath with
+            {
+                Revision =
+                    fixture.Manifest.Songs[0]
+                        .CurrentPath.Revision + 1,
+            });
+    }
+
+    [Fact]
+    public async Task Rollback_active_freeze_blocks_normal_cache_publishers()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackPathsRestored)
+                {
+                    throw new InvalidOperationException(
+                        "stop before rollback cache evidence");
+                }
+            };
+
+        var interrupted = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(interrupted.Succeeded);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackPathsRestored,
+            interrupted.Phase);
+        await fixture
+            .AssertCacheEvidenceWritersBlockedAsync();
+    }
+
+    [Fact]
+    public async Task Rollback_active_freeze_allows_schema_reinitialization()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+
+        await fixture.ReinitializeSchemaAsync();
+
+        var state = fixture.ReadSafetyState();
+        Assert.True(state.Frozen);
+        Assert.Equal("paths_promoted", state.RunPhase);
+    }
+
+    [Fact]
+    public async Task Rollback_active_freeze_rejects_scrape_allocation()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+
+        fixture.AssertScrapeAllocationBlocked();
+
+        var state = fixture.ReadSafetyState();
+        Assert.True(state.Frozen);
+        Assert.Equal("paths_promoted", state.RunPhase);
+    }
+
+    [Fact]
+    public async Task Rollback_cache_fence_survives_unexpected_working_pointer()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        fixture.SeedUnexpectedWorkingPublication();
+
+        await fixture
+            .AssertCacheEvidenceWritersBlockedAsync(
+                allowWorkingPublicationRejection: true);
+    }
+
+    [Fact]
+    public async Task Rollback_reconciles_post_commit_acknowledgement_failure_as_success()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.AfterRollbackCompletionTestHook =
+            backendProcessId =>
+            {
+                fixture.TerminateBackend(
+                    backendProcessId);
+                throw new InvalidOperationException(
+                    "injected post-commit acknowledgement failure");
+            };
+
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(completed.Succeeded);
+        Assert.True(completed.Validated);
+        Assert.False(completed.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RolledBack,
+            completed.Phase);
+        Assert.True(fixture.IsMutationGateClear());
+    }
+
+    [Fact]
+    public async Task Rollback_reports_retryable_terminal_cleanup_pending()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.AfterRollbackCompletionTestHook =
+            backendProcessId =>
+            {
+                fixture.TerminateBackend(
+                    backendProcessId);
+                throw new InvalidOperationException(
+                    "injected post-commit acknowledgement failure");
+            };
+        fixture.Service
+                .TerminalMutationGateCleanupFailureTestHook =
+            () => new InvalidOperationException(
+                "injected cleanup failure");
+
+        var pending = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(pending.Succeeded);
+        Assert.True(pending.Validated);
+        Assert.True(pending.Resumable);
+        Assert.False(pending.PublicReadsFrozen);
+        Assert.True(pending.CleanupPending);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RolledBack,
+            pending.Phase);
+        Assert.Equal(
+            "mutation_gate_cleanup",
+            pending.FailureStage);
+        Assert.False(fixture.IsMutationGateClear());
+
+        fixture.Service.AfterRollbackCompletionTestHook =
+            null;
+        fixture.Service
+                .TerminalMutationGateCleanupFailureTestHook =
+            null;
+        var reconciled = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(reconciled.Succeeded);
+        Assert.False(reconciled.CleanupPending);
+        Assert.True(fixture.IsMutationGateClear());
+    }
+
+    [Fact]
+    public async Task Rollback_terminal_retry_clears_stale_mutation_gate()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(completed.Succeeded);
+        fixture.SeedStaleMutationGate();
+
+        var dryRun = await fixture.RollbackAsync(
+            plan.PlanDigest,
+            dryRun: true);
+        Assert.False(dryRun.Succeeded);
+        Assert.True(dryRun.DryRun);
+        Assert.False(fixture.IsMutationGateClear());
+
+        var repeated = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(repeated.Succeeded);
+        Assert.True(fixture.IsMutationGateClear());
+    }
+
+    [Fact]
+    public async Task Rollback_terminal_validation_failure_is_not_reconciled_as_success()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(completed.Succeeded);
+        fixture.MutateRollbackPrecondition(
+            "current-path");
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.False(rejected.Validated);
+        Assert.False(rejected.CleanupPending);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.None,
+            rejected.Phase);
+        Assert.Equal("preflight", rejected.FailureStage);
+    }
+
+    [Fact]
+    public async Task Rollback_terminal_retry_does_not_clear_unrelated_newer_freeze_or_gate()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(completed.Succeeded);
+        fixture.SetUnrelatedFreeze();
+        fixture.SeedStaleMutationGate();
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.False(rejected.Validated);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal("other-owner", fixture.ReadFreezeReason());
+        Assert.False(fixture.IsMutationGateClear());
+    }
+
+    [Fact]
+    public async Task Rollback_completion_refuses_unrelated_replacement_freeze()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.BeforeRollbackCompletionTestHook =
+            fixture.SetUnrelatedFreeze;
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Equal("other-owner", fixture.ReadFreezeReason());
+        Assert.NotEqual(
+            MaxScoreMaintenancePhase.RolledBack,
+            rejected.Phase);
+    }
+
+    [Fact]
+    public async Task Rollback_uses_direction_specific_notification_audit()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.NotificationsQuarantined);
+        var applyAudit =
+            fixture.ReadNotificationAuditDirections();
+        Assert.Equal(1, applyAudit.RunCount);
+        Assert.True(applyAudit.ApplyPresent);
+        Assert.False(applyAudit.RollbackPresent);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackNotificationsQuarantined)
+                {
+                    throw new InvalidOperationException(
+                        "stop after atomic rollback notification checkpoint");
+                }
+            };
+
+        var interrupted = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.False(interrupted.Succeeded);
+        Assert.Equal(
+            MaxScoreMaintenancePhase
+                .RollbackNotificationsQuarantined,
+            interrupted.Phase);
+        var interruptedAudit =
+            fixture.ReadNotificationAuditDirections();
+        Assert.Equal(2, interruptedAudit.RunCount);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            null;
+
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(
+            completed.Succeeded,
+            fixture.LastFailure?.ToString());
+        var rollbackAudit =
+            fixture.ReadNotificationAuditDirections();
+        Assert.Equal(2, rollbackAudit.RunCount);
+        Assert.Equal(2, rollbackAudit.DistinctDigestCount);
+        Assert.True(rollbackAudit.ApplyPresent);
+        Assert.True(rollbackAudit.RollbackPresent);
+    }
+
+    [Fact]
+    public async Task Apply_rejects_resumable_rollback_phase_with_truthful_report()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.CachesStaged);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackPathsRestored)
+                {
+                    throw new InvalidOperationException(
+                        "stop in rollback");
+                }
+            };
+        var interrupted = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.False(interrupted.Succeeded);
+        fixture.Service.AfterRollbackPhaseCheckpointTestHook =
+            null;
+
+        var rejectedApply = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(rejectedApply.Succeeded);
+        Assert.False(rejectedApply.Resumable);
+        Assert.True(rejectedApply.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackPathsRestored,
+            rejectedApply.Phase);
+        Assert.Equal(
+            "rollback_owned",
+            rejectedApply.FailureStage);
+        Assert.NotNull(rejectedApply.CacheEvidence);
+        Assert.True(rejectedApply.StagedCacheEntryCount > 0);
+    }
+
+    [Fact]
+    public async Task Apply_rejects_terminal_rollback_with_truthful_report()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.PathsPromoted);
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+        Assert.True(completed.Succeeded);
+
+        var rejectedApply = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(rejectedApply.Succeeded);
+        Assert.False(rejectedApply.Resumable);
+        Assert.False(rejectedApply.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RolledBack,
+            rejectedApply.Phase);
+        Assert.Equal(
+            "rollback_owned",
+            rejectedApply.FailureStage);
+    }
+
+    [Fact]
+    public async Task Rollback_detects_history_used_only_by_restored_maximum()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeRollbackOnlyHistoryEvidence: true);
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+        fixture.Service.BeforeRollbackCompletionTestHook =
+            fixture.MutateRollbackOnlyHistoryEvidence;
+
+        var rejected = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.PublicReadsFrozen);
+        Assert.Contains(
+            "Rollback score history changed",
+            fixture.LastFailure?.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Rollback_preserves_unrelated_publication_scopes_and_tiers()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                includeScopeDivergence: true);
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(
+            completed.Succeeded,
+            fixture.LastFailure?.ToString());
+        var state = fixture.ReadScopeDivergenceState();
+        Assert.True(state.PublishedOnlyBaseKeyPresent);
+        Assert.True(state.PublishedOnlyLeewayKeyPresent);
+        Assert.True(state.PublishedOnlyOffsetKeyPresent);
+        Assert.False(state.ActiveOnlyBaseKeyPresent);
+        Assert.False(state.ActiveOnlyStatsPresent);
+        Assert.False(state.ActiveOnlyRankingPresent);
+        Assert.Equal(
+            ["Overall", "Solo_Bass", "Solo_Drums"],
+            state.UnrelatedAccountDatabaseInstruments);
+        Assert.Equal(50, state.UnaffectedBassEntryCount);
+        Assert.Equal(3, state.TotalSongs);
+    }
+
+    [Fact]
+    public async Task Rollback_restores_preapply_missing_maximum()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                currentMaximumMissing: true);
+        var plan = await fixture.PlanAsync();
+        await fixture.StopApplyAtAsync(
+            plan.PlanDigest,
+            MaxScoreMaintenancePhase.DerivedStateRebuilt);
+
+        var completed = await fixture.RollbackAsync(
+            plan.PlanDigest);
+
+        Assert.True(
+            completed.Succeeded,
+            fixture.LastFailure?.ToString());
+        fixture.AssertCurrentPathMatches(
+            fixture.Manifest.Songs[0].CurrentPath);
+        Assert.Null(fixture.ReadTargetSongStatsMaximum());
+    }
+
     private static void AssertConfiguredEvidenceTimeouts(
         ConcurrentQueue<(string Stage, int Seconds)> configured,
         int expectedSeconds)
@@ -748,6 +1768,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
 
         internal static async Task<WorkflowFixture> CreateAsync(
             bool includeScopeDivergence = false,
+            bool currentMaximumMissing = false,
+            bool includeRollbackOnlyHistoryEvidence = false,
             int maxScoreMaintenanceCommandTimeoutSeconds =
                 ScraperOptions
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
@@ -909,10 +1931,17 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     GenerationProfile: "profile-v2",
                     ArtifactGenerationId:
                         "workflow-current",
-                    ExpectedInstruments: [Instrument],
+                    ExpectedInstruments:
+                        currentMaximumMissing
+                            ? ["Solo_Bass"]
+                            : [Instrument],
                     Maxima: new MaxScoreMaintenanceMaxima(
-                        55_000,
-                        null,
+                        currentMaximumMissing
+                            ? null
+                            : 55_000,
+                        currentMaximumMissing
+                            ? 55_000
+                            : null,
                         null,
                         null,
                         null,
@@ -942,6 +1971,11 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     GenerationProfile = runtime.Profile,
                     ArtifactGenerationId =
                         "workflow-staged",
+                    ExpectedInstruments =
+                        currentMaximumMissing
+                            ? [Instrument, "Solo_Bass"]
+                            : currentIdentity
+                                .ExpectedInstruments,
                     Maxima = currentIdentity.Maxima with
                     {
                         Lead = 60_000,
@@ -1013,7 +2047,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                             MaxScoreMaintenanceStagePurposes
                                 .Promotion,
                             new string('8', 64),
-                            [Instrument],
+                            currentMaximumMissing
+                                ? [Instrument, "Solo_Bass"]
+                                : [Instrument],
                             [Instrument]),
                     Runtime: runtime,
                     Songs:
@@ -1033,6 +2069,11 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 catalogCapturedAt,
                 currentIdentity,
                 publishedOverlayScore);
+            if (includeRollbackOnlyHistoryEvidence)
+            {
+                SeedRollbackOnlyHistoryEvidence(
+                    dataSource);
+            }
             if (includeBlankAffectedAccount)
             {
                 SetBlankAffectedSourceRow(
@@ -1234,6 +2275,430 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 NextReportPath(
                     resume ? "resume" : "apply"),
                 CancellationToken.None);
+        }
+
+        internal async Task<MaxScoreMaintenanceRollbackReport>
+            RollbackAsync(
+                string planDigest,
+                bool dryRun = false,
+                string rollbackPath = "rollback.json",
+                string? expectedManifestDigest = null,
+                string? expectedPlanDigest = null,
+                string? expectedRollbackDigest = null,
+                string? reportOutputPath = null)
+        {
+            LastFailure = null;
+            expectedRollbackDigest ??=
+                await MaxScoreMaintenanceFileStore
+                    .ComputeSha256Async(
+                        Path.Combine(
+                            _dataDirectory,
+                            rollbackPath),
+                        CancellationToken.None);
+            return await Service.RollbackAsync(
+                PublishedScrapeId,
+                "manifest.json",
+                expectedManifestDigest
+                    ?? Manifest.ComputeDigest(),
+                expectedPlanDigest
+                    ?? planDigest,
+                rollbackPath,
+                expectedRollbackDigest,
+                reportOutputPath
+                    ?? NextReportPath(
+                        dryRun
+                            ? "rollback-dry-run"
+                            : "rollback"),
+                dryRun,
+                CancellationToken.None);
+        }
+
+        internal async Task StopApplyAtAsync(
+            string planDigest,
+            MaxScoreMaintenancePhase phase)
+        {
+            Service.AfterPhaseCheckpointTestHook =
+                checkpoint =>
+                {
+                    if (checkpoint == phase)
+                    {
+                        throw new InvalidOperationException(
+                            $"Stop after {phase}.");
+                    }
+                };
+            var interrupted = await ApplyAsync(
+                resume: false,
+                planDigest,
+                "rollback.json");
+            Service.AfterPhaseCheckpointTestHook = null;
+            Assert.False(interrupted.Succeeded);
+            Assert.True(interrupted.PublicReadsFrozen);
+            Assert.Equal(phase, interrupted.Phase);
+        }
+
+        internal async Task PromotePathsWithoutCheckpointAsync()
+        {
+            await using var lease =
+                await _meta
+                    .AcquireMaxScoreMaintenanceLeaseAsync(
+                        PublicationId);
+            var promotions = Manifest.Songs
+                .Select(song =>
+                    new PathGenerationPromotion(
+                        song.StagedPath
+                            .ArtifactGenerationId!,
+                        song.SongId,
+                        song.CurrentPath.Revision,
+                        song.StagedPath
+                            .ArtifactGenerationId!,
+                        song.StagedPath.DatFileHash!,
+                        song.ExpectedCatalogLastModified,
+                        song.StagedPath.GeneratedAtUtc!.Value,
+                        new PathGenerationRuntimeIdentity(
+                            song.StagedPath.ChoptVersion!,
+                            song.StagedPath
+                                .ChoptBinarySha256!,
+                            song.StagedPath
+                                .GenerationProfile!),
+                        song.StagedPath
+                            .ExpectedInstruments,
+                        song.StagedPath.Maxima
+                            .ToSongMaxScores()))
+                .ToArray();
+            var result =
+                await new PathDataStore(_dataSource)
+                    .TryPromoteGenerationsAtomicallyAsync(
+                        promotions,
+                        new PathGenerationBatchPromotionGate(
+                            PublicationId,
+                            PublishedScrapeId,
+                            PublicReadFreezeState
+                                .MaxScoreMaintenanceReasonPrefix
+                            + Manifest.ComputeDigest()),
+                        lease,
+                        CancellationToken.None);
+            Assert.Equal(
+                PathGenerationPromotionOutcome.Promoted,
+                result.Outcome);
+            Assert.Equal(promotions.Length, result.PromotedCount);
+        }
+
+        internal void MutateRollbackOnlyHistoryEvidence()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE score_history DISABLE TRIGGER
+                    trg_score_history_registration_mutation_guard;
+                UPDATE score_history
+                SET new_score = new_score - 1
+                WHERE account_id =
+                    'rollback-only-history';
+                ALTER TABLE score_history ENABLE TRIGGER
+                    trg_score_history_registration_mutation_guard;
+                """;
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        internal void TerminateBackend(
+            int backendProcessId)
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            command.Parameters.AddWithValue(
+                "backendProcessId",
+                backendProcessId);
+            Assert.True(command.ExecuteScalar() is true);
+        }
+
+        internal Task ReinitializeSchemaAsync()
+            => DatabaseInitializer.EnsureSchemaAsync(
+                _dataSource);
+
+        internal void AssertScrapeAllocationBlocked()
+        {
+            Assert.Throws<PublicationCommitBusyException>(
+                () => _meta.StartScrapeRun());
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT working_publication_id IS NULL
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            Assert.True(command.ExecuteScalar() is true);
+        }
+
+        internal void SeedUnexpectedWorkingPublication()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO scrape_log (
+                    id,
+                    started_at,
+                    status)
+                VALUES (
+                    999999,
+                    now(),
+                    'running');
+                INSERT INTO publication_generations (
+                    publication_id,
+                    scrape_id,
+                    status,
+                    created_at)
+                VALUES (
+                    999999,
+                    999999,
+                    'building',
+                    now());
+                UPDATE scrape_publication_state
+                SET working_publication_id = 999999
+                WHERE id = TRUE;
+                """;
+            Assert.Equal(3, command.ExecuteNonQuery());
+        }
+
+        internal bool IsMutationGateClear()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT max_score_mutation_gate_token IS NULL
+                   AND max_score_mutation_gate_publication_id
+                       IS NULL
+                   AND max_score_mutation_gate_backend_pid
+                       IS NULL
+                   AND max_score_mutation_gate_backend_start
+                       IS NULL
+                   AND max_score_mutation_gate_acquired_at
+                       IS NULL
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            return command.ExecuteScalar() is true;
+        }
+
+        internal void SeedStaleMutationGate()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE scrape_publication_state
+                SET max_score_mutation_gate_token =
+                        'stale-terminal-token',
+                    max_score_mutation_gate_publication_id =
+                        @publicationId,
+                    max_score_mutation_gate_backend_pid =
+                        2147483647,
+                    max_score_mutation_gate_backend_start =
+                        now() - interval '1 day',
+                    max_score_mutation_gate_acquired_at =
+                        now() - interval '1 day'
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        internal void SetUnrelatedFreeze()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id =
+                        @publishedScrapeId,
+                    public_reads_frozen_reason =
+                        'other-owner',
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                PublishedScrapeId);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        internal string? ReadFreezeReason()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            return command.ExecuteScalar() as string;
+        }
+
+        internal (
+            long RunCount,
+            long DistinctDigestCount,
+            bool ApplyPresent,
+            bool RollbackPresent)
+            ReadNotificationAuditDirections()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*)::BIGINT,
+                       COUNT(
+                           DISTINCT dry_run_digest)::BIGINT,
+                       COALESCE(
+                           BOOL_OR(
+                               canonical_candidate_data::JSONB
+                                   ->> 'alignmentDirection'
+                               = 'apply'),
+                           FALSE),
+                       COALESCE(
+                           BOOL_OR(
+                               canonical_candidate_data::JSONB
+                                   ->> 'alignmentDirection'
+                               = 'rollback'),
+                           FALSE)
+                FROM improvement_notification_maintenance_runs
+                WHERE notification_purpose = @purpose
+                  AND published_scrape_id =
+                      @publishedScrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "purpose",
+                MaxScoreMaintenanceSchema.Purpose);
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                checked((int)PublishedScrapeId));
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            return (
+                reader.GetInt64(0),
+                reader.GetInt64(1),
+                reader.GetBoolean(2),
+                reader.GetBoolean(3));
+        }
+
+        internal void MutateRollbackPrecondition(
+            string mutation)
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.CommandText = mutation switch
+            {
+                "freeze" => """
+                    UPDATE scrape_publication_state
+                    SET public_reads_frozen_reason =
+                        'other-owner'
+                    WHERE id = TRUE
+                    """,
+                "publication" => """
+                    UPDATE scrape_publication_state
+                    SET public_reads_frozen_scrape_id =
+                        @activeScrapeId
+                    WHERE id = TRUE
+                    """,
+                "current-path" => """
+                    UPDATE songs
+                    SET path_generation_revision =
+                        path_generation_revision + 1
+                    WHERE song_id = @songId
+                    """,
+                "rollback-row" => """
+                    DROP TRIGGER
+                        trg_reject_max_score_rollback_mutation
+                        ON max_score_maintenance_rollback_songs;
+                    UPDATE max_score_maintenance_rollback_songs
+                    SET max_lead_score =
+                        COALESCE(max_lead_score, 0) + 1
+                    WHERE manifest_sha256 =
+                        @manifestDigest
+                      AND song_id = @songId
+                    """,
+                "extra-song" => """
+                    INSERT INTO max_score_maintenance_rollback_songs (
+                        manifest_sha256,
+                        song_id,
+                        expected_catalog_last_modified,
+                        path_generation_revision,
+                        dat_file_hash,
+                        song_last_modified,
+                        paths_generated_at,
+                        chopt_version,
+                        chopt_binary_sha256,
+                        path_generation_profile,
+                        path_artifact_generation_id,
+                        path_artifact_tree_sha256,
+                        path_artifact_file_count,
+                        path_expected_instruments,
+                        max_lead_score,
+                        max_bass_score,
+                        max_drums_score,
+                        max_vocals_score,
+                        max_pro_lead_score,
+                        max_pro_bass_score,
+                        max_pro_cymbals_score,
+                        max_pro_drums_score,
+                        path_generation_pending)
+                    SELECT manifest_sha256,
+                           'extra-song',
+                           expected_catalog_last_modified,
+                           path_generation_revision,
+                           dat_file_hash,
+                           song_last_modified,
+                           paths_generated_at,
+                           chopt_version,
+                           chopt_binary_sha256,
+                           path_generation_profile,
+                           path_artifact_generation_id,
+                           path_artifact_tree_sha256,
+                           path_artifact_file_count,
+                           path_expected_instruments,
+                           max_lead_score,
+                           max_bass_score,
+                           max_drums_score,
+                           max_vocals_score,
+                           max_pro_lead_score,
+                           max_pro_bass_score,
+                           max_pro_cymbals_score,
+                           max_pro_drums_score,
+                           path_generation_pending
+                    FROM max_score_maintenance_rollback_songs
+                    WHERE manifest_sha256 =
+                        @manifestDigest
+                    ORDER BY song_id
+                    LIMIT 1
+                    """,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(mutation)),
+            };
+            if (mutation == "publication")
+            {
+                command.Parameters.AddWithValue(
+                    "activeScrapeId",
+                    ActiveScrapeId);
+            }
+            Assert.True(command.ExecuteNonQuery() > 0);
         }
 
         internal void SetBlankAffectedSourceRow(
@@ -1723,7 +3188,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         }
 
         internal async Task
-            AssertCacheEvidenceWritersBlockedAsync()
+            AssertCacheEvidenceWritersBlockedAsync(
+                bool allowWorkingPublicationRejection = false)
         {
             var leaseError =
                 await Assert.ThrowsAsync<
@@ -1738,7 +3204,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                         .WaitAsync(
                             TimeSpan.FromSeconds(5)));
             Assert.Contains(
-                "max-score maintenance cache evidence",
+                "active max-score maintenance",
                 leaseError.Message,
                 StringComparison.OrdinalIgnoreCase);
 
@@ -1752,10 +3218,14 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                                     PublicationId))
                         .WaitAsync(
                             TimeSpan.FromSeconds(5)));
-            Assert.Contains(
-                "cache evidence capture",
-                writerError.Message,
-                StringComparison.OrdinalIgnoreCase);
+            Assert.True(
+                writerError.Message.Contains(
+                    "active max-score maintenance",
+                    StringComparison.OrdinalIgnoreCase)
+                || allowWorkingPublicationRejection
+                && writerError.Message.Contains(
+                    "working publication",
+                    StringComparison.OrdinalIgnoreCase));
 
             var swapError =
                 await Assert.ThrowsAsync<
@@ -1766,10 +3236,14 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                                     PublicationId))
                         .WaitAsync(
                             TimeSpan.FromSeconds(5)));
-            Assert.Contains(
-                "cache evidence capture",
-                swapError.Message,
-                StringComparison.OrdinalIgnoreCase);
+            Assert.True(
+                swapError.Message.Contains(
+                    "active max-score maintenance",
+                    StringComparison.OrdinalIgnoreCase)
+                || allowWorkingPublicationRejection
+                && swapError.Message.Contains(
+                    "working publication",
+                    StringComparison.OrdinalIgnoreCase));
 
             using var connection =
                 _dataSource.OpenConnection();
@@ -1874,6 +3348,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     run.status,
                     run.phase,
                     stats.entry_count,
+                    stats.max_score,
                     population.total_entries,
                     (
                         SELECT COUNT(*)
@@ -1928,19 +3403,139 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             Assert.True(reader.Read());
             var targetScores =
                 ReadTargetScores(
-                    reader.GetFieldValue<byte[]>(6));
+                    reader.GetFieldValue<byte[]>(7));
             var accountScores =
                 ReadAccountScores(
-                    reader.GetFieldValue<byte[]>(7));
+                    reader.GetFieldValue<byte[]>(8));
             return new WorkflowState(
                 reader.GetBoolean(0),
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt32(3),
                 reader.GetInt32(4),
-                reader.GetInt64(5),
+                reader.GetInt32(5),
+                reader.GetInt64(6),
                 targetScores,
                 accountScores);
+        }
+
+        internal void AssertCurrentPathMatches(
+            MaxScoreMaintenancePathIdentity expected)
+        {
+            var actual = new PathDataStore(_dataSource)
+                .GetPathGenerationState(SongId);
+            Assert.NotNull(actual);
+            Assert.True(
+                MaxScoreMaintenanceService.PathIdentityMatches(
+                    actual!,
+                    expected));
+        }
+
+        internal void AssertPublishedCachesMatchLive()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                WITH live AS (
+                    SELECT cache_key,
+                           etag,
+                           encode(
+                               digest(json_data, 'sha256'),
+                               'hex') AS json_sha256
+                    FROM api_response_cache
+                ), published AS (
+                    SELECT cache_key,
+                           etag,
+                           encode(
+                               digest(json_data, 'sha256'),
+                               'hex') AS json_sha256
+                    FROM publication_api_response_cache
+                    WHERE publication_id = @publicationId
+                )
+                SELECT COUNT(*)::BIGINT
+                FROM live
+                FULL JOIN published USING (cache_key)
+                WHERE live.cache_key IS NULL
+                   OR published.cache_key IS NULL
+                   OR live.etag IS DISTINCT FROM published.etag
+                   OR live.json_sha256 IS DISTINCT FROM
+                        published.json_sha256
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            Assert.Equal(
+                0L,
+                Convert.ToInt64(command.ExecuteScalar()));
+        }
+
+        internal string? ReadOriginalFailureStage()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT failure_stage
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            return command.ExecuteScalar() as string;
+        }
+
+        internal string ReadNotificationAuditIdentity()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT concat_ws(
+                    ':',
+                    run.notification_maintenance_run_id,
+                    audit.dry_run_digest,
+                    audit.candidate_count,
+                    audit.player_rank_state_rows_updated)
+                FROM max_score_maintenance_runs run
+                JOIN improvement_notification_maintenance_runs
+                    audit
+                  ON audit.maintenance_run_id =
+                     run.notification_maintenance_run_id
+                WHERE run.manifest_sha256 =
+                    @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            return Convert.ToString(
+                       command.ExecuteScalar())
+                   ?? throw new InvalidOperationException(
+                       "Notification maintenance audit identity was unavailable.");
+        }
+
+        internal int? ReadTargetSongStatsMaximum()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT max_score
+                FROM song_stats
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                """;
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            var value = command.ExecuteScalar();
+            return value is null or DBNull
+                ? null
+                : Convert.ToInt32(value);
         }
 
         internal ScopeDivergenceState
@@ -2491,6 +4086,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     title,
                     last_modified,
                     max_lead_score,
+                    max_bass_score,
                     dat_file_hash,
                     song_last_modified,
                     paths_generated_at,
@@ -2506,6 +4102,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     'Workflow Song',
                     @lastModified,
                     @currentMaxScore,
+                    @currentBassMaxScore,
                     @currentDatHash,
                     @lastModified,
                     @currentGeneratedAt,
@@ -2513,7 +4110,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     @currentBinaryHash,
                     @currentProfile,
                     @currentGenerationId,
-                    ARRAY[@instrument]::TEXT[],
+                    @currentExpectedInstruments,
                     @currentRevision,
                     FALSE);
 
@@ -2918,7 +4515,12 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 currentPath.SongLastModified!);
             command.Parameters.AddWithValue(
                 "currentMaxScore",
-                currentPath.Maxima.Lead!.Value);
+                (object?)currentPath.Maxima.Lead
+                ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "currentBassMaxScore",
+                (object?)currentPath.Maxima.Bass
+                ?? DBNull.Value);
             command.Parameters.AddWithValue(
                 "currentDatHash",
                 currentPath.DatFileHash!);
@@ -2940,7 +4542,101 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             command.Parameters.AddWithValue(
                 "currentRevision",
                 currentPath.Revision);
+            command.Parameters.Add(
+                "currentExpectedInstruments",
+                NpgsqlTypes.NpgsqlDbType.Array
+                | NpgsqlTypes.NpgsqlDbType.Text).Value =
+                currentPath.ExpectedInstruments.ToArray();
             command.ExecuteNonQuery();
+        }
+
+        private static void SeedRollbackOnlyHistoryEvidence(
+            NpgsqlDataSource dataSource)
+        {
+            using var connection = dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at,
+                    source_priority,
+                    overlay_reason)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    'rollback-only-history',
+                    60000,
+                    960000,
+                    TRUE,
+                    5,
+                    3,
+                    3,
+                    0.3,
+                    3,
+                    3,
+                    'backfill',
+                    now() - interval '2 days',
+                    now() - interval '1 hour',
+                    200,
+                    'rollback-evidence-test');
+
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    old_score,
+                    new_score,
+                    old_rank,
+                    new_rank,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    percentile,
+                    season,
+                    score_achieved_at,
+                    season_rank,
+                    all_time_rank,
+                    difficulty,
+                    changed_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    'rollback-only-history',
+                    56000,
+                    57000,
+                    4,
+                    3,
+                    950000,
+                    TRUE,
+                    5,
+                    0.4,
+                    3,
+                    now() - interval '3 days',
+                    3,
+                    3,
+                    3,
+                    now() - interval '3 days');
+                """;
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            Assert.Equal(2, command.ExecuteNonQuery());
         }
 
         private static void SeedScopeDivergence(
@@ -3419,6 +5115,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         string RunStatus,
         string RunPhase,
         int SongStatsPopulation,
+        int SongStatsMaximum,
         int MutablePopulation,
         long VisibleNotifications,
         IReadOnlyList<int> TargetCacheScores,

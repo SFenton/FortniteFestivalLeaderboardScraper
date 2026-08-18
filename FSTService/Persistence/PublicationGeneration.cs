@@ -183,7 +183,11 @@ public sealed record PublicationCachedResponse(
     long PublishedScrapeId,
     DateTime? PublishedAtUtc,
     byte[] Json,
-    string ETag);
+    string ETag,
+    DateTime? CachedAtUtc = null,
+    string ContentType = "application/json",
+    string? ContentSha256 = null,
+    string? CacheKey = null);
 
 public sealed record PublicationCacheLookup(
     bool HasCurrentPublication,

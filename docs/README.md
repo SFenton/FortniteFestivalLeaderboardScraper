@@ -1,13 +1,14 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified: 2026-08-17
+last_verified_commit: 57efc5bd
 sources:
   - README.md
   - AGENTS.md
   - .github/instructions/documentation.instructions.md
   - docs/architecture/replay-artifacts.md
+  - docs/database/StaleSoloRankIndexRetirementRunbook.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -54,6 +55,7 @@ again. Verify their preconditions and current code before execution.
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
+- [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)
 - [Runbook index and lifecycle](operations/runbooks/README.md)
 
 ## Documentation classes

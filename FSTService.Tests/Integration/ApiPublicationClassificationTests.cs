@@ -1,5 +1,6 @@
 using FSTService.Api;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
@@ -105,6 +106,116 @@ public sealed class ApiPublicationClassificationTests
             .ToArray();
 
         Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/songs",
+        "/api/songs")]
+    [InlineData(
+        "/api/rankings/overview?pageSize=25",
+        "/api/rankings/overview")]
+    [InlineData(
+        "/api/rankings/composite?page=1&pageSize=5",
+        "/api/rankings/composite")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar?page=1&pageSize=5",
+        "/api/rankings/{instrument}")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets?page=1&pageSize=5",
+        "/api/rankings/bands/{bandType}")]
+    [InlineData(
+        "/api/player/account-1",
+        "/api/player/{accountId}")]
+    [InlineData(
+        "/api/leaderboard/song-1/Solo_Guitar?top=10",
+        "/api/leaderboard/{songId}/{instrument}")]
+    [InlineData(
+        "/api/leaderboard/song-1/all?top=10",
+        "/api/leaderboard/{songId}/all")]
+    [InlineData(
+        "/api/leaderboard/song-1/bands/all?top=10",
+        "/api/leaderboard/{songId}/bands/all")]
+    public void CacheCoveredRoutesArePublicationBoundAndRateLimited(
+        string requestTarget,
+        string routePattern)
+    {
+        var endpoint = Assert.Single(
+            GetApiEndpoints(),
+            candidate => string.Equals(
+                candidate.RoutePattern.RawText,
+                routePattern,
+                StringComparison.Ordinal)
+                && ApiPublicationEndpointDescriptions
+                    .GetHttpMethods(candidate)
+                    .Contains(
+                        HttpMethods.Get,
+                        StringComparer.Ordinal));
+        Assert.IsType<PublicationBound>(
+            Assert.Single(
+                endpoint.Metadata
+                    .GetOrderedMetadata<
+                        ApiPublicationClassification>()));
+        Assert.NotNull(
+            endpoint.Metadata.GetMetadata<
+                EnableRateLimitingAttribute>());
+
+        var separator = requestTarget.IndexOf('?');
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = separator < 0
+            ? requestTarget
+            : requestTarget[..separator];
+        if (separator >= 0)
+        {
+            context.Request.QueryString =
+                new QueryString(
+                    requestTarget[separator..]);
+        }
+        context.SetEndpoint(endpoint);
+
+        Assert.True(
+            PublicApiResponseCachePolicy
+                .TryCreateRequestPlan(
+                    context,
+                    out var plan));
+        Assert.True(plan.FreezeCritical);
+    }
+
+    [Fact]
+    public void RateLimitingAndAuthorizationRemainBeforePublicationCache()
+    {
+        var programPath = Path.GetFullPath(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "FSTService",
+                "Program.cs"));
+        Assert.True(
+            File.Exists(programPath),
+            $"Program source not found at {programPath}.");
+        var source = File.ReadAllText(programPath);
+
+        var rateLimit = source.IndexOf(
+            "app.UseRateLimiter();",
+            StringComparison.Ordinal);
+        var authentication = source.IndexOf(
+            "app.UseAuthentication();",
+            StringComparison.Ordinal);
+        var authorization = source.IndexOf(
+            "app.UseAuthorization();",
+            StringComparison.Ordinal);
+        var cache = source.IndexOf(
+            "app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();",
+            StringComparison.Ordinal);
+
+        Assert.True(rateLimit >= 0);
+        Assert.True(authentication > rateLimit);
+        Assert.True(authorization > authentication);
+        Assert.True(cache > authorization);
     }
 
     [Theory]

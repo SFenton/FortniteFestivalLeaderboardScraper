@@ -10,6 +10,14 @@ internal enum HostedWorkerMode
 
 internal static class HostedWorkerModeResolver
 {
+    public static bool RequiresNoHostedServices(
+        bool soloFamilyRankingBackfillRequested,
+        bool leaderboardRivalsRecomputeRequested,
+        bool maxScoreMaintenanceRequested)
+        => soloFamilyRankingBackfillRequested
+           || leaderboardRivalsRecomputeRequested
+           || maxScoreMaintenanceRequested;
+
     public static HostedWorkerMode Resolve(
         bool apiOnlyRequested,
         bool scraperWorkerDisabled,

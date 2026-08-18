@@ -67,6 +67,8 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
 {
     opts.SerializerOptions.DefaultIgnoreCondition =
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    FSTService.Api.PublicApiJsonContract
+        .Configure(opts.SerializerOptions);
 });
 
 // ─── Response compression ───────────────────────────────────
@@ -202,6 +204,11 @@ var hostedServicePlan = HostedWorkerModeResolver.ResolveHostedServicePlan(
     rolloutReadOnlyStartupRequested,
     runOnceRequested,
     backfillOnlyRequested);
+var strictOneShotWithoutHostedServices =
+    HostedWorkerModeResolver.RequiresNoHostedServices(
+        soloFamilyRankingBackfillCommand is not null,
+        leaderboardRivalsRecomputeCommand is not null,
+        maxScoreMaintenanceCommand is not null);
 
 builder.Services.AddSingleton<
     IValidateOptions<ScraperOptions>,
@@ -425,7 +432,11 @@ var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
     ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
 var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
 {
-    ApplicationName = soloFamilyRankingBackfillCommand is not null
+    ApplicationName =
+        maxScoreMaintenanceCommand?.Action
+            == MaxScoreMaintenanceAction.Rollback
+        ? "fst-max-score-rollback"
+        : soloFamilyRankingBackfillCommand is not null
         ? "fstservice-solo-family-backfill"
         : hostedWorkerMode switch
         {
@@ -528,7 +539,9 @@ builder.Services.AddSingleton(sp =>
         () => sp
             .GetRequiredService<FSTService.Api.PublicationReadContextService>()
             .GetPointers()
-            .CurrentPublicationId));
+            .CurrentPublicationId,
+        sp.GetRequiredService<
+            FSTService.Api.PublicationApiResponseCacheService>()));
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<
     FSTService.Api.PublicationRecoveryCoordinator>();
@@ -547,6 +560,17 @@ builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =
         sp.GetRequiredService<IOptions<FeatureOptions>>(),
         sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
+builder.Services.AddSingleton(sp =>
+    new FSTService.Api.PublicationApiResponseCacheService(
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<
+            FSTService.Api.PublicReadGateService>(),
+        () => sp.GetRequiredService<
+                FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId,
+        sp.GetRequiredService<ILogger<
+            FSTService.Api.PublicationApiResponseCacheService>>()));
 builder.Services.AddSingleton<FSTService.Api.RolloutReadOnlyViolationMonitor>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
@@ -671,7 +695,8 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<IOptions<FeatureOptions>>().Value,
         sp.GetRequiredService<IOptions<ScraperOptions>>().Value,
         sp.GetRequiredService<LeaderboardRivalsCalculator>(),
-        sp.GetRequiredService<SoloCurrentProjectionBuilder>());
+        sp.GetRequiredService<SoloCurrentProjectionBuilder>(),
+        sp.GetRequiredService<FestivalService>());
 });
 
 builder.Services.AddHttpClient<ItemShopService>()
@@ -813,8 +838,7 @@ builder.Services.AddCors(opts =>
 
 // StartupInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<StartupInitializer>();
-if (soloFamilyRankingBackfillCommand is not null
-    || leaderboardRivalsRecomputeCommand is not null)
+if (strictOneShotWithoutHostedServices)
 {
     builder.Services.AddHealthChecks();
 }
@@ -1058,6 +1082,21 @@ if (maxScoreMaintenanceCommand is not null)
                 maxScoreMaintenanceCommand.RollbackOutputPath,
                 maxScoreMaintenanceCommand.ReportOutputPath,
                 CancellationToken.None),
+        MaxScoreMaintenanceAction.Rollback =>
+            await maintenance.RollbackAsync(
+                maxScoreMaintenanceCommand
+                    .ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.ManifestPath!,
+                maxScoreMaintenanceCommand
+                    .ExpectedManifestDigest!,
+                maxScoreMaintenanceCommand
+                    .ExpectedPlanDigest!,
+                maxScoreMaintenanceCommand.RollbackFilePath!,
+                maxScoreMaintenanceCommand
+                    .ExpectedRollbackDigest!,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                maxScoreMaintenanceCommand.RollbackDryRun,
+                CancellationToken.None),
         _ => throw new ArgumentOutOfRangeException(),
     };
     Console.WriteLine(
@@ -1074,6 +1113,15 @@ if (maxScoreMaintenanceCommand is not null)
         }
         or MaxScoreMaintenanceApplyReport
         {
+            Succeeded: false,
+        }
+        or MaxScoreMaintenanceRollbackReport
+        {
+            Validated: false,
+        }
+        or MaxScoreMaintenanceRollbackReport
+        {
+            DryRun: false,
             Succeeded: false,
         })
     {
@@ -1182,6 +1230,38 @@ shopService.SetJsonSerializerOptions(jsonOpts);
 notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
+if (hostedWorkerMode is HostedWorkerMode.ApiOnly
+    or HostedWorkerMode.FrontendOnly)
+{
+    var pathDataStore =
+        app.Services.GetRequiredService<IPathDataStore>();
+    var persistence =
+        app.Services.GetRequiredService<
+            GlobalLeaderboardPersistence>();
+    var precomputer =
+        app.Services.GetRequiredService<
+            ScrapeTimePrecomputer>();
+    songsCacheService.SetDurableRefresh(() =>
+    {
+        try
+        {
+            songsCacheService.Prime(
+                festivalService,
+                pathDataStore,
+                persistence.Meta,
+                persistence,
+                precomputer,
+                jsonOpts,
+                persistPublicationCache: true);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(
+                ex,
+                "Failed to refresh the durable publication songs cache after a same-publication content mutation.");
+        }
+    });
+}
 notificationService.SetMetaDatabase(app.Services.GetRequiredService<IMetaDatabase>());
 
 app.UseCors();

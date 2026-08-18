@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -22,6 +22,9 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - tools/postgres-retire-ix-le-song-rank.py
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RegisteredBandProcessing.cs
@@ -67,6 +70,81 @@ surface is not the production service persistence model.
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
+### Freeze-safe publication API cache
+
+`publication_api_response_cache` is the authoritative L2 for covered JSON
+responses. Its primary key `(publication_id, cache_key)` already owns the
+required read and uniqueness path; no additional index or schema rewrite is
+needed. Each row stores deterministic JSON bytes, ETag, and `cached_at`.
+Service lookup derives the full SHA-256 and fixed JSON content type and combines
+those with publication ID and the public-read safety revision for L1 identity.
+The warm current-publication L1 path reads current publication, durable freeze,
+and failed-candidate isolation through one combined PostgreSQL snapshot query.
+No schema/index is added. Publication ID remains in the L1 key, and any
+publication/freeze/failure change increments the process safety revision and
+clears current L1 entries.
+
+Publication cleanup retains only current and previous generations. Full
+precompute uses staging and atomic swap. Same-publication max-score maintenance
+rebuilds and swaps the same surface before unfreeze. Stable song catalog/path
+changes write the canonical songs row only after a content-mutation token
+remains current; service L1 is invalidated before mutation and after the
+durable update. API catalog refresh compares the canonical provider snapshot
+hash before and after sync, preventing same-count metadata changes from
+retaining an old songs row.
+
+Bounded lazy writes use the shared publication advisory lock, require the
+expected current publication, no working publication, and unfrozen reads, then
+upsert both generation and compatibility rows in one short transaction.
+The surface binding row count/hash/timestamp is updated in the same commit.
+Frozen or transition-raced writes return no row and cannot poison L1.
+An exact current byte/ETag match is returned without an upsert, so service
+restart recovery does not rewrite an already-current songs payload.
+
+The current production surface has 9,255 rows and about 245 MB of JSON for one
+publication. The candidate adds at most 6,319 eager rows (one songs row plus
+6,318 published song/instrument top-10 rows). A read-only stratified sample of
+180 standalone instrument payloads across 20 evenly spaced catalog songs
+measured a `1.09696` standalone-to-leaderboard-all byte ratio, yielding
+19.02 MB logical payload per publication. Keep 20.74 MB as the conservative
+upper bound until a full candidate precompute measures every row. The only lazy space is ten finite overview
+metric/size variants, at most 1.59 MB from measured payloads. Current and
+previous generation rows plus the required current `api_response_cache`
+compatibility mirror therefore add about 57.06 MB logical payload centrally,
+with 62.22 MB retained as the conservative upper bound. If all ten lazy variants exist in both retained generations, their
+current compatibility mirror raises the lazy upper bound to about 4.76 MB;
+table/index overhead is additional. Full precompute writes both compatibility
+and generation staging tables, so incremental eager staging is about 38.04 MB
+centrally and 41.48 MB conservatively. Existing live generation/compatibility
+relations compress logical JSON materially; the current ratios imply roughly
+24.83-27.08 MB steady physical growth, but this is indicative only.
+Incremental WAL, table overhead, and
+promotion-copy cost remain full-scrape A/B measurements rather than inferred
+acceptance evidence.
+
+The rejected service-only A/B on publication 1302 measured the full current
+cache build directly. Head `5a227954` staged 15,574 rows and 267,948,123
+logical JSON bytes, then atomically swapped current while retaining publication
+77. Relative to the 9,255-row baseline, current generation and compatibility
+mirror each added 6,319 rows and 22,805,709 logical bytes. Physical database
+growth was 24,453,120 bytes and filesystem growth 24,596,480 bytes. Peak
+staging/free-space excursion was 409,980,928 bytes, WAL was 466,458,000 bytes,
+and PostgreSQL temp-file/byte deltas were zero. The core precompute took
+167.94 seconds. These measurements bind to the rejected Unicode-escaping head;
+the repaired encoder must be remeasured before service promotion.
+
+The accepted repeat A/B on head `cf044631` staged the repaired current cache
+without changing publication/freeze state. After two bounded lazy overview
+rows, current held 15,576 rows and 264,511,124 logical bytes: `+6,321` rows and
+`+19,368,712` logical bytes over baseline. WAL was 469,401,072 bytes,
+PostgreSQL temp delta remained zero, physical database growth was 13,484,032
+bytes, and peak free-space excursion was 296,656,896 bytes. Current and
+previous generations remained intact and staging was empty after swap.
+
+The accepted cache remains current on publication 80 with 15,576 rows and
+264,511,124 logical JSON bytes; publication 77 remains retained and staging is
+empty. Official deployment did not move publication/freeze pointers.
+
 ### Solo ranking denominator ownership
 
 Normal per-instrument ranking denominators are catalog-bound. For each exact
@@ -103,6 +181,25 @@ frequently. `DatabaseInitializer` and its tests are the schema inventory;
 canonical documentation describes ownership and invariants instead of copying
 volatile table counts.
 
+### Legacy solo rank-index retirement
+
+`ix_le_song_rank` is not bootstrap schema and is not a scrape-time droppable or
+recreated index. Its parent plus nine leaves were removed from production on
+2026-08-17; no current physical family remains.
+
+Only `tools/postgres-retire-ix-le-song-rank.sh` may validate absence or perform
+an explicitly reviewed restore/retirement cycle. The tool binds the production
+Compose project, PostgreSQL system identifier, publication, exact parent plus
+nine leaf OIDs/definitions and attachments, dependency/constraint inventory,
+bytes, and dated zero-use observation. It generates the exact rollback before
+any execute command.
+
+The completed removal changed no rows, rankings, publication pointers, API
+contract, unrelated index/constraint, or representative score-index plan.
+Legacy rank predicates remain logically correct without it. Public API roles
+continue to read published/current projection sources. See the
+[stale solo rank index retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
+
 ### Max-score maintenance evidence
 
 `max_score_maintenance_runs` owns the digest-bound workflow checkpoint:
@@ -129,6 +226,41 @@ post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
 
+Guarded rollback extends the same run with separate rollback timestamps,
+before/after path fingerprints, restored/rebuilt/quarantined/cache counts,
+rollback cache evidence, and rollback-specific failure detail. Apply failure
+fields and apply cache evidence remain unchanged for forensic history.
+Rollback phases progress from `rollback_validating` through
+`rollback_validated`; only phase/status `rolled_back` is terminal.
+`max_score_maintenance_rollback_cache_entries` stores the immutable rollback
+staging key/ETag/JSON hashes separately from apply evidence. Schema migration
+adds these columns, phases/status, constraints, table, and mutation guards
+idempotently; the CLI one-shot still requires a prior release schema
+initialization.
+Either committed apply cache evidence or rollback cache evidence blocks normal
+cache-build leases and non-owner staging mutations for the frozen publication;
+application guards and database triggers enforce the same rule.
+The stronger admission rule starts with the active digest-owned max-score
+freeze, before either evidence field exists, so intermediate apply/rollback
+state cannot be published by an ordinary cache builder.
+It remains fail-closed if a working publication pointer appears unexpectedly;
+active maintenance detection is bound to the current publication/freeze/run,
+not to the absence of that pointer. Scrape allocation rejects the freeze or
+durable mutation token before inserting a new working generation.
+The publication-addressed staging guard is row-scoped for DML: non-owner
+startup retention may delete only rows outside the current, previous, and
+working publication IDs. All current-generation DML and every staging truncate
+remain rejected, allowing FSTService schema initialization to restart safely
+during a freeze without exposing maintenance state.
+
+Notification maintenance candidate JSON includes an `alignmentDirection`
+(`apply` or `rollback`) before hashing. The unique audit key therefore cannot
+reuse a completed apply alignment for rollback merely because both candidate
+sets are identical or empty. Rollback audit insertion/reuse, baseline
+alignment, rollback audit ID/count fields, and the
+`rollback_notifications_quarantined` phase checkpoint commit in the same
+lease transaction.
+
 `max_score_maintenance_rollback_songs` stores every pre-promotion path field,
 all eight maxima, the immutable generation file count, and the exact artifact
 tree SHA-256 for every manifest song. It complements the canonical same-drive
@@ -141,6 +273,54 @@ publication/catalog, and database rollback-song identity. Every post-capture
 resume and final completion reloads canonical bytes and requires the
 checkpointed SHA-256; missing, corrupt, or swapped evidence keeps the freeze
 resumable.
+
+Rollback path restoration and its durable checkpoint share one serializable
+source-locked transaction. It targets only the exact rollback song set and
+requires every locked current path to match the promoted manifest identity
+before replacing all stored path/maxima fields with rollback values. It never
+deletes promoted immutable generations or audit rows. Later derived,
+notification, and cache work is resumable; final validated cache swap,
+`rolled_back` checkpoint, and unfreeze are one serializable lease-owned
+transaction.
+
+Each rollback invocation captures two score-history views in the same
+repeatable-read/source-locked snapshot: the original accepted
+post-promotion selector and the selector implied by the restored maxima. The
+latter covers rows that become fallback-eligible only when a maximum decreases;
+a missing restored maximum has an explicit empty fallback evidence set. Final
+validation recomputes both views. The digest-owned freeze and database mutation
+guards prevent source drift between retries.
+
+Rollback retains the session-owned registration mutation and path-generation
+advisory locks but not the global publication lock. Every lease-owned
+transaction requests the transaction-scoped exclusive publication lock after
+its uncommitted work and immediately before durable commit. This commit fence
+lets cached public reads continue during long computation while ensuring
+readers observe only complete committed units.
+
+Forward resume uses the same commit-fence lease shape under application name
+`fst-max-score-resume`. Initial apply still retains the publication lock while
+creating the freeze; a resume can yield it because the exact digest-owned
+freeze, durable mutation token, worker-offline gate, and source locks already
+fence the current publication.
+
+Affected-account cache evidence orders the public fingerprint tuple by song ID
+and projected combo ID. Raw instrument names are converted before sorting so
+the expected ordering matches the serialized player cache ordering for
+same-song multi-instrument scores.
+Max-score maintenance report/log diagnostics use a `sha256:<16-hex>` evidence
+identifier for registered accounts. The durable cache keys and payloads retain
+their required exact account IDs, but operator evidence and error text do not
+emit them.
+
+Terminal success additionally requires all
+`max_score_mutation_gate_*` ownership fields to be null. If the commit succeeds
+but the original backend disappears before lease disposal, the same rollback
+command acquires a fresh exclusive cleanup lease, replaces the stale owner,
+releases its locks, clears its token, and verifies the row before reporting
+success. An already-`rolled_back` retry performs this reconciliation too.
+When cleanup cannot finish, report v2 represents the committed terminal state
+with `cleanupPending=true` rather than rewriting it as a preflight failure.
 
 Maintenance observed-score bounds, affected-account selection, player-stat
 validation, and ranking/player-stat inputs share the published solo source

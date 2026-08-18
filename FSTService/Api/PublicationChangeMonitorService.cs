@@ -14,6 +14,8 @@ public sealed class PublicationChangeMonitorService : BackgroundService
     private readonly IPathDataStore? _pathStore;
     private readonly ISongInstrumentSupportCache? _instrumentSupportCache;
     private readonly ILogger<PublicationChangeMonitorService> _log;
+    private readonly PublicationApiResponseCacheService?
+        _publicationApiCache;
 
     public PublicationChangeMonitorService(
         StartupInitializer startup,
@@ -23,7 +25,9 @@ public sealed class PublicationChangeMonitorService : BackgroundService
         SongsCacheService songsCache,
         ILogger<PublicationChangeMonitorService> log,
         IPathDataStore? pathStore = null,
-        ISongInstrumentSupportCache? instrumentSupportCache = null)
+        ISongInstrumentSupportCache? instrumentSupportCache = null,
+        PublicationApiResponseCacheService?
+            publicationApiCache = null)
     {
         _startup = startup;
         _metaDb = metaDb;
@@ -33,6 +37,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
         _pathStore = pathStore;
         _instrumentSupportCache = instrumentSupportCache;
         _log = log;
+        _publicationApiCache = publicationApiCache;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -66,6 +71,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     _instrumentSupportCache
                         ?.InvalidateSongInstrumentSupport();
                     _songsCache.Invalidate();
+                    _publicationApiCache?.Reset();
                     await _notifications.NotifyPublicationChangedAsync(
                         currentPublicationId.Value,
                         forceRefresh: true);
@@ -81,6 +87,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                         _instrumentSupportCache
                             ?.InvalidateSongInstrumentSupport();
                         _songsCache.Invalidate();
+                        _publicationApiCache?.Reset();
                     }
                     previousPublicationId = currentPublicationId;
                     await Task.Delay(PollInterval, stoppingToken);
@@ -103,6 +110,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                 _instrumentSupportCache
                     ?.InvalidateSongInstrumentSupport();
                 _songsCache.Invalidate();
+                _publicationApiCache?.Reset();
                 await _notifications.NotifyPublicationChangedAsync(
                     currentPublicationId.Value);
                 previousPublicationId = currentPublicationId;

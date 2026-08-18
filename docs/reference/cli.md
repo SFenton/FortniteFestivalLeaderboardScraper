@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified_commit: 937868e0
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -177,7 +177,8 @@ are rejected.
 | `--max-score-maintenance-stage` | `--published-scrape-id`, `--max-score-maintenance-stage-request`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete immutable generations without pointer mutation; discovery permits explicit partial maximum constraints, while promotion requires complete old/new eight-field maxima |
 | `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes, records mapped raw/eligible/outlier observed-score evidence plus publication-population and complete consumed score-history count/range/hash evidence, and emits the deterministic `planDigest` |
 | `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
-| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
+| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; phase checkpoints skip completed mutation families, failures remain frozen, and the recovery lease yields the publication lock between bounded commit fences |
+| `--max-score-maintenance-rollback` | `--published-scrape-id`, manifest, expected manifest/plan digests, `--max-score-maintenance-rollback-file`, `--expected-max-score-rollback-digest`, and a new report output; optional `--max-score-maintenance-rollback-dry-run` | Validate or execute exact resumable rollback: restore pre-apply paths, rebuild complete affected derived state, quarantine notifications, restage/validate caches, record `rolled_back`, and atomically unfreeze |
 
 Every action writes a versioned report. Apply/resume exit `2` with
 `resumable=true` after a post-freeze failure. Do not manually clear the freeze;
@@ -185,6 +186,38 @@ rerun `--max-score-maintenance-resume` with the same manifest and digests. The
 rollback snapshot timestamp comes from the persisted maintenance run, so a
 crash after file creation but before its database checkpoint reproduces and
 validates the same canonical bytes.
+
+Rollback report version `2` records dry-run/validation/terminal state, durable
+rollback phase, exact manifest/plan/rollback digests, publication IDs,
+before/after path fingerprints, restored/rebuilt/quarantined/cache counts,
+aggregate cache evidence, per-stage timestamps/status, and failure detail.
+`cleanupPending=true` means rollback data committed and reads are unfrozen, but
+the durable mutation gate still requires a retry; it is validated,
+non-successful, and resumable until cleanup is verified.
+Dry-run validates without taking the maintenance lease or mutating state.
+Execution is resumable from `rollback_validating` through
+`rollback_validated`; only terminal `rolled_back` is successful and unfrozen.
+Rollback rejects completed applies, pre-promotion path state, changed paths,
+rollback-file/database divergence, active maintenance/worker backends, waiting
+locks, or any publication/freeze mismatch. A `rollback_captured` run is
+accepted only when exact promoted path identity proves the path transaction
+committed before its phase checkpoint. Execution validates both accepted
+post-promotion and restored-maximum score-history selectors, revalidates the
+canonical rollback file before terminal unfreeze, and holds the publication
+lock only at bounded transaction commit fences. Terminal and already-rolled-back
+invocations verify the durable mutation-owner fields are cleared, reacquiring a
+cleanup lease after backend loss when necessary.
+Dry-run against terminal `rolled_back` is a read-only rejection and does not
+perform that cleanup. Apply/resume after any rollback-owned phase returns a
+non-resumable rejection with the actual freeze state.
+The report output path is normalized and atomically reserved before rollback
+preflight, so an existing path or collision with the manifest/rollback input
+fails before any database mutation.
+An unwritten reservation is removed when manifest parsing prevents creation of
+a typed failure report.
+Once a run enters `rollback_validating`, apply/resume is rejected; interruption
+must continue with the same rollback command and identities plus a new report
+path.
 
 Plan report version 6 includes `populationEvidence`, `scoreHistoryEvidence`,
 and, on every `observedScoreChecks` row, `validCutoff`,

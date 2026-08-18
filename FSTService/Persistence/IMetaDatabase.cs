@@ -70,6 +70,8 @@ public interface IMetaDatabase : IDisposable
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     PublicReadFreezeState GetFailedCandidateReadIsolationState();
+    PublicReadCacheDatabaseState?
+        GetPublicReadCacheDatabaseState();
     PublicationPointerState GetPublicationPointerState();
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
@@ -429,6 +431,14 @@ public interface IMetaDatabase : IDisposable
     PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);
+    PublicationCachedResponse? GetCachedResponseEntry(
+        long publicationId,
+        string cacheKey);
+    PublicationCachedResponse? TrySetCurrentCachedResponse(
+        long expectedPublicationId,
+        string cacheKey,
+        byte[] json,
+        string etag);
     IDisposable AcquirePublicationCacheBuildLease(
         long publicationId,
         bool requireCurrentPublication);
@@ -441,6 +451,20 @@ public interface IMetaDatabase : IDisposable
         => Task.FromException<IMaxScoreMaintenanceLease>(
             new NotSupportedException(
                 "Max-score maintenance leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance rollback leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceResumeLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance resume leases are not supported by this metadata store."));
     void BulkSetCachedResponses(
         IEnumerable<(string Key, byte[] Json, string ETag)> entries,
         long? publicationId = null);

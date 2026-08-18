@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-17
+last_verified_commit: bd11b749
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -18,6 +18,7 @@ sources:
   - docs/operations/deployment.md
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
+  - tools/postgres-retire-ix-le-song-rank.sh
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -139,6 +140,42 @@ proves the new path has the same data as the old path. Record:
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
 
+### Completed stale solo rank-index retirement
+
+The guarded `ix_le_song_rank` package removed the exact parent plus nine leaves
+on 2026-08-17. Catalog removal was `5,147,222,016` bytes and immediate
+filesystem return was `5,147,246,592` bytes. Publication `1302` remained
+unfrozen, all monitored public requests succeeded, and unrelated
+indexes/constraints and the representative score-index plan remained exact.
+
+The rollback DDL is retained in the checksummed execution evidence and was not
+run. Check mode is now idempotent `already_absent`; a partial reappearance must
+fail closed.
+
+Any future restore/retirement cycle still requires:
+
+- the exact checksummed check manifest, zero-use observation, and rollback;
+- the production Compose project and PostgreSQL system identifier unchanged;
+- the standard worker start/recreate host lock acquired nonblockingly;
+- publication idle/unfrozen with no working publication;
+- `fstworker` offline and no worker/maintenance backend, running scrape/phase,
+  waiting lock, target relation lock, or matching active query;
+- healthy PostgreSQL, service, web, and full public path;
+- retained filesystem and catalog byte evidence before and after.
+
+PostgreSQL 17 does not support concurrent drop of a partitioned parent. The
+package uses a normal parent drop with a `2s` lock timeout and `30s` statement
+timeout, no `CASCADE`, a shared publication fence, and the exclusive
+registration mutation gate. A timeout must leave all ten family members
+unchanged. Never drop attached leaves individually or lengthen the timeout to
+force the window.
+
+Post-action free space is `64,785,661,952` bytes: `4,392,662,149` above the
+single-scrape floor but `56,000,337,654` below preferred two-window headroom.
+The worker remains held despite the capacity guard's
+`accepted_with_capacity_alert` result. See the
+[retirement runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
+
 ## Current-publication max-score correction
 
 Use the
@@ -184,6 +221,39 @@ authorize running with an active worker, weakening source locks, or clearing a
 post-freeze failure. Plan failures identify the evidence stage so operators
 can distinguish publication-population, complete score-history, and other
 evidence without exposing SQL or credentials.
+
+For an incomplete post-promotion run, use only the canonical max-score
+rollback dry-run/execute commands from the runbook. Rollback requires exact
+manifest/plan/rollback digests, zero worker/maintenance backends and waiting
+locks, the worker offline, and the original digest-owned freeze. It restores
+paths atomically, rebuilds complete derived/notification/cache state, records
+terminal `rolled_back`, and unfreezes only with exact final validation. Never
+replace it with manual path SQL, phase/status edits, cache swaps, gate clearing,
+or freeze clearing. A rollback failure keeps the freeze and resumes through the
+same command/identities from its durable rollback phase. The executor keeps
+the registration/path locks and durable freeze but yields the global
+publication lock during long work. It takes that lock transactionally only at
+each commit with the existing `5s` lock timeout; contention rolls back that
+unit rather than authorizing prolonged public-read queuing. Keep cached and
+cold route probes active throughout. A `rollback_captured` run is executable
+only when exact current path identity proves promotion committed before the
+missing checkpoint.
+Scrape allocation remains forbidden in code while the max-score freeze or
+durable mutation owner exists, even if the held worker is started accidentally.
+
+Do not choose rollback from an obsolete phase assumption. Re-read the durable
+run first. A phase at or after `notifications_quarantined` has already
+checkpointed the complete forward derived rebuild and notification alignment;
+the reviewed resume path may be materially smaller because it skips those
+families and uses commit-only publication fences. Rollback remains the
+correctness fallback when current derived validation fails, but it repeats the
+full ranking/tier/rivals/band/cache workload.
+
+The accepted publication-1302 phase-5 resume observed an 8.77 GB physical
+free-space excursion despite only 584 MB of WAL growth because final validation
+used large temporary files. Require at least 16 GiB free for a future
+`notifications_quarantined` resume. This does not relax the independent 60.4 GB
+next-scrape capacity gate or the 64 GiB full-rollback requirement.
 
 ## Service availability
 

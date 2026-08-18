@@ -1,16 +1,20 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-08-17
+last_verified_commit: dffca41c
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Api/PublicApiCacheTelemetry.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-tier1-replay-drill.sh
   - tools/postgres-tier1-replay-drill.test.mjs
+  - tools/postgres-retire-ix-le-song-rank.sh
+  - tools/postgres-retire-ix-le-song-rank.py
+  - tools/postgres-retire-ix-le-song-rank.test.py
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -74,6 +78,74 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Publication API cache evidence
+
+The protected `GET /api/admin/public-cache-telemetry` snapshot reports the
+existing route hit/miss counters plus a bounded 256-operation trace for the
+two-tier cache. Trace rows contain route pattern, SHA-256-derived cache-key ID,
+publication and content revision, L1/L2/miss/build/wait/error outcome, duration,
+payload bytes, cached timestamp, and error type. They never expose the raw key,
+account ID, team key, or response body.
+
+Candidate performance evidence uses:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
+  --logger 'console;verbosity=detailed'
+```
+
+The benchmark exercises a 723 KB songs payload against PostgreSQL L2 and L1,
+then a 10,000-row publication surface write-through. Production read-only
+probes separately measure every allowed lazy overview metric at page sizes 25
+and 50. These artifacts are candidate evidence only, not deployment approval.
+
+### Exact stale solo rank-index retirement
+
+`tools/postgres-retire-ix-le-song-rank.sh` is the only supported retirement
+entry point for `public.ix_le_song_rank` and its nine attached leaves. It has
+no arbitrary index-name option.
+
+`--check` is read-only and emits a checksummed manifest, dated zero-use
+observation, exact drop plan, and exact rollback DDL beneath the FST evidence
+root. `--execute` requires the reviewed manifest, observation, rollback, and
+all three SHA-256 values. It revalidates production project/cluster identity,
+idle/unfrozen publication state, offline worker state, locks/activity, exact
+OIDs/definitions/dependencies/bytes, and zero scans before one short-timeout
+normal parent drop. The package holds the standard nonblocking worker
+start/recreate host lock for the complete execute lifecycle; check mode only
+records whether the lock is available or already held by the external worker
+hold.
+
+The parent cannot use `DROP INDEX CONCURRENTLY` on PostgreSQL 17. Rollback
+creates the parent `ON ONLY`, builds nine leaves concurrently, then attaches
+them. Follow the
+[living runbook](../database/StaleSoloRankIndexRetirementRunbook.md).
+
+Production retirement completed on 2026-08-17. Current check mode returns
+`already_absent`; execute is idempotent for that exact state. The checksummed
+rollback remains retained but was not run.
+
+Validate structure with:
+
+```bash
+bash -n tools/postgres-retire-ix-le-song-rank.sh
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-ix-le-song-rank.test.py
+```
+
+### Max-score rollback one-shot
+
+The canonical rollback executor is part of `FSTService.dll`, not an ad-hoc SQL
+or shell script. Use only the exact command in the
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+It consumes canonical manifest/rollback files under `Scraper:DataDirectory`,
+the three expected SHA-256 gates, and a new report path. The optional dry-run
+performs no lease or mutation. Execution owns durable rollback phases and
+separate immutable rollback cache evidence. There is no supported manual
+freeze clear, phase edit, partial path update, cache swap, or generated SQL
+fallback.
 
 ### Tier-1 isolated replay drill
 

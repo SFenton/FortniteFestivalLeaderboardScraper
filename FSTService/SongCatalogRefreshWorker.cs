@@ -90,23 +90,35 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         try
         {
             var before = _festivalService.Songs.Count;
-            await _festivalService.SyncSongsWithResultAsync();
+            var beforeHash = SongCatalogSnapshotBuilder
+                .Create(_festivalService.Songs)
+                .ContentHash;
+            var syncResult =
+                await _festivalService.SyncSongsWithResultAsync();
             var after = _festivalService.Songs.Count;
             var added = Math.Max(0, after - before);
+            var removed = Math.Max(0, before - after);
 
-            if (added > 0)
+            if (HasExactCatalogChanged(
+                    beforeHash,
+                    syncResult))
             {
                 _log.LogInformation(
-                    "Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
+                    "Song catalog refresh changed the exact provider catalog: {AddedCount} added, {RemovedCount} removed ({Total} total).",
                     added,
+                    removed,
                     after);
-                _persistence.InvalidateTotalSongCount();
+                if (before != after)
+                    _persistence.InvalidateTotalSongCount();
+                _songsCache.InvalidateForContentChange();
                 PrimeSongsCache();
                 await _notifications.NotifySongsChangedAsync(after, added);
             }
             else
             {
-                _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
+                _log.LogDebug(
+                    "Song catalog refresh: {Total} songs in catalog (no exact changes).",
+                    after);
             }
 
             await TryGeneratePathsAsync(ct);
@@ -122,6 +134,16 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
             _log.LogWarning(ex, "Song catalog refresh failed. Will retry at next interval.");
         }
     }
+
+    internal static bool HasExactCatalogChanged(
+        string beforeContentHash,
+        SongCatalogSyncResult syncResult) =>
+        syncResult.IsExact
+        && syncResult.PersistenceToken is not null
+        && !string.Equals(
+            beforeContentHash,
+            syncResult.PersistenceToken.ContentHash,
+            StringComparison.Ordinal);
 
     private async Task<bool> TryGeneratePathsAsync(CancellationToken ct)
     {
@@ -154,12 +176,19 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
     {
         try
         {
-            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _persistence, _precomputer, _jsonOpts);
+            _songsCache.Prime(
+                _festivalService,
+                _pathDataStore,
+                _persistence.Meta,
+                _persistence,
+                _precomputer,
+                _jsonOpts,
+                persistPublicationCache: true);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to prime songs cache; will rebuild on next request.");
-            _songsCache.Invalidate();
+            _songsCache.InvalidateForContentChange();
         }
     }
 
