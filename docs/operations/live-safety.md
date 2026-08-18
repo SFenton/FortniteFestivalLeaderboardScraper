@@ -35,9 +35,9 @@ update_triggers:
 - All database data, scratch, exports, migration artifacts, repacks, and
   retention work stay on the 4 TB FST drive unless the operator explicitly
   overrides the rule.
-- The only current alternate-device override is the temporary pro-bass pilot
-  archive/restore workspace on `/dev/nvme2n1p2`, mounted at `/`. It does not
-  authorize a permanent FST store or PostgreSQL tablespace there.
+- The only current alternate-device override is temporary snapshot migration
+  archive/restore/recovery work on `/dev/nvme2n1p2`, mounted at `/`. It does
+  not authorize a permanent FST store or PostgreSQL tablespace there.
 - Keep secrets out of commands, logs, documentation, artifacts, e-mail, and
   commits.
 
@@ -243,6 +243,31 @@ lock timeout, a `30s` statement timeout, and no `CASCADE`. The old detached
 relation remains until validation. A mismatch or timeout aborts the attempt;
 do not lengthen timeouts or retry blindly. Follow the
 [pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
+
+### Completed pro-bass generation subpartition migration
+
+The guarded generation migration completed on 2026-08-18 from repository
+commit `f89d444b`. Run
+`snapshot-generation-pro-bass-20260818T190019Z` converted
+`leaderboard_entries_snapshot_pro_bass` from a regular instrument partition
+into `LIST (snapshot_id)` children for protected IDs `1302-1303` plus an empty
+default child.
+
+The run archive/restore-proved `8,602,324` rows, retained `5,256,465`, removed
+`3,345,859` obsolete `1301` rows, and returned `3,812,192,256` filesystem
+bytes. The final tree is `2,214,182,912` bytes in `pg_default`; no
+`sgm_pb_*` artifacts remain. Swap time was `0.054` seconds and finalization
+was `79.669` seconds. Candidate/original fingerprints, generation
+distributions, publication sources, active/projection references, index
+attachments/tablespaces, and exact public song/ranking responses matched.
+
+Rename-back rollback ended at final drop. Recovery now uses the independent
+read-only archive/evidence package at
+`/home/sfenton/fst-temporary/snapshot-generation-pro-bass-20260818T190019Z`;
+its archive SHA-256 is
+`94d499d94b21dcf17aee0ba3c006590176b17c4dd494c4b2ff8117f2d60c136e`.
+Keep the package until a separate deletion decision. The worker remains held
+while the other eight fixed instruments are migrated.
 
 ### Completed stale solo rank-index retirement
 

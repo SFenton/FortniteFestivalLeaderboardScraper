@@ -25,8 +25,9 @@ table into a `LIST (snapshot_id)` partitioned table. It retains only the exact
 physical snapshot IDs still required by active state, the solo current
 projection, and the current/previous/working publication source maps.
 
-The package has passed an isolated PostgreSQL 17 drill. It has **not** run
-against production. This runbook is not authorization to start a scrape,
+The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
+target completed production migration on 2026-08-18; the other eight targets
+remain unmigrated. This runbook is not authorization to start a scrape,
 unfreeze reads, select alternate scratch storage, delete an archive, or weaken
 a failed gate.
 
@@ -68,6 +69,34 @@ independent evidence. Converting the current pro-bass relation into generation
 children still creates and restore-proves a new archive of that exact current
 source before dropping it. Existing pro-bass evidence must not be deleted or
 treated as scratch capacity.
+
+### Accepted production pro-bass generation migration
+
+Run `snapshot-generation-pro-bass-20260818T190019Z` retained physical
+snapshots `1302-1303` and removed obsolete `1301` from hot storage:
+
+- exact source/archive rows: `8,602,324`;
+- retained rows: `5,256,465`;
+- removed rows: `3,345,859`;
+- source bytes: `3,812,302,848`;
+- final partition tree: `2,214,182,912` bytes;
+- immediate filesystem return: `3,812,192,256` bytes;
+- swap: `0.054` seconds;
+- finalization: `79.669` seconds;
+- archive: `323,003,699` bytes, SHA-256
+  `94d499d94b21dcf17aee0ba3c006590176b17c4dd494c4b2ff8117f2d60c136e`;
+- final report SHA-256:
+  `2d9ac6d8e5252ffab70404aa87d74dab77639c1a07db012c4f5576ebc43fb98e`.
+
+The final root has only generation children `1302`, `1303`, and an empty
+default child; all root/leaf relations and indexes are in `pg_default`.
+Candidate/original retained fingerprints, per-generation hashes, 1,404 named
+publication-source rows, active/projection references, and exact public
+`/api/songs` and `/api/rankings/overview` bodies matched. Seventeen final-drop
+API-monitor samples had zero failures. Rename-back rollback ended at final
+drop; the independent read-only recovery package under
+`/home/sfenton/fst-temporary/snapshot-generation-pro-bass-20260818T190019Z`
+is now authoritative until a separate deletion decision.
 
 ## Current protected-source expectation
 

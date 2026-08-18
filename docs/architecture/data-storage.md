@@ -800,6 +800,14 @@ torn committed drop to be reported without trusting the original archive; the
 independent package remains authoritative until the separate archive-deletion
 decision.
 
+`pro-bass` completed this conversion on 2026-08-18. Its live tree now contains
+only snapshot children `1302-1303` plus an empty default, occupies
+`2,214,182,912` bytes, and has no `sgm_pb_*` migration artifacts. The accepted
+run removed `3,345,859` obsolete `1301` rows and returned `3,812,192,256`
+filesystem bytes while exact publication/reference/API parity remained
+unchanged. The other eight instrument partitions still use the legacy regular
+table layout.
+
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
 implemented by the layout migration itself. It must preserve
