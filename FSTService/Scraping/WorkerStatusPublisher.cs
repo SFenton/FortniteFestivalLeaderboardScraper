@@ -125,6 +125,7 @@ public sealed class WorkerStatusPublisher
             EtaSampleCount = durableView?.EtaSampleCount,
             LastProgressAtUtc = durableView?.LastProgressAtUtc,
             HeartbeatAtUtc = now,
+            SubphaseProgress = durableView?.SubphaseProgress,
         };
 
         lock (_gate)
@@ -137,7 +138,8 @@ public sealed class WorkerStatusPublisher
             ScraperWorkerKey,
             operation,
             status: "running",
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
 
     public void UpdateOperation(string operationKey, string? operationLabel = null,
@@ -177,7 +179,8 @@ public sealed class WorkerStatusPublisher
         TryPublish(() => _metaDb.UpdateWorkerActivity(
             ScraperWorkerKey,
             operation,
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
 
     public void CompleteOperation(string operationKey, string status = "completed", string? detail = null)
@@ -229,7 +232,8 @@ public sealed class WorkerStatusPublisher
             current,
             completed,
             status: "running",
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
 
         if (string.Equals(operationKey, "scrape.pass", StringComparison.OrdinalIgnoreCase))
             _phaseProgress?.EndScrape(detail);
@@ -258,7 +262,8 @@ public sealed class WorkerStatusPublisher
         TryPublish(() => _metaDb.UpdateWorkerActivity(
             ScraperWorkerKey,
             operation,
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
 
     private static WorkerOperationInfo CopyOperation(WorkerOperationInfo source,
@@ -310,6 +315,9 @@ public sealed class WorkerStatusPublisher
             EtaSampleCount = durableProgress is null ? source.EtaSampleCount : durableProgress.EtaSampleCount,
             LastProgressAtUtc = durableProgress is null ? source.LastProgressAtUtc : durableProgress.LastProgressAtUtc,
             HeartbeatAtUtc = heartbeatAtUtc ?? source.HeartbeatAtUtc,
+            SubphaseProgress = durableProgress is null
+                ? source.SubphaseProgress
+                : durableProgress.SubphaseProgress,
         };
 
     private void TryPublish(Action action)

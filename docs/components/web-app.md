@@ -235,33 +235,38 @@ polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
 is added, and publication-boundary cache/reset ownership is unchanged.
 
 The service area uses one flat `FrostedCard` with no tinted or bordered
-subcards. Its specific translated phase and any distinct subphase use the same
-shared `SectionHeader` title/description treatment as the other Settings
-sections and appear first inside the card. Identical phase/subphase labels
-collapse to one line. Card padding, spacing, and publication rows follow the
-same Settings card and label/value-row patterns instead of defining a parallel
-typography or layout system. Idle state uses the title position to say that the
-service is waiting for the next update.
+subcards. Inside it, three ToggleRow-style entries reuse the same title,
+subtitle, spacing, and trailing-value treatment as the rest of Settings:
 
-The browser uses stable phase/subphase IDs for localization with safe label
-fallbacks. A phase bar is determinate only when service-info v2 reports a final
-denominator and exact `phasePercent`; v1 and unknown-total payloads remain
-indeterminate and never reuse legacy `progressPercent` as exact progress.
-The visible phase percentage stays on the progress-bar line. Units, exceptional
-phase states, estimated overall progress, and ETA range/confidence wrap beneath
-it without promoting estimated overall progress above the exact phase value.
-ETA sample count remains part of the trust gate but is not user-facing.
-Display memory rejects older payload regressions while allowing a new phase
-attempt to reset and announce itself.
+1. `Leaderboard Service State`, with the friendly phase as its subtitle and
+   `Updating` plus the shared spinner, `Idle`, or `Stopped` on the right.
+2. The friendly `Phase · Subphase` label, followed only by the progress bar.
+   Identical labels collapse to one.
+3. `Last Successful Publication`, with browser-local date/time and the local
+   short timezone abbreviation as its subtitle.
 
-One concise availability sentence distinguishes an existing publication from a
-first publication still in progress without exposing scrape IDs. A flat
-definition-list footer shows last publication, current update start when
-applicable, and next scheduled update behind one subtle divider. Operational
-IDs, raw heartbeat/progress timestamps, attempts, model diagnostics, technical
-disclosures, and selected-profile rival/sync status are not rendered. Settings
-therefore does not add a selected-profile sync polling loop; profile-name
-refresh and export controls keep their existing selected-profile ownership.
+The browser uses stable phase/subphase IDs for localization, including the two
+dynamic rank-history cleanup families, and humanizes unknown IDs instead of
+showing raw snake case. A named subphase consumes only
+`currentUpdate.subphaseProgress`; it never inherits the parent
+`phasePercent`. Exact progress requires `kind=exact`, a final denominator, and
+a valid percentage. `indeterminate` keeps the animated bar, while
+`not_applicable` omits the bar. Legacy named-subphase payloads remain
+indeterminate.
+
+The progress row intentionally has no visible percentage, unit count, ETA,
+overall estimate, phase-state subtitle, or other status text. Exact counts
+remain available through the progress bar's accessible value text. Display
+memory is keyed by operation, scrape, plan, phase attempt, subphase ID, and
+subphase epoch; lower sequences and older timestamps cannot regress the bar,
+while a new identity can reset from a higher percentage to a lower truthful
+value.
+
+Operational IDs, raw timestamps, attempts, model diagnostics, technical
+disclosures, current-update timing, next-schedule timing, and selected-profile
+rival/sync status are not rendered. Settings therefore does not add a
+selected-profile sync polling loop; profile-name refresh and export controls
+keep their existing selected-profile ownership.
 
 English shell/common/Songs resources remain eager in the i18next `translation`
 namespace. App Manual, Settings, and First Run resources use named namespaces

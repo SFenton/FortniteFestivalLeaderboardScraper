@@ -1110,6 +1110,16 @@ public static class DatabaseInitializer
             eta_upper_seconds     DOUBLE PRECISION,
             eta_confidence        TEXT,
             eta_sample_count      INTEGER,
+            current_subphase_epoch INTEGER         NOT NULL DEFAULT 0,
+            subphase_sequence      BIGINT          NOT NULL DEFAULT 0,
+            subphase_progress_kind TEXT            NOT NULL DEFAULT 'indeterminate',
+            subphase_units_kind    TEXT,
+            subphase_units_completed BIGINT,
+            subphase_units_total   BIGINT,
+            subphase_units_total_final BOOLEAN     NOT NULL DEFAULT FALSE,
+            subphase_percent       DOUBLE PRECISION,
+            subphase_started_at    TIMESTAMPTZ,
+            subphase_last_progress_at TIMESTAMPTZ,
             started_at            TIMESTAMPTZ      NOT NULL,
             last_progress_at      TIMESTAMPTZ      NOT NULL,
             heartbeat_at          TIMESTAMPTZ      NOT NULL,
@@ -1145,6 +1155,33 @@ public static class DatabaseInitializer
                 OR eta_upper_seconds IS NULL
                 OR eta_upper_seconds >= eta_lower_seconds),
             CHECK (eta_sample_count IS NULL OR eta_sample_count >= 0),
+            CHECK (current_subphase_epoch >= 0),
+            CHECK (subphase_sequence >= 0),
+            CHECK (subphase_progress_kind IN (
+                'exact', 'indeterminate', 'not_applicable')),
+            CHECK (
+                subphase_units_completed IS NULL
+                OR subphase_units_completed >= 0),
+            CHECK (
+                subphase_units_total IS NULL
+                OR subphase_units_total >= 0),
+            CHECK (
+                NOT subphase_units_total_final
+                OR subphase_units_total IS NOT NULL),
+            CHECK (
+                NOT subphase_units_total_final
+                OR subphase_units_completed IS NULL
+                OR subphase_units_completed <= subphase_units_total),
+            CHECK (
+                subphase_percent IS NULL
+                OR (
+                    subphase_progress_kind = 'exact'
+                    AND subphase_units_total_final
+                    AND subphase_percent >= 0
+                    AND subphase_percent <= 100)),
+            CHECK (
+                subphase_progress_kind <> 'exact'
+                OR subphase_units_total_final),
             CHECK (last_progress_at >= started_at),
             CHECK (heartbeat_at >= started_at),
             CHECK (completed_at IS NULL OR completed_at >= started_at),
@@ -1152,6 +1189,72 @@ public static class DatabaseInitializer
                 (status = 'running' AND completed_at IS NULL)
                 OR (status <> 'running' AND completed_at IS NOT NULL))
         );
+
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS current_subphase_epoch INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_sequence BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_progress_kind TEXT NOT NULL DEFAULT 'indeterminate';
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_kind TEXT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_completed BIGINT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_total BIGINT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_total_final BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_percent DOUBLE PRECISION;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_started_at TIMESTAMPTZ;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_last_progress_at TIMESTAMPTZ;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_scrape_phase_attempts_subphase_progress'
+                  AND conrelid = 'scrape_phase_attempts'::regclass
+            ) THEN
+                ALTER TABLE scrape_phase_attempts
+                    ADD CONSTRAINT ck_scrape_phase_attempts_subphase_progress
+                    CHECK (
+                        current_subphase_epoch >= 0
+                        AND subphase_sequence >= 0
+                        AND subphase_progress_kind IN (
+                            'exact', 'indeterminate', 'not_applicable')
+                        AND (
+                            subphase_units_completed IS NULL
+                            OR subphase_units_completed >= 0)
+                        AND (
+                            subphase_units_total IS NULL
+                            OR subphase_units_total >= 0)
+                        AND (
+                            NOT subphase_units_total_final
+                            OR subphase_units_total IS NOT NULL)
+                        AND (
+                            NOT subphase_units_total_final
+                            OR subphase_units_completed IS NULL
+                            OR subphase_units_completed <= subphase_units_total)
+                        AND (
+                            subphase_percent IS NULL
+                            OR (
+                                subphase_progress_kind = 'exact'
+                                AND subphase_units_total_final
+                                AND subphase_percent >= 0
+                                AND subphase_percent <= 100))
+                        AND (
+                            subphase_progress_kind <> 'exact'
+                            OR subphase_units_total_final))
+                    NOT VALID;
+            END IF;
+        END $$;
+
+        ALTER TABLE scrape_phase_attempts
+            VALIDATE CONSTRAINT ck_scrape_phase_attempts_subphase_progress;
 
         CREATE INDEX IF NOT EXISTS ix_scrape_phase_attempts_watchdog
             ON scrape_phase_attempts

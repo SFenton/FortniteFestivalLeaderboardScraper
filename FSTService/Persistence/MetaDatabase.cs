@@ -1821,6 +1821,17 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     ELSE COALESCE(EXCLUDED.current_operation_json, service_worker_status.current_operation_json)
                 END,
                 updated_at = EXCLUDED.updated_at
+            WHERE service_worker_status.instance_id IS NULL
+               OR (
+                    service_worker_status.instance_id = EXCLUDED.instance_id
+                    AND (
+                        service_worker_status.last_heartbeat_at IS NULL
+                        OR EXCLUDED.last_heartbeat_at >= service_worker_status.last_heartbeat_at
+                    )
+               )
+               OR EXCLUDED.started_at > COALESCE(
+                    service_worker_status.started_at,
+                    '-infinity'::timestamptz)
             """;
         cmd.Parameters.AddWithValue("workerKey", workerKey);
         cmd.Parameters.AddWithValue("status", status);
@@ -1832,12 +1843,19 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("message", (object?)message ?? DBNull.Value);
         AddJsonbParameter(cmd, "currentOperation", currentOperation);
         cmd.Parameters.AddWithValue("updatedAt", NormalizeUtc(heartbeatAtUtc));
-        cmd.ExecuteNonQuery();
+        var rows = cmd.ExecuteNonQuery();
+        if (rows == 0)
+        {
+            _log.LogDebug(
+                "Ignored stale heartbeat for worker {WorkerKey} instance {InstanceId}.",
+                workerKey,
+                instanceId);
+        }
     }
 
     public void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
         WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
-        DateTime? updatedAtUtc = null)
+        DateTime? updatedAtUtc = null, string? instanceId = null)
     {
         if (string.IsNullOrWhiteSpace(workerKey))
             throw new ArgumentException("Worker key is required.", nameof(workerKey));
@@ -1849,12 +1867,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.CommandText =
             """
             INSERT INTO service_worker_status (
-                worker_key, status, last_status_change_at, message,
+                worker_key, status, instance_id, last_status_change_at, message,
                 current_operation_json, last_operation_json, updated_at)
-            VALUES (@workerKey, COALESCE(@status, 'running'), @changedAt, @message,
+            VALUES (@workerKey, COALESCE(@status, 'running'), @instanceId, @changedAt, @message,
                 @currentOperation, @lastOperation, @updatedAt)
             ON CONFLICT (worker_key) DO UPDATE SET
                 status = COALESCE(EXCLUDED.status, service_worker_status.status),
+                instance_id = COALESCE(
+                    service_worker_status.instance_id,
+                    EXCLUDED.instance_id),
                 last_status_change_at = CASE
                     WHEN EXCLUDED.status IS NOT NULL
                      AND service_worker_status.status IS DISTINCT FROM EXCLUDED.status THEN EXCLUDED.last_status_change_at
@@ -1864,15 +1885,34 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 current_operation_json = EXCLUDED.current_operation_json,
                 last_operation_json = COALESCE(EXCLUDED.last_operation_json, service_worker_status.last_operation_json),
                 updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.instance_id IS NULL
+               OR service_worker_status.instance_id IS NULL
+               OR (
+                    service_worker_status.instance_id = EXCLUDED.instance_id
+                    AND (
+                        service_worker_status.updated_at IS NULL
+                        OR EXCLUDED.updated_at >= service_worker_status.updated_at
+                    )
+               )
             """;
         cmd.Parameters.AddWithValue("workerKey", workerKey);
         cmd.Parameters.AddWithValue("status", (object?)status ?? DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "instanceId",
+            (object?)instanceId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("changedAt", now);
         cmd.Parameters.AddWithValue("message", (object?)message ?? DBNull.Value);
         AddJsonbParameter(cmd, "currentOperation", currentOperation);
         AddJsonbParameter(cmd, "lastOperation", lastOperation);
         cmd.Parameters.AddWithValue("updatedAt", now);
-        cmd.ExecuteNonQuery();
+        var rows = cmd.ExecuteNonQuery();
+        if (rows == 0 && instanceId is not null)
+        {
+            _log.LogDebug(
+                "Ignored stale activity for worker {WorkerKey} instance {InstanceId}.",
+                workerKey,
+                instanceId);
+        }
     }
 
     public WorkerStatusInfo? GetWorkerStatus(string workerKey)
@@ -1965,9 +2005,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 JOIN latest_scrape latest
                   ON latest.id = attempt.scrape_id
                 WHERE attempt.status = 'running'
-                ORDER BY attempt.last_progress_at DESC,
-                         attempt.phase_ordinal DESC,
-                         attempt.attempt DESC
+                ORDER BY attempt.phase_ordinal ASC,
+                         attempt.attempt DESC,
+                         attempt.last_progress_at DESC
                 LIMIT 1
             )
             SELECT
@@ -2002,6 +2042,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 attempt.overall_percent, attempt.overall_model_version,
                 attempt.eta_lower_seconds, attempt.eta_upper_seconds,
                 attempt.eta_confidence, attempt.eta_sample_count,
+                attempt.current_subphase_epoch, attempt.subphase_sequence,
+                attempt.subphase_progress_kind, attempt.subphase_units_kind,
+                attempt.subphase_units_completed, attempt.subphase_units_total,
+                attempt.subphase_units_total_final, attempt.subphase_percent,
+                attempt.subphase_started_at, attempt.subphase_last_progress_at,
                 attempt.started_at, attempt.last_progress_at,
                 attempt.heartbeat_at, attempt.completed_at,
                 attempt.build_id, attempt.config_id,

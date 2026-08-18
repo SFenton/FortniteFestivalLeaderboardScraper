@@ -2083,10 +2083,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task ApiServiceInfo_ReflectsWorkerStatusActivity()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        var startedAt = DateTime.UtcNow.AddMinutes(-10);
-        var heartbeatAt = DateTime.UtcNow.AddSeconds(-5);
-        var operationStartedAt = DateTime.UtcNow.AddMinutes(-2);
-        var operationUpdatedAt = DateTime.UtcNow.AddSeconds(-20);
+        var now = DateTime.UtcNow;
+        var startedAt = now.AddMinutes(-1);
+        var heartbeatAt = now.AddSeconds(-5);
+        var operationStartedAt = now.AddSeconds(-45);
+        var operationUpdatedAt = now.AddSeconds(-20);
 
         metaDb.UpsertWorkerHeartbeat(
             WorkerStatusPublisher.ScraperWorkerKey,
@@ -2179,7 +2180,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             now.AddSeconds(-10),
             now,
             "build-test",
-            "config-test"));
+            "config-test",
+            CurrentSubphaseEpoch: 1,
+            SubphaseSequence: 3,
+            SubphaseProgressKind: "exact",
+            SubphaseUnitsKind: "scopes",
+            SubphaseUnitsCompleted: 25,
+            SubphaseUnitsTotal: 100,
+            SubphaseUnitsTotalFinal: true,
+            SubphasePercent: 25,
+            SubphaseStartedAtUtc: now.AddMinutes(-1),
+            SubphaseLastProgressAtUtc: now.AddSeconds(-10)));
 
         try
         {
@@ -2190,6 +2201,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(2, json.GetProperty("contractVersion").GetInt32());
             var phasePlan = json.GetProperty("phasePlan");
             Assert.Equal(PhaseProgressCatalog.PlanVersion, phasePlan.GetProperty("version").GetString());
+            Assert.Equal(
+                "fst.subphase-plan.v1",
+                phasePlan.GetProperty("subphaseCatalogVersion").GetString());
             Assert.Equal(
                 PhaseProgressCatalog.All.Count,
                 phasePlan.GetProperty("phases").GetArrayLength());
@@ -2228,6 +2242,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(100, current.GetProperty("unitsTotal").GetInt64());
             Assert.True(current.GetProperty("unitsTotalFinal").GetBoolean());
             Assert.Equal(25, current.GetProperty("phasePercent").GetDouble());
+            var subphaseProgress = current.GetProperty("subphaseProgress");
+            Assert.Equal(1, subphaseProgress.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("current_projection_refresh", subphaseProgress.GetProperty("id").GetString());
+            Assert.Equal(1, subphaseProgress.GetProperty("epoch").GetInt32());
+            Assert.Equal(3, subphaseProgress.GetProperty("sequence").GetInt64());
+            Assert.Equal("exact", subphaseProgress.GetProperty("kind").GetString());
+            Assert.Equal(25, subphaseProgress.GetProperty("percent").GetDouble());
             Assert.Equal("indeterminate", current.GetProperty("overallPercentKind").GetString());
             Assert.False(current.TryGetProperty("overallPercent", out _));
             Assert.Equal(JsonValueKind.String, current.GetProperty("heartbeatAt").ValueKind);
@@ -2263,6 +2284,185 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 currentOperation: null,
                 status: "running",
                 updatedAtUtc: completedAt);
+        }
+    }
+
+    [Theory]
+    [InlineData("indeterminate")]
+    [InlineData("not_applicable")]
+    public async Task ApiServiceInfo_ProjectsNonExactSubphaseKinds(
+        string progressKind)
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var scrapeId = metaDb.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        const string instanceId = "subphase-kind-test";
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            instanceId,
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.post_process",
+                OperationLabel = "Post-processing leaderboard update",
+                Status = "running",
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "BandMaintenance",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            },
+            updatedAtUtc: now);
+        var subphaseId = progressKind == "not_applicable"
+            ? "skipping_band_after_timeout"
+            : "maintaining_band_projection";
+        var attempt = metaDb.StartScrapePhaseAttempt(
+            new ScrapePhaseAttemptStart(
+                scrapeId,
+                "post.band_maintenance",
+                "scrape.update",
+                300,
+                PhaseProgressCatalog.PlanVersion,
+                instanceId,
+                subphaseId,
+                "running",
+                "scopes",
+                null,
+                null,
+                false,
+                null,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now.AddMinutes(-1),
+                now,
+                now,
+                "build-test",
+                "config-test",
+                CurrentSubphaseEpoch: 2,
+                SubphaseSequence: 4,
+                SubphaseProgressKind: progressKind,
+                SubphaseUnitsTotalFinal: false,
+                SubphaseStartedAtUtc: now.AddMinutes(-1),
+                SubphaseLastProgressAtUtc: now));
+
+        try
+        {
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var subphaseProgress = json
+                .GetProperty("currentUpdate")
+                .GetProperty("subphaseProgress");
+
+            Assert.Equal(
+                progressKind,
+                subphaseProgress.GetProperty("kind").GetString());
+            Assert.False(subphaseProgress.GetProperty("unitsTotalFinal").GetBoolean());
+            Assert.False(subphaseProgress.TryGetProperty("percent", out _));
+            Assert.False(subphaseProgress.TryGetProperty("unitsCompleted", out _));
+            Assert.False(subphaseProgress.TryGetProperty("unitsTotal", out _));
+        }
+        finally
+        {
+            var completedAt = DateTime.UtcNow;
+            metaDb.CompleteScrapePhaseAttempt(
+                new ScrapePhaseAttemptCompletion(
+                    scrapeId,
+                    "post.band_maintenance",
+                    attempt,
+                    "completed",
+                    completedAt,
+                    completedAt,
+                    completedAt,
+                    null,
+                    null));
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                songsScraped: 0,
+                totalEntries: 0,
+                totalRequests: 0,
+                totalBytes: 0);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                currentOperation: null,
+                status: "running",
+                updatedAtUtc: completedAt);
+        }
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_AllowsLegacyV2OperationWithoutSubphaseProgress()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var now = DateTime.UtcNow;
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "legacy-v2-subphase",
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.leaderboards",
+                OperationLabel = "Scraping leaderboard scores",
+                Status = "running",
+                Phase = "Scraping",
+                SubOperation = "persisting_scores",
+                PhaseId = "scrape.leaderboards",
+                SubphaseId = "persisting_scores",
+                PhasePlanVersion = PhaseProgressCatalog.PlanVersion,
+                PhaseOrdinal = 100,
+                PhaseAttempt = 1,
+                UnitsKind = "leaderboards",
+                UnitsCompleted = 10,
+                UnitsTotal = 10,
+                UnitsTotalFinal = true,
+                PhasePercent = 100,
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            },
+            updatedAtUtc: now);
+
+        try
+        {
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var current = (await response.Content
+                    .ReadFromJsonAsync<JsonElement>())
+                .GetProperty("currentUpdate");
+
+            Assert.Equal(
+                "persisting_scores",
+                current.GetProperty("subphaseId").GetString());
+            Assert.Equal(100, current.GetProperty("phasePercent").GetDouble());
+            Assert.False(current.TryGetProperty(
+                "subphaseProgress",
+                out _));
+        }
+        finally
+        {
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                currentOperation: null,
+                status: "running",
+                updatedAtUtc: DateTime.UtcNow);
         }
     }
 

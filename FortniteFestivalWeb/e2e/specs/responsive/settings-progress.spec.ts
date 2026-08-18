@@ -56,6 +56,20 @@ function runningServiceInfo(unitsTotalFinal: boolean): ServiceInfoResponse {
       etaUpperSeconds: unitsTotalFinal ? 240 : null,
       etaConfidence: unitsTotalFinal ? 'medium' : null,
       etaSampleCount: unitsTotalFinal ? 9 : null,
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'per_instrument_rankings',
+        epoch: 1,
+        sequence: 1,
+        kind: unitsTotalFinal ? 'exact' : 'indeterminate',
+        unitsKind: unitsTotalFinal ? 'instruments' : null,
+        unitsCompleted: unitsTotalFinal ? 3 : null,
+        unitsTotal: unitsTotalFinal ? 8 : null,
+        unitsTotalFinal,
+        percent: unitsTotalFinal ? 37.5 : null,
+        startedAt: '2026-01-02T10:00:00.000Z',
+        lastProgressAt: '2026-01-02T10:05:00.000Z',
+      },
       heartbeatAt: '2026-01-02T10:05:05.000Z',
       lastProgressAt: '2026-01-02T10:05:00.000Z',
       branches: null,
@@ -99,6 +113,54 @@ function failedServiceInfo(): ServiceInfoResponse {
   };
 }
 
+function notApplicableServiceInfo(): ServiceInfoResponse {
+  const running = runningServiceInfo(false);
+  return {
+    ...running,
+    currentUpdate: {
+      ...running.currentUpdate,
+      subOperation: 'skipping_band_after_timeout',
+      subphaseId: 'skipping_band_after_timeout',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'skipping_band_after_timeout',
+        epoch: 2,
+        sequence: 3,
+        kind: 'not_applicable',
+        unitsTotalFinal: false,
+      },
+    },
+  };
+}
+
+function exactProgressServiceInfo(
+  percent: number,
+  epoch: number,
+  sequence: number,
+): ServiceInfoResponse {
+  const running = runningServiceInfo(true);
+  return {
+    ...running,
+    currentUpdate: {
+      ...running.currentUpdate,
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'per_instrument_rankings',
+        epoch,
+        sequence,
+        kind: 'exact',
+        unitsKind: 'instruments',
+        unitsCompleted: percent,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent,
+        startedAt: '2026-01-02T10:00:00.000Z',
+        lastProgressAt: `2026-01-02T10:05:0${sequence}.000Z`,
+      },
+    },
+  };
+}
+
 test.use({ scenario: createPopulatedScenario() });
 test.beforeEach(({}, testInfo) => {
   test.skip(testInfo.project.name !== WIDE_PROJECT, 'Settings viewport matrix runs once');
@@ -118,8 +180,15 @@ for (const width of [320, 375, 768, 1440]) {
 
     const serviceInfo = page.getByTestId('settings-service-info-list');
     await expect(serviceInfo).toBeVisible();
-    await expect(serviceInfo.getByText('Waiting for the next update')).toBeVisible();
-    await expect(serviceInfo.getByText('Published leaderboard data is available.')).toHaveCount(1);
+    await expect(serviceInfo.getByText('Leaderboard Service State')).toBeVisible();
+    await expect(page.getByTestId('settings-service-info-row-update-sub-status')).toContainText(
+      'Waiting for the Next Update',
+    );
+    await expect(page.getByTestId('settings-service-info-row-update-status')).toContainText('Idle');
+    await expect(page.getByTestId('settings-service-info-row-update-step-position')).toHaveCount(0);
+    const publication = page.getByTestId('settings-service-info-row-last-published-at');
+    await expect(publication).toContainText('Last Successful Publication');
+    await expect(publication).toContainText(/\b(?:PST|PDT|UTC|GMT(?:[+-]\d+)?)\b/);
     await expect(page.getByTestId('settings-service-technical-details')).toHaveCount(0);
     await expect(page.getByTestId('settings-selected-profile-sync')).toHaveCount(0);
 
@@ -149,7 +218,7 @@ for (const width of [320, 375, 768, 1440]) {
 }
 
 for (const width of [375, 1440]) {
-  test(`v2 determinate progress keeps the current phase first at ${width}px`, async ({
+  test(`v2 determinate progress uses state and phase rows at ${width}px`, async ({
     page,
     appState,
     api,
@@ -167,28 +236,35 @@ for (const width of [375, 1440]) {
     await expect(progress).toHaveAttribute('aria-valuemax', '100');
     await expect(progress).toHaveAttribute('aria-valuenow', '37.5');
     await expect(progress).toHaveAttribute('aria-valuetext', /3 of 8 instruments completed/);
-    await expect(page.getByTestId('settings-service-info-row-update-step-position')).toContainText(
-      'Computing rankings',
+    await expect(page.getByText('37.5%', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('3 of 8 instruments completed', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('settings-service-info-row-update-status')).toContainText('Updating');
+    await expect(page.getByTestId('settings-service-info-row-update-status').getByTestId('arc-spinner')).toBeVisible();
+    await expect(page.getByTestId('settings-service-info-row-update-sub-status')).toContainText(
+      'Computing Rankings',
     );
     await expect(page.getByTestId('settings-service-info-row-update-step-position')).toContainText(
-      'Computing rankings by instrument',
+      'Computing Rankings · Calculating Instrument Rankings',
     );
-    await expect(page.getByText('Estimated overall 63.2%')).toBeVisible();
-    await expect(page.getByText('Estimated 2m 0s–4m 0s remaining (medium confidence)')).toBeVisible();
+    await expect(page.getByTestId('settings-service-info-row-update-overall-progress')).toHaveCount(0);
+    await expect(page.getByTestId('settings-service-info-row-update-eta')).toHaveCount(0);
     await expect(page.getByTestId('settings-service-technical-details')).toHaveCount(0);
     await expect(page.getByTestId('settings-selected-profile-sync')).toHaveCount(0);
     await expect(page.getByTestId('settings-quick-link-profile-sync')).toHaveCount(0);
 
-    const phasePrecedesProgress = await page.getByTestId('settings-service-info-list').evaluate(service => {
+    const rowOrderIsCorrect = await page.getByTestId('settings-service-info-list').evaluate(service => {
+      const state = service.querySelector('[data-testid="settings-service-info-row-update-sub-status"]');
       const phase = service.querySelector('[data-testid="settings-service-info-row-update-step-position"]');
       const bar = service.querySelector('[data-testid="settings-service-phase-progress"]');
       return Boolean(
-        phase
+        state
+        && phase
+        && (state.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING)
         && bar
         && (phase.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING),
       );
     });
-    expect(phasePrecedesProgress).toBe(true);
+    expect(rowOrderIsCorrect).toBe(true);
 
     await page.addScriptTag({ content: axe.source });
     const results = await page.evaluate(() => window.axe.run('[data-testid="settings-service-info-list"]'));
@@ -221,7 +297,7 @@ test('v2 unknown totals stay indeterminate without numeric progress', async ({
   await expect(progress).not.toHaveAttribute('aria-valuemin');
   await expect(progress).not.toHaveAttribute('aria-valuemax');
   await expect(progress).not.toHaveAttribute('aria-valuenow');
-  await expect(page.getByText('3 instruments completed; 8 discovered so far')).toBeVisible();
+  await expect(page.getByText('3 instruments completed; 8 discovered so far')).toHaveCount(0);
   await expect(page.getByText('37.5%')).toHaveCount(0);
   await expect(page.getByText(/Estimated overall progress/)).toHaveCount(0);
 
@@ -231,7 +307,44 @@ test('v2 unknown totals stay indeterminate without numeric progress', async ({
   });
 });
 
-test('failed update keeps prior publication health visible', async ({
+test('not-applicable substate renders no progress bar', async ({
+  page,
+  appState,
+  api,
+  scenario,
+}) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  api.use({ ...scenario, serviceInfo: notApplicableServiceInfo() });
+  await appState.reset();
+  await gotoAppRoute(page, '/settings');
+
+  await expect(page.getByTestId('settings-service-info-row-update-step-position')).toContainText(
+    'Continuing Without Band Leaderboards',
+  );
+  await expect(page.getByRole('progressbar')).toHaveCount(0);
+});
+
+test('a new subphase epoch resets the bar from 90% to 5%', async ({
+  page,
+  appState,
+  api,
+  scenario,
+}) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  api.use({ ...scenario, serviceInfo: exactProgressServiceInfo(90, 1, 5) });
+  await appState.reset();
+  await gotoAppRoute(page, '/settings');
+
+  const progress = page.getByRole('progressbar', { name: 'Current phase progress' });
+  await expect(progress).toHaveAttribute('aria-valuenow', '90');
+
+  api.use({ ...scenario, serviceInfo: exactProgressServiceInfo(5, 2, 1) });
+  await expect(progress).toHaveAttribute('aria-valuenow', '5', { timeout: 8_000 });
+  await expect(page.getByText('90.0%', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('5.0%', { exact: true })).toHaveCount(0);
+});
+
+test('failed update shows stopped process and failed service state', async ({
   page,
   appState,
   api,
@@ -242,9 +355,9 @@ test('failed update keeps prior publication health visible', async ({
   await appState.reset();
   await gotoAppRoute(page, '/settings');
 
-  await expect(page.getByTestId('settings-service-info-row-update-status')).toContainText('Failed');
+  await expect(page.getByTestId('settings-service-info-row-update-status')).toContainText('Stopped');
   await expect(page.getByTestId('settings-service-info-row-update-sub-status')).toContainText(
-    'Previously published leaderboard data remains available',
+    'Last Leaderboard Update Failed',
   );
   await expect(page.getByText('The last completed update reported 2 non-critical warnings.')).toBeVisible();
   await expect(page.getByRole('progressbar')).toHaveCount(0);

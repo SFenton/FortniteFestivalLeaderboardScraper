@@ -51,6 +51,11 @@ public sealed partial class MetaDatabase
                         phase_percent, overall_percent_kind, overall_percent,
                         overall_model_version, eta_lower_seconds,
                         eta_upper_seconds, eta_confidence, eta_sample_count,
+                        current_subphase_epoch, subphase_sequence,
+                        subphase_progress_kind, subphase_units_kind,
+                        subphase_units_completed, subphase_units_total,
+                        subphase_units_total_final, subphase_percent,
+                        subphase_started_at, subphase_last_progress_at,
                         started_at, last_progress_at, heartbeat_at,
                         build_id, config_id)
                     SELECT
@@ -61,6 +66,11 @@ public sealed partial class MetaDatabase
                         @phasePercent, @overallPercentKind, @overallPercent,
                         @overallModelVersion, @etaLowerSeconds,
                         @etaUpperSeconds, @etaConfidence, @etaSampleCount,
+                        @currentSubphaseEpoch, @subphaseSequence,
+                        @subphaseProgressKind, @subphaseUnitsKind,
+                        @subphaseUnitsCompleted, @subphaseUnitsTotal,
+                        @subphaseUnitsTotalFinal, @subphasePercent,
+                        @subphaseStartedAt, @subphaseLastProgressAt,
                         @startedAt, @lastProgressAt, @heartbeatAt,
                         @buildId, @configId
                     FROM next_attempt
@@ -99,6 +109,16 @@ public sealed partial class MetaDatabase
                 eta_upper_seconds = @etaUpperSeconds,
                 eta_confidence = @etaConfidence,
                 eta_sample_count = @etaSampleCount,
+                current_subphase_epoch = @currentSubphaseEpoch,
+                subphase_sequence = @subphaseSequence,
+                subphase_progress_kind = @subphaseProgressKind,
+                subphase_units_kind = @subphaseUnitsKind,
+                subphase_units_completed = @subphaseUnitsCompleted,
+                subphase_units_total = @subphaseUnitsTotal,
+                subphase_units_total_final = @subphaseUnitsTotalFinal,
+                subphase_percent = @subphasePercent,
+                subphase_started_at = @subphaseStartedAt,
+                subphase_last_progress_at = @subphaseLastProgressAt,
                 last_progress_at = GREATEST(
                     last_progress_at,
                     @lastProgressAt),
@@ -106,6 +126,12 @@ public sealed partial class MetaDatabase
             WHERE scrape_id = @scrapeId
               AND phase_id = @phaseId
               AND attempt = @attempt
+              AND (
+                  @workerInstanceId = ''
+                  OR worker_instance_id = @workerInstanceId)
+              AND (
+                  @subphaseSequence = 0
+                  OR subphase_sequence < @subphaseSequence)
               AND status = 'running'
             """;
         cmd.Parameters.AddWithValue("scrapeId", progress.ScrapeId);
@@ -124,6 +150,17 @@ public sealed partial class MetaDatabase
         cmd.Parameters.AddWithValue("etaUpperSeconds", (object?)progress.EtaUpperSeconds ?? DBNull.Value);
         cmd.Parameters.AddWithValue("etaConfidence", (object?)progress.EtaConfidence ?? DBNull.Value);
         cmd.Parameters.AddWithValue("etaSampleCount", (object?)progress.EtaSampleCount ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("currentSubphaseEpoch", progress.CurrentSubphaseEpoch);
+        cmd.Parameters.AddWithValue("subphaseSequence", progress.SubphaseSequence);
+        cmd.Parameters.AddWithValue("subphaseProgressKind", progress.SubphaseProgressKind);
+        cmd.Parameters.AddWithValue("subphaseUnitsKind", (object?)progress.SubphaseUnitsKind ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsCompleted", (object?)progress.SubphaseUnitsCompleted ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsTotal", (object?)progress.SubphaseUnitsTotal ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsTotalFinal", progress.SubphaseUnitsTotalFinal);
+        cmd.Parameters.AddWithValue("subphasePercent", (object?)progress.SubphasePercent ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseStartedAt", (object?)progress.SubphaseStartedAtUtc?.ToUniversalTime() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseLastProgressAt", (object?)progress.SubphaseLastProgressAtUtc?.ToUniversalTime() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("workerInstanceId", progress.WorkerInstanceId);
         cmd.Parameters.AddWithValue("lastProgressAt", NormalizeUtc(progress.LastProgressAtUtc));
         cmd.Parameters.AddWithValue("heartbeatAt", NormalizeUtc(progress.HeartbeatAtUtc));
         return cmd.ExecuteNonQuery() == 1;
@@ -246,6 +283,16 @@ public sealed partial class MetaDatabase
         cmd.Parameters.AddWithValue("etaUpperSeconds", (object?)attempt.EtaUpperSeconds ?? DBNull.Value);
         cmd.Parameters.AddWithValue("etaConfidence", (object?)attempt.EtaConfidence ?? DBNull.Value);
         cmd.Parameters.AddWithValue("etaSampleCount", (object?)attempt.EtaSampleCount ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("currentSubphaseEpoch", attempt.CurrentSubphaseEpoch);
+        cmd.Parameters.AddWithValue("subphaseSequence", attempt.SubphaseSequence);
+        cmd.Parameters.AddWithValue("subphaseProgressKind", attempt.SubphaseProgressKind);
+        cmd.Parameters.AddWithValue("subphaseUnitsKind", (object?)attempt.SubphaseUnitsKind ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsCompleted", (object?)attempt.SubphaseUnitsCompleted ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsTotal", (object?)attempt.SubphaseUnitsTotal ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseUnitsTotalFinal", attempt.SubphaseUnitsTotalFinal);
+        cmd.Parameters.AddWithValue("subphasePercent", (object?)attempt.SubphasePercent ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseStartedAt", (object?)attempt.SubphaseStartedAtUtc?.ToUniversalTime() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("subphaseLastProgressAt", (object?)attempt.SubphaseLastProgressAtUtc?.ToUniversalTime() ?? DBNull.Value);
         cmd.Parameters.AddWithValue("startedAt", NormalizeUtc(attempt.StartedAtUtc));
         cmd.Parameters.AddWithValue("lastProgressAt", NormalizeUtc(attempt.LastProgressAtUtc));
         cmd.Parameters.AddWithValue("heartbeatAt", NormalizeUtc(attempt.HeartbeatAtUtc));
@@ -283,14 +330,24 @@ public sealed partial class MetaDatabase
             EtaUpperSeconds = reader.IsDBNull(ordinal + 18) ? null : reader.GetDouble(ordinal + 18),
             EtaConfidence = reader.IsDBNull(ordinal + 19) ? null : reader.GetString(ordinal + 19),
             EtaSampleCount = reader.IsDBNull(ordinal + 20) ? null : reader.GetInt32(ordinal + 20),
-            StartedAtUtc = GetUtc(reader, ordinal + 21),
-            LastProgressAtUtc = GetUtc(reader, ordinal + 22),
-            HeartbeatAtUtc = GetUtc(reader, ordinal + 23),
-            CompletedAtUtc = GetNullableUtc(reader, ordinal + 24),
-            BuildId = reader.IsDBNull(ordinal + 25) ? null : reader.GetString(ordinal + 25),
-            ConfigId = reader.IsDBNull(ordinal + 26) ? null : reader.GetString(ordinal + 26),
-            WarningMessage = reader.IsDBNull(ordinal + 27) ? null : reader.GetString(ordinal + 27),
-            ErrorMessage = reader.IsDBNull(ordinal + 28) ? null : reader.GetString(ordinal + 28),
+            CurrentSubphaseEpoch = reader.GetInt32(ordinal + 21),
+            SubphaseSequence = reader.GetInt64(ordinal + 22),
+            SubphaseProgressKind = reader.GetString(ordinal + 23),
+            SubphaseUnitsKind = reader.IsDBNull(ordinal + 24) ? null : reader.GetString(ordinal + 24),
+            SubphaseUnitsCompleted = reader.IsDBNull(ordinal + 25) ? null : reader.GetInt64(ordinal + 25),
+            SubphaseUnitsTotal = reader.IsDBNull(ordinal + 26) ? null : reader.GetInt64(ordinal + 26),
+            SubphaseUnitsTotalFinal = reader.GetBoolean(ordinal + 27),
+            SubphasePercent = reader.IsDBNull(ordinal + 28) ? null : reader.GetDouble(ordinal + 28),
+            SubphaseStartedAtUtc = GetNullableUtc(reader, ordinal + 29),
+            SubphaseLastProgressAtUtc = GetNullableUtc(reader, ordinal + 30),
+            StartedAtUtc = GetUtc(reader, ordinal + 31),
+            LastProgressAtUtc = GetUtc(reader, ordinal + 32),
+            HeartbeatAtUtc = GetUtc(reader, ordinal + 33),
+            CompletedAtUtc = GetNullableUtc(reader, ordinal + 34),
+            BuildId = reader.IsDBNull(ordinal + 35) ? null : reader.GetString(ordinal + 35),
+            ConfigId = reader.IsDBNull(ordinal + 36) ? null : reader.GetString(ordinal + 36),
+            WarningMessage = reader.IsDBNull(ordinal + 37) ? null : reader.GetString(ordinal + 37),
+            ErrorMessage = reader.IsDBNull(ordinal + 38) ? null : reader.GetString(ordinal + 38),
         };
     }
 }

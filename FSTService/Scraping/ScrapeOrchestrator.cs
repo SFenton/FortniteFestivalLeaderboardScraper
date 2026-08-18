@@ -325,13 +325,15 @@ public sealed class ScrapeOrchestrator
             if (useOnlineSoloWriter)
             {
                 _progress.SetSubOperation("draining_solo_writes");
-                writerResults.Add(await _persistence.DrainOnlineSoloWriterAsync());
+                writerResults.Add(
+                    await _persistence.DrainOnlineSoloWriterAsync(
+                        _progress));
             }
             else
             {
                 // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
                 _progress.SetSubOperation("dropping_solo_indexes");
-                _persistence.DropSoloIndexes();
+                _persistence.DropSoloIndexes(_progress);
                 try
                 {
                     _progress.SetSubOperation("flushing_solo");
@@ -340,7 +342,7 @@ public sealed class ScrapeOrchestrator
                 finally
                 {
                     _progress.SetSubOperation("creating_solo_indexes");
-                    _persistence.CreateSoloIndexes();
+                    _persistence.CreateSoloIndexes(_progress);
                 }
             }
 
@@ -500,7 +502,7 @@ public sealed class ScrapeOrchestrator
                 if (shouldFlushBand)
                 {
                     _progress.SetSubOperation("dropping_band_indexes");
-                    _persistence.DropBandIndexes();
+                    _persistence.DropBandIndexes(_progress);
                     try
                     {
                         _progress.SetSubOperation("flushing_band");
@@ -514,7 +516,7 @@ public sealed class ScrapeOrchestrator
                     finally
                     {
                         _progress.SetSubOperation("creating_band_indexes");
-                        _persistence.CreateBandIndexes();
+                        _persistence.CreateBandIndexes(_progress);
                     }
 
                     _log.LogInformation("Band flush complete.");

@@ -1092,7 +1092,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return _onlineSoloWriter.EnqueueAsync(songId, instrument, entries, ct);
     }
 
-    public async Task<WriterDrainResult> DrainOnlineSoloWriterAsync()
+    public async Task<WriterDrainResult> DrainOnlineSoloWriterAsync(
+        ScrapeProgressTracker? progress = null)
     {
         OnlineBoundedPageWriter<LeaderboardEntry>? writer;
         lock (_activeWriterLock)
@@ -1105,13 +1106,38 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         try
         {
-            return await writer.CompleteAndDrainAsync().ConfigureAwait(false);
+            var drainTask = writer.CompleteAndDrainAsync();
+            if (progress is null)
+                return await drainTask.ConfigureAwait(false);
+
+            ReportOnlineWriterProgress(progress, writer);
+            while (!drainTask.IsCompleted)
+            {
+                await Task.WhenAny(
+                        drainTask,
+                        Task.Delay(TimeSpan.FromSeconds(1)))
+                    .ConfigureAwait(false);
+                ReportOnlineWriterProgress(progress, writer);
+            }
+            return await drainTask.ConfigureAwait(false);
         }
         finally
         {
+            ReportOnlineWriterProgress(progress, writer);
             await writer.DisposeAsync().ConfigureAwait(false);
             _snapshotReuseManifests.Clear();
         }
+    }
+
+    private static void ReportOnlineWriterProgress(
+        ScrapeProgressTracker? progress,
+        OnlineBoundedPageWriter<LeaderboardEntry> writer)
+    {
+        progress?.SetOnlineWriterDrainProgress(
+            writer.FlushedPages,
+            writer.EnqueuedPages,
+            writer.FlushedEntries,
+            writer.EnqueuedEntries);
     }
 
     /// <summary>
@@ -2747,7 +2773,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>Drop only solo (leaderboard_entries) secondary indexes.</summary>
-    public void DropSoloIndexes()
+    public void DropSoloIndexes(ScrapeProgressTracker? progress = null)
     {
         if (!WriteLegacyLiveLeaderboardDuringScrape)
         {
@@ -2755,11 +2781,15 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             return;
         }
 
-        DropIndexes(SoloDroppableIndexes, "solo");
+        DropIndexes(
+            SoloDroppableIndexes,
+            "solo",
+            "dropping",
+            progress);
     }
 
     /// <summary>Recreate only solo (leaderboard_entries) secondary indexes.</summary>
-    public void CreateSoloIndexes()
+    public void CreateSoloIndexes(ScrapeProgressTracker? progress = null)
     {
         if (!WriteLegacyLiveLeaderboardDuringScrape)
         {
@@ -2767,18 +2797,43 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             return;
         }
 
-        CreateIndexes(SoloIndexDefinitions, "solo");
+        CreateIndexes(
+            SoloIndexDefinitions,
+            "solo",
+            "creating",
+            progress);
     }
 
     /// <summary>Drop only band (band_entries, band_member_stats, band_members) secondary indexes.</summary>
-    public void DropBandIndexes() => DropIndexes(BandDroppableIndexes, "band");
+    public void DropBandIndexes(ScrapeProgressTracker? progress = null) =>
+        DropIndexes(
+            BandDroppableIndexes,
+            "band",
+            "dropping",
+            progress);
 
     /// <summary>Recreate only band secondary indexes.</summary>
-    public void CreateBandIndexes() => CreateIndexes(BandIndexDefinitions, "band");
+    public void CreateBandIndexes(ScrapeProgressTracker? progress = null) =>
+        CreateIndexes(
+            BandIndexDefinitions,
+            "band",
+            "creating",
+            progress);
 
-    private void DropIndexes(string[] indexes, string label)
+    private void DropIndexes(
+        string[] indexes,
+        string label,
+        string operation,
+        ScrapeProgressTracker? progress)
     {
         int dropped = 0;
+        int completed = 0;
+        var progressOperation = $"{operation}_{label}";
+        progress?.ReportIndexProgress(
+            progressOperation,
+            indexes.FirstOrDefault() ?? label,
+            0,
+            indexes.Length);
         Parallel.ForEach(indexes, new ParallelOptions { MaxDegreeOfParallelism = 4 }, idx =>
         {
             try
@@ -2793,13 +2848,32 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             {
                 _log.LogWarning(ex, "Failed to drop index {Index}.", idx);
             }
+            finally
+            {
+                progress?.ReportIndexProgress(
+                    progressOperation,
+                    idx,
+                    Interlocked.Increment(ref completed),
+                    indexes.Length);
+            }
         });
         _log.LogInformation("Dropped {Count}/{Total} {Label} secondary indexes.", dropped, indexes.Length, label);
     }
 
-    private void CreateIndexes(string[] definitions, string label)
+    private void CreateIndexes(
+        string[] definitions,
+        string label,
+        string operation,
+        ScrapeProgressTracker? progress)
     {
         int created = 0;
+        int completed = 0;
+        var progressOperation = $"{operation}_{label}";
+        progress?.ReportIndexProgress(
+            progressOperation,
+            definitions.FirstOrDefault() ?? label,
+            0,
+            definitions.Length);
         Parallel.ForEach(definitions, new ParallelOptions { MaxDegreeOfParallelism = 4 }, def =>
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -2817,6 +2891,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             catch (Exception ex)
             {
                 _log.LogError(ex, "Failed to create index: {Def}", def);
+            }
+            finally
+            {
+                progress?.ReportIndexProgress(
+                    progressOperation,
+                    def,
+                    Interlocked.Increment(ref completed),
+                    definitions.Length);
             }
         });
         _log.LogInformation("Recreated {Count}/{Total} {Label} secondary indexes.", created, definitions.Length, label);

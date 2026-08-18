@@ -400,7 +400,6 @@ public sealed class PostScrapeOrchestrator
             // ── Solo player stats ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
             {
-                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
                 await RunPhaseAsync(ctx, "PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
             }
 
@@ -2532,6 +2531,7 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     internal async Task ComputeLeaderboardRivalsAsync(ScrapePassContext ctx, CancellationToken ct)
     {
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
         if (ctx.RegisteredIds.Count == 0)
             return;
 
@@ -2542,6 +2542,7 @@ public sealed class PostScrapeOrchestrator
             "Computing leaderboard rivals for {Count} registered user(s) with maxDegree={MaxDegree}.",
             ctx.RegisteredIds.Count,
             maxDegreeOfParallelism);
+        _progress.BeginPhaseProgress(ctx.RegisteredIds.Count);
 
         await Parallel.ForEachAsync(
             ctx.RegisteredIds,
@@ -2552,16 +2553,23 @@ public sealed class PostScrapeOrchestrator
             },
             (accountId, _) =>
             {
-                var result = _leaderboardRivalsCalculator.ComputeForUser(
-                    accountId,
-                    rankingsAuthoritative:
-                        ctx.RankingsComputedSuccessfully);
-                _log.LogDebug(
-                    "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
-                    accountId,
-                    result.RivalCount,
-                    result.SampleCount);
-                return ValueTask.CompletedTask;
+                try
+                {
+                    var result = _leaderboardRivalsCalculator.ComputeForUser(
+                        accountId,
+                        rankingsAuthoritative:
+                            ctx.RankingsComputedSuccessfully);
+                    _log.LogDebug(
+                        "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
+                        accountId,
+                        result.RivalCount,
+                        result.SampleCount);
+                    return ValueTask.CompletedTask;
+                }
+                finally
+                {
+                    _progress.ReportPhaseItemComplete();
+                }
             });
     }
 
@@ -2667,19 +2675,31 @@ public sealed class PostScrapeOrchestrator
         ScrapePassContext ctx,
         CancellationToken ct)
     {
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
+        _progress.SetSubOperation("population_tiers");
         var changedIds = ctx.Aggregates.ChangedAccountIds;
         // Also include registered users (their stats should always be fresh)
         var accountIds = new HashSet<string>(changedIds, StringComparer.OrdinalIgnoreCase);
         foreach (var id in ctx.RegisteredIds)
             accountIds.Add(id);
+        var normalizedAccountIds =
+            MaxScoreMaintenanceAccountIdPolicy.NormalizeSet(accountIds);
 
         _log.LogInformation("Computing player stats tiers for {Count:N0} accounts ({Changed:N0} changed + {Registered:N0} registered).",
-            accountIds.Count, changedIds.Count, ctx.RegisteredIds.Count);
+            normalizedAccountIds.Length, changedIds.Count, ctx.RegisteredIds.Count);
+        _progress.BeginPhaseProgress(normalizedAccountIds.Length);
+        var reportedAccounts = 0;
         await PlayerStatsTierRebuilder.RebuildAsync(
             _persistence,
             _pathDataStore,
-            accountIds,
+            normalizedAccountIds,
             _log,
-            ct);
+            ct,
+            onProgress: (completed, _) =>
+            {
+                var delta = completed - reportedAccounts;
+                reportedAccounts = completed;
+                _progress.ReportPhaseItemsComplete(delta);
+            });
     }
 }

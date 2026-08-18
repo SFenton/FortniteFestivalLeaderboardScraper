@@ -135,6 +135,23 @@ public static partial class ApiEndpoints
                     Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds));
             var durableV2Operation = durableCurrent
                 ?? (currentStatus == "failed" ? lastFailedOperation : null);
+            var currentSubphaseProgress = currentAttempt is not null
+                ? new SubphaseProgressInfo
+                {
+                    Id = currentAttempt.CurrentSubphaseId,
+                    Epoch = currentAttempt.CurrentSubphaseEpoch,
+                    Sequence = currentAttempt.SubphaseSequence,
+                    Kind = currentAttempt.SubphaseProgressKind,
+                    UnitsKind = currentAttempt.SubphaseUnitsKind,
+                    UnitsCompleted = currentAttempt.SubphaseUnitsCompleted,
+                    UnitsTotal = currentAttempt.SubphaseUnitsTotal,
+                    UnitsTotalFinal = currentAttempt.SubphaseUnitsTotalFinal,
+                    Percent = currentAttempt.SubphasePercent,
+                    StartedAtUtc = currentAttempt.SubphaseStartedAtUtc,
+                    LastProgressAtUtc =
+                        currentAttempt.SubphaseLastProgressAtUtc,
+                }
+                : durableV2Operation?.SubphaseProgress;
             var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
                 runtime,
                 currentStatus,
@@ -149,6 +166,7 @@ public static partial class ApiEndpoints
                 phasePlan = new
                 {
                     version = PhaseProgressCatalog.PlanVersion,
+                    subphaseCatalogVersion = "fst.subphase-plan.v1",
                     phases = PhaseProgressCatalog.All.Select(descriptor => new
                     {
                         id = descriptor.Id,
@@ -209,6 +227,7 @@ public static partial class ApiEndpoints
                     etaUpperSeconds = currentAttempt?.EtaUpperSeconds ?? durableV2Operation?.EtaUpperSeconds,
                     etaConfidence = currentAttempt?.EtaConfidence ?? durableV2Operation?.EtaConfidence,
                     etaSampleCount = currentAttempt?.EtaSampleCount ?? durableV2Operation?.EtaSampleCount,
+                    subphaseProgress = currentSubphaseProgress,
                     heartbeatAt = FormatUtc(storedWorker?.LastHeartbeatAtUtc),
                     lastProgressAt = FormatUtc(currentAttempt?.LastProgressAtUtc)
                         ?? FormatUtc(durableV2Operation?.LastProgressAtUtc)
