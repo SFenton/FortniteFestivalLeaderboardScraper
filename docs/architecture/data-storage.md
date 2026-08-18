@@ -613,6 +613,16 @@ history deletion to telemetry. An FK and explicit row-retention lifecycle are
 an L3 follow-up requiring measured growth, scrape-log retention, delete-lock,
 and rollback evidence; they are not part of PR #15.
 
+The same row now stores subphase telemetry independently from parent phase
+progress: `current_subphase_epoch`, `subphase_sequence`,
+`subphase_progress_kind`, `subphase_units_kind`,
+`subphase_units_completed`, `subphase_units_total`,
+`subphase_units_total_final`, `subphase_percent`,
+`subphase_started_at`, and `subphase_last_progress_at`. Exact fields are
+populated only for a final valid denominator; indeterminate and
+not-applicable rows keep numeric fields null. Worker-instance and increasing
+sequence predicates fence updates.
+
 Indexes follow the actual paths:
 
 - active service-info/watchdog lookup by scrape, `last_progress_at`, ordinal,
@@ -626,6 +636,13 @@ transitions, a maximum one meaningful progress update per five seconds, and
 one heartbeat-only update per worker heartbeat interval. Progress updates use
 the greater of the stored and observed progress timestamps, so a backwards
 clock step cannot regress `last_progress_at` or violate its start-time check.
+When multiple attempts run in parallel, the operational service-info read
+selects the lowest phase ordinal and then newest attempt deterministically.
+
+`service_worker_status` remains the rolling-upgrade fallback. Heartbeat claims
+are ordered by worker start time, and activity writes from a known instance
+must match the stored instance and not regress `updated_at`. An older process
+therefore cannot overwrite a newer worker's status or operation JSON.
 
 Accepted scrape `1296` produced 24 attempt rows across 22 phase IDs, 2,068
 updates, and a 212,992-byte relation (106,496-byte heap and 65,536-byte

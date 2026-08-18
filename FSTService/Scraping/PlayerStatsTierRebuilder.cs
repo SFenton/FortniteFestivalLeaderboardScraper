@@ -16,7 +16,8 @@ public static class PlayerStatsTierRebuilder
         IPathDataStore pathDataStore,
         IReadOnlyCollection<string> accountIds,
         ILogger log,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<int, int>? onProgress = null)
         => RebuildCoreAsync(
             persistence,
             pathDataStore,
@@ -25,6 +26,7 @@ public static class PlayerStatsTierRebuilder
             maintenanceLease: null,
             maxScoresOverride: null,
             populationOverride: null,
+            onProgress: onProgress,
             ct: ct);
 
     internal static Task<PlayerStatsTierRebuildResult>
@@ -54,6 +56,7 @@ public static class PlayerStatsTierRebuilder
             publicationPopulation
                 ?? throw new ArgumentNullException(
                     nameof(publicationPopulation)),
+            onProgress: null,
             ct: ct);
 
     private static async Task<PlayerStatsTierRebuildResult>
@@ -68,6 +71,7 @@ public static class PlayerStatsTierRebuilder
             IReadOnlyDictionary<
                 (string SongId, string Instrument),
                 long>? populationOverride,
+            Action<int, int>? onProgress,
             CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(persistence);
@@ -135,6 +139,7 @@ public static class PlayerStatsTierRebuilder
             : population.Count;
         var rebuiltAccounts = 0;
         var writtenRows = 0;
+        var processedAccounts = 0;
 
         foreach (var accountChunk in normalizedAccountIds.Chunk(
                      AccountChunkSize))
@@ -221,6 +226,10 @@ public static class PlayerStatsTierRebuilder
             {
                 writtenRows += rows.Count;
             }
+            processedAccounts += accountChunk.Length;
+            onProgress?.Invoke(
+                Math.Min(processedAccounts, normalizedAccountIds.Length),
+                normalizedAccountIds.Length);
         }
 
         sw.Stop();

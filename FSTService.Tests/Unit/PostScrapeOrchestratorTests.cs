@@ -3164,6 +3164,51 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeLeaderboardRivalsAsync_ReportsRegisteredAccountProgress()
+    {
+        var ctx = CreateContext(registeredIds:
+        [
+            "leaderboard-rival-1",
+            "leaderboard-rival-2",
+        ]);
+
+        await _sut.ComputeLeaderboardRivalsAsync(
+            ctx,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal("ComputingRivals", current!.Operation);
+        Assert.Null(current.SubOperation);
+        Assert.Equal(2, current.WorkItems?.Completed);
+        Assert.Equal(2, current.WorkItems?.Total);
+        Assert.True(current.WorkItemsTotalFinal);
+    }
+
+    [Fact]
+    public async Task ComputePlayerStatsTiersAsync_ReportsNormalizedAccountProgress()
+    {
+        var ctx = CreateContext(registeredIds:
+        [
+            "player-stats-1",
+            " ",
+            "player-stats-2",
+        ]);
+
+        await _sut.ComputePlayerStatsTiersAsync(
+            ctx,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal("Precomputing", current!.Operation);
+        Assert.Equal("population_tiers", current.SubOperation);
+        Assert.Equal(2, current.WorkItems?.Completed);
+        Assert.Equal(2, current.WorkItems?.Total);
+        Assert.True(current.WorkItemsTotalFinal);
+    }
+
+    [Fact]
     public void CriticalSkipRecorder_RejectsBeforePersisting()
     {
         var scrapeId = _metaDb.StartScrapeRun();

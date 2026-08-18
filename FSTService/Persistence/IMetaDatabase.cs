@@ -90,7 +90,7 @@ public interface IMetaDatabase : IDisposable
         WorkerOperationInfo? currentOperation = null);
     void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
         WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
-        DateTime? updatedAtUtc = null);
+        DateTime? updatedAtUtc = null, string? instanceId = null);
     WorkerStatusInfo? GetWorkerStatus(string workerKey);
     ServiceRuntimeState GetServiceRuntimeState(
         string workerKey,

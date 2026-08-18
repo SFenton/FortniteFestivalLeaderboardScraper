@@ -234,6 +234,14 @@ summary fields for rolling worker and browser compatibility. The normalized
 PostgreSQL ledger is authoritative when a running attempt exists; the worker
 operation JSON remains the fallback summary.
 
+The phase plan also identifies subphase catalog version
+`fst.subphase-plan.v1`. `currentUpdate.subphaseProgress` is optional and
+separate from phase progress; it carries schema version 1, ID, epoch, sequence,
+exact/indeterminate/not-applicable kind, and exact counters only when the
+denominator is final. Parallel attempts resolve deterministically to the
+lowest phase ordinal. Worker heartbeat/activity fallback writes are
+instance-fenced so restart overlap cannot restore an older operation.
+
 Each phase-plan descriptor includes additive `reserved`. The accepted ordered
 v2 list/version remains unchanged; `true` identifies retired IDs retained only
 for historical and Tier-0 lineage. Consumers exclude those descriptors from

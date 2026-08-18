@@ -391,6 +391,27 @@ The worker writes additive `scrape_phase_attempts` rows:
 - persistence failures log a warning and do not replace phase exceptions,
   cancellation, or publication decisions.
 
+Each active attempt also owns a separate subphase stream. Its ID, epoch,
+sequence, classification, units, counters, percentage, start time, and
+last-progress time are persisted on the same row. A subphase transition
+increments the epoch and resets exact progress; later observations advance the
+sequence. A bounded internal-stage transition may also advance the epoch while
+retaining the same friendly subphase ID, such as band page-zero discovery
+moving to remaining-page fetch. Persistence rejects a different worker
+instance or a non-increasing sequence.
+
+Exact subphase producers currently include leaderboard retrieval, band-page
+fetching, bounded online-writer drain, solo/band spool-page flushing,
+coordinated deep-scrape jobs, active solo/band index work, band extraction and
+membership rebuild, registered-player band discovery, registered-band
+processing, player rivals, player-stat account chunks, early snapshot
+activation, and state-level leaderboard-rival accounts. Empty band-index
+creation is `not_applicable`. Operations without a final denominator,
+including monolithic SQL, publication gates, retries, and retention work,
+remain explicitly indeterminate. Timeout/cancel transition states are also
+`not_applicable`; parent phase progress is never relabeled as subphase
+progress.
+
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
 overall/ETA metadata, heartbeat, and last-progress timestamps. Overall progress
@@ -402,6 +423,12 @@ The configuration fingerprint covers an allowlist of phase, network,
 persistence, publication, ranking, notification, and retention controls; it
 also distinguishes the default-off batched member-stat candidate. It never
 stores credentials or resolved provider endpoints.
+
+The fallback `service_worker_status` row is also instance-fenced. A newer
+worker start may claim the row; later heartbeats or activity from an older
+instance are ignored, and same-instance activity cannot move `updated_at`
+backward. This prevents stale worker JSON from overriding the normalized phase
+ledger during restart overlap.
 
 Matched control scrape `1295` and accepted candidate `1296` validated the
 contract under identical `800/32/4` network enforcement. Candidate wall time
