@@ -110,8 +110,11 @@ The retention policy protects:
 Publication IDs are resolved through `publication_generations.scrape_id`
 before joining `leaderboard_published_scope_source.published_scrape_id`.
 Source-map rows belonging only to older, unnamed publication generations do
-not remain hot forever. They are archive candidates only after their
-`scrape_log` ownership is present and terminal.
+not remain hot forever. Modern rows require terminal `scrape_log` ownership.
+Legacy IDs with missing or failed ownership may also be archive candidates only
+when the verified archive proves the exact unchanged source fence, exact ID,
+row count and content hashes, and the ID has no named current/previous/working
+source map. Without that archive proof, those ownership caveats remain blocked.
 
 Report-only planning remains statistics-based and fail-closed. It is not the
 pilot execution plan. The pilot `plan` stage performs exact target-local ID,

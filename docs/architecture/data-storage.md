@@ -685,8 +685,10 @@ rewrite policy is not reduced. The exact
 orchestrator with no arbitrary relation input.
 
 Its `plan` stage scans only the exact partition and derives retained IDs from
-authoritative active/projection/publication/rollback ownership. It requires a
-terminal `scrape_log` owner for every archive/purge ID, but production
+authoritative active/projection/publication/rollback ownership. Modern purge
+IDs require terminal `scrape_log` ownership. Legacy missing/failed ownership is
+accepted only when the exact verified archive contains the unchanged ID/content
+and no named current/previous/working source map references it. Production
 enumeration uses leading-index `MIN(snapshot_id)` probes and metadata joins,
 not a historical-row aggregate. Exact total rows/ranges come from the
 checksummed verified archive restore; PostgreSQL calculates exact

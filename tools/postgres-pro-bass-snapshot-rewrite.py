@@ -2326,7 +2326,12 @@ def catalog_query():
     """
 
 
-def classify_inventory(protected, inventory):
+def classify_inventory(
+    protected,
+    inventory,
+    *,
+    archive_verified=False,
+):
     reasons_by_id = {
         ensure_integer(row["snapshotId"], "protected snapshot ID", 1):
             list(row.get("reasons") or [])
@@ -2365,22 +2370,27 @@ def classify_inventory(protected, inventory):
             item["reasons"] = reasons_by_id[snapshot_id]
             keep.append(item)
             continue
-        failures = []
+        ownership_caveats = []
         if not row.get("scrapeLogPresent"):
-            failures.append("missing scrape_log ownership")
+            ownership_caveats.append("missing scrape_log ownership")
         if row.get("scrapeCompletedAt") is None:
-            failures.append("scrape is incomplete")
+            ownership_caveats.append("scrape is incomplete")
         if row.get("scrapeStatus") not in ("completed", "complete"):
-            failures.append(
+            ownership_caveats.append(
                 f"scrape status is {row.get('scrapeStatus')}"
             )
+        hard_failures = []
         if ensure_integer(
             row.get("namedSourceMapCount", 0),
             "namedSourceMapCount",
         ):
-            failures.append(
+            hard_failures.append(
                 "named publication source map was not protected"
             )
+        failures = (
+            hard_failures
+            + ([] if archive_verified else ownership_caveats)
+        )
         if failures:
             item["classification"] = "blocked"
             item["reasons"] = failures
@@ -2388,10 +2398,23 @@ def classify_inventory(protected, inventory):
         else:
             item["classification"] = "archive_then_purge"
             item["reasons"] = [
-                "completed scrape outside all protected ownership",
+                (
+                    "verified archive preserves this exact snapshot "
+                    "content"
+                    if archive_verified
+                    else "completed scrape outside all protected ownership"
+                ),
                 (
                     "historical source maps, if any, are preserved "
                     "by the immutable archive"
+                ),
+                *(
+                    [
+                        "legacy scrape ownership caveats: "
+                        + "; ".join(ownership_caveats)
+                    ]
+                    if ownership_caveats
+                    else []
                 ),
             ]
             purge.append(item)
@@ -2450,7 +2473,11 @@ def stage_plan(args, runner):
             raise PilotError(
                 "loose-index snapshot IDs differ from verified archive"
             )
-    classification = classify_inventory(protected, inventory)
+    classification = classify_inventory(
+        protected,
+        inventory,
+        archive_verified=verified_archive is not None,
+    )
     if classification["blocked"]:
         raise PilotError(
             "snapshot ownership classification contains blocked IDs"

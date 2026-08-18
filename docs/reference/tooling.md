@@ -234,7 +234,9 @@ The package:
   joins ownership metadata only, and fingerprints protected rows only;
 - requires the checksummed verified live archive/restore/cleanup input for
   exact total rows and archive adoption;
-- rejects stale/incomplete/missing scrape ownership;
+- rejects incomplete/missing ownership unless exact verified-archive evidence
+  covers the unchanged legacy ID/content and no named publication source map
+  references it;
 - streams a PostgreSQL custom archive directly to the explicitly authorized
   8 TB scratch device;
 - restores and verifies the archive in network-none PostgreSQL 17;

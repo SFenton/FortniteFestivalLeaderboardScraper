@@ -285,6 +285,70 @@ class ProBassPilotToolTests(unittest.TestCase):
             result["blocked"][0]["reasons"],
         )
 
+    def test_verified_archive_allows_legacy_ownership_caveats(self):
+        result = tool.classify_inventory(
+            [],
+            [
+                {
+                    "snapshotId": 600,
+                    "scrapeLogPresent": False,
+                    "scrapeCompletedAt": None,
+                    "scrapeStatus": "running",
+                    "sourceMapCount": 0,
+                    "namedSourceMapCount": 0,
+                },
+                {
+                    "snapshotId": 601,
+                    "scrapeLogPresent": True,
+                    "scrapeCompletedAt": None,
+                    "scrapeStatus": "failed",
+                    "sourceMapCount": 12,
+                    "namedSourceMapCount": 0,
+                },
+            ],
+            archive_verified=True,
+        )
+
+        self.assertEqual([], result["blocked"])
+        self.assertEqual(
+            [601, 600],
+            [
+                row["snapshotId"]
+                for row in result["archiveThenPurge"]
+            ],
+        )
+        self.assertTrue(
+            all(
+                any(
+                    "verified archive preserves" in reason
+                    for reason in row["reasons"]
+                )
+                for row in result["archiveThenPurge"]
+            )
+        )
+
+    def test_verified_archive_does_not_override_named_source_map(self):
+        result = tool.classify_inventory(
+            [],
+            [
+                {
+                    "snapshotId": 600,
+                    "scrapeLogPresent": True,
+                    "scrapeCompletedAt": "2026-08-01T00:00:00Z",
+                    "scrapeStatus": "completed",
+                    "sourceMapCount": 1,
+                    "namedSourceMapCount": 1,
+                }
+            ],
+            archive_verified=True,
+        )
+
+        self.assertEqual(1, len(result["blocked"]))
+        self.assertIn(
+            "named publication source map was not protected",
+            result["blocked"][0]["reasons"],
+        )
+
     def test_absent_rollback_snapshot_does_not_block_partition(self):
         result = tool.classify_inventory(
             [
