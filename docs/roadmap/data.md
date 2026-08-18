@@ -12,6 +12,7 @@ sources:
   - deploy/config/fstworker-role.env
   - docs/database/SnapshotReuseRunbook.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/ProBassSnapshotRewritePilot.md
   - docs/roadmap/post-scrape-processing.md
 update_triggers:
   - Publication, snapshot ownership, retention, or analytics readiness changes.
@@ -24,11 +25,11 @@ These are verified gaps, not automatic implementation approvals.
 | Item | Current evidence | Acceptance gate |
 |---|---|---|
 | Complete generation-addressable publication bindings | `EnablePublicationReadContext` remains false for both service and worker roles | Every publication-bound surface reports ready; stale/current generation behavior passes contract tests and live-safe validation |
-| Finish snapshot/current-state ownership migration | Snapshot-overlay worker reads and unchanged-snapshot skipping remain disabled | Complete scrape A/B parity, replay evidence, rollback, and storage/resource comparison |
-| Revalidate snapshot reuse | The living runbook contains evaluation history but no blanket promotion | Fresh matched baseline and candidate on current schema/code |
+| Finish snapshot/current-state ownership migration | Snapshot reuse is accepted and enabled for the worker role after scrape 1303; snapshot-overlay readers remain disabled | Complete reader migration with replay/live parity, rollback, and storage/resource comparison |
+| Bound physical snapshot generations | Scrape 1303 reused 1,717 scopes / 6,112,541 rows globally, but regular instrument partitions still retain whole historical snapshot IDs | Introduce independently droppable snapshot-generation children, remove obsolete `1301`, and migrate every instrument before another scrape |
 | Evaluate bounded artifact analytics | DuckDB/Parquet is routed as an artifact-only option, not a production source of truth | Bounded export/replay benchmark that preserves PostgreSQL publication correctness and stays on the FST drive |
 | Verify freeze-safe publication cache at a natural publication switch | Service-only promotion is complete. PR #55 merged as `2bc7e9f9`; official service/held-worker image digest `4fad543b...976564` is deployed, service healthy, worker Created/offline, web unchanged. Exact Unicode/HTML/control/emoji bytes and ETags pass; classification, selected-context isolation, freeze simulation, atomic staging, restart L2, and public health pass. Across 120 interleaved samples per route, warm p95 is `1.90-3.47 ms` and all 11 routes improve `55.76-82.97%` with no sustained regression. Live staging measured 15,576 current rows, 13.48 MB physical DB growth, 296.66 MB peak free-space excursion, 469.40 MB WAL, zero temp bytes, and 210.03 s core precompute. | Keep worker offline until normal capacity policy permits a natural scrape. Then execute the recorded invalidation card: prove no pre-publication leakage, atomic new-current/retained-previous cache promotion, L1 reset, first-hit L2 recovery, route parity, and public health. |
-| Produce an exact snapshot-capacity/reclaim plan | Report-only retention planning is already enabled, but its exact protected generations, candidate partitions, purge/retained bytes, rewrite workspace, runtime cost, and rollback objects are not persisted in current evidence; rewrite remains off and current free space is below the 500 GiB gate | Run the existing planner read-only after a safe scrape boundary, preserve its exact output, prove planner load is safe, then require current live-scrape parity and rollback before any rewrite/reclaim |
+| Validate and extend the accepted pro-bass transition | The live rewrite returned `152,985,165,824` bytes. Validation scrape `1303` published with zero best-effort failures, reused 350/702 pro-bass scopes and 1,436,731 rows, and grew pro bass by `1,000,898,560` bytes. Publication/API parity passed and the worker is held. | Remove obsolete `1301` through the generation-partition migration, preserve `1302-1303`, then migrate all remaining instruments before another scrape. |
 
 Detailed post-scrape phase, progress, replay, deployment, A/B, and optimization
 work is owned by the

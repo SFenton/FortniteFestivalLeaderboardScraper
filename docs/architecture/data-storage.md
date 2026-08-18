@@ -36,6 +36,8 @@ sources:
   - FSTService/Scraping/Replay/
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
+  - tools/postgres-pro-bass-snapshot-rewrite.py
+  - docs/database/ProBassSnapshotRewritePilot.md
 update_triggers:
   - Schema, persistence ownership, publication storage, retention, restore, or source-of-truth behavior changes.
 ---
@@ -657,8 +659,13 @@ does not scan snapshot partitions.
 The estimator is fail-closed:
 
 - retained rows include both policy `Keep` and `Blocked` snapshot IDs;
-- active, current-projection-source, and rollback-protected IDs are present in
-  every partition plan even when absent from `most_common_vals`;
+- active, current-projection-source, publication-physical-source, and
+  rollback-protected IDs are present in every partition plan even when absent
+  from `most_common_vals`;
+- publication physical sources are resolved only from current, previous, and
+  working publication IDs through `publication_generations.scrape_id` and
+  `leaderboard_published_scope_source.published_scrape_id`; source maps for
+  older unnamed generations do not pin hot snapshots forever;
 - positive `n_distinct`, negative fraction-of-row `n_distinct`, zero/unknown
   values, MCV/frequency length, frequency remainder, and the drift between
   `n_live_tup` and `reltuples` all contribute to statistics safety;
@@ -686,6 +693,88 @@ workspace became the full `2,607,232,278,528` bytes; executable purge
 rows/bytes were zero. The separately labeled informational candidate was about
 `2.52` billion rows / `1.46 TB`, with about `392 GB` outside MCV coverage.
 Those values are not reclaim proof.
+
+### Accepted pro-bass archive/rewrite
+
+The exact pro-bass transition completed live on 2026-08-18. The generic
+report-only planner remains unchanged and the global `500 GiB`
+rewrite policy is not reduced. The exact
+`leaderboard_entries_snapshot_pro_bass` pilot uses a separate one-target
+orchestrator with no arbitrary relation input.
+
+Its `plan` stage scans only the exact partition and derives retained IDs from
+authoritative active/projection/publication/rollback ownership. Modern purge
+IDs require terminal `scrape_log` ownership. Legacy missing/failed ownership is
+accepted only when the exact verified archive contains the unchanged ID/content
+and no named current/previous/working source map references it. Production
+enumeration uses leading-index `MIN(snapshot_id)` probes and metadata joins,
+not a historical-row aggregate. Exact total rows/ranges come from the
+checksummed verified archive restore; PostgreSQL calculates exact
+counts/ranges/fingerprints only for protected IDs. Source/reference parity and
+the original column/constraint/index/owner/tablespace catalog remain required.
+
+The original relation is streamed as a PostgreSQL custom archive directly to
+an explicitly authorized temporary directory on `/dev/nvme2n1p2`. The archive
+contains the partitioned parent, pro-bass child, data, attach records,
+constraints, primary/score indexes, and ownership. It is checksum-verified and
+restored in isolated network-none PostgreSQL 17 before any build is eligible.
+
+The replacement may be built in one run-owned temporary 8 TB tablespace when
+the dual-filesystem capacity gate passes. A short-lock transaction detaches and
+retains the original, then renames/attaches the replacement. Validation occurs
+while rename-back rollback is available. Final old-relation drop is separate;
+before it, `repatriate` copies/swaps the retained relation to `pg_default`
+while the original still provides rollback and retains the scratch candidate
+as a second rollback relation. Only after repatriation fingerprint/reference/
+catalog/API parity passes does final drop remove both rollback relations,
+normalize names, and remove the temporary tablespace. The restore-drilled
+archive remains on 8 TB through
+acceptance and a later explicit retention decision.
+
+The final 180,000-row drill measured a 75,415,552-byte original,
+19,636,224-byte replacement, 20,423,824 scratch-build WAL bytes, 8,429,568
+temp bytes, 19,689,472 peak scratch growth, and 95,043,584 immediate bytes
+returned when the original plus scratch rollback relation were dropped.
+Rename-back, verified-archive adoption, repatriation to `pg_default`, durable
+copy/swap evidence, torn-evidence recovery, scratch tablespace removal, and
+final-drop paths all passed.
+
+The read-only live archive is `11,942,257,904` bytes with checksum
+`3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+Its verified input checksum is
+`483cf15e12df3f0fcda370f6fc5ee969b450b8c4f1eeb2c291f7ec2201326c15`;
+it binds 308,536,699 restored rows, exact per-snapshot counts/content hashes,
+and the full canonical restored catalog.
+Its isolated restore proved `308,536,699` exact rows across 125 snapshot IDs
+(`769-1302`), the exact partition/primary/score-index catalog, and a packed
+`129,666,588,672`-byte restored relation. The first restore shape was rejected
+for a duplicate child primary key; the successful retry built child indexes
+while detached and attached afterward. The `130,771,858,177`-byte restore
+PGDATA was deleted after validation while the archive remained.
+
+Using the exact archive row count, `6,691,993` protected rows, live heap/index
+bytes, and measured ratios projects a `2,685,343,018`-byte replacement and a
+`69,713,820,289`-byte free-space requirement. At current free space
+`68,545,114,112`, the exact-row direct-build projection is short by
+`1,168,706,177` bytes. The older approximately `3.4 GB`
+retained-size sensitivity remains a conservative `72.19-73.06 GB` requirement.
+The temporary-tablespace candidate instead requires `63,889,690,620` free on
+4 TB and `17,260,886,072` on scratch, so its capacity math passes narrowly at
+the accepted free-space assumptions. Pre-drop repatriation requires
+`66,575,033,638`; current projected margin is `1,970,080,474`. The live run retained IDs `1301-1302`, removed `301,844,706` rows from hot
+storage, returned `152,985,165,824` filesystem bytes, and left a
+`2,811,404,288`-byte `pg_default` partition. The scratch tablespace and mount
+are absent; the verified archive remains. See the
+[pilot runbook](../database/ProBassSnapshotRewritePilot.md) for evidence and
+recovery.
+
+Validation scrape `1303` then reused 1,717 scopes / 6,112,541 rows globally.
+Pro bass reused 350 scopes / 1,436,731 rows from `1302`, wrote 1,910,331 rows
+for `1303`, and grew by `1,000,898,560` bytes. The worker-role default now
+enables fingerprints and unchanged-snapshot reuse. Physical IDs `1301-1303`
+remain in the regular instrument partition until the next migration converts
+snapshot generations into independently droppable children and removes
+obsolete `1301`.
 
 ## Tier-0 replay evidence packages
 
@@ -724,10 +813,14 @@ source-of-truth or restore targets.
 
 - Production data, scratch, exports, repacks, and migration artifacts stay on
   the 4 TB FST drive unless the operator explicitly overrides the rule.
-- The current read-only retention observation reported about `258.8 GB` free,
-  `94%` filesystem use, and `2.14` projected headroom days. Storage recovery
-  remains urgent. Trustworthy report-only planning does not authorize
-  retention, rewrite, or reduction of the `500 GiB` free-space gate.
+- The pro-bass pilot has one explicit exception for temporary archive,
+  restore-drill, and immutable report files on `/dev/nvme2n1p2`. No accepted
+  PostgreSQL relation or permanent FST artifact may use that device. The
+  archive remains temporary but retained until a separate deletion/retention
+  decision.
+- Current FST free space is approximately `66 GB`. Trustworthy report-only
+  planning and the isolated pilot do not authorize live rewrite or reduction
+  of the `500 GiB` free-space gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
 - Current-publication max-score correction requires the canonical manifest and

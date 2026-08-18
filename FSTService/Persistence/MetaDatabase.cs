@@ -3089,64 +3089,96 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 backendProcessId = identityReader.GetInt32(2);
             }
 
-            await using (var mutationGate =
-                         conn.CreateCommand())
+            while (true)
             {
-                mutationGate.CommandTimeout =
-                    waitForExclusiveMaintenance ? 0 : 5;
-                mutationGate.CommandText =
-                    waitForExclusiveMaintenance
-                        ? "SELECT pg_advisory_lock_shared(@lockKey)"
-                        : "SELECT pg_try_advisory_lock_shared(@lockKey)";
-                mutationGate.Parameters.AddWithValue(
-                    "lockKey",
-                    RegistrationMutationGate.AdvisoryLockKey);
-                var result =
-                    await mutationGate.ExecuteScalarAsync(ct);
-                if (!waitForExclusiveMaintenance
-                    && result is not true)
+                await using (var mutationGate =
+                             conn.CreateCommand())
                 {
-                    throw new RegistrationMutationBlockedException();
+                    mutationGate.CommandTimeout =
+                        waitForExclusiveMaintenance ? 0 : 5;
+                    mutationGate.CommandText =
+                        waitForExclusiveMaintenance
+                            ? "SELECT pg_advisory_lock_shared(@lockKey)"
+                            : "SELECT pg_try_advisory_lock_shared(@lockKey)";
+                    mutationGate.Parameters.AddWithValue(
+                        "lockKey",
+                        RegistrationMutationGate.AdvisoryLockKey);
+                    var result =
+                        await mutationGate.ExecuteScalarAsync(ct);
+                    if (!waitForExclusiveMaintenance
+                        && result is not true)
+                    {
+                        throw new RegistrationMutationBlockedException();
+                    }
+                    mutationGateLockAcquired = true;
                 }
-                mutationGateLockAcquired = true;
-            }
-            await using (var ensure = conn.CreateCommand())
-            {
-                ensure.CommandText = """
-                    INSERT INTO scrape_publication_state (
-                        id,
-                        updated_at)
-                    VALUES (
-                        TRUE,
-                        now())
-                    ON CONFLICT (id) DO NOTHING
+                await using (var ensure = conn.CreateCommand())
+                {
+                    ensure.CommandText = """
+                        INSERT INTO scrape_publication_state (
+                            id,
+                            updated_at)
+                        VALUES (
+                            TRUE,
+                            now())
+                        ON CONFLICT (id) DO NOTHING
+                        """;
+                    await ensure.ExecuteNonQueryAsync(ct);
+                }
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    SELECT state.public_reads_frozen,
+                           state.public_reads_frozen_reason,
+                           state.max_score_mutation_gate_token,
+                           state.max_score_mutation_gate_token IS NOT NULL
+                           AND EXISTS (
+                               SELECT 1
+                               FROM pg_stat_activity activity
+                               WHERE activity.pid =
+                                   state.max_score_mutation_gate_backend_pid
+                                 AND activity.backend_start =
+                                   state.max_score_mutation_gate_backend_start
+                           ) AS mutation_gate_owner_active
+                    FROM scrape_publication_state state
+                    WHERE state.id = TRUE
                     """;
-                await ensure.ExecuteNonQueryAsync(ct);
-            }
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                SELECT public_reads_frozen,
-                       public_reads_frozen_reason,
-                       max_score_mutation_gate_token
-                FROM scrape_publication_state
-                WHERE id = TRUE
-                """;
-            await using var reader =
-                await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
-                throw new RegistrationMutationBlockedException();
-            var blocked = IsRegistrationMutationBlocked(reader);
-            await reader.CloseAsync();
-            if (blocked)
-                throw new RegistrationMutationBlockedException();
+                await using var reader =
+                    await cmd.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                    throw new RegistrationMutationBlockedException();
+                var blocked = IsRegistrationMutationBlocked(reader);
+                var activeOwnerHandoff =
+                    waitForExclusiveMaintenance
+                    && blocked
+                    && !reader.IsDBNull(2)
+                    && reader.GetBoolean(3);
+                await reader.CloseAsync();
+                if (!blocked)
+                {
+                    return new PostgresRegistrationMutationLease(
+                        conn,
+                        leaseToken,
+                        backendProcessId,
+                        boundedAdmission
+                            ? _boundedRegistrationAdmissions
+                            : null);
+                }
+                if (!activeOwnerHandoff)
+                    throw new RegistrationMutationBlockedException();
 
-            return new PostgresRegistrationMutationLease(
-                conn,
-                leaseToken,
-                backendProcessId,
-                boundedAdmission
-                    ? _boundedRegistrationAdmissions
-                    : null);
+                await using (var unlock = conn.CreateCommand())
+                {
+                    unlock.CommandTimeout = 5;
+                    unlock.CommandText =
+                        "SELECT pg_advisory_unlock_shared(@lockKey)";
+                    unlock.Parameters.AddWithValue(
+                        "lockKey",
+                        RegistrationMutationGate.AdvisoryLockKey);
+                    await unlock.ExecuteScalarAsync(ct);
+                }
+                mutationGateLockAcquired = false;
+                await Task.Delay(TimeSpan.FromMilliseconds(10), ct);
+            }
         }
         catch
         {

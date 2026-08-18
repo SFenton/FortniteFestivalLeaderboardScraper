@@ -33,6 +33,7 @@ sources:
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -103,6 +104,11 @@ diagnostic or replay data without becoming the published generation.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
    - Build required published scope-source mappings and notification plans.
+   - Physical snapshot IDs in those mappings are retention pins only while
+     their generation is named as current, previous, or working. Publication
+     IDs resolve through `publication_generations.scrape_id`; older unnamed
+     source maps remain historical evidence but do not pin hot partitions
+     forever.
    - Prepare the next publication generation outside the final commit.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
@@ -258,9 +264,12 @@ derived rows while retaining the same published scrape/publication ID.
    validate or restore the bounded timeout rolls back without releasing the
    freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
-   clearing the token. Queued holders cannot pass the advisory gate early, and
-   stale direct entry or population writers remain durably blocked throughout
-   the handoff.
+   clearing the token. A normal queued registration holder that acquires the
+   shared advisory lock during that short handoff checks the durable owner
+   backend identity, releases the shared lock, and retries until the live owner
+   clears the token. Bounded try-acquire still rejects immediately, and an
+   orphaned token whose owner backend is gone remains fail-closed. Stale direct
+   entry or population writers remain durably blocked throughout the handoff.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument

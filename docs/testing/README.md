@@ -25,6 +25,8 @@ sources:
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
   - tools/postgres-retire-ix-le-song-rank.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite-drill.py
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -61,6 +63,70 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+
+Focused snapshot-retention policy validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests|FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests'
+```
+
+This proves current, previous, and working publication physical source IDs are
+protected through the publication-generation-to-scrape mapping, while stale
+source maps for unnamed generations do not remain protected forever.
+
+Pro-bass pilot structural and isolated lifecycle validation:
+
+```bash
+bash -n \
+  tools/postgres-pro-bass-snapshot-rewrite.sh \
+  tools/postgres-pro-bass-snapshot-rewrite-drill.sh
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-pro-bass-snapshot-rewrite.test.py
+
+mkdir -p artifacts/pro-bass-pilot-drills
+tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
+  --work-root "$PWD/artifacts/pro-bass-pilot-drills/<utc-run>" \
+  --image postgres:17 \
+  --purge-rows 300000 \
+  --retained-rows 30000
+```
+
+The unit suite locks the production planning-query shape: recursive
+leading-index `MIN(snapshot_id)` probes, metadata-only ownership joins,
+protected-only fingerprints, no `GROUPING SETS`, no parallel gather, and a
+256 MB PostgreSQL temp-file limit. Production stages also require the exact
+checksummed verified-live-archive input. This prevents planning-only work from
+rehashing all historical rows or consuming the FST emergency reserve.
+
+The drill must report exact archive/restore distribution, content-hash and
+full catalog parity, successful
+rename-back rollback, successful separate final drop, matching fingerprints,
+immediate filesystem reclaim, removed transient containers/PGDATA, retained
+archives, and truthful archive/build/swap/rollback recovery after simulating a
+missing terminal acknowledgement. It also zeroes copy evidence and truncates
+swap evidence after repatriation, then requires catalog-driven scratch
+restoration and original rollback. Its measured profile must contain at least
+100,000 total and 10,000 retained rows before production capacity planning
+accepts it. It is isolated evidence only and never authorizes a production
+rewrite.
+
+The final-drop lane also runs `repatriate` and must end with the accepted
+partition/catalog in `pg_default`, no scratch-retired relation, and no
+temporary tablespace. Unit tests cover dual-filesystem capacity arithmetic,
+mount/device/path fencing, repeated cancel-to-terminate emergency handling,
+atomic evidence publication, malformed-evidence rejection, archive
+distribution/catalog tampering, repatriation dependencies, and final scratch
+cleanup.
+
+The production-derived archive restore additionally records one rejected and
+one accepted ordering. Restoring parent indexes before archived child indexes
+must fail on the duplicate child primary key. Restoring child
+table/data/indexes while detached and attaching afterward must produce
+`308,536,699` rows, 125 snapshot IDs, exact child catalog/checksum parity, zero
+validation temp bytes, exact per-snapshot content fingerprints, full canonical
+catalog parity, and complete restore-PGDATA cleanup.
 
 Focused dead/no-op phase cleanup validation:
 
@@ -132,6 +198,10 @@ notification audit, and expected affected-account cache rows sort after combo
 ID projection.
 Evidence-safety coverage pins deterministic bounded account hashes and rejects
 raw maintenance account IDs in diagnostic identifiers.
+Mutation-gate handoff coverage deliberately pauses a live max-score owner after
+exclusive advisory-lock release but before durable-token cleanup. A normal
+queued registration acquisition must release/retry and then succeed; bounded
+try-acquire and orphan-token cases remain fail-closed.
 
 Rollback coverage starts from `paths_promoted`, partial derived progress, and
 an ambiguous committed promotion still checkpointed as `rollback_captured`;

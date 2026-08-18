@@ -6179,34 +6179,44 @@ public sealed class MetaDatabaseTests : IDisposable
             () => Db
                 .AcquireRegistrationMutationLeaseAsync());
 
-        Task resumedRegistration;
-        await using (var resumeLease =
-                     await Db
-                         .AcquireMaxScoreMaintenanceLeaseAsync(
-                             publicationId))
+        Task resumedRegistration = Task.CompletedTask;
+        try
         {
-            Assert.Equal(
-                freezeReason,
-                Db.GetPublicReadFreezeState().Reason);
-            await resumeLease.VerifyHeldAsync(
-                requireSourceLocks: true);
-            ClearPublicReadFreezeForTest();
-
-            resumedRegistration = Task.Run(async () =>
+            await using (var resumeLease =
+                         await Db
+                             .AcquireMaxScoreMaintenanceLeaseAsync(
+                                 publicationId))
             {
-                await using var registrationLease =
-                    await Db
-                        .AcquireRegistrationMutationLeaseAsync();
-                Db.RegisterUser(
-                    "resumed-device",
-                    resumedAccountId);
-            });
-            await Task.Delay(150);
-            Assert.False(
-                resumedRegistration.IsCompleted);
-            Assert.False(
-                Db.IsAccountRegistered(
-                    resumedAccountId));
+                Assert.Equal(
+                    freezeReason,
+                    Db.GetPublicReadFreezeState().Reason);
+                await resumeLease.VerifyHeldAsync(
+                    requireSourceLocks: true);
+                ClearPublicReadFreezeForTest();
+
+                resumedRegistration = Task.Run(async () =>
+                {
+                    await using var registrationLease =
+                        await Db
+                            .AcquireRegistrationMutationLeaseAsync();
+                    Db.RegisterUser(
+                        "resumed-device",
+                        resumedAccountId);
+                });
+                await Task.Delay(150);
+                Assert.False(
+                    resumedRegistration.IsCompleted);
+                Assert.False(
+                    Db.IsAccountRegistered(
+                        resumedAccountId));
+                Db.MaxScoreMaintenanceAfterLocksReleasedTestHook =
+                    _ => Thread.Sleep(250);
+            }
+        }
+        finally
+        {
+            Db.MaxScoreMaintenanceAfterLocksReleasedTestHook =
+                null;
         }
 
         await resumedRegistration.WaitAsync(

@@ -164,8 +164,8 @@ long-run distribution.
 
 | Phase | Samples | p50 or representative duration | Tail/variance note |
 |---|---:|---:|---|
-| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1293` took 132.3 minutes: current projection 100.8 minutes (76.20%), prune 19.1 minutes, search refresh 12.4 minutes |
-| `ComputeRankings` | 10+ | About 68 minutes | Stable near 70 minutes |
+| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1303` took 213.3 minutes: current projection 183.4 minutes, prune 18.9 minutes, search refresh 11.0 minutes. This reinforces current projection as the first target |
+| `ComputeRankings` | 10+ | About 68 minutes | Scrape `1303` took 88.3 minutes; investigate the >10% tail before accepting any ranking concurrency change |
 | `RefreshRegisteredUsers` | 10 | About 24 minutes | About 44-minute tail |
 | `Cleanup.PrecomputeAll` | 10 | About 13 minutes | Stable |
 | `Cleanup.SoloCurrentProjection` | 10 | About 12 minutes | About 18-minute tail |

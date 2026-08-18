@@ -19,6 +19,8 @@ sources:
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-retire-ix-le-song-rank.sh
+  - tools/postgres-pro-bass-snapshot-rewrite.sh
+  - docs/database/ProBassSnapshotRewritePilot.md
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -33,6 +35,9 @@ update_triggers:
 - All database data, scratch, exports, migration artifacts, repacks, and
   retention work stay on the 4 TB FST drive unless the operator explicitly
   overrides the rule.
+- The only current alternate-device override is the temporary pro-bass pilot
+  archive/restore workspace on `/dev/nvme2n1p2`, mounted at `/`. It does not
+  authorize a permanent FST store or PostgreSQL tablespace there.
 - Keep secrets out of commands, logs, documentation, artifacts, e-mail, and
   commits.
 
@@ -139,6 +144,105 @@ proves the new path has the same data as the old path. Record:
 
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
+
+### Completed pro-bass archive/rewrite
+
+The guarded production transition completed on 2026-08-18 from commit
+`4e2bcdc4`. It retained snapshot IDs `1301-1302`, removed `301,844,706`
+historical rows from hot storage, returned `152,985,165,824` filesystem bytes,
+and left a `2,811,404,288`-byte `pg_default` partition. Publication `1302`
+remained unfrozen and public route parity passed.
+
+Validation scrape `1303` subsequently published and unfroze with zero
+best-effort failures. Snapshot reuse reused 1,717 scopes / 6,112,541 rows
+globally and 350 scopes / 1,436,731 rows for pro bass. The worker is held
+offline. Pro bass now contains `1301-1303`; only `1302-1303` remain protected,
+so `1301` is owned by the next generation-retention migration.
+
+The production `plan` stage must use recursive leading-index snapshot-ID
+enumeration, metadata-only ownership joins, protected-only fingerprints, and
+the checksummed verified-live-archive input for exact total rows/ranges. It
+uses no `GROUPING SETS`, no parallel gather, `work_mem=64MB`, and
+`temp_file_limit=256MB`. A prior unbounded planning query spilled about 61 GB
+of temporary data before it was cancelled; PostgreSQL released the files and
+no live data changed. Stop only the exact pilot backends if the temp limit,
+filesystem monitor, or public-health monitor reports a violation.
+
+The tool accepts only
+`public.leaderboard_entries_snapshot_pro_bass`. Before each live stage it binds
+the exact production Compose project/working directory, PostgreSQL container,
+system identifier, database/parent OIDs, 4 TB data mount, current/previous
+publication, unfrozen state, offline worker, and zero running scrape/phase,
+worker/pilot backend, waiting lock, or target lock.
+
+The explicitly operator-created `--scratch-root` must resolve to
+`/dev/nvme2n1p2` with the recorded `MAJ:MIN` identity. Symlinks, non-local
+filesystems, foreign files, Docker/FST roots, and temporary-system directories
+are rejected. Scratch contains only:
+
+- the custom archive and immutable manifest/catalog/TOC;
+- isolated restore-drill PGDATA, removed after verification;
+- immutable stage reports and measured capacity profile.
+
+The retained live archive is
+`/home/sfenton/fst-temporary/pro-bass-archive-20260817T223105Z/pro-bass-original.custom`,
+`11,942,257,904` bytes, SHA-256
+`3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+The successful isolated restore proved `308,536,699` rows, 125 snapshot IDs,
+exact per-snapshot row counts/content hashes, the full canonical parent/column/
+default/nullability/owner/tablespace/constraint/index catalog, and an unchanged source
+during archive. A first restore ordering was rejected for a duplicate child
+primary key; the archive was preserved and the corrected detached-child build
+plus final attach passed. The restore container and `130,771,858,177`-byte
+PGDATA were removed after validation.
+
+The replacement may use only the run-owned temporary scratch tablespace when
+the measured dual-filesystem gate passes. That is an interim location, not an
+accepted state. While the old rollback relation still exists, `repatriate`
+must copy/swap the retained relation to `pg_default` and prove fingerprint/
+reference/catalog/API parity while both original and scratch rollback
+relations remain. Final drop removes both rollback relations, normalizes names,
+and removes the tablespace. The archive remains on 8 TB
+scratch through acceptance and a later explicit product-retention decision.
+
+The production-owned Compose bind
+`<scratch-root>/postgres-tablespace:/fst-pro-bass-scratch:rw` must be active
+before `check`; `check` binds the recreated PostgreSQL container identity.
+Critical state uses atomic fsynced publication. A disk-threshold breach writes
+a no-resume marker and repeatedly cancels, then terminates, only exact pilot
+backends until none remain.
+Do not delete it merely because the detached source relation was dropped.
+
+The temporary tablespace and Compose bind have been removed. The final
+PostgreSQL container has only its PGDATA mount. Rename-back rollback ended at
+final drop; recovery now uses the retained verified archive. Keep that archive
+until a separate retention decision.
+
+Production build requires the candidate-specific measured gate:
+
+```text
+60,392,999,803-byte emergency floor
++ replacement heap/indexes
++ measured WAL and temp
++ one replacement-sized failure reserve
+```
+
+Pre-execution capacity evidence showed a direct `pg_default` build did not fit:
+the exact archived row ratio required
+`69,713,820,289` bytes and is short by `1,168,706,177` at current
+`68,545,114,112` free bytes; the conservative
+sensitivity requires `72.19-73.06 GB`. The temporary-tablespace candidate
+projects `63,889,690,620` required 4 TB bytes (`4,655,423,492` current
+margin) and `17,260,886,072` scratch bytes. Pre-drop repatriation requires
+`66,575,033,638` bytes and had `1,970,080,474` projected margin. The accepted
+run completed without a threshold breach. This does not lower the global
+`500 GiB` retention policy.
+
+Swap/rollback/drop use maintenance and publication advisory locks, a `2s`
+lock timeout, a `30s` statement timeout, and no `CASCADE`. The old detached
+relation remains until validation. A mismatch or timeout aborts the attempt;
+do not lengthen timeouts or retry blindly. Follow the
+[pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
 
 ### Completed stale solo rank-index retirement
 
