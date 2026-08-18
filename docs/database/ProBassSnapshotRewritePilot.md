@@ -20,11 +20,14 @@ update_triggers:
 
 The pro-bass transition was accepted live on 2026-08-18 from commit
 `4e2bcdc4`. The final attached relation is in `pg_default`, contains only
-snapshot IDs `1301` and `1302`, and has exact retained fingerprint parity.
+snapshot IDs `1301` and `1302`, and had exact retained fingerprint parity.
 The original and scratch rollback relations were dropped, the temporary
 tablespace and Compose mount were removed, and the verified archive remains.
-The next gate is one guarded validation scrape before broader instrument
-migration.
+Guarded validation scrape `1303` then published successfully. The relation now
+contains `1301-1303`; source maps reuse 350 pro-bass scopes / 1,436,731 rows
+from `1302` and write 352 scopes / 1,910,331 rows for `1303`. Snapshot `1301`
+is now obsolete. The next gate is durable whole-generation retention plus
+remaining-instrument migration before another scrape.
 
 The exact target is fixed in code:
 
@@ -120,6 +123,26 @@ Evidence root:
 - FST free after cleanup: `221,605,724,160` bytes;
 - publication stayed at scrape `1302`, unfrozen, with exact songs/overview
   body and ETag parity and zero waiting locks.
+
+### Validation scrape 1303
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pro-bass-validation-scrape-20260818T0235Z/`.
+`decision-summary.json` SHA-256 is
+`9f7edfb0f1ddea85980fe6e93ba34a28546a686fe6d2a23068f22644f3661145`.
+
+- network phase: `4,806.752s`, `+2.04%` versus scrape 1302, 62 recovered
+  timeouts, zero HTTP 429/403/503, retry amplification `1.031`;
+- snapshot reuse: 1,717 scopes and 6,112,541 rows globally; pro bass reused
+  `49.86%` of scopes and `42.93%` of rows;
+- pro-bass physical growth: `1,000,898,560` bytes;
+- complete scrape-to-publication wall clock: `26,224.892s`;
+- BandMaintenance: `12,796.067s`, including `11,002.075s` current projection;
+- rankings: `5,295.526s`;
+- publication succeeded on attempt 3 after two deferred-ready handoffs; commit
+  `916a727b` fixes that release sequencing;
+- publication `1303` is current, `1302` previous, reads are unfrozen, public
+  API fingerprints pass, and the worker is offline.
 
 ## Physical-source retention policy
 
@@ -549,4 +572,5 @@ Require:
 Production build, both swaps, validation, repatriation, final drop, and mount
 cleanup completed successfully. Rename-back rollback was not required and is
 no longer available after final drop; recovery now uses the retained verified
-archive. One guarded validation scrape remains before broader migration.
+archive. Validation scrape 1303 passed; durable generation retention and
+broader instrument migration remain.

@@ -62,7 +62,8 @@ Role files override code/appsettings defaults:
 | `EnforcePublicationCriticalPhases` | `true` |
 | `WritePublishedScopeSources` | `true` |
 | `UsePublishedScopeSources` | `false` |
-| `SkipUnchangedPhysicalLeaderboardSnapshots` | `false` |
+| `UseLeaderboardScopeFingerprints` | `true` |
+| `SkipUnchangedPhysicalLeaderboardSnapshots` | `true` |
 | `EnablePublicationReadContext` | `false` |
 | `WriteLegacyLiveLeaderboardDuringScrape` | `false` |
 

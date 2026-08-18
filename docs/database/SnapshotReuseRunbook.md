@@ -15,8 +15,30 @@ update_triggers:
 
 ## Current decision
 
-**Tier:** publication prerequisite cleared; snapshot-reuse code remains
-default-off and requires the prepared estimate/canary/full-scrape A/B.
+**Tier:** accepted for the worker role after full scrape 1303. The code default
+remains fail-closed, while `deploy/config/fstworker-role.env` enables both
+scope fingerprints and unchanged physical snapshot reuse.
+
+Scrape `1303` published successfully as publication `89`:
+
+- `1,717/6,276` scopes reused their prior physical source (`27.36%`);
+- `6,112,541/40,655,783` published rows were reused (`15.03%`);
+- pro bass reused `350/702` scopes and `1,436,731` rows;
+- measured pro-bass growth was `1,000,898,560` bytes for `1,910,331` new
+  rows, projecting about `752.8 MB` avoided for pro bass and about `3.2 GB`
+  globally at the same measured bytes/new-row ratio;
+- all `6,318` expected scrape scopes completed, public API parity passed,
+  best-effort failures were zero, and the worker was held after publication;
+- evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pro-bass-validation-scrape-20260818T0235Z/`;
+  `decision-summary.json` SHA-256 is
+  `9f7edfb0f1ddea85980fe6e93ba34a28546a686fe6d2a23068f22644f3661145`.
+
+The network lane `candidate-800-32-4` was also accepted as the conservative
+continuity profile: network time was `+2.04%` versus scrape 1302, retry
+amplification was `1.031`, 62 timeouts recovered, and HTTP 429/403/503 were
+zero. Two deferred publication attempts recovered on the third attempt; commit
+`916a727b` fixes the mutation-gate release handoff exposed by that window.
 
 Scrape `1278` subsequently published successfully with snapshot reuse still
 off, but its monolithic final publication transaction held the global
@@ -45,7 +67,7 @@ Evidence:
 The full B2 evidence is:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b2-20260807T105325Z`.
 
-## Next dual-lane A/B card
+## Superseded dual-lane A/B card
 
 This card is readiness-only while controlled publication B2 scrape `1280`
 runs. Do not deploy or start it until B2 publishes, unfreezes, and supplies the

@@ -751,6 +751,14 @@ are absent; the verified archive remains. See the
 [pilot runbook](../database/ProBassSnapshotRewritePilot.md) for evidence and
 recovery.
 
+Validation scrape `1303` then reused 1,717 scopes / 6,112,541 rows globally.
+Pro bass reused 350 scopes / 1,436,731 rows from `1302`, wrote 1,910,331 rows
+for `1303`, and grew by `1,000,898,560` bytes. The worker-role default now
+enables fingerprints and unchanged-snapshot reuse. Physical IDs `1301-1303`
+remain in the regular instrument partition until the next migration converts
+snapshot generations into independently droppable children and removes
+obsolete `1301`.
+
 ## Tier-0 replay evidence packages
 
 Tier-0 evidence packages are filesystem artifacts, not PostgreSQL relations and

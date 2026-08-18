@@ -132,8 +132,9 @@ reuse, automatic path generation, and publication read context.
 
 `deploy/config/fstworker-role.env` skips startup schema initialization, enables
 the three publication correctness gates, writes published scope sources, keeps
-public-read ownership off the worker, leaves unchanged-snapshot reuse and
-publication read context disabled, and sets
+public-read ownership off the worker, enables scope fingerprints and
+unchanged-snapshot reuse after accepted scrape 1303, leaves publication read
+context disabled, and sets
 `WriteLegacyLiveLeaderboardDuringScrape=false`.
 With that value, the post-scrape legacy stored-rank phase completes its
 publication-critical contract without performing a rank update. It is never

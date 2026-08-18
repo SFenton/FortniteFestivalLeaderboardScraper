@@ -153,6 +153,12 @@ historical rows from hot storage, returned `152,985,165,824` filesystem bytes,
 and left a `2,811,404,288`-byte `pg_default` partition. Publication `1302`
 remained unfrozen and public route parity passed.
 
+Validation scrape `1303` subsequently published and unfroze with zero
+best-effort failures. Snapshot reuse reused 1,717 scopes / 6,112,541 rows
+globally and 350 scopes / 1,436,731 rows for pro bass. The worker is held
+offline. Pro bass now contains `1301-1303`; only `1302-1303` remain protected,
+so `1301` is owned by the next generation-retention migration.
+
 The production `plan` stage must use recursive leading-index snapshot-ID
 enumeration, metadata-only ownership joins, protected-only fingerprints, and
 the checksummed verified-live-archive input for exact total rows/ranges. It
