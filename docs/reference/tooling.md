@@ -215,10 +215,10 @@ monitor, exact JSON result, and checksums on the FST drive. The current
 publication-`1293` observation took `94 ms`, produced nine blocked plans, and
 kept API/web/PostgreSQL healthy.
 
-### Exact pro-bass snapshot archive/rewrite pilot
+### Accepted pro-bass snapshot archive/rewrite
 
 `tools/postgres-pro-bass-snapshot-rewrite.sh` is the only supported entry point
-for the candidate rewrite of
+for the completed guarded rewrite of
 `public.leaderboard_entries_snapshot_pro_bass`. It has no table, partition,
 instrument, or SQL input.
 
@@ -305,8 +305,10 @@ conservative sensitivity remains
 `72.19-73.06 GB`. With the replacement/temp/failure reserve on the guarded
 temporary tablespace, the candidate requires `63,889,690,620` free on 4 TB and
 `17,260,886,072` on scratch, giving `4,655,423,492` current 4 TB margin.
-Pre-drop repatriation requires `66,575,033,638`, giving `1,970,080,474`
-projected margin.
+The live run completed build, both swaps, validation, repatriation and final
+drop without a threshold breach. It returned `152,985,165,824` filesystem
+bytes and left a `2,811,404,288`-byte `pg_default` partition. The temporary
+tablespace and Compose mount are absent; the archive remains retained.
 
 Follow the
 [living runbook](../database/ProBassSnapshotRewritePilot.md). The archive

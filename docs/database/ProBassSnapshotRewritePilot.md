@@ -18,9 +18,13 @@ update_triggers:
 
 ## Current decision
 
-The repository package is a **candidate only**. A read-only production archive
-and isolated restore drill now exist, but no production replacement, rewrite,
-swap, rollback, or drop has run.
+The pro-bass transition was accepted live on 2026-08-18 from commit
+`4e2bcdc4`. The final attached relation is in `pg_default`, contains only
+snapshot IDs `1301` and `1302`, and has exact retained fingerprint parity.
+The original and scratch rollback relations were dropped, the temporary
+tablespace and Compose mount were removed, and the verified archive remains.
+The next gate is one guarded validation scrape before broader instrument
+migration.
 
 The exact target is fixed in code:
 
@@ -86,14 +90,36 @@ scratch and budgets only WAL plus the emergency floor on 4 TB. It projects a
 the original `66 GB` assumption, and a scratch requirement of
 `17,260,886,072` bytes. Current scratch-build margin is `4,655,423,492`.
 Capacity therefore passes narrowly for that candidate mode, but production
-build/swap remains blocked by the complete sequence: copying the measured
+build/swap originally depended on the complete sequence: copying the measured
 replacement back to `pg_default` while the original rollback relation still
 exists requires `66,575,033,638` bytes. After relocating 17 unreferenced
 evidence directories to temporary 8 TB staging, observed 4 TB free space is
 `68,545,114,112`, leaving `1,970,080,474` bytes of projected repatriation
-margin. Candidate commit/push, the production-owned scratch bind
-mount/container-recreate gate, fresh preflight/parity, and the explicit
-no-rewrite boundary for this task also remain.
+margin. The live run passed those gates; this calculation remains the
+pre-execution record.
+
+### Accepted live result
+
+Evidence root:
+`/home/sfenton/fst-temporary/pro-bass-live-20260818T0205Z-v2/`.
+`execution-summary.json` SHA-256 is
+`613f081cf027d72290905fde68c962ec518a4ab6095f3eed734337aaa771f82a`.
+
+- source: `308,536,699` rows / `150,098,894,848` bytes;
+- retained: `6,691,993` rows across snapshot IDs `1301-1302`;
+- purged from hot storage: `301,844,706` rows;
+- scratch build: `20.696s`, `2,811,355,136` bytes,
+  `2,868,112,424` WAL bytes, `1,341,054,976` temp bytes, and only `4,096`
+  peak FST bytes;
+- first swap: `0.052s`; repatriation build: `24.731s`; second swap:
+  `0.034s`;
+- final drop: `1.224s`, with `152,985,165,824` immediate filesystem bytes
+  returned;
+- final relation: `1,454,727,168` heap bytes, `1,356,242,944` index bytes,
+  `2,811,404,288` total bytes;
+- FST free after cleanup: `221,605,724,160` bytes;
+- publication stayed at scrape `1302`, unfrozen, with exact songs/overview
+  body and ETag parity and zero waiting locks.
 
 ## Physical-source retention policy
 
@@ -520,6 +546,7 @@ Require:
 - old relation detached and present;
 - no public-health, lock, WAL/temp, or capacity gate failure.
 
-No production build, swap, rollback, or drop occurred while creating and
-validating this candidate package. The production source was read only for the
-archive and bounded plan attempts.
+Production build, both swaps, validation, repatriation, final drop, and mount
+cleanup completed successfully. Rename-back rollback was not required and is
+no longer available after final drop; recovery now uses the retained verified
+archive. One guarded validation scrape remains before broader migration.

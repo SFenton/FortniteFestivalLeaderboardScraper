@@ -145,11 +145,13 @@ proves the new path has the same data as the old path. Record:
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
 
-### Temporary pro-bass archive/rewrite pilot
+### Completed pro-bass archive/rewrite
 
-The repository candidate is not rewrite/drop authorization. A read-only
-production archive and isolated restore drill completed; no production
-replacement, rewrite, swap, rollback, or drop occurred.
+The guarded production transition completed on 2026-08-18 from commit
+`4e2bcdc4`. It retained snapshot IDs `1301-1302`, removed `301,844,706`
+historical rows from hot storage, returned `152,985,165,824` filesystem bytes,
+and left a `2,811,404,288`-byte `pg_default` partition. Publication `1302`
+remained unfrozen and public route parity passed.
 
 The production `plan` stage must use recursive leading-index snapshot-ID
 enumeration, metadata-only ownership joins, protected-only fingerprints, and
@@ -205,6 +207,11 @@ a no-resume marker and repeatedly cancels, then terminates, only exact pilot
 backends until none remain.
 Do not delete it merely because the detached source relation was dropped.
 
+The temporary tablespace and Compose bind have been removed. The final
+PostgreSQL container has only its PGDATA mount. Rename-back rollback ended at
+final drop; recovery now uses the retained verified archive. Keep that archive
+until a separate retention decision.
+
 Production build requires the candidate-specific measured gate:
 
 ```text
@@ -214,17 +221,15 @@ Production build requires the candidate-specific measured gate:
 + one replacement-sized failure reserve
 ```
 
-A direct `pg_default` build does not fit: the exact archived row ratio requires
+Pre-execution capacity evidence showed a direct `pg_default` build did not fit:
+the exact archived row ratio required
 `69,713,820,289` bytes and is short by `1,168,706,177` at current
 `68,545,114,112` free bytes; the conservative
 sensitivity requires `72.19-73.06 GB`. The temporary-tablespace candidate
 projects `63,889,690,620` required 4 TB bytes (`4,655,423,492` current
 margin) and `17,260,886,072` scratch bytes. Pre-drop repatriation requires
-`66,575,033,638` bytes and has `1,970,080,474` projected margin. Do not run
-`build`, `swap`, `repatriate`, or `drop` before exact production
-mount/recreate validation, fresh preflight/parity, and the separately approved
-maintenance turn. Local
-live validation precedes PR merge. This does not lower the global
+`66,575,033,638` bytes and had `1,970,080,474` projected margin. The accepted
+run completed without a threshold breach. This does not lower the global
 `500 GiB` retention policy.
 
 Swap/rollback/drop use maintenance and publication advisory locks, a `2s`

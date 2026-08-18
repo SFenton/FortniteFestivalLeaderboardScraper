@@ -677,9 +677,10 @@ rows/bytes were zero. The separately labeled informational candidate was about
 `2.52` billion rows / `1.46 TB`, with about `392 GB` outside MCV coverage.
 Those values are not reclaim proof.
 
-### Exact pro-bass archive/rewrite candidate
+### Accepted pro-bass archive/rewrite
 
-The generic report-only planner remains unchanged and the global `500 GiB`
+The exact pro-bass transition completed live on 2026-08-18. The generic
+report-only planner remains unchanged and the global `500 GiB`
 rewrite policy is not reduced. The exact
 `leaderboard_entries_snapshot_pro_bass` pilot uses a separate one-target
 orchestrator with no arbitrary relation input.
@@ -743,11 +744,12 @@ retained-size sensitivity remains a conservative `72.19-73.06 GB` requirement.
 The temporary-tablespace candidate instead requires `63,889,690,620` free on
 4 TB and `17,260,886,072` on scratch, so its capacity math passes narrowly at
 the accepted free-space assumptions. Pre-drop repatriation requires
-`66,575,033,638`; current projected margin is `1,970,080,474`. Execution
-remains blocked by production
-mount/recreate, fresh preflight/parity, and the no-rewrite boundary for this
-task. See the
-[pilot runbook](../database/ProBassSnapshotRewritePilot.md).
+`66,575,033,638`; current projected margin is `1,970,080,474`. The live run retained IDs `1301-1302`, removed `301,844,706` rows from hot
+storage, returned `152,985,165,824` filesystem bytes, and left a
+`2,811,404,288`-byte `pg_default` partition. The scratch tablespace and mount
+are absent; the verified archive remains. See the
+[pilot runbook](../database/ProBassSnapshotRewritePilot.md) for evidence and
+recovery.
 
 ## Tier-0 replay evidence packages
 
