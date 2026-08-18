@@ -123,6 +123,7 @@ def source_catalog():
                 "isPrimary": True,
                 "isUnique": True,
                 "isValid": True,
+                "tablespace": "pg_default",
                 "relationKind": "i",
                 "parentIndex": "leaderboard_entries_snapshot_pkey",
             },
@@ -138,6 +139,7 @@ def source_catalog():
                 "isPrimary": False,
                 "isUnique": False,
                 "isValid": True,
+                "tablespace": "pg_default",
                 "relationKind": "i",
                 "parentIndex": "ix_les_snapshot_song_score",
             },
@@ -165,7 +167,15 @@ def plan_fixture():
             "exactRetainedRows": 20,
             "retainedFingerprint": {"rowCount": 20},
             "retainedDistribution": [],
-            "referenceParity": {},
+            "referenceParity": {
+                "publication": {
+                    "publishedScrapeId": 1303,
+                    "currentPublicationId": 89,
+                    "previousPublicationId": 80,
+                    "workingPublicationId": None,
+                    "publicReadsFrozen": False,
+                }
+            },
         },
     }
 
@@ -176,6 +186,13 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
         WORK_ROOT.mkdir(parents=True, mode=0o700)
 
     def tearDown(self):
+        package = (
+            WORK_ROOT
+            / tool.RECOVERED_DIR
+            / "drop-recovery-package"
+        )
+        if package.exists():
+            package.chmod(0o700)
         shutil.rmtree(WORK_ROOT, ignore_errors=True)
 
     def test_fixed_allowlist_is_exactly_nine_database_partitions(self):
@@ -440,6 +457,94 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
         )
         self.assertNotIn("--clean", command)
 
+    def test_final_drop_reproof_and_ddl_share_advisory_transaction(self):
+        args = types.SimpleNamespace(
+            run_id="synthetic-run-0001",
+            query_timeout_seconds=600,
+        )
+        target = tool.TARGET_BY_KEY["solo-guitar"]
+        plan = plan_fixture()
+        restore = {
+            "restoredFingerprint": {"rowCount": 1000},
+            "restoredDistribution": [],
+        }
+        primary = tool.replacement_primary_name(args.run_id, target)
+        score = tool.replacement_score_name(args.run_id, target)
+        validation = {
+            "candidateShape": {
+                "indexes": [
+                    {
+                        "name": primary,
+                        "definition":
+                            f"CREATE UNIQUE INDEX {primary} ON ONLY public.x",
+                    },
+                    {
+                        "name": score,
+                        "definition":
+                            f"CREATE INDEX {score} ON ONLY public.x",
+                    },
+                ]
+            },
+            "candidateCatalog": {
+                "constraints": [
+                    {"name": primary},
+                    {
+                        "name": tool.replacement_instrument_check_name(
+                            args.run_id,
+                            target,
+                        )
+                    },
+                ],
+                "indexes": [
+                    {
+                        "name": primary,
+                        "definition":
+                            f"CREATE UNIQUE INDEX {primary} ON ONLY public.x",
+                    },
+                    {
+                        "name": score,
+                        "definition":
+                            f"CREATE INDEX {score} ON ONLY public.x",
+                    },
+                ],
+            },
+        }
+        sql = tool.final_drop_sql(
+            args,
+            target,
+            plan,
+            restore,
+            validation,
+            tool.retired_name(args.run_id, target),
+            plan["sourceCatalogNames"],
+        )
+
+        share_lock = sql.index("IN SHARE MODE")
+        fingerprint = sql.index("hashtextextended")
+        advisory = sql.index("pg_try_advisory_xact_lock")
+        protected = sql.index("protected IDs changed")
+        drop = sql.index("DROP TABLE")
+
+        self.assertLess(share_lock, fingerprint)
+        self.assertLess(fingerprint, advisory)
+        self.assertLess(advisory, protected)
+        self.assertLess(protected, drop)
+        self.assertIn("public_reads_frozen = FALSE", sql)
+
+        reproof_sql, ddl_sql = tool.final_drop_transaction_sql(
+            args,
+            target,
+            plan,
+            restore,
+            validation,
+            tool.retired_name(args.run_id, target),
+            plan["sourceCatalogNames"],
+        )
+        self.assertIn("BEGIN;", reproof_sql)
+        self.assertNotIn("DROP TABLE", reproof_sql)
+        self.assertIn("DROP TABLE", ddl_sql)
+        self.assertNotIn("COMMIT;", ddl_sql)
+
     def test_archive_toc_rejects_other_instrument_data(self):
         target = tool.TARGET_BY_KEY["solo-guitar"]
         names = tool.source_catalog_names(source_catalog())
@@ -514,10 +619,56 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
         ):
             tool.load_archive_manifest(WORK_ROOT, target)
 
+    def test_archive_pin_detects_path_replacement_and_preserves_inode(self):
+        archive_dir = WORK_ROOT / tool.ARCHIVE_DIR
+        archive_dir.mkdir()
+        archive = archive_dir / "solo-guitar-original.custom"
+        archive.write_bytes(b"verified archive")
+        manifest = archive_dir / "solo-guitar-manifest.json"
+        manifest.write_bytes(b"verified manifest")
+        chain = {
+            "archivePath": str(archive),
+            "archiveSha256": tool.sha256_path(archive),
+            "manifestPath": str(manifest),
+            "manifestSha256": tool.sha256_path(manifest),
+        }
+        recovery = archive.with_name(
+            "." + archive.name + ".drop-recovery"
+        )
+        stale_partial = recovery.with_name(
+            "." + recovery.name + ".partial-stale"
+        )
+        stale_partial.write_bytes(b"stale")
+        pins = tool.pin_archive_evidence(chain)
+        archive_recovery = recovery
+        try:
+            self.assertFalse(stale_partial.exists())
+            self.assertFalse(
+                os.path.samefile(archive, archive_recovery)
+            )
+            self.assertEqual(
+                0,
+                archive_recovery.stat().st_mode & 0o222,
+            )
+            archive.unlink()
+            archive.write_bytes(b"replacement")
+            with self.assertRaisesRegex(
+                tool.MigrationError,
+                "pinned evidence changed",
+            ):
+                pins[0].verify(checksum=False)
+            self.assertEqual(
+                b"verified archive",
+                archive_recovery.read_bytes(),
+            )
+        finally:
+            for pin in pins:
+                pin.close()
+
     def test_capacity_gates_preserve_fst_floor_and_bound_scratch(self):
         archive = tool.calculate_archive_capacity(
             100 * 1024**3,
-            300 * 1024**3,
+            500 * 1024**3,
         )
         build = tool.calculate_build_capacity(
             100 * 1024**3,
@@ -609,6 +760,7 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
                     "isPrimary": True,
                     "isUnique": True,
                     "isValid": True,
+                    "tablespace": "pg_default",
                     "definition": (
                         "CREATE UNIQUE INDEX candidate_pk ON ONLY "
                         "public.candidate USING btree "
@@ -622,6 +774,7 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
                     "isPrimary": False,
                     "isUnique": False,
                     "isValid": True,
+                    "tablespace": "pg_default",
                     "definition": (
                         "CREATE INDEX candidate_score ON ONLY "
                         "public.candidate USING btree "
@@ -748,6 +901,21 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
                 path,
                 {**value, "elapsedSeconds": 1.0},
             )
+
+    def test_api_monitor_stop_timeout_is_a_failure(self):
+        monitor = tool.PublicApiMonitor(
+            "http://127.0.0.1:1",
+            [],
+        )
+        thread = mock.Mock()
+        thread.is_alive.return_value = True
+        monitor._thread = thread
+
+        self.assertFalse(monitor.stop(timeout_seconds=0))
+        self.assertEqual(
+            "api_monitor_thread_did_not_stop",
+            monitor.failures[-1]["reason"],
+        )
 
     def test_torn_report_is_preserved_then_reconciled(self):
         (WORK_ROOT / tool.REPORTS_DIR).mkdir()

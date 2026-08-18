@@ -791,6 +791,15 @@ returns without mutation while a live instrument still uses the legacy regular
 partition. This permits code deployment before the guarded per-instrument
 migration.
 
+The one-time per-instrument migration retains an independent read-only copy of
+the restore-proved archive and its plan/archive/restore/validation evidence on
+the authorized temporary scratch device. Kernel read leases protect both
+source and recovery files through destructive commit and durable reporting.
+An anchored, read-only package plus a pre-commit recovery manifest allows a
+torn committed drop to be reported without trusting the original archive; the
+independent package remains authoritative until the separate archive-deletion
+decision.
+
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
 implemented by the layout migration itself. It must preserve

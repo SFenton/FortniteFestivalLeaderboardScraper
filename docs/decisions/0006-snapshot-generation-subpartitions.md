@@ -103,7 +103,13 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
    retaining the original for rollback.
 6. Validate fingerprints, references, parent index attachment, and public
    parity.
-7. Drop the original only after acceptance.
+7. Drop the original only after acceptance, with the restore-proved archive
+   copied into an independent read-only recovery package, kernel-leased, and
+   checksum/evidence-chain reverified through the destructive commit and
+   durable report. Persist its recovery manifest before commit and keep an
+   anchored authoritative path so a torn post-commit report can be rebuilt
+   without the original archive. Retain that package until the separate
+   archive-deletion decision.
 8. Repeat one instrument at a time.
 9. Implement and validate recurring archive-before-child-drop retention,
    including empty/default-child auditing.

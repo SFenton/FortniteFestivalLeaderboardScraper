@@ -462,6 +462,676 @@ def run_stage(stage, scratch, run_id, container):
         ) from error
 
 
+def run_archive_mutation_drop_probe(
+    scratch,
+    run_id,
+    container,
+    mutation_phase,
+):
+    archive = (
+        scratch
+        / "archive"
+        / f"{TARGET_KEY}-original.custom"
+    )
+    recovery = archive.with_name(
+        "." + archive.name + ".drop-recovery"
+    )
+    expected_sha = sha256_path(archive)
+    gate = scratch / "reports" / "archive-mutation-drop-gate"
+    gate_paths = {
+        phase: {
+            suffix: gate.with_name(
+                gate.name + f".{phase}.{suffix}"
+            )
+            for suffix in ("ready", "continue")
+        }
+        for phase in ("pre-ddl", "pre-commit", "commit-entry")
+    }
+    command = stage_command("drop", scratch, run_id, container)
+    command.extend(["--test-final-drop-gate", str(gate)])
+    drop = subprocess.Popen(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        for phase in ("pre-ddl", "pre-commit"):
+            ready = gate_paths[phase]["ready"]
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and not ready.is_file():
+                if drop.poll() is not None:
+                    stdout, stderr = drop.communicate()
+                    raise DrillError(
+                        "drop exited before the archive-mutation gate: "
+                        + stderr
+                        + stdout
+                    )
+                time.sleep(0.05)
+            if not ready.is_file():
+                raise DrillError(
+                    "timed out waiting for final-drop decision gate "
+                    + phase
+                )
+            if phase == mutation_phase:
+                break
+            gate_paths[phase]["continue"].write_text(
+                "continue\n",
+                encoding="ascii",
+            )
+        archive.unlink()
+        archive.write_bytes(b"replacement archive")
+        gate_paths[mutation_phase]["continue"].write_text(
+            "continue\n",
+            encoding="ascii",
+        )
+        stdout, stderr = drop.communicate(timeout=120)
+        if drop.returncode == 0:
+            raise DrillError(
+                "archive mutation unexpectedly allowed final drop: "
+                + stdout
+            )
+        if "archive" not in stderr.lower():
+            raise DrillError(
+                "archive mutation failure did not identify evidence: "
+                + stderr
+            )
+        state = relation_summary(container)
+        if (
+            state["targetKind"] != "p"
+            or not state["migrationArtifacts"]
+            or not recovery.is_file()
+            or os.path.samefile(archive, recovery)
+            or sha256_path(recovery) != expected_sha
+        ):
+            raise DrillError(
+                "archive mutation did not preserve rollback state: "
+                f"{state}"
+            )
+        archive.unlink()
+        shutil.copyfile(recovery, archive)
+        archive.chmod(0o600)
+        package = (
+            scratch
+            / "recovered-evidence"
+            / "drop-recovery-package"
+        )
+        if package.exists():
+            package.chmod(0o700)
+            for child in package.iterdir():
+                child.unlink()
+            package.rmdir()
+        for path in (
+            recovery,
+            (
+                scratch
+                / "archive"
+                / f".{TARGET_KEY}-manifest.json.drop-recovery"
+            ),
+            scratch / "reports" / "drop.recovery.json",
+            scratch / "reports" / ".drop.recovery.json.drop-recovery",
+            *(
+                scratch
+                / "reports"
+                / f".{stage}.json.drop-recovery"
+                for stage in (
+                    "check",
+                    "plan",
+                    "archive",
+                    "restore",
+                    "validate",
+                )
+            ),
+        ):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+        for path in (
+            scratch / "reports"
+        ).glob(".drop-recovery-manifest-*.recovery"):
+            path.unlink()
+        for paths in gate_paths.values():
+            for path in paths.values():
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+        return {
+            "blocked": True,
+            "mutationPhase": mutation_phase,
+            "originalSha256": expected_sha,
+            "independentRecoveryPath": str(recovery),
+            "stateAfterFailure": state,
+        }
+    finally:
+        if drop.poll() is None:
+            drop.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                drop.communicate(timeout=10)
+
+
+def run_child_catalog_mutation_probe(scratch, run_id, container):
+    child = f"{TARGET_PARTITION}_s1302"
+    constraint = "drill_unexpected_score_check"
+    psql(
+        container,
+        (
+            f"ALTER TABLE {child} ADD CONSTRAINT {constraint} "
+            "CHECK (score < 0) NOT VALID"
+        ),
+        timeout=60,
+    )
+    try:
+        completed = run(
+            stage_command("drop", scratch, run_id, container),
+            timeout=1800,
+            check=False,
+        )
+        if completed.returncode == 0:
+            raise DrillError(
+                "child-local constraint unexpectedly allowed final drop"
+            )
+        if (
+            "partition evidence changed" not in completed.stderr
+            and "generation child" not in completed.stderr
+        ):
+            raise DrillError(
+                "child catalog rejection was not attributed to a "
+                "catalog guard: "
+                + completed.stderr
+            )
+        state = relation_summary(container)
+        if (
+            state["targetKind"] != "p"
+            or not state["migrationArtifacts"]
+        ):
+            raise DrillError(
+                "child catalog mutation did not preserve rollback state: "
+                f"{state}"
+            )
+        return {
+            "blocked": True,
+            "child": child,
+            "constraint": constraint,
+            "stateAfterFailure": state,
+        }
+    finally:
+        psql(
+            container,
+            (
+                f"ALTER TABLE {child} "
+                f"DROP CONSTRAINT IF EXISTS {constraint}"
+            ),
+            timeout=60,
+        )
+
+
+def run_prevalidation_child_catalog_probe(scratch, run_id, container):
+    child = f"{TARGET_PARTITION}_s1302"
+    constraint = "drill_prevalidate_score_check"
+    psql(
+        container,
+        (
+            f"ALTER TABLE {child} ADD CONSTRAINT {constraint} "
+            "CHECK (score < 0) NOT VALID"
+        ),
+        timeout=60,
+    )
+    try:
+        completed = run(
+            stage_command("validate", scratch, run_id, container),
+            timeout=1800,
+            check=False,
+        )
+        if completed.returncode == 0:
+            raise DrillError(
+                "pre-validation child constraint was accepted"
+            )
+        if "generation child" not in completed.stderr:
+            raise DrillError(
+                "pre-validation child rejection was not attributed to "
+                "the independent child contract: "
+                + completed.stderr
+            )
+        return {
+            "blocked": True,
+            "child": child,
+            "constraint": constraint,
+        }
+    finally:
+        psql(
+            container,
+            (
+                f"ALTER TABLE {child} "
+                f"DROP CONSTRAINT IF EXISTS {constraint}"
+            ),
+            timeout=60,
+        )
+
+
+def run_commit_to_report_recovery_probe(scratch, run_id, container):
+    archive = (
+        scratch
+        / "archive"
+        / f"{TARGET_KEY}-original.custom"
+    )
+    expected_sha = sha256_path(archive)
+    gate = scratch / "reports" / "archive-write-lease-gate"
+    gate_paths = {
+        phase: {
+            suffix: gate.with_name(
+                gate.name + f".{phase}.{suffix}"
+            )
+            for suffix in ("ready", "continue")
+        }
+        for phase in (
+            "pre-ddl",
+            "pre-commit",
+            "commit-entry",
+            "post-commit",
+        )
+    }
+    command = stage_command("drop", scratch, run_id, container)
+    command.extend(["--test-final-drop-gate", str(gate)])
+    drop = subprocess.Popen(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    writer = None
+    try:
+        for phase in ("pre-ddl", "pre-commit", "commit-entry"):
+            ready = gate_paths[phase]["ready"]
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and not ready.is_file():
+                if drop.poll() is not None:
+                    stdout, stderr = drop.communicate()
+                    raise DrillError(
+                        "drop exited before the write-lease gate: "
+                        + stderr
+                        + stdout
+                    )
+                time.sleep(0.05)
+            if not ready.is_file():
+                raise DrillError(
+                    "timed out waiting for write-lease gate " + phase
+                )
+            if phase == "commit-entry":
+                break
+            gate_paths[phase]["continue"].write_text(
+                "continue\n",
+                encoding="ascii",
+            )
+        writer = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os,sys;"
+                    "p=sys.argv[1];"
+                    "f=open(p,'r+b',buffering=0);"
+                    "f.write(b'corrupted-after-commit');"
+                    "os.fsync(f.fileno());"
+                    "f.close()"
+                ),
+                str(archive),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        time.sleep(1)
+        if writer.poll() is not None:
+            stdout, stderr = writer.communicate()
+            raise DrillError(
+                "kernel read lease did not block the archive writer: "
+                + stderr
+                + stdout
+            )
+        gate_paths["commit-entry"]["continue"].write_text(
+            "continue\n",
+            encoding="ascii",
+        )
+        post_commit_ready = gate_paths["post-commit"]["ready"]
+        deadline = time.monotonic() + 120
+        while (
+            time.monotonic() < deadline
+            and not post_commit_ready.is_file()
+        ):
+            if drop.poll() is not None:
+                stdout, stderr = drop.communicate()
+                raise DrillError(
+                    "drop exited before post-commit kill gate: "
+                    + stderr
+                    + stdout
+                )
+            time.sleep(0.05)
+        if not post_commit_ready.is_file():
+            raise DrillError(
+                "timed out waiting for post-commit kill gate"
+            )
+        drop.kill()
+        drop.communicate(timeout=30)
+        writer_stdout, writer_stderr = writer.communicate(timeout=60)
+        if writer.returncode != 0:
+            raise DrillError(
+                "blocked archive writer did not resume: "
+                + writer_stderr
+                + writer_stdout
+            )
+        if (scratch / "reports" / "drop.json").exists():
+            raise DrillError(
+                "drop report existed before torn-commit recovery"
+            )
+        psql(
+            container,
+            (
+                f"ALTER TABLE {TARGET_PARTITION} "
+                "ALTER COLUMN accuracy SET DEFAULT 123"
+            ),
+            timeout=60,
+        )
+        mutated_recovery = run(
+            stage_command("drop", scratch, run_id, container),
+            timeout=1800,
+            check=False,
+        )
+        if (
+            mutated_recovery.returncode == 0
+            or (
+                "final partitioned catalog is unexpected"
+                not in mutated_recovery.stderr
+                and "generation child"
+                not in mutated_recovery.stderr
+            )
+        ):
+            raise DrillError(
+                "finalized recovery accepted a mutated root catalog: "
+                + mutated_recovery.stderr
+            )
+        psql(
+            container,
+            (
+                f"ALTER TABLE {TARGET_PARTITION} "
+                "ALTER COLUMN accuracy DROP DEFAULT"
+            ),
+            timeout=60,
+        )
+        recovered_result = run_stage(
+            "drop",
+            scratch,
+            run_id,
+            container,
+        )
+        report = json.loads(
+            (scratch / "reports" / "drop.json").read_text(
+                encoding="utf-8",
+            )
+        )
+        recovery = pathlib.Path(report["archiveRetained"]["path"])
+        if (
+            not recovery.is_file()
+            or os.path.samefile(archive, recovery)
+            or sha256_path(recovery) != expected_sha
+            or sha256_path(archive) == expected_sha
+        ):
+            raise DrillError(
+                "leased writer did not preserve authoritative recovery"
+            )
+        for paths in gate_paths.values():
+            for path in paths.values():
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+        return recovered_result, {
+            "writerBlockedThroughCommit": True,
+            "processKilledAfterCommit": True,
+            "committedDropRecoveredFromIndependentCopy": True,
+            "mutatedFinalCatalogRejected": True,
+            "originalSha256Before": expected_sha,
+            "originalSha256After": sha256_path(archive),
+            "authoritativeRecovery": report["archiveRetained"],
+        }
+    finally:
+        if drop.poll() is None:
+            drop.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                drop.communicate(timeout=10)
+        if writer is not None and writer.poll() is None:
+            writer.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                writer.communicate(timeout=10)
+
+
+def run_recovery_path_publication_probe(scratch, run_id, container):
+    gate = scratch / "reports" / "recovery-path-publication-gate"
+    phases = (
+        "pre-ddl",
+        "pre-commit",
+        "commit-entry",
+        "post-commit",
+        "report-entry",
+    )
+    gate_paths = {
+        phase: {
+            suffix: gate.with_name(
+                gate.name + f".{phase}.{suffix}"
+            )
+            for suffix in ("ready", "continue")
+        }
+        for phase in phases
+    }
+    command = stage_command("drop", scratch, run_id, container)
+    command.extend(["--test-final-drop-gate", str(gate)])
+    drop = subprocess.Popen(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        for phase in phases:
+            ready = gate_paths[phase]["ready"]
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and not ready.is_file():
+                if drop.poll() is not None:
+                    stdout, stderr = drop.communicate()
+                    raise DrillError(
+                        "drop exited before recovery publication gate: "
+                        + stderr
+                        + stdout
+                    )
+                time.sleep(0.05)
+            if not ready.is_file():
+                raise DrillError(
+                    "timed out waiting for recovery publication gate "
+                    + phase
+                )
+            if phase == "report-entry":
+                break
+            gate_paths[phase]["continue"].write_text(
+                "continue\n",
+                encoding="ascii",
+            )
+        recovery_evidence = json.loads(
+            (
+                scratch / "reports" / "drop.recovery.json"
+            ).read_text(encoding="utf-8")
+        )
+        paths = [
+            pathlib.Path(path)
+            for path in recovery_evidence["copies"]["archive"]["paths"]
+        ]
+        anchor = next(
+            path
+            for path in paths
+            if "drop-recovery-package" in str(path)
+        )
+        primary = next(path for path in paths if path != anchor)
+        try:
+            anchor.unlink()
+        except PermissionError:
+            anchor_unlink_blocked = True
+        else:
+            raise DrillError(
+                "read-only recovery package allowed anchor unlink"
+            )
+        primary.unlink()
+        original = (
+            scratch
+            / "archive"
+            / f"{TARGET_KEY}-original.custom"
+        )
+        os.link(original, primary)
+        gate_paths["report-entry"]["continue"].write_text(
+            "continue\n",
+            encoding="ascii",
+        )
+        stdout, stderr = drop.communicate(timeout=180)
+        if drop.returncode != 0:
+            raise DrillError(
+                "recovery publication drop failed: " + stderr + stdout
+            )
+        report = json.loads(
+            (scratch / "reports" / "drop.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        authoritative = pathlib.Path(
+            report["archiveRetained"]["path"]
+        )
+        if (
+            not anchor_unlink_blocked
+            or authoritative != primary
+            or not authoritative.is_file()
+            or sha256_path(authoritative)
+            != report["archiveRetained"]["sha256"]
+            or os.path.samefile(authoritative, original)
+        ):
+            raise DrillError(
+                "durable recovery anchor was not authoritative"
+            )
+        for paths_by_phase in gate_paths.values():
+            for path in paths_by_phase.values():
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+        return json.loads(stdout), {
+            "anchorUnlinkBlocked": True,
+            "primaryPathReplacedBySourceHardLink": True,
+            "primaryPathRepairedFromAnchor": True,
+            "authoritativePath": str(authoritative),
+        }
+    finally:
+        if drop.poll() is None:
+            drop.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                drop.communicate(timeout=10)
+
+
+def run_package_rename_publication_probe(scratch, run_id, container):
+    gate = scratch / "reports" / "package-rename-publication-gate"
+    phases = (
+        "pre-ddl",
+        "pre-commit",
+        "commit-entry",
+        "post-commit",
+        "report-entry",
+    )
+    gate_paths = {
+        phase: {
+            suffix: gate.with_name(
+                gate.name + f".{phase}.{suffix}"
+            )
+            for suffix in ("ready", "continue")
+        }
+        for phase in phases
+    }
+    command = stage_command("drop", scratch, run_id, container)
+    command.extend(["--test-final-drop-gate", str(gate)])
+    drop = subprocess.Popen(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        for phase in phases:
+            ready = gate_paths[phase]["ready"]
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and not ready.is_file():
+                if drop.poll() is not None:
+                    stdout, stderr = drop.communicate()
+                    raise DrillError(
+                        "drop exited before package-rename gate: "
+                        + stderr
+                        + stdout
+                    )
+                time.sleep(0.05)
+            if not ready.is_file():
+                raise DrillError(
+                    "timed out waiting for package-rename gate "
+                    + phase
+                )
+            if phase == "report-entry":
+                break
+            gate_paths[phase]["continue"].write_text(
+                "continue\n",
+                encoding="ascii",
+            )
+        package = (
+            scratch
+            / "recovered-evidence"
+            / "drop-recovery-package"
+        )
+        renamed = package.with_name(
+            "drop-recovery-package-renamed"
+        )
+        package.rename(renamed)
+        drop.kill()
+        drop.communicate(timeout=30)
+        if (scratch / "reports" / "drop.json").exists():
+            raise DrillError(
+                "drop report existed before package-rename recovery"
+            )
+        recovered_result = run_stage(
+            "drop",
+            scratch,
+            run_id,
+            container,
+        )
+        report = json.loads(
+            (scratch / "reports" / "drop.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        authoritative = pathlib.Path(
+            report["archiveRetained"]["path"]
+        )
+        if (
+            not authoritative.is_file()
+            or "drop-recovery-package" in str(authoritative)
+            or sha256_path(authoritative)
+            != report["archiveRetained"]["sha256"]
+        ):
+            raise DrillError(
+                "package rename stranded terminal recovery paths"
+            )
+        for paths_by_phase in gate_paths.values():
+            for path in paths_by_phase.values():
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+        return recovered_result, {
+            "packageRenamedBeforeReport": True,
+            "processKilledAfterPackageRename": True,
+            "renamedPackageRecoverySucceeded": True,
+            "workingRecoveryPathRemainedAuthoritative": True,
+            "authoritativePath": str(authoritative),
+            "renamedPackage": str(renamed),
+        }
+    finally:
+        if drop.poll() is None:
+            drop.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                drop.communicate(timeout=10)
+
+
 def truncate_report(scratch, stage):
     path = pathlib.Path(scratch) / "reports" / f"{stage}.json"
     with path.open("wb") as handle:
@@ -535,6 +1205,13 @@ def run_lane(root, lane, *, final_action):
     container = f"fst-snapshot-generation-test-{lane}-{token}"
     run_id = f"drill-{lane}-{token}"
     stage_results = []
+    archive_mutation_probes = []
+    prevalidation_child_probe = None
+    child_catalog_probe = None
+    write_lease_probe = None
+    recovery_publication_probe = None
+    package_rename_probe = None
+    drop_report = None
     started = time.monotonic()
     try:
         start_source(container, data_root)
@@ -562,6 +1239,14 @@ def run_lane(root, lane, *, final_action):
                 raise DrillError(
                     f"{stage} torn-report recovery evidence is missing"
                 )
+        if final_action == "drop":
+            prevalidation_child_probe = (
+                run_prevalidation_child_catalog_probe(
+                    scratch,
+                    run_id,
+                    container,
+                )
+            )
         stage_results.append(
             run_stage("validate", scratch, run_id, container)
         )
@@ -614,13 +1299,84 @@ def run_lane(root, lane, *, final_action):
                 raise DrillError(
                     "validate torn-report recovery evidence is missing"
                 )
-            stage_results.append(
-                run_stage("drop", scratch, run_id, container)
+            run(
+                ["docker", "kill", "--signal", "KILL", container],
+                timeout=60,
             )
-            truncate_report(scratch, "drop")
-            stage_results.append(
-                run_stage("drop", scratch, run_id, container)
+            run(["docker", "start", container], timeout=60)
+            wait_ready(container)
+            psql(container, "SELECT pg_stat_reset();", timeout=60)
+            if final_action == "drop":
+                child_catalog_probe = (
+                    run_child_catalog_mutation_probe(
+                        scratch,
+                        run_id,
+                        container,
+                    )
+                )
+                for mutation_phase in ("pre-ddl", "pre-commit"):
+                    archive_mutation_probes.append(
+                        run_archive_mutation_drop_probe(
+                            scratch,
+                            run_id,
+                            container,
+                            mutation_phase,
+                        )
+                    )
+                drop_result = run_stage(
+                    "drop",
+                    scratch,
+                    run_id,
+                    container,
+                )
+            elif final_action == "lease-drop":
+                drop_result, write_lease_probe = (
+                    run_commit_to_report_recovery_probe(
+                        scratch,
+                        run_id,
+                        container,
+                    )
+                )
+            elif final_action == "publish-drop":
+                drop_result, recovery_publication_probe = (
+                    run_recovery_path_publication_probe(
+                        scratch,
+                        run_id,
+                        container,
+                    )
+                )
+            elif final_action == "rename-drop":
+                drop_result, package_rename_probe = (
+                    run_package_rename_publication_probe(
+                        scratch,
+                        run_id,
+                        container,
+                    )
+                )
+            else:
+                raise DrillError(
+                    f"unknown final action: {final_action}"
+                )
+            stage_results.append(drop_result)
+            drop_report = json.loads(
+                (
+                    scratch
+                    / "reports"
+                    / "drop.json"
+                ).read_text(encoding="utf-8")
             )
+            if (
+                final_action == "drop"
+                and not drop_report.get("fullArchiveReproofRequired")
+            ):
+                raise DrillError(
+                    "drop did not require archive reproof after stats reset"
+                )
+            if final_action == "drop":
+                truncate_report(scratch, "drop")
+                stage_results.append(
+                    run_stage("drop", scratch, run_id, container)
+                )
             summary = relation_summary(container)
             if (
                 summary["targetKind"] != "p"
@@ -640,6 +1396,56 @@ def run_lane(root, lane, *, final_action):
         )
         if not archive.is_file() or archive.stat().st_size <= 0:
             raise DrillError("lane archive was not retained")
+        retained_recovery = None
+        if final_action in (
+            "drop",
+            "lease-drop",
+            "publish-drop",
+            "rename-drop",
+        ):
+            retained_recovery = drop_report["archiveRetained"][
+                "recoveryCopies"
+            ]
+            recovery_sources = {
+                "archive": archive,
+                "manifest": (
+                    scratch
+                    / "archive"
+                    / f"{TARGET_KEY}-manifest.json"
+                ),
+            }
+            recovery_sources.update(
+                {
+                    f"{stage}Report": (
+                        scratch / "reports" / f"{stage}.json"
+                    )
+                    for stage in (
+                        "check",
+                        "plan",
+                        "archive",
+                        "restore",
+                        "validate",
+                    )
+                }
+            )
+            recovery_sources["dropRecoveryManifest"] = (
+                scratch / "reports" / "drop.recovery.json"
+            )
+            for label, recovery in retained_recovery.items():
+                recovery_path = pathlib.Path(recovery["path"])
+                if (
+                    not recovery_path.is_file()
+                    or os.path.samefile(
+                        recovery_sources[label],
+                        recovery_path,
+                    )
+                    or recovery_path.stat().st_mode & 0o222
+                    or sha256_path(recovery_path)
+                        != recovery["sha256"]
+                ):
+                    raise DrillError(
+                        "drop did not retain independent recovery copies"
+                    )
         return {
             "lane": lane,
             "finalAction": final_action,
@@ -654,6 +1460,15 @@ def run_lane(root, lane, *, final_action):
             },
             "workspace": str(scratch),
             "tornEvidenceRecovered": True,
+            "archiveMutationProbes": archive_mutation_probes,
+            "prevalidationChildCatalogProbe":
+                prevalidation_child_probe,
+            "childCatalogMutationProbe": child_catalog_probe,
+            "writeLeaseProbe": write_lease_probe,
+            "recoveryPublicationProbe":
+                recovery_publication_probe,
+            "packageRenameProbe": package_rename_probe,
+            "retainedRecoveryCopies": retained_recovery,
         }
     finally:
         run(
@@ -669,7 +1484,7 @@ def run_lane(root, lane, *, final_action):
 def build_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Run rollback and final-drop lanes against isolated "
+            "Run rollback and four guarded final-drop lanes against isolated "
             "network-none PostgreSQL 17."
         )
     )
@@ -706,6 +1521,21 @@ def main(argv=None):
     lanes = [
         run_lane(root, "rollback", final_action="rollback"),
         run_lane(root, "drop", final_action="drop"),
+        run_lane(
+            root,
+            "lease-drop",
+            final_action="lease-drop",
+        ),
+        run_lane(
+            root,
+            "publish-drop",
+            final_action="publish-drop",
+        ),
+        run_lane(
+            root,
+            "rename-drop",
+            final_action="rename-drop",
+        ),
     ]
     summary = {
         "formatVersion": 1,

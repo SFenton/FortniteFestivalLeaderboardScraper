@@ -18,7 +18,9 @@ import math
 import os
 import pathlib
 import re
+import selectors
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -559,11 +561,155 @@ class Database:
                 f"database returned malformed JSON: {output[:500]}"
             ) from error
 
+    def json_script(self, sql, *, timeout=600, pgoptions=None):
+        output = self.scalar(
+            sql,
+            timeout=timeout,
+            pgoptions=pgoptions,
+        )
+        for line in reversed(output.splitlines()):
+            candidate = line.strip()
+            if not candidate:
+                continue
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        raise MigrationError(
+            f"database script returned no JSON result: {output[:500]}"
+        )
+
     def psql(self, sql, *, timeout=600, pgoptions=None):
         return self.runner.run(
             self._arguments(sql, pgoptions),
             timeout=timeout,
         )
+
+    def open_transaction(self, sql, *, timeout=600, pgoptions=None):
+        options = (
+            f"-c application_name={APPLICATION_NAME} "
+            "-c row_security=off"
+        )
+        if pgoptions:
+            options += " " + pgoptions
+        arguments = [
+            "docker",
+            "exec",
+            "-i",
+            "-e",
+            "PGCONNECT_TIMEOUT=10",
+            "-e",
+            f"PGOPTIONS={options}",
+            self.container,
+            "psql",
+            "-X",
+            "-q",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            self.user,
+            "-d",
+            self.database,
+            "-At",
+        ]
+        session = InteractivePsqlTransaction(
+            arguments,
+            timeout=timeout,
+        )
+        session.execute_until_ready(sql)
+        return session
+
+
+class InteractivePsqlTransaction:
+    READY_MARKER = "__FST_TRANSACTION_READY__"
+
+    def __init__(self, arguments, timeout):
+        self.timeout = timeout
+        self.process = subprocess.Popen(
+            arguments,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self.stderr_lines = []
+        self.finished = False
+
+    def execute_until_ready(self, sql):
+        if self.process.stdin is None:
+            raise MigrationError("interactive psql stdin is unavailable")
+        self.process.stdin.write(sql)
+        self.process.stdin.write(
+            f"\n\\echo {self.READY_MARKER}\n"
+        )
+        self.process.stdin.flush()
+        selector = selectors.DefaultSelector()
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        selector.register(self.process.stdout, selectors.EVENT_READ)
+        selector.register(self.process.stderr, selectors.EVENT_READ)
+        deadline = time.monotonic() + self.timeout
+        output_lines = []
+        try:
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    break
+                events = selector.select(timeout=0.5)
+                for key, _ in events:
+                    line = key.fileobj.readline()
+                    if not line:
+                        continue
+                    if key.fileobj is self.process.stderr:
+                        self.stderr_lines.append(line)
+                    elif line.strip() == self.READY_MARKER:
+                        return output_lines
+                    else:
+                        output_lines.append(line)
+            raise MigrationError(
+                "interactive PostgreSQL reproof did not reach decision "
+                "point: "
+                + "".join(self.stderr_lines)[-2000:]
+            )
+        except Exception:
+            self.rollback()
+            raise
+        finally:
+            selector.close()
+
+    def commit(self, sql):
+        self._finish(sql + "\n\\q\n")
+
+    def rollback(self):
+        if self.finished:
+            return
+        with contextlib.suppress(Exception):
+            self._finish("ROLLBACK;\n\\q\n")
+
+    def _finish(self, command):
+        if self.finished:
+            return
+        self.finished = True
+        if self.process.stdin is not None:
+            self.process.stdin.write(command)
+            self.process.stdin.flush()
+        try:
+            stdout, stderr = self.process.communicate(
+                timeout=self.timeout
+            )
+        except subprocess.TimeoutExpired as error:
+            self.process.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.process.wait(timeout=10)
+            raise MigrationError(
+                "interactive PostgreSQL transaction timed out"
+            ) from error
+        if self.process.returncode != 0:
+            raise MigrationError(
+                "interactive PostgreSQL transaction failed: "
+                + ("".join(self.stderr_lines) + stderr)[-4000:]
+                + stdout[-1000:]
+            )
 
 
 class FilesystemMonitor:
@@ -621,6 +767,71 @@ class FilesystemMonitor:
         self._stopped.set()
         self._thread.join(timeout=5)
         self._observe()
+
+
+class PublicApiMonitor:
+    def __init__(self, base_url, baseline, interval_seconds=5):
+        self.base_url = base_url
+        self.baseline = baseline
+        self.interval_seconds = interval_seconds
+        self.samples = 0
+        self.failures = []
+        self._stopped = threading.Event()
+        self._thread = None
+
+    def _observe(self):
+        try:
+            observed = capture_api_fingerprints(self.base_url)
+            if not compare_api_snapshots(self.baseline, observed):
+                self.failures.append(
+                    {
+                        "observedAtUtc": utc_now(),
+                        "reason": "fingerprint_mismatch",
+                        "observed": observed,
+                    }
+                )
+        except Exception as error:
+            self.failures.append(
+                {
+                    "observedAtUtc": utc_now(),
+                    "reason": str(error),
+                }
+            )
+        self.samples += 1
+
+    def _run(self):
+        while not self._stopped.wait(self.interval_seconds):
+            self._observe()
+
+    def __enter__(self):
+        self._observe()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="fst-snapshot-generation-api-monitor",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def stop(self, timeout_seconds=90):
+        self._stopped.set()
+        if self._thread is None:
+            return True
+        self._thread.join(timeout=timeout_seconds)
+        if self._thread.is_alive():
+            self.failures.append(
+                {
+                    "observedAtUtc": utc_now(),
+                    "reason": "api_monitor_thread_did_not_stop",
+                }
+            )
+            return False
+        self._observe()
+        self._thread = None
+        return True
+
+    def __exit__(self, *_):
+        self.stop()
 
 
 def find_mount(runner, path):
@@ -974,7 +1185,13 @@ def dependency_hashes(root, stage):
     return result
 
 
-def write_stage_report(root, stage, body):
+def write_stage_report(
+    root,
+    stage,
+    body,
+    *,
+    dependencies=None,
+):
     path = report_path(root, stage)
     if path.exists():
         return load_report(root, stage)
@@ -984,7 +1201,11 @@ def write_stage_report(root, stage, body):
         "stage": stage,
         "status": "succeeded",
         "completedAtUtc": utc_now(),
-        "dependencies": dependency_hashes(root, stage),
+        "dependencies": (
+            dependency_hashes(root, stage)
+            if dependencies is None
+            else dependencies
+        ),
         **body,
     }
     report["integritySha256"] = report_integrity(report)
@@ -1235,7 +1456,7 @@ def relation_state_query(relation_name):
                   ON tablespace.oid = relation.reltablespace
                 WHERE namespace.nspname = {sql_literal(TARGET_SCHEMA)}
                   AND relation.relname = {sql_literal(relation_name)}
-            ), 'null'::json)
+            ), 'null'::json) AS value
         """
 
 
@@ -1422,6 +1643,9 @@ def catalog_query(relation_name):
                                 'isUnique', metadata.indisunique,
                                 'isValid', metadata.indisvalid,
                                 'relationKind', index_class.relkind,
+                                'tablespace', COALESCE(
+                                    index_tablespace.spcname,
+                                    'pg_default'),
                                 'parentIndex', parent_index.relname)
                             ORDER BY index_class.relname),
                         '[]'::json)
@@ -1432,10 +1656,13 @@ def catalog_query(relation_name):
                       ON inheritance.inhrelid = index_class.oid
                     LEFT JOIN pg_class parent_index
                       ON parent_index.oid = inheritance.inhparent
+                    LEFT JOIN pg_tablespace index_tablespace
+                      ON index_tablespace.oid =
+                           index_class.reltablespace
                     WHERE metadata.indrelid = relation.oid),
                 'heapBytes', pg_relation_size(relation.oid),
                 'indexBytes', pg_indexes_size(relation.oid),
-                'totalBytes', pg_total_relation_size(relation.oid))
+                'totalBytes', pg_total_relation_size(relation.oid)) AS value
             FROM pg_class relation
             JOIN pg_namespace namespace
               ON namespace.oid = relation.relnamespace
@@ -1849,7 +2076,7 @@ def fingerprint_sql(relation_name, predicate="TRUE"):
                     bit_xor(hashtextextended({expression}, 1)), 0),
                 'hashSum2', COALESCE(
                     SUM(hashtextextended({expression}, 2)::numeric),
-                    0)::text)
+                    0)::text) AS value
             FROM {qualified(relation_name)} row
             WHERE {predicate}
     """
@@ -1873,7 +2100,7 @@ def snapshot_distribution_query(relation_name, predicate="TRUE"):
                         'hashXor1', hash_xor_1,
                         'hashSum2', hash_sum_2)
                     ORDER BY snapshot_id DESC),
-                '[]'::json)
+                '[]'::json) AS value
             FROM (
                 SELECT snapshot.snapshot_id,
                        COUNT(*)::bigint AS row_count,
@@ -2273,6 +2500,7 @@ def partition_shape_query(target, relation_name):
                 SELECT child.oid,
                        child.relname,
                        child.relkind,
+                       pg_get_userbyid(child.relowner) AS owner,
                        pg_get_expr(
                            child.relpartbound, child.oid, true)
                            AS partition_bound,
@@ -2293,6 +2521,9 @@ def partition_shape_query(target, relation_name):
                        metadata.indisprimary,
                        metadata.indisunique,
                        metadata.indisvalid,
+                       COALESCE(
+                           index_tablespace.spcname,
+                           'pg_default') AS tablespace,
                        pg_get_indexdef(index_class.oid) AS definition,
                        parent_index.relname AS parent_index
                 FROM root
@@ -2304,6 +2535,9 @@ def partition_shape_query(target, relation_name):
                   ON inheritance.inhrelid = index_class.oid
                 LEFT JOIN pg_class parent_index
                   ON parent_index.oid = inheritance.inhparent
+                LEFT JOIN pg_tablespace index_tablespace
+                  ON index_tablespace.oid =
+                       index_class.reltablespace
             )
             SELECT json_build_object(
                 'relationKind', (
@@ -2334,8 +2568,94 @@ def partition_shape_query(target, relation_name):
                             json_build_object(
                                 'name', relname,
                                 'relationKind', relkind,
+                                'owner', owner,
                                 'partitionBound', partition_bound,
-                                'tablespace', tablespace)
+                                'tablespace', tablespace,
+                                'columns', (
+                                    SELECT json_agg(
+                                        json_build_object(
+                                            'ordinal', attribute.attnum,
+                                            'name', attribute.attname,
+                                            'type', format_type(
+                                                attribute.atttypid,
+                                                attribute.atttypmod),
+                                            'notNull',
+                                                attribute.attnotnull,
+                                            'defaultExpression',
+                                                pg_get_expr(
+                                                    default_value.adbin,
+                                                    default_value.adrelid))
+                                        ORDER BY attribute.attnum)
+                                    FROM pg_attribute attribute
+                                    LEFT JOIN pg_attrdef default_value
+                                      ON default_value.adrelid =
+                                           attribute.attrelid
+                                     AND default_value.adnum =
+                                           attribute.attnum
+                                    WHERE attribute.attrelid =
+                                           children.oid
+                                      AND attribute.attnum > 0
+                                      AND NOT attribute.attisdropped),
+                                'constraints', (
+                                    SELECT COALESCE(
+                                        json_agg(
+                                            json_build_object(
+                                                'name',
+                                                    constraint_row.conname,
+                                                'type',
+                                                    constraint_row.contype,
+                                                'definition',
+                                                    pg_get_constraintdef(
+                                                        constraint_row.oid,
+                                                        true),
+                                                'validated',
+                                                    constraint_row.convalidated)
+                                            ORDER BY
+                                                constraint_row.conname),
+                                        '[]'::json)
+                                    FROM pg_constraint constraint_row
+                                    WHERE constraint_row.conrelid =
+                                           children.oid),
+                                'indexes', (
+                                    SELECT COALESCE(
+                                        json_agg(
+                                            json_build_object(
+                                                'name',
+                                                    index_class.relname,
+                                                'definition',
+                                                    pg_get_indexdef(
+                                                        index_class.oid),
+                                                'isPrimary',
+                                                    metadata.indisprimary,
+                                                'isUnique',
+                                                    metadata.indisunique,
+                                                'isValid',
+                                                    metadata.indisvalid,
+                                                'relationKind',
+                                                    index_class.relkind,
+                                                'tablespace',
+                                                    COALESCE(
+                                                        index_tablespace.spcname,
+                                                        'pg_default'),
+                                                'parentIndex',
+                                                    parent_index.relname)
+                                            ORDER BY index_class.relname),
+                                        '[]'::json)
+                                    FROM pg_index metadata
+                                    JOIN pg_class index_class
+                                      ON index_class.oid =
+                                           metadata.indexrelid
+                                    LEFT JOIN pg_inherits inheritance
+                                      ON inheritance.inhrelid =
+                                           index_class.oid
+                                    LEFT JOIN pg_class parent_index
+                                      ON parent_index.oid =
+                                           inheritance.inhparent
+                                    LEFT JOIN pg_tablespace index_tablespace
+                                      ON index_tablespace.oid =
+                                           index_class.reltablespace
+                                    WHERE metadata.indrelid =
+                                           children.oid))
                             ORDER BY relname),
                         '[]'::json)
                     FROM children),
@@ -2351,6 +2671,7 @@ def partition_shape_query(target, relation_name):
                                 'isPrimary', indisprimary,
                                 'isUnique', indisunique,
                                 'isValid', indisvalid,
+                                'tablespace', tablespace,
                                 'definition', definition,
                                 'parentIndex', parent_index)
                             ORDER BY relname),
@@ -2371,7 +2692,7 @@ def partition_shape_query(target, relation_name):
                       ON tablespace.oid = relation.reltablespace
                     WHERE COALESCE(
                         tablespace.spcname, 'pg_default')
-                        <> 'pg_default'))
+                        <> 'pg_default')) AS value
     """
 
 
@@ -2483,6 +2804,7 @@ def validate_partition_shape(
             or any(
                 item.get("relationKind") != "I"
                 or not item.get("isValid")
+                or item.get("tablespace") != "pg_default"
                 for item in indexes
             )
     ):
@@ -2495,6 +2817,107 @@ def validate_partition_shape(
                 "replacement indexes are not attached to top-parent indexes"
             )
     return True
+
+
+def validate_partition_child_catalogs(
+    shape,
+    target,
+    plan,
+    args,
+    *,
+    instrument_check_present,
+    primary_parent,
+    score_parent,
+):
+    expected_columns = plan["sourceCatalog"]["columns"]
+    expected_owner = plan["sourceCatalog"]["owner"]
+    source_primary = [
+        item
+        for item in plan["sourceCatalog"]["constraints"]
+        if item["type"] == "p"
+    ]
+    if len(source_primary) != 1:
+        raise MigrationError("source primary-key contract is not exact")
+    expected_primary_definition = source_primary[0]["definition"]
+    expected_check_name = replacement_instrument_check_name(
+        args.run_id,
+        target,
+    )
+    expected_check_definition = (
+        f"CHECK (instrument = '{target.instrument}'::text)"
+    )
+    for child in shape.get("children") or []:
+        constraints = child.get("constraints") or []
+        primary_constraints = [
+            item for item in constraints if item.get("type") == "p"
+        ]
+        checks = [
+            item for item in constraints if item.get("type") == "c"
+        ]
+        if (
+            child.get("owner") != expected_owner
+            or child.get("columns") != expected_columns
+            or len(constraints)
+            != (2 if instrument_check_present else 1)
+            or len(primary_constraints) != 1
+            or primary_constraints[0].get("definition")
+            != expected_primary_definition
+            or primary_constraints[0].get("validated") is not True
+        ):
+            raise MigrationError(
+                "generation child column/constraint contract is unexpected"
+            )
+        if instrument_check_present:
+            if (
+                len(checks) != 1
+                or checks[0].get("name") != expected_check_name
+                or checks[0].get("definition")
+                != expected_check_definition
+                or checks[0].get("validated") is not True
+            ):
+                raise MigrationError(
+                    "generation child instrument check is unexpected"
+                )
+        elif checks:
+            raise MigrationError(
+                "generation child retained an unexpected check"
+            )
+        indexes = child.get("indexes") or []
+        primary_indexes = [
+            item for item in indexes if item.get("isPrimary")
+        ]
+        score_indexes = [
+            item
+            for item in indexes
+            if (
+                not item.get("isPrimary")
+                and "(snapshot_id, song_id, instrument, score DESC)"
+                in item.get("definition", "")
+            )
+        ]
+        if (
+            len(indexes) != 2
+            or len(primary_indexes) != 1
+            or len(score_indexes) != 1
+            or primary_indexes[0].get("name")
+            != primary_constraints[0].get("name")
+            or primary_indexes[0].get("parentIndex")
+            != primary_parent
+            or primary_indexes[0].get("isUnique") is not True
+            or primary_indexes[0].get("isValid") is not True
+            or primary_indexes[0].get("relationKind") != "i"
+            or primary_indexes[0].get("tablespace") != "pg_default"
+            or "(snapshot_id, song_id, instrument, account_id)"
+            not in primary_indexes[0].get("definition", "")
+            or score_indexes[0].get("parentIndex") != score_parent
+            or score_indexes[0].get("isUnique") is not False
+            or score_indexes[0].get("isValid") is not True
+            or score_indexes[0].get("relationKind") != "i"
+            or score_indexes[0].get("tablespace") != "pg_default"
+        ):
+            raise MigrationError(
+                "generation child index contract is unexpected"
+            )
 
 
 def validate_parent_index_attachments(shape, plan):
@@ -2537,7 +2960,7 @@ def calculate_archive_capacity(source_total_bytes, scratch_free_bytes):
             "scratch free bytes",
             0,
     )
-    archive_budget = math.ceil(source * 1.10)
+    archive_budget = math.ceil(source * 2.20)
     restore_budget = math.ceil(source * 1.25) + 10 * 1024**3
     required = archive_budget + restore_budget + SCRATCH_RESERVE_BYTES
     return {
@@ -2621,7 +3044,14 @@ def archive_manifest_path(root, target):
     )
 
 
-def load_archive_manifest(root, target, *, verify_checksum=True):
+def load_archive_manifest(
+    root,
+    target,
+    *,
+    verify_checksum=True,
+    expected_run_id=None,
+    expected_plan_id=None,
+):
     manifest = read_json(archive_manifest_path(root, target))
     if (
             manifest.get("formatVersion") != FORMAT_VERSION
@@ -2630,6 +3060,14 @@ def load_archive_manifest(root, target, *, verify_checksum=True):
             or manifest.get("target")
             != f"{TARGET_SCHEMA}.{target.partition}"
             or manifest.get("instrument") != target.instrument
+            or (
+                expected_run_id is not None
+                and manifest.get("runId") != expected_run_id
+            )
+            or (
+                expected_plan_id is not None
+                and manifest.get("planId") != expected_plan_id
+            )
     ):
             raise MigrationError(
                 "archive manifest target identity is invalid"
@@ -2668,6 +3106,1068 @@ def load_archive_manifest(root, target, *, verify_checksum=True):
     ):
             raise MigrationError("archive TOC evidence changed")
     return manifest
+
+
+def verify_archive_evidence_chain(
+    args,
+    target,
+    plan,
+    archive_report,
+    restore_report,
+    validation_report,
+    *,
+    verify_archive_checksum=True,
+):
+    for label, report in (
+        ("archive", archive_report),
+        ("restore", restore_report),
+        ("validation", validation_report),
+    ):
+        if (
+            report.get("runId") != args.run_id
+            or report.get("planId") != plan["planId"]
+            or report.get("targetKey") != target.key
+        ):
+            raise MigrationError(
+                f"{label} evidence belongs to another migration"
+            )
+    manifest_path = archive_manifest_path(args.scratch_root, target)
+    manifest = load_archive_manifest(
+        args.scratch_root,
+        target,
+        verify_checksum=verify_archive_checksum,
+        expected_run_id=args.run_id,
+        expected_plan_id=plan["planId"],
+    )
+    manifest_sha = sha256_path(manifest_path)
+    archive_sha = manifest["archive"]["sha256"]
+    if archive_report.get("archiveManifest") != {
+        "path": str(manifest_path),
+        "sha256": manifest_sha,
+    }:
+        raise MigrationError("archive report manifest binding changed")
+    if (
+        archive_report.get("archive", {}).get("sha256") != archive_sha
+        or restore_report.get("archive", {}).get("sha256") != archive_sha
+        or validation_report.get("archive", {}).get("sha256")
+        != archive_sha
+        or validation_report.get("archive", {}).get("restoreProved")
+        is not True
+    ):
+        raise MigrationError("archive SHA chain is inconsistent")
+    return {
+        "manifest": manifest,
+        "manifestPath": str(manifest_path),
+        "manifestSha256": manifest_sha,
+        "archivePath": manifest["archive"]["path"],
+        "archiveSha256": archive_sha,
+        "reportPaths": {
+            stage: str(report_path(args.scratch_root, stage))
+            for stage in (
+                "check",
+                "plan",
+                "archive",
+                "restore",
+                "validate",
+            )
+        },
+        "reportSha256": {
+            stage: sha256_path(report_path(args.scratch_root, stage))
+            for stage in (
+                "check",
+                "plan",
+                "archive",
+                "restore",
+                "validate",
+            )
+        },
+    }
+
+
+def drop_recovery_evidence_path(root):
+    return pathlib.Path(root) / REPORTS_DIR / "drop.recovery.json"
+
+
+def has_drop_recovery_package(root):
+    package_root = (
+        pathlib.Path(root)
+        / RECOVERED_DIR
+        / "drop-recovery-package"
+    )
+    return bool(
+        list(
+            package_root.glob(
+                ".drop-recovery-manifest-*.recovery"
+            )
+        )
+        or list(
+            (
+                pathlib.Path(root) / REPORTS_DIR
+            ).glob(".drop-recovery-manifest-*.recovery")
+        )
+    )
+
+
+def write_drop_recovery_evidence(args, target, plan, pins):
+    copies = {
+        pin.label: pin.recovery_evidence(include_fallbacks=True)
+        for pin in pins
+    }
+    return write_integrity_evidence(
+        drop_recovery_evidence_path(args.scratch_root),
+        {
+            "formatVersion": FORMAT_VERSION,
+            "toolId": TOOL_ID,
+            "runId": args.run_id,
+            "planId": plan["planId"],
+            "targetKey": target.key,
+            "target": f"{TARGET_SCHEMA}.{target.partition}",
+            "copies": copies,
+        },
+    )
+
+
+def select_recovery_copy(
+    entry,
+    label,
+    *,
+    verify_checksum=True,
+):
+    candidates = list(entry.get("paths") or [])
+    if entry.get("path") not in candidates:
+        candidates.append(entry.get("path"))
+    for value in candidates:
+        if not value:
+            continue
+        path = pathlib.Path(value)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            continue
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & 0o222
+            or (
+                verify_checksum
+                and sha256_path(path) != entry.get("sha256")
+            )
+        ):
+            continue
+        return path
+    raise MigrationError(
+        f"authoritative {label} recovery copy is unavailable"
+    )
+
+
+def repair_recovery_working_copy(entry, selected, label):
+    working_value = entry.get("path")
+    if not working_value:
+        raise MigrationError(
+            f"{label} recovery lacks a working path"
+        )
+    working = pathlib.Path(working_value)
+    if working == selected:
+        return working
+    with contextlib.suppress(FileNotFoundError):
+        working.unlink()
+    os.link(selected, working)
+    fsync_directory(working.parent)
+    metadata = working.lstat()
+    if (
+        working.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_mode & 0o222
+        or sha256_path(working) != entry.get("sha256")
+    ):
+        raise MigrationError(
+            f"{label} working recovery path could not be repaired"
+        )
+    return working
+
+
+def load_drop_recovery_chain(
+    args,
+    target,
+    plan=None,
+    *,
+    verify_archive_checksum=True,
+):
+    package_root = (
+        pathlib.Path(args.scratch_root)
+        / RECOVERED_DIR
+        / "drop-recovery-package"
+    )
+    manifest_candidates = sorted(
+        (
+            pathlib.Path(args.scratch_root) / REPORTS_DIR
+        ).glob(".drop-recovery-manifest-*.recovery")
+    ) + sorted(
+        package_root.glob(
+            ".drop-recovery-manifest-*.recovery"
+        )
+    )
+    valid_manifests = []
+    for candidate in manifest_candidates:
+        match = re.fullmatch(
+            r"\.drop-recovery-manifest-([0-9a-f]{64})\.recovery",
+            candidate.name,
+        )
+        if (
+            match is not None
+            and candidate.is_file()
+            and not candidate.is_symlink()
+            and sha256_path(candidate) == match.group(1)
+        ):
+            valid_manifests.append((candidate, match.group(1)))
+    if (
+        not valid_manifests
+        or len({value for _, value in valid_manifests}) != 1
+    ):
+        raise MigrationError(
+            "checksum-addressed drop recovery manifest is unavailable"
+        )
+    recovery_manifest_path, recovery_manifest_sha = valid_manifests[0]
+    evidence = load_integrity_evidence(
+        recovery_manifest_path,
+        "drop recovery",
+    )
+    if (
+        evidence.get("runId") != args.run_id
+        or (
+            plan is not None
+            and evidence.get("planId") != plan["planId"]
+        )
+        or evidence.get("targetKey") != target.key
+        or evidence.get("target")
+        != f"{TARGET_SCHEMA}.{target.partition}"
+    ):
+        raise MigrationError(
+            "drop recovery evidence belongs to another migration"
+        )
+    copies = evidence.get("copies") or {}
+    required = {
+        "archive",
+        "manifest",
+        "planReport",
+        "archiveReport",
+        "checkReport",
+        "restoreReport",
+        "validateReport",
+    }
+    if set(copies) != required:
+        raise MigrationError("drop recovery package is incomplete")
+    selected = {
+        label: select_recovery_copy(
+            copies[label],
+            label,
+            verify_checksum=(
+                verify_archive_checksum
+                or label != "archive"
+            ),
+        )
+        for label in sorted(required)
+    }
+    selected = {
+        label: repair_recovery_working_copy(
+            copies[label],
+            path,
+            label,
+        )
+        for label, path in selected.items()
+    }
+    manifest = read_json(selected["manifest"])
+    archive_sha = copies["archive"]["sha256"]
+    if (
+        manifest.get("runId") != args.run_id
+        or manifest.get("planId") != evidence.get("planId")
+        or manifest.get("targetKey") != target.key
+        or manifest.get("archive", {}).get("sha256") != archive_sha
+    ):
+        raise MigrationError(
+            "recovery manifest/archive identity is inconsistent"
+        )
+    reports = {}
+    for stage in (
+        "check",
+        "plan",
+        "archive",
+        "restore",
+        "validate",
+    ):
+        report = read_json(selected[f"{stage}Report"])
+        if (
+            report.get("stage") != stage
+            or report.get("status") != "succeeded"
+            or report.get("runId") != args.run_id
+            or (
+                stage != "check"
+                and report.get("targetKey") != target.key
+            )
+            or report.get("integritySha256")
+            != report_integrity(report)
+        ):
+            raise MigrationError(
+                f"recovery {stage} report is inconsistent"
+            )
+        reports[stage] = report
+    recovered_plan = reports["plan"]
+    if plan is None:
+        plan = recovered_plan
+    if (
+        recovered_plan.get("planId") != plan["planId"]
+        or recovered_plan != plan
+        or reports["archive"].get("planId") != plan["planId"]
+        or reports["restore"].get("planId") != plan["planId"]
+        or reports["validate"].get("planId") != plan["planId"]
+        or reports["archive"].get("archive", {}).get("sha256")
+        != archive_sha
+        or reports["restore"].get("archive", {}).get("sha256")
+        != archive_sha
+        or reports["validate"].get("archive", {}).get("sha256")
+        != archive_sha
+    ):
+        raise MigrationError("recovery report SHA chain is inconsistent")
+    return {
+        "manifest": manifest,
+        "manifestPath": str(selected["manifest"]),
+        "manifestSha256": copies["manifest"]["sha256"],
+        "archivePath": str(selected["archive"]),
+        "archiveSha256": archive_sha,
+        "reportPaths": {
+            stage: str(selected[f"{stage}Report"])
+            for stage in (
+                "check",
+                "plan",
+                "archive",
+                "restore",
+                "validate",
+            )
+        },
+        "reportSha256": {
+            stage: copies[f"{stage}Report"]["sha256"]
+            for stage in (
+                "check",
+                "plan",
+                "archive",
+                "restore",
+                "validate",
+            )
+        },
+        "recoveryEvidence": evidence,
+        "dropRecoveryManifestPath": str(recovery_manifest_path),
+        "dropRecoveryManifestSha256": recovery_manifest_sha,
+        "reports": reports,
+    }
+
+
+LEASE_BREAK_REQUESTED = False
+
+
+def file_lease_break_handler(_signal_number, _frame):
+    global LEASE_BREAK_REQUESTED
+    LEASE_BREAK_REQUESTED = True
+
+
+def sha256_descriptor(descriptor):
+    digest = hashlib.sha256()
+    offset = 0
+    while True:
+        chunk = os.pread(descriptor, 1024 * 1024, offset)
+        if not chunk:
+            return digest.hexdigest()
+        digest.update(chunk)
+        offset += len(chunk)
+
+
+def acquire_read_lease(descriptor):
+    if not hasattr(fcntl, "F_SETLEASE"):
+        raise MigrationError(
+            "kernel file leases are unavailable"
+        )
+    current_handler = signal.getsignal(signal.SIGIO)
+    if current_handler not in (
+        signal.SIG_DFL,
+        file_lease_break_handler,
+    ):
+        raise MigrationError("SIGIO is owned by another handler")
+    signal.signal(signal.SIGIO, file_lease_break_handler)
+    try:
+        fcntl.fcntl(descriptor, fcntl.F_SETLEASE, fcntl.F_RDLCK)
+    except OSError as error:
+        raise MigrationError(
+            "could not acquire a kernel read lease for evidence"
+        ) from error
+
+
+def copy_descriptor_to_recovery(
+    source_descriptor,
+    recovery_path,
+    expected_sha256,
+):
+    temporary = recovery_path.with_name(
+        f".{recovery_path.name}.partial-{os.getpid()}-{time.time_ns()}"
+    )
+    output = os.open(
+        temporary,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o400,
+    )
+    digest = hashlib.sha256()
+    offset = 0
+    try:
+        while True:
+            chunk = os.pread(source_descriptor, 8 * 1024 * 1024, offset)
+            if not chunk:
+                break
+            digest.update(chunk)
+            offset += len(chunk)
+            remaining = memoryview(chunk)
+            while remaining:
+                written = os.write(output, remaining)
+                remaining = remaining[written:]
+        os.fsync(output)
+        os.fchmod(output, 0o400)
+    except Exception:
+        os.close(output)
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+        raise
+    os.close(output)
+    if digest.hexdigest() != expected_sha256:
+        temporary.unlink()
+        raise MigrationError(
+            "source evidence checksum changed during recovery copy"
+        )
+    os.replace(temporary, recovery_path)
+    fsync_directory(recovery_path.parent)
+
+
+def cleanup_stale_recovery_partials(recovery_paths):
+    touched = set()
+    for recovery_path in recovery_paths:
+        recovery_path = pathlib.Path(recovery_path)
+        pattern = f".{recovery_path.name}.partial-*"
+        for candidate in recovery_path.parent.glob(pattern):
+            metadata = candidate.lstat()
+            if (
+                candidate.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or candidate.parent != recovery_path.parent
+            ):
+                raise MigrationError(
+                    f"stale recovery partial is unsafe: {candidate}"
+                )
+            candidate.unlink()
+            touched.add(candidate.parent)
+    for directory in touched:
+        fsync_directory(directory)
+
+
+class PinnedFileEvidence:
+    def __init__(
+        self,
+        label,
+        path,
+        recovery_path,
+        anchor_path,
+        expected_sha256,
+    ):
+        self.label = label
+        self.path = pathlib.Path(path)
+        self.recovery_path = pathlib.Path(recovery_path)
+        self.anchor_path = pathlib.Path(anchor_path)
+        self.expected_sha256 = expected_sha256
+        self.source_descriptor = os.open(
+            self.path,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            acquire_read_lease(self.source_descriptor)
+        except Exception:
+            os.close(self.source_descriptor)
+            self.source_descriptor = None
+            raise
+        source = os.fstat(self.source_descriptor)
+        observed = self.path.lstat()
+        if (
+            not stat.S_ISREG(source.st_mode)
+            or self.path.is_symlink()
+            or observed.st_dev != source.st_dev
+            or observed.st_ino != source.st_ino
+        ):
+            self.close()
+            raise MigrationError(
+                f"source evidence path is unsafe: {self.path}"
+            )
+        self.source_identity = (
+            source.st_dev,
+            source.st_ino,
+            source.st_size,
+            source.st_mtime_ns,
+            source.st_ctime_ns,
+            source.st_nlink,
+        )
+        if not self.recovery_path.exists():
+            if self.anchor_path.is_file() and not self.anchor_path.is_symlink():
+                os.link(self.anchor_path, self.recovery_path)
+                fsync_directory(self.recovery_path.parent)
+            else:
+                try:
+                    copy_descriptor_to_recovery(
+                        self.source_descriptor,
+                        self.recovery_path,
+                        expected_sha256,
+                    )
+                except Exception:
+                    self.close()
+                    raise
+        recovery_metadata = self.recovery_path.lstat()
+        if (
+            self.recovery_path.is_symlink()
+            or not stat.S_ISREG(recovery_metadata.st_mode)
+            or recovery_metadata.st_mode & 0o222
+            or os.path.samefile(self.path, self.recovery_path)
+        ):
+            self.close()
+            raise MigrationError(
+                f"recovery evidence is not independent and read-only: "
+                f"{self.recovery_path}"
+            )
+        if not self.anchor_path.exists():
+            os.link(self.recovery_path, self.anchor_path)
+            fsync_directory(self.anchor_path.parent)
+        if (
+            self.anchor_path.is_symlink()
+            or not self.anchor_path.is_file()
+            or not os.path.samefile(
+                self.recovery_path,
+                self.anchor_path,
+            )
+        ):
+            self.close()
+            raise MigrationError(
+                f"recovery evidence anchor is invalid: "
+                f"{self.anchor_path}"
+            )
+        self.recovery_descriptor = os.open(
+            self.recovery_path,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            acquire_read_lease(self.recovery_descriptor)
+        except Exception:
+            self.close()
+            raise
+        recovery = os.fstat(self.recovery_descriptor)
+        self.recovery_identity = (
+            recovery.st_dev,
+            recovery.st_ino,
+            recovery.st_size,
+            recovery.st_mtime_ns,
+            recovery.st_ctime_ns,
+            recovery.st_nlink,
+        )
+        try:
+            self.verify(checksum=True)
+        except Exception:
+            self.close()
+            raise
+
+    def verify(self, *, checksum):
+        global LEASE_BREAK_REQUESTED
+        source = os.fstat(self.source_descriptor)
+        observed = self.path.lstat()
+        recovery = os.fstat(self.recovery_descriptor)
+        recovery_path = self.recovery_path.lstat()
+        anchor_path = self.anchor_path.lstat()
+        if (
+            LEASE_BREAK_REQUESTED
+            or self.path.is_symlink()
+            or self.recovery_path.is_symlink()
+            or (
+                observed.st_dev,
+                observed.st_ino,
+                observed.st_size,
+                observed.st_mtime_ns,
+                observed.st_ctime_ns,
+                observed.st_nlink,
+            )
+            != self.source_identity
+            or (
+                source.st_dev,
+                source.st_ino,
+                source.st_size,
+                source.st_mtime_ns,
+                source.st_ctime_ns,
+                source.st_nlink,
+            )
+            != self.source_identity
+            or (
+                recovery_path.st_dev,
+                recovery_path.st_ino,
+                recovery_path.st_size,
+                recovery_path.st_mtime_ns,
+                recovery_path.st_ctime_ns,
+                recovery_path.st_nlink,
+            )
+            != self.recovery_identity
+            or (
+                anchor_path.st_dev,
+                anchor_path.st_ino,
+                anchor_path.st_size,
+                anchor_path.st_mtime_ns,
+                anchor_path.st_ctime_ns,
+                anchor_path.st_nlink,
+            )
+            != self.recovery_identity
+            or (
+                recovery.st_dev,
+                recovery.st_ino,
+                recovery.st_size,
+                recovery.st_mtime_ns,
+                recovery.st_ctime_ns,
+                recovery.st_nlink,
+            )
+            != self.recovery_identity
+            or (
+                checksum
+                and (
+                    sha256_descriptor(self.source_descriptor)
+                    != self.expected_sha256
+                    or sha256_descriptor(self.recovery_descriptor)
+                    != self.expected_sha256
+                )
+            )
+        ):
+            raise MigrationError(
+                f"pinned evidence changed before commit: {self.path}"
+            )
+
+    def recovery_evidence(self, *, include_fallbacks):
+        if (
+            sha256_descriptor(self.recovery_descriptor)
+            != self.expected_sha256
+        ):
+            raise MigrationError(
+                f"recovery evidence checksum changed: "
+                f"{self.recovery_path}"
+            )
+        descriptor_metadata = os.fstat(self.recovery_descriptor)
+
+        def is_valid_path(path):
+            try:
+                metadata = path.lstat()
+            except FileNotFoundError:
+                return False
+            return not (
+                path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_mode & 0o222
+                or metadata.st_dev != descriptor_metadata.st_dev
+                or metadata.st_ino != descriptor_metadata.st_ino
+                or metadata.st_size != descriptor_metadata.st_size
+            )
+
+        anchor_valid = is_valid_path(self.anchor_path)
+        recovery_valid = is_valid_path(self.recovery_path)
+        if not recovery_valid and anchor_valid:
+            with contextlib.suppress(FileNotFoundError):
+                self.recovery_path.unlink()
+            os.link(self.anchor_path, self.recovery_path)
+            fsync_directory(self.recovery_path.parent)
+            recovery_valid = is_valid_path(self.recovery_path)
+        if not recovery_valid:
+            raise MigrationError(
+                f"recovery evidence has no durable path: "
+                f"{self.recovery_path}"
+            )
+        valid_paths = [str(self.recovery_path)]
+        if anchor_valid:
+            valid_paths.append(str(self.anchor_path))
+        result = {
+            "path": str(self.recovery_path),
+            "sha256": self.expected_sha256,
+            "independentCopy": True,
+            "readOnly": True,
+        }
+        if include_fallbacks:
+            result["paths"] = valid_paths
+        return result
+
+    def close(self):
+        for descriptor_name in (
+            "recovery_descriptor",
+            "source_descriptor",
+        ):
+            descriptor = getattr(self, descriptor_name, None)
+            if descriptor is None:
+                continue
+            with contextlib.suppress(OSError):
+                fcntl.fcntl(
+                    descriptor,
+                    fcntl.F_SETLEASE,
+                    fcntl.F_UNLCK,
+                )
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+            setattr(self, descriptor_name, None)
+
+
+class RetainedRecoveryEvidence:
+    def __init__(self, label, path, expected_sha256):
+        self.label = label
+        self.path = pathlib.Path(path)
+        self.expected_sha256 = expected_sha256
+        self.descriptor = os.open(
+            self.path,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            acquire_read_lease(self.descriptor)
+            metadata = os.fstat(self.descriptor)
+            observed = self.path.lstat()
+            self.identity = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+                metadata.st_nlink,
+            )
+            if (
+                self.path.is_symlink()
+                or observed.st_mode & 0o222
+                or (
+                    observed.st_dev,
+                    observed.st_ino,
+                    observed.st_size,
+                    observed.st_mtime_ns,
+                    observed.st_ctime_ns,
+                    observed.st_nlink,
+                )
+                != self.identity
+            ):
+                raise MigrationError(
+                    f"retained recovery path is unsafe: {self.path}"
+                )
+            self.verify(checksum=True)
+        except Exception:
+            self.close()
+            raise
+
+    def verify(self, *, checksum):
+        metadata = os.fstat(self.descriptor)
+        observed = self.path.lstat()
+        identity = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+            metadata.st_nlink,
+        )
+        observed_identity = (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_size,
+            observed.st_mtime_ns,
+            observed.st_ctime_ns,
+            observed.st_nlink,
+        )
+        if (
+            LEASE_BREAK_REQUESTED
+            or self.path.is_symlink()
+            or observed.st_mode & 0o222
+            or identity != self.identity
+            or observed_identity != self.identity
+            or (
+                checksum
+                and sha256_descriptor(self.descriptor)
+                != self.expected_sha256
+            )
+        ):
+            raise MigrationError(
+                f"retained recovery evidence changed: {self.path}"
+            )
+
+    def recovery_evidence(self, *, include_fallbacks):
+        self.verify(checksum=True)
+        result = {
+            "path": str(self.path),
+            "sha256": self.expected_sha256,
+            "independentCopy": True,
+            "readOnly": True,
+        }
+        if include_fallbacks:
+            result["paths"] = [str(self.path)]
+        return result
+
+    def close(self):
+        descriptor = getattr(self, "descriptor", None)
+        if descriptor is None:
+            return
+        with contextlib.suppress(OSError):
+            fcntl.fcntl(
+                descriptor,
+                fcntl.F_SETLEASE,
+                fcntl.F_UNLCK,
+            )
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        self.descriptor = None
+
+
+def pin_archive_evidence(chain):
+    archive_path = pathlib.Path(chain["archivePath"])
+    manifest_path = pathlib.Path(chain["manifestPath"])
+    recovery_paths = archive_evidence_recovery_paths(chain)
+    anchor_paths = archive_evidence_anchor_paths(chain)
+    anchor_root = next(iter(anchor_paths.values())).parent
+    anchor_root.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+        mode=0o700,
+    )
+    if not anchor_root.exists():
+        anchor_root.mkdir(mode=0o700)
+        fsync_directory(anchor_root.parent)
+    anchor_metadata = anchor_root.lstat()
+    if (
+        anchor_root.is_symlink()
+        or not stat.S_ISDIR(anchor_metadata.st_mode)
+        or anchor_metadata.st_uid != os.getuid()
+    ):
+        raise MigrationError(
+            "recovery package directory is unsafe"
+        )
+    sources = [
+        (
+            "archive",
+            archive_path,
+            recovery_paths["archive"],
+            anchor_paths["archive"],
+            chain["archiveSha256"],
+        ),
+        (
+            "manifest",
+            manifest_path,
+            recovery_paths["manifest"],
+            anchor_paths["manifest"],
+            chain["manifestSha256"],
+        ),
+    ]
+    sources.extend(
+        (
+            f"{stage}Report",
+            pathlib.Path(path),
+            recovery_paths[f"{stage}Report"],
+            anchor_paths[f"{stage}Report"],
+            chain["reportSha256"][stage],
+        )
+        for stage, path in (chain.get("reportPaths") or {}).items()
+    )
+    cleanup_stale_recovery_partials(
+        recovery for _, _, recovery, _, _ in sources
+    )
+    required_bytes = sum(
+        source.stat().st_size
+        for _, source, recovery, _, _ in sources
+        if not recovery.exists()
+    )
+    free_bytes = shutil.disk_usage(archive_path.parent).free
+    if free_bytes - required_bytes < SCRATCH_RESERVE_BYTES:
+        raise MigrationError(
+            "scratch capacity cannot retain independent recovery copies"
+        )
+    global LEASE_BREAK_REQUESTED
+    LEASE_BREAK_REQUESTED = False
+    pins = []
+    try:
+        for label, source, recovery, anchor, expected_sha in sources:
+            pins.append(
+                PinnedFileEvidence(
+                    label,
+                    source,
+                    recovery,
+                    anchor,
+                    expected_sha,
+                )
+            )
+        return pins
+    except Exception:
+        for pin in pins:
+            pin.close()
+        raise
+
+
+def pin_drop_recovery_manifest(args):
+    path = drop_recovery_evidence_path(args.scratch_root)
+    expected_sha = sha256_path(path)
+    recovery_path = path.with_name(
+        f".drop-recovery-manifest-{expected_sha}.recovery"
+    )
+    cleanup_stale_recovery_partials([recovery_path])
+    package_root = (
+        pathlib.Path(args.scratch_root)
+        / RECOVERED_DIR
+        / "drop-recovery-package"
+    )
+    return PinnedFileEvidence(
+        "dropRecoveryManifest",
+        path,
+        recovery_path,
+        package_root
+        / f".drop-recovery-manifest-{expected_sha}.recovery",
+        expected_sha,
+    )
+
+
+def seal_drop_recovery_package(args, *, required):
+    package_root = (
+        pathlib.Path(args.scratch_root)
+        / RECOVERED_DIR
+        / "drop-recovery-package"
+    )
+    if not package_root.exists():
+        if required:
+            raise MigrationError(
+                "drop recovery package directory disappeared"
+            )
+        return False
+    package_root.chmod(0o500)
+    fsync_directory(package_root.parent)
+    return True
+
+
+def pin_retained_recovery_chain(chain):
+    global LEASE_BREAK_REQUESTED
+    LEASE_BREAK_REQUESTED = False
+    sources = [
+        (
+            "archive",
+            chain["archivePath"],
+            chain["archiveSha256"],
+        ),
+        (
+            "manifest",
+            chain["manifestPath"],
+            chain["manifestSha256"],
+        ),
+    ]
+    sources.extend(
+        (
+            f"{stage}Report",
+            path,
+            chain["reportSha256"][stage],
+        )
+        for stage, path in chain["reportPaths"].items()
+    )
+    sources.append(
+        (
+            "dropRecoveryManifest",
+            chain["dropRecoveryManifestPath"],
+            chain["dropRecoveryManifestSha256"],
+        )
+    )
+    pins = []
+    try:
+        for label, path, expected_sha in sources:
+            pins.append(
+                RetainedRecoveryEvidence(
+                    label,
+                    path,
+                    expected_sha,
+                )
+            )
+        return pins
+    except Exception:
+        for pin in pins:
+            pin.close()
+        raise
+
+
+def archive_evidence_recovery_paths(chain):
+    archive_path = pathlib.Path(chain["archivePath"])
+    manifest_path = pathlib.Path(chain["manifestPath"])
+    paths = {
+        "archive": archive_path.with_name(
+            "." + archive_path.name + ".drop-recovery"
+        ),
+        "manifest": manifest_path.with_name(
+            "." + manifest_path.name + ".drop-recovery"
+        ),
+    }
+    for stage, path in (chain.get("reportPaths") or {}).items():
+        report = pathlib.Path(path)
+        paths[f"{stage}Report"] = report.with_name(
+            "." + report.name + ".drop-recovery"
+        )
+    return paths
+
+
+def archive_evidence_anchor_paths(chain):
+    root = pathlib.Path(chain["manifestPath"]).parent.parent
+    anchor_root = (
+        root
+        / RECOVERED_DIR
+        / "drop-recovery-package"
+    )
+    paths = {
+        "archive": anchor_root / ".drop-archive.recovery",
+        "manifest": anchor_root / ".drop-manifest.recovery",
+    }
+    for stage in (chain.get("reportPaths") or {}):
+        paths[f"{stage}Report"] = (
+            anchor_root / f".drop-{stage}-report.recovery"
+        )
+    return paths
+
+
+def verify_retained_recovery_copies(pins):
+    return {
+        pin.label: pin.recovery_evidence(
+            include_fallbacks=False
+        )
+        for pin in pins
+    }
+
+
+def wait_for_test_final_drop_gate(args, phase):
+    if not args.test_final_drop_gate:
+        return
+    gate = pathlib.Path(args.test_final_drop_gate)
+    ready = gate.with_name(gate.name + f".{phase}.ready")
+    proceed = gate.with_name(gate.name + f".{phase}.continue")
+    write_json_exclusive(
+        ready,
+        {
+            "runId": args.run_id,
+            "stage": "drop",
+            "phase": phase,
+            "status": "ready",
+            "createdAtUtc": utc_now(),
+        },
+    )
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if proceed.is_file() and not proceed.is_symlink():
+            return
+        time.sleep(0.05)
+    raise MigrationError(
+        "test final-drop decision gate timed out"
+    )
 
 
 def advisory_lock_guard_sql():
@@ -4081,6 +5581,7 @@ def build_sql(args, target, plan):
                 values = ", ".join(str(value) for value in protected_ids)
                 return f"""
                     BEGIN;
+                    SET LOCAL idle_in_transaction_session_timeout = 0;
                     SET LOCAL lock_timeout = '2s';
                     SET LOCAL statement_timeout = '0';
                     SET LOCAL temp_tablespaces = 'pg_default';
@@ -4304,6 +5805,21 @@ def stage_build(args, runner):
                     target,
                     plan["planIdentity"]["protectedSnapshotIds"],
                     attached=False,
+                )
+                validate_partition_child_catalogs(
+                    pre_swap_shape,
+                    target,
+                    plan,
+                    args,
+                    instrument_check_present=True,
+                    primary_parent=replacement_primary_name(
+                        args.run_id,
+                        target,
+                    ),
+                    score_parent=replacement_score_name(
+                        args.run_id,
+                        target,
+                    ),
                 )
                 sizes = database.json(
                     f"""
@@ -4735,6 +6251,21 @@ def stage_swap(args, runner):
                     target,
                     plan["planIdentity"]["protectedSnapshotIds"],
                 )
+                validate_partition_child_catalogs(
+                    shape,
+                    target,
+                    plan,
+                    args,
+                    instrument_check_present=True,
+                    primary_parent=replacement_primary_name(
+                        args.run_id,
+                        target,
+                    ),
+                    score_parent=replacement_score_name(
+                        args.run_id,
+                        target,
+                    ),
+                )
                 validate_parent_index_attachments(shape, plan)
                 body = {
                     "runId": args.run_id,
@@ -4872,6 +6403,21 @@ def stage_validate(args, runner):
                     partition_shape_query(target, target.partition)
                 )
                 validate_partition_shape(shape, target, protected_ids_now)
+                validate_partition_child_catalogs(
+                    shape,
+                    target,
+                    plan,
+                    args,
+                    instrument_check_present=True,
+                    primary_parent=replacement_primary_name(
+                        args.run_id,
+                        target,
+                    ),
+                    score_parent=replacement_score_name(
+                        args.run_id,
+                        target,
+                    ),
+                )
                 validate_parent_index_attachments(shape, plan)
                 catalog = database.json(catalog_query(target.partition))
                 if (
@@ -4978,11 +6524,656 @@ def final_catalog_names_match(catalog, source_names):
                 ]
                 return (
                     len(primary) == 1
+                    and len(catalog.get("constraints") or []) == 1
                     and len(primary_indexes) == 1
                     and len(score_indexes) == 1
+                    and len(indexes) == 2
                     and primary[0]["name"] == source_names["primaryConstraint"]
                     and primary_indexes[0]["name"] == source_names["primaryIndex"]
                     and score_indexes[0]["name"] == source_names["scoreIndex"]
+                )
+
+
+def catalog_without_sizes(catalog):
+                result = dict(catalog)
+                for key in ("heapBytes", "indexBytes", "totalBytes"):
+                    result.pop(key, None)
+                return result
+
+
+def validate_final_candidate_catalog(
+    catalog,
+    plan,
+    target,
+    source_names,
+):
+                if (
+                    catalog.get("relationKind") != "p"
+                    or catalog.get("partitionKey")
+                    != "LIST (snapshot_id)"
+                    or catalog.get("partitionBound") != target.bound
+                    or catalog.get("owner")
+                    != plan["sourceCatalog"].get("owner")
+                    or catalog.get("tablespace") != "pg_default"
+                    or catalog.get("columns")
+                    != plan["sourceCatalog"].get("columns")
+                    or not final_catalog_names_match(
+                        catalog,
+                        source_names,
+                    )
+                ):
+                    raise MigrationError(
+                        "final partitioned catalog is unexpected"
+                    )
+
+
+def rename_index_catalog_entry(entry, old_name, new_name):
+                result = dict(entry)
+                result["name"] = new_name
+                definition = result.get("definition", "")
+                for old_token, new_token in (
+                    (
+                        f"INDEX {old_name} ",
+                        f"INDEX {new_name} ",
+                    ),
+                    (
+                        f'INDEX "{old_name}" ',
+                        f'INDEX "{new_name}" ',
+                    ),
+                ):
+                    if old_token in definition:
+                        result["definition"] = definition.replace(
+                            old_token,
+                            new_token,
+                            1,
+                        )
+                        break
+                else:
+                    raise MigrationError(
+                        f"cannot rename expected index definition {old_name}"
+                    )
+                return result
+
+
+def expected_final_partition_evidence(
+    validation,
+    args,
+    target,
+    source_names,
+):
+                primary_before = replacement_primary_name(
+                    args.run_id,
+                    target,
+                )
+                score_before = replacement_score_name(
+                    args.run_id,
+                    target,
+                )
+                shape = json.loads(
+                    json.dumps(validation["candidateShape"])
+                )
+                shape_indexes = []
+                for entry in shape["indexes"]:
+                    if entry["name"] == primary_before:
+                        entry = rename_index_catalog_entry(
+                            entry,
+                            primary_before,
+                            source_names["primaryIndex"],
+                        )
+                    elif entry["name"] == score_before:
+                        entry = rename_index_catalog_entry(
+                            entry,
+                            score_before,
+                            source_names["scoreIndex"],
+                        )
+                    else:
+                        raise MigrationError(
+                            "candidate shape has an unexpected root index"
+                        )
+                    shape_indexes.append(entry)
+                shape["indexes"] = sorted(
+                    shape_indexes,
+                    key=lambda item: item["name"],
+                )
+                for child in shape.get("children") or []:
+                    child["constraints"] = [
+                        entry
+                        for entry in child.get("constraints") or []
+                        if entry.get("name")
+                        != replacement_instrument_check_name(
+                            args.run_id,
+                            target,
+                        )
+                    ]
+                    for entry in child.get("indexes") or []:
+                        if entry.get("parentIndex") == primary_before:
+                            entry["parentIndex"] = source_names[
+                                "primaryIndex"
+                            ]
+                        elif entry.get("parentIndex") == score_before:
+                            entry["parentIndex"] = source_names[
+                                "scoreIndex"
+                            ]
+
+                catalog = json.loads(
+                    json.dumps(validation["candidateCatalog"])
+                )
+                constraints = []
+                for entry in catalog["constraints"]:
+                    if entry["name"] == replacement_instrument_check_name(
+                        args.run_id,
+                        target,
+                    ):
+                        continue
+                    if entry["name"] == primary_before:
+                        entry["name"] = source_names[
+                            "primaryConstraint"
+                        ]
+                    constraints.append(entry)
+                catalog["constraints"] = sorted(
+                    constraints,
+                    key=lambda item: item["name"],
+                )
+                indexes = []
+                for entry in catalog["indexes"]:
+                    if entry["name"] == primary_before:
+                        entry = rename_index_catalog_entry(
+                            entry,
+                            primary_before,
+                            source_names["primaryIndex"],
+                        )
+                    elif entry["name"] == score_before:
+                        entry = rename_index_catalog_entry(
+                            entry,
+                            score_before,
+                            source_names["scoreIndex"],
+                        )
+                    else:
+                        raise MigrationError(
+                            "candidate catalog has an unexpected root index"
+                        )
+                    indexes.append(entry)
+                catalog["indexes"] = sorted(
+                    indexes,
+                    key=lambda item: item["name"],
+                )
+                return shape, catalog_without_sizes(catalog)
+
+
+def transactional_partition_evidence_guard_sql(
+    target,
+    expected_shape,
+    expected_catalog,
+    label,
+):
+                shape_query = partition_shape_query(
+                    target,
+                    target.partition,
+                )
+                catalog = catalog_query(target.partition)
+                return f"""
+                    DO ${label}$
+                    DECLARE
+                        locked_shape JSONB;
+                        locked_catalog JSONB;
+                    BEGIN
+                        SELECT result.value::jsonb
+                        INTO locked_shape
+                        FROM ({shape_query}) result;
+                        SELECT (
+                            result.value::jsonb
+                            - 'heapBytes'
+                            - 'indexBytes'
+                            - 'totalBytes')
+                        INTO locked_catalog
+                        FROM ({catalog}) result;
+                        IF locked_shape IS DISTINCT FROM
+                                {sql_literal(json.dumps(
+                                    expected_shape,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ))}::jsonb
+                           OR locked_catalog IS DISTINCT FROM
+                                {sql_literal(json.dumps(
+                                    expected_catalog,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ))}::jsonb
+                        THEN
+                            RAISE EXCEPTION
+                                'partition evidence changed at {label}';
+                        END IF;
+                    END
+                    ${label}$;
+                """
+
+
+def pre_drop_reproof_sql(args, target, retired):
+                target_fingerprint = fingerprint_sql(target.partition)
+                original_fingerprint = fingerprint_sql(retired)
+                original_distribution = snapshot_distribution_query(retired)
+                target_state = relation_state_query(target.partition)
+                original_state = relation_state_query(retired)
+                return f"""
+                    BEGIN;
+                    SET LOCAL idle_in_transaction_session_timeout = 0;
+                    SET LOCAL lock_timeout = '2s';
+                    SET LOCAL statement_timeout =
+                        '{int(args.query_timeout_seconds)}s';
+                    LOCK TABLE {qualified(target.partition)} IN SHARE MODE;
+                    LOCK TABLE {qualified(retired)} IN SHARE MODE;
+                    WITH publication_slots AS (
+                        SELECT current_publication_id AS publication_id
+                        FROM scrape_publication_state
+                        WHERE id = TRUE
+                        UNION ALL
+                        SELECT previous_publication_id
+                        FROM scrape_publication_state
+                        WHERE id = TRUE
+                        UNION ALL
+                        SELECT working_publication_id
+                        FROM scrape_publication_state
+                        WHERE id = TRUE
+                    ),
+                    resolved_publications AS (
+                        SELECT generation.scrape_id
+                        FROM publication_slots slot
+                        JOIN publication_generations generation
+                          ON generation.publication_id =
+                                slot.publication_id
+                        WHERE slot.publication_id IS NOT NULL
+                    ),
+                    protected AS (
+                        SELECT active_snapshot_id AS snapshot_id
+                        FROM leaderboard_snapshot_state
+                        WHERE instrument =
+                                {sql_literal(target.instrument)}
+                          AND active_snapshot_id IS NOT NULL
+                        UNION
+                        SELECT source_snapshot_id
+                        FROM solo_current_projection_scope
+                        WHERE instrument =
+                                {sql_literal(target.instrument)}
+                          AND source_snapshot_id IS NOT NULL
+                        UNION
+                        SELECT source.source_snapshot_id
+                        FROM resolved_publications publication
+                        JOIN leaderboard_published_scope_source source
+                          ON source.published_scrape_id =
+                                publication.scrape_id
+                        WHERE source.instrument =
+                                {sql_literal(target.instrument)}
+                          AND source.source_kind = 'snapshot'
+                          AND source.source_snapshot_id IS NOT NULL
+                    )
+                    SELECT json_build_object(
+                        'publication', (
+                            SELECT json_build_object(
+                                'publishedScrapeId',
+                                    published_scrape_id,
+                                'currentPublicationId',
+                                    current_publication_id,
+                                'previousPublicationId',
+                                    previous_publication_id,
+                                'workingPublicationId',
+                                    working_publication_id,
+                                'publicReadsFrozen',
+                                    public_reads_frozen)
+                            FROM scrape_publication_state
+                            WHERE id = TRUE),
+                        'protectedSnapshotIds', (
+                            SELECT COALESCE(
+                                json_agg(
+                                    DISTINCT snapshot_id
+                                    ORDER BY snapshot_id),
+                                '[]'::json)
+                            FROM protected),
+                        'targetFingerprint', (
+                            SELECT value
+                            FROM ({target_fingerprint}) fingerprint),
+                        'originalFingerprint', (
+                            SELECT value
+                            FROM ({original_fingerprint}) fingerprint),
+                        'originalDistribution', (
+                            SELECT value
+                            FROM ({original_distribution}) distribution),
+                        'targetState', (
+                            SELECT value
+                            FROM ({target_state}) state),
+                        'originalState', (
+                            SELECT value
+                            FROM ({original_state}) state))
+                        AS value;
+                    COMMIT;
+                """
+
+
+def final_drop_sql(
+    args,
+    target,
+    plan,
+    restore,
+    validation,
+    retired,
+    source_names,
+):
+                expected_ids = sorted(
+                    plan["planIdentity"]["protectedSnapshotIds"]
+                )
+                expected_ids_sql = ", ".join(
+                    str(value) for value in expected_ids
+                )
+                expected_target_fingerprint = json.dumps(
+                    plan["planIdentity"]["retainedFingerprint"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                expected_target_distribution = json.dumps(
+                    normalized_distribution(
+                        plan["planIdentity"]["retainedDistribution"]
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                expected_original_fingerprint = json.dumps(
+                    restore["restoredFingerprint"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                expected_original_distribution = json.dumps(
+                    normalized_distribution(
+                        restore["restoredDistribution"]
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                publication = plan["planIdentity"]["referenceParity"][
+                    "publication"
+                ]
+                expected_working = (
+                    "NULL::bigint"
+                    if publication.get("workingPublicationId") is None
+                    else str(publication["workingPublicationId"])
+                )
+                locked_guard = (
+                    transactional_partition_evidence_guard_sql(
+                        target,
+                        validation["candidateShape"],
+                        catalog_without_sizes(
+                            validation["candidateCatalog"]
+                        ),
+                        "locked_partition_guard",
+                    )
+                )
+                final_shape, final_catalog = (
+                    expected_final_partition_evidence(
+                        validation,
+                        args,
+                        target,
+                        source_names,
+                    )
+                )
+                post_ddl_guard = (
+                    transactional_partition_evidence_guard_sql(
+                        target,
+                        final_shape,
+                        final_catalog,
+                        "post_ddl_partition_guard",
+                    )
+                )
+                target_fingerprint_query = fingerprint_sql(
+                    target.partition
+                )
+                target_distribution_query = snapshot_distribution_query(
+                    target.partition
+                )
+                original_fingerprint_query = fingerprint_sql(retired)
+                original_distribution_query = snapshot_distribution_query(
+                    retired
+                )
+                return f"""
+                    BEGIN;
+                    SET LOCAL idle_in_transaction_session_timeout = 0;
+                    SET LOCAL lock_timeout = '2s';
+                    SET LOCAL statement_timeout =
+                        '{int(args.query_timeout_seconds)}s';
+                    LOCK TABLE {qualified(target.partition)} IN SHARE MODE;
+                    LOCK TABLE {qualified(retired)} IN SHARE MODE;
+                    {locked_guard}
+                    DO $content_reproof$
+                    DECLARE
+                        target_fingerprint JSONB;
+                        target_distribution JSONB;
+                        original_fingerprint JSONB;
+                        original_distribution JSONB;
+                        original_oid OID;
+                        original_relfilenode OID;
+                        original_heap BIGINT;
+                        original_indexes BIGINT;
+                        original_total BIGINT;
+                    BEGIN
+                        SELECT result.value::jsonb
+                        INTO target_fingerprint
+                        FROM ({target_fingerprint_query}) result;
+                        IF target_fingerprint IS DISTINCT FROM
+                                {sql_literal(expected_target_fingerprint)}::jsonb
+                        THEN
+                            RAISE EXCEPTION
+                                'target fingerprint changed before final drop';
+                        END IF;
+                        SELECT result.value::jsonb
+                        INTO target_distribution
+                        FROM ({target_distribution_query}) result;
+                        IF target_distribution IS DISTINCT FROM
+                                {sql_literal(expected_target_distribution)}::jsonb
+                        THEN
+                            RAISE EXCEPTION
+                                'target distribution changed before final drop';
+                        END IF;
+
+                        SELECT result.value::jsonb
+                        INTO original_fingerprint
+                        FROM ({original_fingerprint_query}) result;
+                        SELECT result.value::jsonb
+                        INTO original_distribution
+                        FROM ({original_distribution_query}) result;
+                        IF original_fingerprint IS DISTINCT FROM
+                                {sql_literal(expected_original_fingerprint)}::jsonb
+                           OR original_distribution IS DISTINCT FROM
+                                {sql_literal(expected_original_distribution)}::jsonb
+                        THEN
+                            RAISE EXCEPTION
+                                'retained original failed archive reproof';
+                        END IF;
+
+                        SELECT relation.oid,
+                               relation.relfilenode,
+                               pg_relation_size(relation.oid),
+                               pg_indexes_size(relation.oid),
+                               pg_total_relation_size(relation.oid)
+                        INTO original_oid,
+                             original_relfilenode,
+                             original_heap,
+                             original_indexes,
+                             original_total
+                        FROM pg_class relation
+                        JOIN pg_namespace namespace
+                          ON namespace.oid = relation.relnamespace
+                        WHERE namespace.nspname = 'public'
+                          AND relation.relname = {sql_literal(retired)};
+
+                        IF original_oid IS DISTINCT FROM
+                                {int(plan["planIdentity"]["sourceRelationIdentity"]["oid"])}
+                           OR original_relfilenode IS DISTINCT FROM
+                                {int(plan["planIdentity"]["sourceRelationIdentity"]["relfilenode"])}
+                           OR original_heap IS DISTINCT FROM
+                                {int(plan["planIdentity"]["sourceRelationIdentity"]["heapBytes"])}
+                           OR original_indexes IS DISTINCT FROM
+                                {int(plan["planIdentity"]["sourceRelationIdentity"]["indexBytes"])}
+                           OR original_total IS DISTINCT FROM
+                                {int(plan["planIdentity"]["sourceRelationIdentity"]["totalBytes"])}
+                        THEN
+                            RAISE EXCEPTION
+                                'retained original physical identity changed';
+                        END IF;
+                    END
+                    $content_reproof$;
+
+                    SET LOCAL statement_timeout = '30s';
+                    {advisory_lock_guard_sql()}
+                    DO $final_drop_guard$
+                    DECLARE
+                        current_ids BIGINT[];
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM scrape_publication_state state
+                            WHERE state.id = TRUE
+                              AND state.published_scrape_id =
+                                    {int(publication["publishedScrapeId"])}
+                              AND state.current_publication_id =
+                                    {int(publication["currentPublicationId"])}
+                              AND state.previous_publication_id =
+                                    {int(publication["previousPublicationId"])}
+                              AND state.working_publication_id
+                                    IS NOT DISTINCT FROM {expected_working}
+                              AND state.public_reads_frozen = FALSE
+                        ) THEN
+                            RAISE EXCEPTION
+                                'publication fence changed before final drop';
+                        END IF;
+
+                        WITH publication_slots AS (
+                            SELECT current_publication_id AS publication_id
+                            FROM scrape_publication_state
+                            WHERE id = TRUE
+                            UNION ALL
+                            SELECT previous_publication_id
+                            FROM scrape_publication_state
+                            WHERE id = TRUE
+                            UNION ALL
+                            SELECT working_publication_id
+                            FROM scrape_publication_state
+                            WHERE id = TRUE
+                        ),
+                        resolved_publications AS (
+                            SELECT generation.scrape_id
+                            FROM publication_slots slot
+                            JOIN publication_generations generation
+                              ON generation.publication_id =
+                                    slot.publication_id
+                            WHERE slot.publication_id IS NOT NULL
+                        ),
+                        protected AS (
+                            SELECT active_snapshot_id AS snapshot_id
+                            FROM leaderboard_snapshot_state
+                            WHERE instrument =
+                                    {sql_literal(target.instrument)}
+                              AND active_snapshot_id IS NOT NULL
+                            UNION
+                            SELECT source_snapshot_id
+                            FROM solo_current_projection_scope
+                            WHERE instrument =
+                                    {sql_literal(target.instrument)}
+                              AND source_snapshot_id IS NOT NULL
+                            UNION
+                            SELECT source.source_snapshot_id
+                            FROM resolved_publications publication
+                            JOIN leaderboard_published_scope_source source
+                              ON source.published_scrape_id =
+                                    publication.scrape_id
+                            WHERE source.instrument =
+                                    {sql_literal(target.instrument)}
+                              AND source.source_kind = 'snapshot'
+                              AND source.source_snapshot_id IS NOT NULL
+                        )
+                        SELECT COALESCE(
+                            array_agg(
+                                DISTINCT snapshot_id
+                                ORDER BY snapshot_id),
+                            ARRAY[]::bigint[])
+                        INTO current_ids
+                        FROM protected;
+
+                        IF current_ids IS DISTINCT FROM
+                                ARRAY[{expected_ids_sql}]::bigint[] THEN
+                            RAISE EXCEPTION
+                                'protected IDs changed before final drop';
+                        END IF;
+
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_inherits
+                            WHERE inhparent =
+                                'public.{TARGET_PARENT}'::regclass
+                              AND inhrelid =
+                                'public.{target.partition}'::regclass
+                        ) OR (
+                            SELECT relkind
+                            FROM pg_class
+                            WHERE oid =
+                                'public.{target.partition}'::regclass
+                        ) <> 'p' THEN
+                            RAISE EXCEPTION
+                                'accepted target is not attached partitioned';
+                        END IF;
+                    END
+                    $final_drop_guard$;
+
+                    DROP TABLE {qualified(retired)};
+                    ALTER TABLE {qualified(target.partition)}
+                        DROP CONSTRAINT
+                            "{replacement_instrument_check_name(args.run_id, target)}";
+                    ALTER TABLE {qualified(target.partition)}
+                        RENAME CONSTRAINT
+                            "{replacement_primary_name(args.run_id, target)}"
+                        TO "{source_names['primaryConstraint']}";
+                    ALTER INDEX
+                        {qualified(replacement_score_name(args.run_id, target))}
+                        RENAME TO "{source_names['scoreIndex']}";
+                    {post_ddl_guard}
+                    COMMIT;
+                """
+
+
+def final_drop_transaction_sql(
+    args,
+    target,
+    plan,
+    restore,
+    validation,
+    retired,
+    source_names,
+):
+                sql = final_drop_sql(
+                    args,
+                    target,
+                    plan,
+                    restore,
+                    validation,
+                    retired,
+                    source_names,
+                )
+                decision_boundary = (
+                    "SET LOCAL statement_timeout = '30s';"
+                )
+                if sql.count(decision_boundary) != 1:
+                    raise MigrationError(
+                        "final drop SQL decision boundary is ambiguous"
+                    )
+                reproof_sql, ddl_sql = sql.split(
+                    decision_boundary,
+                    1,
+                )
+                ddl_sql = decision_boundary + ddl_sql
+                if not ddl_sql.rstrip().endswith("COMMIT;"):
+                    raise MigrationError(
+                        "final drop SQL does not end with COMMIT"
+                    )
+                ddl_sql = ddl_sql.rstrip()[:-len("COMMIT;")]
+                return (
+                    reproof_sql,
+                    ddl_sql,
                 )
 
 
@@ -4991,13 +7182,35 @@ def stage_drop(args, runner):
                     raise MigrationError("drop requires --execute")
                 assert_no_emergency_breach(args.scratch_root)
                 target = TARGET_BY_KEY[args.instrument]
-                check = load_report(args.scratch_root, "check")
-                plan = load_report(args.scratch_root, "plan")
-                validation = load_report(args.scratch_root, "validate")
+                recovery_chain = None
+                if has_drop_recovery_package(args.scratch_root):
+                    recovery_chain = load_drop_recovery_chain(
+                        args,
+                        target,
+                    )
+                    recovered_reports = recovery_chain["reports"]
+                    check = recovered_reports["check"]
+                    plan = recovered_reports["plan"]
+                    archive = recovered_reports["archive"]
+                    restore = recovered_reports["restore"]
+                    validation = recovered_reports["validate"]
+                else:
+                    check = load_report(args.scratch_root, "check")
+                    plan = load_report(args.scratch_root, "plan")
+                    validation = load_report(
+                        args.scratch_root,
+                        "validate",
+                    )
+                    archive = load_report(
+                        args.scratch_root,
+                        "archive",
+                    )
+                    restore = load_report(
+                        args.scratch_root,
+                        "restore",
+                    )
                 if validation.get("accepted") is not True:
                     raise MigrationError("validation was not accepted")
-                load_report(args.scratch_root, "archive")
-                load_report(args.scratch_root, "restore")
                 host = collect_host_guard(args, runner)
                 database = Database(
                     runner,
@@ -5038,6 +7251,15 @@ def stage_drop(args, runner):
                     raise MigrationError(
                         "retained original changed before final drop"
                     )
+                statistics_counters_match = (
+                    not retired_exists
+                    or (
+                        relation_mutation_counters(retired_state)
+                        == relation_mutation_counters(plan["sourceState"])
+                        and relation_statistics_epoch(retired_state)
+                        == relation_statistics_epoch(plan["sourceState"])
+                    )
+                )
                 protected_now = derive_protected_ids(
                     database.json(
                         protected_sources_query(target),
@@ -5056,58 +7278,239 @@ def stage_drop(args, runner):
                     raise MigrationError(
                         "protected IDs changed before final drop"
                     )
-                fingerprint = database.json(
-                    fingerprint_sql(target.partition),
-                    timeout=args.query_timeout_seconds,
-                )
-                if fingerprint != plan["planIdentity"]["retainedFingerprint"]:
-                    raise MigrationError(
-                        "accepted target fingerprint changed before final drop"
-                    )
                 shape = database.json(
                     partition_shape_query(target, target.partition)
                 )
                 validate_partition_shape(shape, target, protected_now)
-                validate_parent_index_attachments(shape, plan)
-                manifest = load_archive_manifest(args.scratch_root, target)
-                source_fence = (
-                    source_fence_from_state(retired_state)
-                    if retired_exists
-                    else source_fence_from_state(
-                        validation["retainedOriginalRelationState"]
-                    )
+                validate_partition_child_catalogs(
+                    shape,
+                    target,
+                    plan,
+                    args,
+                    instrument_check_present=retired_exists,
+                    primary_parent=(
+                        replacement_primary_name(args.run_id, target)
+                        if retired_exists
+                        else source_names["primaryIndex"]
+                    ),
+                    score_parent=(
+                        replacement_score_name(args.run_id, target)
+                        if retired_exists
+                        else source_names["scoreIndex"]
+                    ),
                 )
-                if not source_fence_matches(
-                    manifest["source"]["before"],
-                    source_fence,
+                validate_parent_index_attachments(shape, plan)
+                if recovery_chain is not None:
+                    archive_chain = recovery_chain
+                else:
+                    archive_chain = verify_archive_evidence_chain(
+                        args,
+                        target,
+                        plan,
+                        archive,
+                        restore,
+                        validation,
+                    )
+                manifest = archive_chain["manifest"]
+                pre_drop_api = (
+                    capture_api_fingerprints(args.api_base)
+                    if args.api_base
+                    else []
+                )
+                if not compare_api_snapshots(
+                    check.get("publicApiBaseline", []),
+                    pre_drop_api,
                 ):
                     raise MigrationError(
-                        "archive source fence differs from retained original"
+                        "public API parity changed before final drop"
                     )
+                api_monitor = None
+                expected_publication = plan["planIdentity"][
+                    "referenceParity"
+                ]["publication"]
                 free_before = host["dataFilesystem"]["freeBytes"]
                 started = time.monotonic()
-                if retired_exists:
-                    database.psql(
-                        f"""
-                            BEGIN;
-                            SET LOCAL lock_timeout = '2s';
-                            SET LOCAL statement_timeout = '30s';
-                            {advisory_lock_guard_sql()}
-                            DROP TABLE {qualified(retired)};
-                            ALTER TABLE {qualified(target.partition)}
-                                DROP CONSTRAINT
-                                    "{replacement_instrument_check_name(args.run_id, target)}";
-                            ALTER TABLE {qualified(target.partition)}
-                                RENAME CONSTRAINT
-                                    "{replacement_primary_name(args.run_id, target)}"
-                                TO "{source_names['primaryConstraint']}";
-                            ALTER INDEX
-                                {qualified(replacement_score_name(args.run_id, target))}
-                                RENAME TO "{source_names['scoreIndex']}";
-                            COMMIT;
-                        """,
-                        timeout=60,
+                if recovery_chain is None:
+                    archive_pins = pin_archive_evidence(
+                        archive_chain
                     )
+                    write_drop_recovery_evidence(
+                        args,
+                        target,
+                        plan,
+                        archive_pins,
+                    )
+                    archive_pins.append(
+                        pin_drop_recovery_manifest(args)
+                    )
+                    seal_drop_recovery_package(
+                        args,
+                        required=True,
+                    )
+                    recovery_chain = load_drop_recovery_chain(
+                        args,
+                        target,
+                        plan,
+                    )
+                else:
+                    archive_pins = pin_retained_recovery_chain(
+                        archive_chain
+                    )
+                    seal_drop_recovery_package(
+                        args,
+                        required=False,
+                    )
+                if retired_exists:
+                    preproof = {
+                        "publication": expected_publication,
+                        "protectedSnapshotIds":
+                            plan["planIdentity"][
+                                "protectedSnapshotIds"
+                            ],
+                        "targetFingerprint":
+                            plan["planIdentity"][
+                                "retainedFingerprint"
+                            ],
+                        "targetDistribution":
+                            plan["planIdentity"][
+                                "retainedDistribution"
+                            ],
+                        "originalFingerprint":
+                            restore["restoredFingerprint"],
+                        "originalDistribution":
+                            restore["restoredDistribution"],
+                    }
+                    reproof_sql, ddl_sql = (
+                        final_drop_transaction_sql(
+                            args,
+                            target,
+                            plan,
+                            restore,
+                            validation,
+                            retired,
+                            source_names,
+                        )
+                    )
+                    session = None
+                    try:
+                        if args.api_base:
+                            api_monitor = PublicApiMonitor(
+                                args.api_base,
+                                check.get("publicApiBaseline", []),
+                            )
+                            with api_monitor:
+                                session = database.open_transaction(
+                                    reproof_sql,
+                                    timeout=(
+                                        args.query_timeout_seconds
+                                        + 120
+                                    ),
+                                    pgoptions=PLAN_QUERY_PGOPTIONS,
+                                )
+                            if api_monitor.failures:
+                                session.rollback()
+                                raise MigrationError(
+                                    "public API health changed during "
+                                    "final drop reproof"
+                                )
+                        else:
+                            session = database.open_transaction(
+                                reproof_sql,
+                                timeout=args.query_timeout_seconds + 120,
+                                pgoptions=PLAN_QUERY_PGOPTIONS,
+                            )
+                        wait_for_test_final_drop_gate(args, "pre-ddl")
+                        current_chain = load_drop_recovery_chain(
+                            args,
+                            target,
+                            plan,
+                        )
+                        if (
+                            current_chain["manifestSha256"]
+                            != archive_chain["manifestSha256"]
+                            or current_chain["archiveSha256"]
+                            != archive_chain["archiveSha256"]
+                            or current_chain["reportSha256"]
+                            != archive_chain["reportSha256"]
+                        ):
+                            session.rollback()
+                            raise MigrationError(
+                                "archive evidence chain changed during "
+                                "final drop reproof"
+                            )
+                        for pin in archive_pins:
+                            pin.verify(checksum=False)
+                        session.execute_until_ready(ddl_sql)
+                        wait_for_test_final_drop_gate(
+                            args,
+                            "pre-commit",
+                        )
+                        precommit_chain = (
+                            load_drop_recovery_chain(
+                                args,
+                                target,
+                                plan,
+                                verify_archive_checksum=False,
+                            )
+                        )
+                        if (
+                            precommit_chain["manifestSha256"]
+                            != archive_chain["manifestSha256"]
+                            or precommit_chain["archiveSha256"]
+                            != archive_chain["archiveSha256"]
+                            or precommit_chain["reportSha256"]
+                            != archive_chain["reportSha256"]
+                        ):
+                            session.rollback()
+                            raise MigrationError(
+                                "archive evidence chain changed during "
+                                "final drop DDL"
+                            )
+                        for pin in archive_pins:
+                            pin.verify(checksum=False)
+                        wait_for_test_final_drop_gate(
+                            args,
+                            "commit-entry",
+                        )
+                        session.commit("COMMIT;")
+                        wait_for_test_final_drop_gate(
+                            args,
+                            "post-commit",
+                        )
+                    except Exception:
+                        if session is not None:
+                            session.rollback()
+                        for pin in archive_pins:
+                            pin.close()
+                        raise
+                    fingerprint = preproof["targetFingerprint"]
+                else:
+                    fingerprint = database.json(
+                        fingerprint_sql(target.partition),
+                        timeout=args.query_timeout_seconds,
+                        pgoptions=PLAN_QUERY_PGOPTIONS,
+                    )
+                    if (
+                        fingerprint
+                        != plan["planIdentity"]["retainedFingerprint"]
+                    ):
+                        raise MigrationError(
+                            "final target fingerprint changed during "
+                            "drop report recovery"
+                        )
+                    preproof = {
+                        "publication": expected_publication,
+                        "protectedSnapshotIds": protected_now,
+                        "targetFingerprint": fingerprint,
+                        "targetDistribution":
+                            plan["planIdentity"][
+                                "retainedDistribution"
+                            ],
+                        "originalFingerprint":
+                            restore["restoredFingerprint"],
+                        "originalDistribution":
+                            restore["restoredDistribution"],
+                    }
                 if database.json(relation_state_query(retired)) is not None:
                     raise MigrationError(
                         "retained original remains after final drop"
@@ -5116,12 +7519,23 @@ def stage_drop(args, runner):
                     partition_shape_query(target, target.partition)
                 )
                 validate_partition_shape(final_shape, target, protected_now)
+                validate_partition_child_catalogs(
+                    final_shape,
+                    target,
+                    plan,
+                    args,
+                    instrument_check_present=False,
+                    primary_parent=source_names["primaryIndex"],
+                    score_parent=source_names["scoreIndex"],
+                )
                 validate_parent_index_attachments(final_shape, plan)
                 final_catalog = database.json(catalog_query(target.partition))
-                if not final_catalog_names_match(final_catalog, source_names):
-                    raise MigrationError(
-                        "final partitioned PK/score catalog names are unexpected"
-                    )
+                validate_final_candidate_catalog(
+                    final_catalog,
+                    plan,
+                    target,
+                    source_names,
+                )
                 if any(
                     item["name"]
                     == replacement_instrument_check_name(args.run_id, target)
@@ -5143,14 +7557,29 @@ def stage_drop(args, runner):
                         "public API parity changed after final drop"
                     )
                 host_after = collect_host_guard(args, runner)
+                postcommit_chain = load_drop_recovery_chain(
+                    args,
+                    target,
+                    plan,
+                )
                 if (
-                    not pathlib.Path(manifest["archive"]["path"]).is_file()
-                    or sha256_path(manifest["archive"]["path"])
-                    != manifest["archive"]["sha256"]
+                    postcommit_chain["manifestSha256"]
+                    != archive_chain["manifestSha256"]
+                    or postcommit_chain["archiveSha256"]
+                    != archive_chain["archiveSha256"]
+                    or postcommit_chain["reportSha256"]
+                    != archive_chain["reportSha256"]
                 ):
                     raise MigrationError(
-                        "archive was not retained after final drop"
+                        "archive evidence chain changed after final drop"
                     )
+                wait_for_test_final_drop_gate(
+                    args,
+                    "report-entry",
+                )
+                retained_recovery = verify_retained_recovery_copies(
+                    archive_pins
+                )
                 body = {
                     "runId": args.run_id,
                     "planId": plan["planId"],
@@ -5172,9 +7601,13 @@ def stage_drop(args, runner):
                     ),
                     "resumedCommittedDrop": already_finalized,
                     "archiveRetained": {
-                        "path": manifest["archive"]["path"],
-                        "sha256": manifest["archive"]["sha256"],
+                        "path": retained_recovery["archive"]["path"],
+                        "sha256": retained_recovery["archive"]["sha256"],
+                        "originalPath": manifest["archive"]["path"],
+                        "sourceLeaseBreakRequested":
+                            LEASE_BREAK_REQUESTED,
                         "deletionDecision": "deferred",
+                        "recoveryCopies": retained_recovery,
                     },
                     "rollbackModeAfterDrop": (
                         "archive restore only; rename-back rollback is unavailable"
@@ -5184,9 +7617,60 @@ def stage_drop(args, runner):
                     "finalCatalog": final_catalog,
                     "acceptedTablespace": "pg_default",
                     "temporaryScratchTablespaceUsed": False,
+                    "statisticsCountersMatched":
+                        statistics_counters_match,
+                    "fullArchiveReproofRequired":
+                        retired_exists
+                        and not statistics_counters_match,
+                    "preDropReproof": {
+                        "publication": preproof["publication"],
+                        "protectedSnapshotIds":
+                            preproof["protectedSnapshotIds"],
+                        "targetFingerprint":
+                            preproof["targetFingerprint"],
+                        "targetDistribution":
+                            preproof["targetDistribution"],
+                        "originalFingerprint":
+                            preproof["originalFingerprint"],
+                        "originalDistribution":
+                            preproof["originalDistribution"],
+                    },
+                    "preDropApiMonitor": {
+                        "samples":
+                            api_monitor.samples
+                            if api_monitor is not None
+                            else 0,
+                        "failures":
+                            api_monitor.failures
+                            if api_monitor is not None
+                            else [],
+                    },
+                    "preDropPublicApi": pre_drop_api,
                     "publicApi": public_api,
                 }
-                return write_stage_report(args.scratch_root, "drop", body)
+                report = write_stage_report(
+                    args.scratch_root,
+                    "drop",
+                    body,
+                    dependencies={
+                        stage: {
+                            "path": recovery_chain[
+                                "reportPaths"
+                            ][stage],
+                            "sha256": recovery_chain[
+                                "reportSha256"
+                            ][stage],
+                        }
+                        for stage in (
+                            "validate",
+                            "archive",
+                            "restore",
+                        )
+                    },
+                )
+                for pin in archive_pins:
+                    pin.close()
+                return report
 
 
 def rollback_probe_query(args, target):
@@ -5583,6 +8067,10 @@ def build_parser():
                     default=30.0,
                 )
                 parser.add_argument("--api-base")
+                parser.add_argument(
+                    "--test-final-drop-gate",
+                    help=argparse.SUPPRESS,
+                )
                 return parser
 
 
@@ -5613,6 +8101,21 @@ def validate_args(args):
                     raise MigrationError(
                         "initial check requires --claim-workspace"
                     )
+                if args.test_final_drop_gate:
+                    if not args.test_mode or args.stage != "drop":
+                        raise MigrationError(
+                            "--test-final-drop-gate is restricted to "
+                            "test-mode drop"
+                        )
+                    gate = pathlib.Path(
+                        args.test_final_drop_gate
+                    ).resolve()
+                    scratch = pathlib.Path(args.scratch_root).resolve()
+                    if not path_is_beneath(gate, scratch):
+                        raise MigrationError(
+                            "--test-final-drop-gate must be inside "
+                            "the scratch workspace"
+                        )
                 if not args.test_mode:
                     if pathlib.Path(args.compose_dir).resolve() != (
                         PRODUCTION_COMPOSE_DIR

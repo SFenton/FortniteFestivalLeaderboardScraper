@@ -203,9 +203,12 @@ IDs behind current or previous publications.
 
 ## Capacity and emergency cancellation
 
-Scratch preflight budgets 1.10 times source bytes for the custom archive, 1.25
-times source bytes plus 10 GiB for isolated restore PGDATA, and a fixed
-20 GiB scratch reserve.
+Scratch preflight budgets 2.20 times source bytes for the custom archive plus
+its independent final-drop recovery copy, 1.25 times source bytes plus 10 GiB
+for isolated restore PGDATA, and a fixed 20 GiB scratch reserve.
+Before recalculating free space, `drop` removes only run-owned, regular
+same-directory `.partial-*` recovery-copy files left by an interrupted copy
+and fsyncs each affected directory.
 
 The 4 TB build model uses the accepted pro-bass live profile with fixed
 conservative margins:
@@ -235,7 +238,7 @@ PostgreSQL/WAL/storage and start a new run.
 | `swap` | short-lock DDL | Validates the original instrument check, detaches/renames the original, attaches the candidate, and writes committed-swap evidence with the real duration. |
 | `validate` | none | Proves retained fingerprints, references, publication/API parity, child/index catalog, archive, and `pg_default`. |
 | `rollback` | short-lock DDL | Accepts committed-swap evidence even if the terminal swap report tore, reattaches the checked original without a full scan, removes its temporary check, and retains the failed candidate. |
-| `drop` | destructive DDL | Requires accepted validation and restore-proof archive, drops only the detached original, normalizes index names, and revalidates `pg_default`/API/archive. |
+| `drop` | destructive DDL | Requires accepted validation and pre-drop API parity, then holds both advisory fences while rechecking publication, protected IDs, target fingerprint, original identity/archive reproof, and destructive DDL; normalizes names and revalidates `pg_default`/API/archive. |
 
 No stage uses `CASCADE`.
 
@@ -330,6 +333,61 @@ If mutation counters differ from the plan, rollback recomputes the complete
 original fingerprint and per-snapshot distribution and requires exact equality
 with the isolated restore report before reattachment.
 
+Final drop keeps one transaction open from reproof through DDL. Target and
+original relations are held in read-compatible `SHARE` mode while complete
+fingerprints and per-snapshot distributions are recomputed, and a five-second
+public API monitor runs beside the scan. The PostgreSQL session pauses at a
+decision boundary with those locks still held; any API-monitor failure rolls
+the transaction back. Monitor shutdown must be confirmed; a join timeout or
+still-running probe is also a failure. Only after a clean, stopped monitor does
+the same session re-read and exactly compare the complete root and per-child
+bound/default, tablespace, owner, column/default/nullability, constraint,
+leaf/root-index (including every index tablespace), and parent-index-attachment
+catalog under those locks. It then
+acquires the advisory fences, rechecks the unfrozen publication and protected
+IDs, and executes the short DDL. The resulting complete shape/catalog is
+validated again inside the uncommitted transaction before `COMMIT`.
+The transaction explicitly disables
+`idle_in_transaction_session_timeout` locally because the locked decision
+interval includes API-monitor shutdown and archive verification.
+
+Before the long reproof starts, `drop` binds the run ID, plan ID, archive,
+manifest, plan/archive/restore/validation reports, and their SHA-256 chain. It
+creates independent byte-for-byte recovery copies of every bound file, verifies
+their checksums, makes them read-only, and opens both source and recovery files
+under kernel read leases. Each recovery inode also has an anchor inside a
+read-only recovery-package directory, so removing or replacing the working
+copy cannot orphan the verified bytes. Scratch capacity is checked before
+copying. A checksummed `drop.recovery.json` binding the run, plan, archive, and
+all recovery paths is itself copied and anchored by a checksum-bearing file
+name before destructive DDL. The package includes copied check, plan, archive,
+restore, and validation reports, so recovery never needs mutable working
+metadata. After the API monitor stops, the tool rechecks source/recovery path
+identity, metadata, complete archive checksum, manifest checksum, and report
+chain before allowing phase two. A removed or replaced path rolls the database
+transaction back while the independent recovery package remains intact.
+
+After phase-two DDL but before `COMMIT`, a second decision boundary rechecks the
+report/manifest hash chain, source and recovery inode/size/link-count/timestamp
+identity, and whether any writer requested a lease break. A same-inode writer
+that starts after this last check is kernel-blocked until the destructive
+transaction, post-commit archive/recovery checks, API/catalog validation, and
+durable `drop.json` report are complete. The report names the independent
+archive copy as authoritative; the original path may change after leases are
+released without destroying recovery. Recovery copies remain governed by the
+same separate archive-deletion decision. If the process dies after `COMMIT`
+but before `drop.json`, the next `drop` invocation recognizes the finalized
+catalog, loads the pre-commit recovery manifest, verifies the anchored recovery
+archive and copied lifecycle reports, and reconstructs the terminal report
+without trusting the potentially changed original archive path or working
+reports. Terminal `drop.json` dependencies point to the copied evidence.
+At report publication, the tool revalidates and, when needed, repairs each
+writable recovery-copy path from its read-only anchor. The checksum-addressed
+recovery manifest has working and anchored names, so renaming the package
+directory cannot strand recovery or invalidate terminal dependency paths.
+Resumed recovery does not require the original package directory to remain at
+its initial name.
+
 Never edit reports, manifests, source fences, checksums, or workspace markers.
 
 ## Validation package
@@ -354,17 +412,36 @@ PYTHONDONTWRITEBYTECODE=1 \
   artifacts/snapshot-generation-migration-drills/<new-empty-run>
 ```
 
-The drill runs independent rollback and final-drop lanes. It proves custom
+The drill runs independent rollback, guarded final-drop, write-lease/torn-
+commit recovery, recovery-publication, and package-rename lanes. It proves
+custom
 archive/TOC, network-none restore and cleanup, exact protected children plus an
 empty default, top-parent index attachment, rename-back rollback, final drop,
 archive retention, and torn success-report recovery for archive, restore,
 build, swap, validate, and drop. The rollback lane force-kills/restarts
 PostgreSQL, resets cumulative statistics, and requires complete archive
 fingerprint/distribution reproof before the original can be reattached.
+The final-drop lane adds an unexpected child-local `NOT VALID` check both
+before `validate` and after accepted validation, proving neither the
+independent build contract nor the locked catalog guard can bless it. It also
+removes/replaces the archive at both the pre-DDL and post-DDL/pre-commit
+decision boundaries, proves that neither attempt commits destructive DDL,
+restores the original path from the independent recovery copy, and then
+completes the accepted drop. The write-lease lane starts a same-inode archive
+writer at commit entry, proves the kernel blocks it through `COMMIT`, kills the
+migration before `drop.json`, lets the writer corrupt the original, and proves
+the next invocation reconstructs the committed drop solely from the anchored
+recovery package. The publication lane proves its read-only anchor cannot be
+unlinked and repairs the authoritative working path after it is replaced by a
+hard link to the source. The package-rename
+lane renames the complete anchor directory at report entry and proves the
+process can be killed there and the next invocation still publishes from the
+revalidated working archive and copied terminal dependencies.
 
 The implementation validation on 2026-08-18 used 1,400 synthetic source rows
 per lane (`1301` purge; `1302-1303` retained), PostgreSQL `postgres:17`, and
-completed both lanes without a production connection or mutation. Synthetic
+completed all five lanes without a production connection or mutation.
+Synthetic
 sizes and timings are correctness evidence only, not production performance
 estimates.
 
