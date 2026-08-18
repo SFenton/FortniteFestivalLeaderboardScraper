@@ -741,7 +741,7 @@ The temporary-tablespace candidate instead requires `63,889,690,620` free on
 4 TB and `17,260,886,072` on scratch, so its capacity math passes narrowly at
 the accepted free-space assumptions. Pre-drop repatriation requires
 `66,575,033,638` and is still `575,033,638` short at `66 GB`. Execution
-remains blocked by that final headroom, merge/review, production
+remains blocked by that final headroom, candidate commit/push, production
 mount/recreate, fresh preflight/parity, and the no-rewrite boundary for this
 task. See the
 [pilot runbook](../database/ProBassSnapshotRewritePilot.md).

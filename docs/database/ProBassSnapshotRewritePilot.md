@@ -87,7 +87,7 @@ Capacity therefore passes narrowly for that candidate mode, but production
 build/swap remains blocked by the complete sequence: copying the measured
 replacement back to `pg_default` while the original rollback relation still
 exists requires `66,575,033,638` bytes, `575,033,638` above the `66 GB`
-assumption. PR merge/review, the production-owned scratch bind
+assumption. Candidate commit/push, the production-owned scratch bind
 mount/container-recreate gate, fresh preflight/parity, and the explicit
 no-rewrite boundary for this task also remain.
 
@@ -304,8 +304,10 @@ synthetic rows.
 
 ## Production command sequence
 
-Do not run these commands until the branch is merged, the live parity gate is
-accepted, the worker is held, and the exact live preflight is approved.
+Do not run these commands until the candidate branch is committed/pushed and
+review-clean, the worker is held, and the exact live preflight is accepted.
+The operator-directed local live validation occurs before PR merge; merge is
+allowed only after that evidence is accepted.
 
 Before `check`, the production-owned PostgreSQL service must expose exactly
 `<scratch-root>/postgres-tablespace:/fst-pro-bass-scratch:rw`. Adding that bind

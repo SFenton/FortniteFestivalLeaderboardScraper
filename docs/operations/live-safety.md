@@ -221,9 +221,10 @@ projects `63,889,690,620` required 4 TB bytes (`2,110,309,380` margin at
 `66 GB`) and `17,260,886,072` scratch bytes. That is capacity readiness only:
 pre-drop repatriation requires `66,575,033,638` bytes and is still
 `575,033,638` short at the same assumption. Do not run `build`, `swap`,
-`repatriate`, or `drop` before merge/review, exact production mount/recreate
-validation, fresh preflight/parity, sufficient repatriation headroom, and the
-separately approved maintenance turn. This does not lower the global
+`repatriate`, or `drop` before candidate commit/push and clean review, exact
+production mount/recreate validation, fresh preflight/parity, sufficient
+repatriation headroom, and the separately approved maintenance turn. Local
+live validation precedes PR merge. This does not lower the global
 `500 GiB` retention policy.
 
 Swap/rollback/drop use maintenance and publication advisory locks, a `2s`
