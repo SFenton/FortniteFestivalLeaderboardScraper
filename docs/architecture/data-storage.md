@@ -759,6 +759,35 @@ remain in the regular instrument partition until the next migration converts
 snapshot generations into independently droppable children and removes
 obsolete `1301`.
 
+### Snapshot-generation subpartition layout
+
+Fresh schemas partition `leaderboard_entries_snapshot` by instrument and then
+partition each instrument by `snapshot_id`. A retained generation child owns
+its heap plus primary/score leaf indexes; an empty default child preserves
+diagnostic/test compatibility.
+
+Before snapshot insertion, the worker calls the fixed
+`ensure_leaderboard_snapshot_generation_partition(instrument, snapshot_id)`
+helper. It accepts only the nine supported instruments, serializes concurrent
+creation with an advisory transaction lock, validates the child bound, and
+returns without mutation while a live instrument still uses the legacy regular
+partition. This permits code deployment before the guarded per-instrument
+migration.
+
+After migration, a separately gated retention owner can archive and drop
+obsolete generation children as whole relations. That recurring owner is not
+implemented by the layout migration itself. It must preserve
+current/previous/working publication sources, active snapshot state, and
+projection sources; archive/restore-prove nonempty obsolete children; and keep
+the default child empty. Readers continue to query the unchanged parent
+relation. Normal scheduling remains held until this recurring lifecycle is
+accepted.
+
+The existing generic retention service remains the compatibility owner for
+unmigrated regular instrument partitions only. It deliberately produces no
+legacy rewrite candidate for a generation-subpartitioned root; child retirement
+belongs to the future archive-before-child-drop owner.
+
 ## Tier-0 replay evidence packages
 
 Tier-0 evidence packages are filesystem artifacts, not PostgreSQL relations and

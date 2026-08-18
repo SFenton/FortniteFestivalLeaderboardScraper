@@ -1,0 +1,124 @@
+---
+status: decision
+owner: data
+last_verified: 2026-08-18
+last_verified_commit: 3c467408
+sources:
+  - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Scraping/LeaderboardSpoolWriterFactory.cs
+  - docs/architecture/data-storage.md
+  - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
+update_triggers:
+  - Physical snapshot partitioning, retention, write routing, archive, migration, or rollback changes.
+---
+
+# ADR 0006: Subpartition physical snapshots by generation
+
+## Decision
+
+Keep PostgreSQL as the physical leaderboard snapshot source of truth.
+
+Partition `leaderboard_entries_snapshot` first by instrument and then by
+`snapshot_id`. Each instrument partition owns:
+
+- one child for every retained physical snapshot generation;
+- an empty default child for compatibility and fail-closed diagnostics;
+- a partitioned primary key and score index whose leaf indexes belong to each
+  generation.
+
+The worker must ensure the exact generation child exists before inserting
+snapshot rows. The helper is fixed to the nine supported instruments, uses an
+advisory transaction lock for concurrent batch writers, and is a no-op while a
+production instrument is still on the pre-migration regular-table layout.
+
+Retention archives and restore-proves an original instrument before replacing
+it. Current, previous, working, active-state, and projection-source physical
+IDs remain hot. Obsolete generations are reclaimed by dropping whole child
+relations instead of rewriting a cumulative instrument table.
+
+This decision establishes the physical layout and migration path; it does not
+by itself authorize or schedule recurring child deletion. A separately gated
+generation-retention owner must derive the protected set from
+current/previous/working publication sources plus active/projection state,
+archive and restore-prove every nonempty obsolete child, then drop only the
+exact archived child. Until that owner is implemented and accepted, the worker
+must remain held after migration rather than accumulate unbounded children.
+
+## Context
+
+The former instrument-only layout appended every generation into one regular
+partition. Snapshot indexes represented more than half of physical storage,
+and reclaiming old IDs required rewriting the complete instrument.
+
+The accepted pro-bass transition reduced a 150,098,894,848-byte relation to
+2,811,404,288 bytes. Validation scrape 1303 then reused 350/702 pro-bass
+scopes, but the regular partition still grew by 1,000,898,560 bytes and retained
+obsolete snapshot 1301. Snapshot reuse reduces new writes; it does not make old
+generations independently reclaimable.
+
+## Rationale
+
+- Existing reads already constrain `snapshot_id` and `instrument`, so the
+  second partition key matches the dominant access path.
+- The parent primary key includes `snapshot_id`, satisfying PostgreSQL unique
+  partition-key requirements.
+- New generation children are empty at creation, so index creation is cheap.
+- Whole-child drop gives predictable, immediate reclaim with no dead tuples,
+  `VACUUM FULL`, or full-instrument rewrite.
+- Instrument-first ownership preserves current table naming, query contracts,
+  publication semantics, and per-instrument migration/rollback.
+
+## Alternatives
+
+### Keep instrument-only partitions plus periodic rewrites
+
+Rejected. Rewrites repeatedly require duplicate heap/index capacity, long
+copy/index work, and complex retained-original rollback.
+
+### Partition only by snapshot ID
+
+Rejected. It removes the existing instrument isolation and makes
+instrument-local operations, capacity decisions, and phased migration harder.
+
+### Delete old IDs and vacuum
+
+Rejected. Batched deletes create large WAL/dead-tuple pressure and do not
+return filesystem space predictably.
+
+### Store snapshots only in object/columnar artifacts
+
+Rejected for the live source of truth. Archive artifacts remain recovery and
+analysis inputs; PostgreSQL publication/source semantics stay authoritative.
+
+## Migration sequence
+
+1. Deploy compatible generation-child creation while existing regular
+   instrument partitions remain valid.
+2. Hold the worker and capture current protected physical IDs.
+3. Archive and restore-prove each original instrument.
+4. Build a replacement partitioned by `snapshot_id`, copy protected IDs into
+   dedicated children, and create an empty default child.
+5. Short-swap under exact catalog, publication, lock, and API guards while
+   retaining the original for rollback.
+6. Validate fingerprints, references, parent index attachment, and public
+   parity.
+7. Drop the original only after acceptance.
+8. Repeat one instrument at a time.
+9. Implement and validate recurring archive-before-child-drop retention,
+   including empty/default-child auditing.
+10. Restore normal scraping only after all nine instruments are migrated and
+    the recurring retention owner is ready.
+
+## Consequences
+
+- The worker performs one idempotent generation-ensure call before snapshot
+  inserts.
+- Direct diagnostic/test inserts still route to the default child.
+- A failed ensure cannot silently create an arbitrary table or instrument.
+- Retention becomes child-drop maintenance rather than table rewrite.
+- Layout migration does not make child drop automatic; recurring archive/drop
+  ownership remains an explicit promotion gate.
+- Archives remain required before destructive migration or removal.
+- Existing SQL readers continue to query `leaderboard_entries_snapshot`
+  unchanged.

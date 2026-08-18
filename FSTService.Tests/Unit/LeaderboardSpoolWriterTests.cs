@@ -215,11 +215,18 @@ public class LeaderboardSpoolWriterTests
     [Fact]
     public void SoloFlushSql_UsesConstantInstrumentPredicates_ForPartitionPruning()
     {
+        var ensureGenerationSql =
+            LeaderboardSpoolWriterFactory.BuildEnsureSnapshotGenerationPartitionSql();
         var snapshotSql = LeaderboardSpoolWriterFactory.BuildSnapshotInsertSql();
         var bandContextSql = LeaderboardSpoolWriterFactory.BuildBandContextSyncSql();
         var scoreMergeSql = LeaderboardSpoolWriterFactory.BuildScoreMergeSql();
         var rankUpdateSql = LeaderboardSpoolWriterFactory.BuildRankUpdateSql();
 
+        Assert.Contains(
+            "ensure_leaderboard_snapshot_generation_partition",
+            ensureGenerationSql);
+        Assert.Contains("@instrument", ensureGenerationSql);
+        Assert.Contains("@snapshotId", ensureGenerationSql);
         Assert.Contains("FROM _le_staging WHERE instrument = @instrument", snapshotSql);
         Assert.Contains("WHERE instrument = @instrument", bandContextSql);
         Assert.Contains("FROM _le_staging WHERE instrument = @instrument", scoreMergeSql);
