@@ -270,8 +270,8 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
 
 The final accepted isolated drill retained two restore-drilled archives and
 proved both rename-back and final-drop paths. It measured a 144,318,464-byte
-source, 19,636,224-byte replacement, 20,455,160 scratch-build WAL bytes,
-8,421,376 temp bytes, 19,701,760 peak scratch growth, and 163,958,784
+source, 19,636,224-byte replacement, 20,455,280 scratch-build WAL bytes,
+8,429,568 temp bytes, 19,771,392 peak scratch growth, and 163,971,072
 filesystem bytes returned after dropping the original plus scratch rollback.
 Repatriation returned the accepted relation/catalog to `pg_default`.
 The rollback lane also proves archive/build/swap/rollback resume after a
@@ -290,13 +290,13 @@ caused PostgreSQL to reject a duplicate child primary key. The successful
 procedure restored child data/indexes while detached and attached afterward.
 
 The exact archive row ratio plus measured profile projects a
-`2,685,343,018`-byte replacement and `69,712,458,213` required free bytes,
-still `3,712,458,213` short at `66 GB`. The conservative sensitivity remains
+`2,685,343,018`-byte replacement and `69,713,820,289` required free bytes,
+still `3,713,820,289` short at `66 GB`. The conservative sensitivity remains
 `72.19-73.06 GB`. With the replacement/temp/failure reserve on the guarded
-temporary tablespace, the candidate requires `63,889,388,393` free on 4 TB and
-`17,259,765,778` on scratch, so capacity passes narrowly but execution remains
-separately gated. Pre-drop repatriation requires `66,574,731,411`, still
-`574,731,411` above the `66 GB` assumption.
+temporary tablespace, the candidate requires `63,889,690,620` free on 4 TB and
+`17,260,886,072` on scratch, so capacity passes narrowly but execution remains
+separately gated. Pre-drop repatriation requires `66,575,033,638`, still
+`575,033,638` above the `66 GB` assumption.
 
 Follow the
 [living runbook](../database/ProBassSnapshotRewritePilot.md). The archive

@@ -710,8 +710,8 @@ archive remains on 8 TB through
 acceptance and a later explicit retention decision.
 
 The final 360,000-row scaled drill measured a 144,318,464-byte original,
-19,636,224-byte replacement, 20,455,160 scratch-build WAL bytes, 8,421,376
-temp bytes, 19,701,760 peak scratch growth, and 163,958,784 immediate bytes
+19,636,224-byte replacement, 20,455,280 scratch-build WAL bytes, 8,429,568
+temp bytes, 19,771,392 peak scratch growth, and 163,971,072 immediate bytes
 returned when the original plus scratch rollback relation were dropped.
 Rename-back, verified-archive adoption, repatriation to `pg_default`, scratch
 tablespace removal, and final-drop paths all passed.
@@ -727,13 +727,13 @@ PGDATA was deleted after validation while the archive remained.
 
 Using the exact archive row count, `6,691,993` protected rows, live heap/index
 bytes, and measured ratios projects a `2,685,343,018`-byte replacement and a
-`69,712,458,213`-byte free-space requirement. At `66 GB`, the exact-row
-projection is short by `3,712,458,213` bytes. The older approximately `3.4 GB`
+`69,713,820,289`-byte free-space requirement. At `66 GB`, the exact-row
+projection is short by `3,713,820,289` bytes. The older approximately `3.4 GB`
 retained-size sensitivity remains a conservative `72.19-73.06 GB` requirement.
-The temporary-tablespace candidate instead requires `63,889,388,393` free on
-4 TB and `17,259,765,778` on scratch, so its capacity math passes narrowly at
+The temporary-tablespace candidate instead requires `63,889,690,620` free on
+4 TB and `17,260,886,072` on scratch, so its capacity math passes narrowly at
 the accepted free-space assumptions. Pre-drop repatriation requires
-`66,574,731,411` and is still `574,731,411` short at `66 GB`. Execution
+`66,575,033,638` and is still `575,033,638` short at `66 GB`. Execution
 remains blocked by that final headroom, merge/review, production
 mount/recreate, fresh preflight/parity, and the no-rewrite boundary for this
 task. See the

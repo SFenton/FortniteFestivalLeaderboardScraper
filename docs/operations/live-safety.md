@@ -206,12 +206,12 @@ Production build requires the candidate-specific measured gate:
 ```
 
 A direct `pg_default` build does not fit: the exact archived row ratio requires
-`69,712,458,213` bytes and is short by `3,712,458,213`; the conservative
+`69,713,820,289` bytes and is short by `3,713,820,289`; the conservative
 sensitivity requires `72.19-73.06 GB`. The temporary-tablespace candidate
-projects `63,889,388,393` required 4 TB bytes (`2,110,611,607` margin at
-`66 GB`) and `17,259,765,778` scratch bytes. That is capacity readiness only:
-pre-drop repatriation requires `66,574,731,411` bytes and is still
-`574,731,411` short at the same assumption. Do not run `build`, `swap`,
+projects `63,889,690,620` required 4 TB bytes (`2,110,309,380` margin at
+`66 GB`) and `17,260,886,072` scratch bytes. That is capacity readiness only:
+pre-drop repatriation requires `66,575,033,638` bytes and is still
+`575,033,638` short at the same assumption. Do not run `build`, `swap`,
 `repatriate`, or `drop` before merge/review, exact production mount/recreate
 validation, fresh preflight/parity, sufficient repatriation headroom, and the
 separately approved maintenance turn. This does not lower the global

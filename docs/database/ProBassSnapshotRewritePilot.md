@@ -40,14 +40,14 @@ and separate final drop. Measurements were:
 |---|---:|
 | Original relation | 144,318,464 |
 | Replacement relation | 19,636,224 |
-| Scratch build WAL | 20,455,160 |
-| Build temp | 8,421,376 |
-| Observed scratch-build peak | 19,701,760 |
-| Repatriation WAL/temp | 20,275,720 / 8,429,568 |
-| Custom archive | 6,703,385 |
+| Scratch build WAL | 20,455,280 |
+| Build temp | 8,429,568 |
+| Observed scratch-build peak | 19,771,392 |
+| Repatriation WAL/temp | 20,275,824 / 8,421,376 |
+| Custom archive | 6,703,401 |
 | Restore workspace peak | 264,653,337 |
 | Dropped original / scratch rollback | 144,318,464 / 19,636,224 |
-| Immediate filesystem return | 163,958,784 |
+| Immediate filesystem return | 163,971,072 |
 
 The swap took `0.047-0.066s` in the scaled drill. That is isolated evidence,
 not a production lock-duration promise.
@@ -59,42 +59,40 @@ truthful resumed report; the first reports remain checksummed as interruption
 evidence.
 
 Committed-code evidence is mirrored at
-`/home/sfenton/FortniteFestivalLeaderboardScraper/artifacts/pro-bass-pilot-implementation-a66ff41b-20260817T2220Z/`.
+`/home/sfenton/FortniteFestivalLeaderboardScraper/artifacts/pro-bass-pilot-implementation-e9650f47-20260818T0045Z/`.
 Key SHA-256 values are:
 
 - `drill-summary.json`:
-  `e041c9eba1f65029577508667f28c47beddbd722296fecfdb0e02393a833bb72`;
+  `3445e2ae445abff79f2336b1fbae53e8b453965353a1e43ea46551fb998ebe6a`;
 - `measured-profile.json`:
-  `740330f1f2bad5e3f2bc440421805554f3e19db27d71224ed6a96a6959fe92a0`;
-- `live-capacity-projection.json`:
-  `4a10a8c8a7564c03a20b620227d4ecd1ea0b403729c297f742aa6cf44f316c1f`;
-- `cleanup-proof.json`:
-  `90c14fb44a3a2c3230c27496182fb48ab65c653af6f96e70a440c6e21681a3f6`.
-- `live-archive-summary.json`:
-  `df09e8efe03290bcde0d39be410555d17481c92779fc8d060757d3ab7a6191f7`;
+  `99ba02f63ef121df8421e8666349a7213d128dd512ab629e7c5a5f6309e57837`;
 - `live-archive-capacity-projection.json`:
-  `2f339396e2aee86c8848323355f71a27be5b79c97d73fcdfac7378c96d796073`.
+  `0e3419fe8f483fdeb606608452c3c70e896cf7c6c04bf0f6b60ae00136067c85`;
+- `cleanup-proof.json`:
+  `43b391ecdf2d59c5a5f8fa68d51b1cbbd8657fc8186e510aea665e21aa55ac38`.
+- `live-archive-summary.json`:
+  `a58bd93baffda46540d04885e3e60c0218244bfe93f0cfdccee51f85e8f188b9`;
 - `verified-live-archive-input.json`:
   `233e46dff7a870f314af791001c8d0e6115a180ec7f856eb0bd977277971e5ac`.
 - `dual-filesystem-capacity-projection.json`:
-  `4bd8ccf643879ec84df60519fe7afb69c9c67498cd3770148c5564d05d970ceb`.
+  `c950cfd8774f3454b13cd5074bfeb50bafef5a1cc546ccf32667a544bf3bee1c`.
 
 The verified archive contains `308,536,699` rows across 125 snapshot IDs
 (`769-1302`). Applying the measured ratios to the exact row ratio and live
 heap/index bytes estimates a `2,685,343,018`-byte replacement and requires
-`69,712,458,213` free bytes after WAL, temp, failure reserve, and the
+`69,713,820,289` free bytes after WAL, temp, failure reserve, and the
 `60,392,999,803`-byte emergency floor. At `66 GB`, the shortfall is
-`3,712,458,213` bytes. The older approximately `3.4 GB` retained-size
+`3,713,820,289` bytes. The older approximately `3.4 GB` retained-size
 sensitivity remains a conservative `72.19-73.06 GB` requirement.
 
 The temporary-tablespace model keeps replacement/temp/failure bytes on 8 TB
 scratch and budgets only WAL plus the emergency floor on 4 TB. It projects a
-4 TB requirement of `63,889,388,393` bytes, leaving `2,110,611,607` bytes at
-the `66 GB` assumption, and a scratch requirement of `17,259,765,778` bytes.
+4 TB requirement of `63,889,690,620` bytes, leaving `2,110,309,380` bytes at
+the `66 GB` assumption, and a scratch requirement of `17,260,886,072` bytes.
 Capacity therefore passes narrowly for that candidate mode, but production
 build/swap remains blocked by the complete sequence: copying the measured
 replacement back to `pg_default` while the original rollback relation still
-exists requires `66,574,731,411` bytes, `574,731,411` above the `66 GB`
+exists requires `66,575,033,638` bytes, `575,033,638` above the `66 GB`
 assumption. PR merge/review, the production-owned scratch bind
 mount/container-recreate gate, fresh preflight/parity, and the explicit
 no-rewrite boundary for this task also remain.
@@ -452,7 +450,7 @@ plus a conservative WAL budget; the 8 TB gate requires measured replacement
 heap/indexes, temp, one replacement-sized failure reserve, and 10 GiB reserve.
 `repatriate` must fit the measured replacement plus WAL budget while the old
 rollback relation still exists. At the `66 GB` assumption it is short by
-`574,731,411` bytes. The workflow is incomplete while any accepted relation or
+`575,033,638` bytes. The workflow is incomplete while any accepted relation or
 tablespace remains under the scratch root, and final old-relation drop cannot
 precede repatriation.
 
