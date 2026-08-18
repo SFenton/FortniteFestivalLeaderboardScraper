@@ -242,7 +242,12 @@ The package:
   pass, then requires `repatriate` back to `pg_default`;
 - retains the detached original through exact validation;
 - supports rename-back rollback before a separately guarded final drop;
-- removes every scratch relation/tablespace before accepted completion;
+- retains original and scratch rollback relations through repatriation parity,
+  then removes both and the tablespace only in final drop;
+- atomically publishes critical evidence, recovers catalog state from
+  zero-length/truncated copy/swap evidence, and durably blocks a breached run;
+- binds verified archive adoption to exact per-snapshot counts/content hashes
+  and the full canonical restored catalog;
 - never uses `CASCADE`.
 
 Run structural tests with:
@@ -269,11 +274,13 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
 ```
 
 The final accepted isolated drill retained two restore-drilled archives and
-proved both rename-back and final-drop paths. It measured a 144,318,464-byte
-source, 19,636,224-byte replacement, 20,455,280 scratch-build WAL bytes,
-8,429,568 temp bytes, 19,771,392 peak scratch growth, and 163,971,072
-filesystem bytes returned after dropping the original plus scratch rollback.
-Repatriation returned the accepted relation/catalog to `pg_default`.
+proved rename-back, pre-drop repatriation, torn-evidence recovery, and
+final-drop paths. It measured a 75,415,552-byte source, 19,636,224-byte
+replacement, 20,423,824 scratch-build WAL bytes, 8,429,568 temp bytes,
+19,689,472 peak scratch growth, and 95,043,584 filesystem bytes returned after
+dropping the original plus scratch rollback. Repatriation returned the accepted
+relation/catalog to `pg_default` while both rollback relations remained until
+final drop.
 The rollback lane also proves archive/build/swap/rollback resume after a
 simulated missing terminal report while preserving the first checksummed
 reports.

@@ -448,6 +448,7 @@ def simulate_missing_acknowledgement(
         "archive": "resumedExistingArchive",
         "build": "resumedExistingAtomicBuild",
         "swap": "resumedCommittedSwap",
+        "repatriate": "resumedCommittedSwap",
         "rollback": "resumedCommittedRollback",
     }
     field = resume_fields[stage]
@@ -515,6 +516,8 @@ def create_verified_archive_input(
                 {
                     "snapshotId": row["snapshotId"],
                     "rowCount": row["rowCount"],
+                    "contentHashXor": row["hashXor0"],
+                    "contentHashSum": row["hashSum2"],
                 }
                 for row in sorted(
                     drill["restoredSnapshotDistribution"],
@@ -523,6 +526,10 @@ def create_verified_archive_input(
             ],
         },
     )
+    catalog_path = path.with_name(
+        "verified-restore-catalog.json"
+    )
+    write_json(catalog_path, drill["restoredCatalog"])
     validation_path = path.with_name(
         "verified-restore-validation.json"
     )
@@ -531,29 +538,23 @@ def create_verified_archive_input(
         "status": "succeeded",
         "productionDatabaseMutated": False,
         "sourceChangedDuringArchive": False,
+        "source": {
+            "oid": source["oid"],
+            "relfilenode": source["relfilenode"],
+            "heapBytes": source["heapBytes"],
+            "indexBytes": source["indexBytes"],
+            "totalBytes": source["totalBytes"],
+            "inserts": source["inserts"],
+            "updates": source["updates"],
+            "deletes": source["deletes"],
+        },
         "archive": {
             "path": archive["archive"]["path"],
             "bytes": archive["archive"]["bytes"],
             "sha256": archive["archive"]["sha256"],
             "checksumMatches": True,
         },
-        "catalog": {
-            "partitionBound": drill["restoredCatalog"][
-                "partitionBound"
-            ],
-            "indexes": [
-                {
-                    "name": plan["sourceCatalogNames"][
-                        "primaryIndex"
-                    ]
-                },
-                {
-                    "name": plan["sourceCatalogNames"][
-                        "scoreIndex"
-                    ]
-                },
-            ],
-        },
+        "catalog": drill["restoredCatalog"],
         "data": {
             "rowCount": drill["exactRows"]["total"],
             "snapshotIds": snapshot_ids,
@@ -621,13 +622,37 @@ def create_verified_archive_input(
             "distributionSha256": sha256_path(
                 distribution_path
             ),
+            "catalogPath": str(catalog_path),
+            "catalogSha256": sha256_path(catalog_path),
             "partitionBound": drill["restoredCatalog"][
                 "partitionBound"
             ],
+            "owner": drill["restoredCatalog"]["owner"],
+            "primaryConstraint": plan["sourceCatalogNames"][
+                "primaryConstraint"
+            ],
+            "primaryConstraintDefinition": next(
+                item["definition"]
+                for item in drill["restoredCatalog"]["constraints"]
+                if item["name"]
+                == plan["sourceCatalogNames"]["primaryConstraint"]
+            ),
             "primaryIndex": plan["sourceCatalogNames"][
                 "primaryIndex"
             ],
+            "primaryIndexDefinition": next(
+                item["definition"]
+                for item in drill["restoredCatalog"]["indexes"]
+                if item["name"]
+                == plan["sourceCatalogNames"]["primaryIndex"]
+            ),
             "scoreIndex": plan["sourceCatalogNames"]["scoreIndex"],
+            "scoreIndexDefinition": next(
+                item["definition"]
+                for item in drill["restoredCatalog"]["indexes"]
+                if item["name"]
+                == plan["sourceCatalogNames"]["scoreIndex"]
+            ),
         },
         "cleanup": {
             "status": "succeeded",
@@ -849,15 +874,18 @@ def main(argv=None):
     rollback_scratch = work_root / "rollback-path"
     drop_scratch = work_root / "drop-path"
     adopted_scratch = work_root / "adopted-archive-path"
+    torn_scratch = work_root / "torn-evidence-path"
     rollback_scratch.mkdir(mode=0o700)
     drop_scratch.mkdir(mode=0o700)
     adopted_scratch.mkdir(mode=0o700)
+    torn_scratch.mkdir(mode=0o700)
     seed_path = work_root / "seed-profile.json"
     seed_profile(seed_path)
     interruption_root = work_root / "interruption-recovery"
     interruption_root.mkdir(mode=0o700)
     run_id_rollback = "synthetic-rollback-0001"
     run_id_drop = "synthetic-drop-0001"
+    run_id_torn = "synthetic-torn-0001"
     run(
         [
             "docker",
@@ -1015,6 +1043,134 @@ def main(argv=None):
             "swap",
             "validate",
             "repatriate",
+        ):
+            stage_command(
+                stage,
+                torn_scratch,
+                device,
+                run_id_torn,
+                container,
+                args.image,
+                seed_path,
+            )
+        (
+            torn_scratch / "reports" / "repatriate.json"
+        ).unlink()
+        (
+            torn_scratch / "reports" / "repatriate.copy.json"
+        ).write_bytes(b"")
+        (
+            torn_scratch / "reports" / "repatriate.swap.json"
+        ).write_bytes(b'{"status":')
+        try:
+            stage_command(
+                "repatriate",
+                torn_scratch,
+                device,
+                run_id_torn,
+                container,
+                args.image,
+                seed_path,
+            )
+        except DrillError as error:
+            if "malformed repatriation evidence" not in str(error):
+                raise
+        else:
+            raise DrillError(
+                "torn repatriation evidence was not rejected"
+            )
+        torn_token = hashlib.sha256(
+            run_id_torn.encode("utf-8")
+        ).hexdigest()[:12]
+        torn_state = json.loads(
+            psql(
+                container,
+                f"""
+                    SELECT json_build_object(
+                        'targetTablespace', (
+                            SELECT COALESCE(
+                                tablespace.spcname, 'pg_default')
+                            FROM pg_class relation
+                            LEFT JOIN pg_tablespace tablespace
+                              ON tablespace.oid =
+                                    relation.reltablespace
+                            WHERE relation.oid =
+                                'public.{TARGET}'::regclass),
+                        'originalExists', to_regclass(
+                            'public.{TARGET}_retired_{torn_token}')
+                            IS NOT NULL,
+                        'scratchRetiredExists', to_regclass(
+                            'public.pb_scratch_retired_{torn_token}')
+                            IS NOT NULL,
+                        'homeExists', to_regclass(
+                            'public.pb_home_{torn_token}')
+                            IS NOT NULL)
+                """,
+            )
+        )
+        if (
+            torn_state["targetTablespace"] == "pg_default"
+            or not torn_state["originalExists"]
+            or torn_state["scratchRetiredExists"]
+            or not torn_state["homeExists"]
+        ):
+            raise DrillError(
+                "torn evidence recovery did not restore scratch "
+                "candidate ownership"
+            )
+        stage_command(
+            "rollback",
+            torn_scratch,
+            device,
+            run_id_torn,
+            container,
+            args.image,
+            seed_path,
+        )
+        psql(
+            container,
+            f"""
+                DROP TABLE
+                    public."{TARGET}_failed_{torn_token}",
+                    public."pb_home_{torn_token}";
+                CHECKPOINT;
+            """,
+        )
+        torn_tablespace = read_report(
+            torn_scratch,
+            "build",
+        )["buildStorage"]["tablespace"]
+        psql(
+            container,
+            f'DROP TABLESPACE "{torn_tablespace}";',
+        )
+        run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0:0",
+                container,
+                "sh",
+                "-c",
+                (
+                    "find /fst-pro-bass-scratch "
+                    "-mindepth 1 -maxdepth 1 "
+                    "-exec rm -rf -- {} +"
+                ),
+            ],
+            timeout=600,
+        )
+
+        for stage in (
+            "check",
+            "plan",
+            "archive",
+            "drill",
+            "build",
+            "swap",
+            "validate",
+            "repatriate",
             "drop",
         ):
             stage_command(
@@ -1026,6 +1182,19 @@ def main(argv=None):
                 args.image,
                 seed_path,
             )
+            if stage == "repatriate":
+                interruption_results.append(
+                    simulate_missing_acknowledgement(
+                        stage,
+                        drop_scratch,
+                        device,
+                        run_id_drop,
+                        container,
+                        args.image,
+                        seed_path,
+                        interruption_root,
+                    )
+                )
         final_rows = int(
             psql(
                 container,
@@ -1061,6 +1230,7 @@ def main(argv=None):
             },
             "finalDropPathPassed": True,
             "repatriationPathPassed": True,
+            "tornEvidenceRecoveryPassed": True,
             "interruptionRecoveryPassed": True,
             "interruptionRecovery": interruption_results,
             "originalRows": expected_rows,

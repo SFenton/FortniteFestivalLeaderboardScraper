@@ -175,11 +175,32 @@ def sha256_path(path):
 def write_bytes_exclusive(path, value, mode=0o600):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with path.open("xb") as handle:
-        handle.write(value)
-        handle.flush()
-        os.fsync(handle.fileno())
-    path.chmod(mode)
+    temporary = path.with_name(
+        f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}"
+    )
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            mode,
+        )
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path)
+        os.unlink(temporary)
+        directory = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def write_json_exclusive(path, value):
@@ -211,7 +232,10 @@ def read_json(path, maximum_bytes=16 * 1024 * 1024):
     if metadata.st_size > maximum_bytes:
         raise PilotError(f"JSON input is too large: {path}")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PilotError(f"JSON input is malformed: {path}") from error
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PilotError(f"invalid JSON input {path}: {error}") from error
 
@@ -398,7 +422,11 @@ def catalog_shape(catalog):
     }
 
 
-def catalog_semantic_shape(catalog):
+def catalog_semantic_shape(
+    catalog,
+    *,
+    ignored_constraint_names=(),
+):
     indexes = []
     for item in catalog["indexes"]:
         definition = re.sub(
@@ -431,6 +459,7 @@ def catalog_semantic_shape(catalog):
                     "definition": item["definition"],
                 }
                 for item in catalog["constraints"]
+                if item["name"] not in ignored_constraint_names
             ),
             key=lambda item: (
                 item["type"],
@@ -671,6 +700,7 @@ class FilesystemMonitor:
         self.minimum_free_bytes = shutil.disk_usage(self.path).free
         self.samples = 1
         self.breached = False
+        self.breach_handled = False
         self.breach_error = None
         self._stopped = threading.Event()
         self._thread = None
@@ -685,12 +715,18 @@ class FilesystemMonitor:
         if (
             self.minimum_allowed_bytes is not None
             and free < self.minimum_allowed_bytes
-            and not self.breached
         ):
             self.breached = True
-            if self.on_breach is not None:
+            if (
+                self.on_breach is not None
+                and not self.breach_handled
+            ):
                 try:
-                    self.on_breach()
+                    self.breach_handled = bool(
+                        self.on_breach(free)
+                    )
+                    if self.breach_handled:
+                        self.breach_error = None
                 except Exception as error:
                     self.breach_error = str(error)
 
@@ -1725,26 +1761,59 @@ def load_verified_archive_input(
             "verified archive distribution checksum changed"
         )
     distribution = read_json(distribution_path)
+    distribution_rows = distribution.get("distribution") or []
+    distribution_ids = [
+        ensure_integer(
+            row.get("snapshotId"),
+            "verified archive distribution snapshot ID",
+            1,
+        )
+        for row in distribution_rows
+    ]
+    try:
+        content_hashes_valid = all(
+            isinstance(row.get("contentHashXor"), int)
+            and not isinstance(row.get("contentHashXor"), bool)
+            and str(int(row.get("contentHashSum")))
+            == str(row.get("contentHashSum"))
+            for row in distribution_rows
+        )
+    except (TypeError, ValueError):
+        content_hashes_valid = False
     if (
         distribution.get("status") != "succeeded"
         or int(distribution.get("rowCount", -1))
         != int(restore["rowCount"])
         or distribution.get("snapshotIds") != snapshot_ids
-        or len(distribution.get("distribution") or [])
-        != len(snapshot_ids)
+        or distribution_ids != snapshot_ids
+        or len(set(distribution_ids)) != len(snapshot_ids)
+        or not content_hashes_valid
         or sum(
             ensure_integer(
                 row.get("rowCount"),
                 "verified archive distribution row count",
                 1,
             )
-            for row in distribution["distribution"]
+            for row in distribution_rows
         )
         != int(restore["rowCount"])
     ):
         raise PilotError(
             "verified archive distribution is inconsistent"
         )
+    catalog_path = pathlib.Path(
+        str(restore.get("catalogPath", ""))
+    )
+    if (
+        not catalog_path.is_file()
+        or catalog_path.is_symlink()
+        or sha256_path(catalog_path)
+        != restore.get("catalogSha256")
+    ):
+        raise PilotError(
+            "verified archive catalog checksum changed"
+        )
+    restored_catalog = read_json(catalog_path)
     evidence_values = {}
     for evidence_path_key, evidence_sha_key, container, label in (
         (
@@ -1778,6 +1847,28 @@ def load_verified_archive_input(
     validation_data = validation.get("data") or {}
     validation_archive = validation.get("archive") or {}
     validation_catalog = validation.get("catalog") or {}
+    validation_source = validation.get("source") or {}
+    validation_source_fence = {
+        "partitionOid": validation_source.get(
+            "partitionOid",
+            validation_source.get("oid"),
+        ),
+        "relfilenode": validation_source.get("relfilenode"),
+        "heapBytes": validation_source.get("heapBytes"),
+        "indexBytes": validation_source.get("indexBytes"),
+        "totalBytes": validation_source.get("totalBytes"),
+        "inserts": validation_source.get("inserts"),
+        "updates": validation_source.get("updates"),
+        "deletes": validation_source.get("deletes"),
+    }
+    validation_constraints = {
+        item.get("name"): item.get("definition")
+        for item in validation_catalog.get("constraints") or []
+    }
+    validation_indexes = {
+        item.get("name"): item.get("definition")
+        for item in validation_catalog.get("indexes") or []
+    }
     if (
         validation.get("status") != "succeeded"
         or validation.get("productionDatabaseMutated") is not False
@@ -1790,16 +1881,28 @@ def load_verified_archive_input(
         or int(validation_data.get("rowCount", -1))
         != int(restore["rowCount"])
         or validation_data.get("snapshotIds") != snapshot_ids
+        or validation_data.get("distributionPath")
+        != restore.get("distributionPath")
+        or validation_data.get("distributionSha256")
+        != restore.get("distributionSha256")
+        or not source_fence_matches(
+            source,
+            validation_source_fence,
+        )
         or validation_catalog.get("partitionBound")
         != restore.get("partitionBound")
-        or restore.get("primaryIndex") not in {
-            item.get("name")
-            for item in validation_catalog.get("indexes") or []
-        }
-        or restore.get("scoreIndex") not in {
-            item.get("name")
-            for item in validation_catalog.get("indexes") or []
-        }
+        or catalog_shape(validation_catalog)
+        != catalog_shape(restored_catalog)
+        or validation_catalog.get("owner")
+        != restore.get("owner")
+        or validation_constraints.get(
+            restore.get("primaryConstraint")
+        )
+        != restore.get("primaryConstraintDefinition")
+        or validation_indexes.get(restore.get("primaryIndex"))
+        != restore.get("primaryIndexDefinition")
+        or validation_indexes.get(restore.get("scoreIndex"))
+        != restore.get("scoreIndexDefinition")
     ):
         raise PilotError(
             "verified archive restore validation is inconsistent"
@@ -2382,6 +2485,43 @@ def stage_plan(args, runner):
             "pilot target must reside in the default FST tablespace"
         )
     catalog_names = source_catalog_names(catalog)
+    if verified_archive is not None:
+        restore_catalog = verified_archive["restore"]
+        restored_catalog = read_json(
+            pathlib.Path(restore_catalog["catalogPath"])
+        )
+        constraint_definitions = {
+            item["name"]: item["definition"]
+            for item in catalog["constraints"]
+        }
+        index_definitions = {
+            item["name"]: item["definition"]
+            for item in catalog["indexes"]
+        }
+        if (
+            catalog_shape(restored_catalog)
+            != catalog_shape(catalog)
+            or restore_catalog.get("partitionBound")
+            != catalog["partitionBound"]
+            or restore_catalog.get("owner") != catalog["owner"]
+            or restore_catalog.get("primaryConstraint")
+            != catalog_names["primaryConstraint"]
+            or restore_catalog.get("primaryIndex")
+            != catalog_names["primaryIndex"]
+            or restore_catalog.get("scoreIndex")
+            != catalog_names["scoreIndex"]
+            or restore_catalog.get("primaryConstraintDefinition")
+            != constraint_definitions[
+                catalog_names["primaryConstraint"]
+            ]
+            or restore_catalog.get("primaryIndexDefinition")
+            != index_definitions[catalog_names["primaryIndex"]]
+            or restore_catalog.get("scoreIndexDefinition")
+            != index_definitions[catalog_names["scoreIndex"]]
+        ):
+            raise PilotError(
+                "verified restore catalog differs from the live source"
+            )
     exact_retained_rows = ensure_integer(
         retained_fingerprint.get("rowCount"),
         "protected fingerprint row count",
@@ -3353,37 +3493,140 @@ def advisory_lock_guard_sql():
     """
 
 
-def cancel_pilot_backends(runner, args):
-    runner.run(
-        [
-            "docker",
-            "exec",
-            args.pg_container,
-            "psql",
-            "-X",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            args.pg_user,
-            "-d",
-            args.pg_database,
-            "-At",
-            "-c",
-            (
-                "SELECT COALESCE(bool_and(pg_cancel_backend(pid)), TRUE) "
-                "FROM pg_stat_activity "
-                "WHERE pid <> pg_backend_pid() "
-                "AND application_name = "
-                f"{sql_literal(APPLICATION_NAME)}"
-            ),
-        ],
-        timeout=30,
+def assert_no_emergency_breach(root):
+    path = (
+        pathlib.Path(root)
+        / REPORTS_DIR
+        / "emergency-floor-breach.json"
     )
+    if path.exists():
+        raise PilotError(
+            "workspace recorded an emergency-floor breach; use a new "
+            "run after reconciling PostgreSQL WAL and filesystem state"
+        )
+
+
+def cancel_pilot_backends(
+    runner,
+    args,
+    free_bytes,
+    threshold_bytes,
+    filesystem,
+):
+    breach_path = (
+        pathlib.Path(args.scratch_root)
+        / REPORTS_DIR
+        / "emergency-floor-breach.json"
+    )
+    if not breach_path.exists():
+        write_json_exclusive(
+            breach_path,
+            {
+                "formatVersion": FORMAT_VERSION,
+                "toolId": TOOL_ID,
+                "status": "blocked",
+                "recordedAtUtc": utc_now(),
+                "freeBytes": free_bytes,
+                "thresholdBytes": threshold_bytes,
+                "filesystem": filesystem,
+                "applicationName": APPLICATION_NAME,
+                "resumeAllowed": False,
+            },
+        )
+
+    def backend_count():
+        output = runner.run(
+            [
+                "docker",
+                "exec",
+                args.pg_container,
+                "psql",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                args.pg_user,
+                "-d",
+                args.pg_database,
+                "-At",
+                "-c",
+                (
+                    "SELECT COUNT(*) FROM pg_stat_activity "
+                    "WHERE pid <> pg_backend_pid() "
+                    "AND application_name = "
+                    f"{sql_literal(APPLICATION_NAME)}"
+                ),
+            ],
+            timeout=30,
+        ).stdout.strip()
+        try:
+            parsed = int(output)
+        except ValueError as error:
+            raise PilotError(
+                "remaining pilot backend count is not an integer"
+            ) from error
+        return ensure_integer(
+            parsed,
+            "remaining pilot backend count",
+            0,
+        )
+
+    for attempt in range(10):
+        if backend_count() == 0:
+            return True
+        function = (
+            "pg_cancel_backend"
+            if attempt < 4
+            else "pg_terminate_backend"
+        )
+        output = runner.run(
+            [
+                "docker",
+                "exec",
+                args.pg_container,
+                "psql",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                args.pg_user,
+                "-d",
+                args.pg_database,
+                "-At",
+                "-c",
+                (
+                    f"SELECT COUNT(*) FILTER (WHERE {function}(pid)) "
+                    "FROM pg_stat_activity "
+                    "WHERE pid <> pg_backend_pid() "
+                    "AND application_name = "
+                    f"{sql_literal(APPLICATION_NAME)}"
+                ),
+            ],
+            timeout=30,
+        ).stdout.strip()
+        try:
+            parsed = int(output)
+        except ValueError as error:
+            raise PilotError(
+                "cancelled pilot backend count is not an integer"
+            ) from error
+        ensure_integer(
+            parsed,
+            "cancelled pilot backend count",
+            0,
+        )
+        time.sleep(0.5)
+    if backend_count() != 0:
+        raise PilotError(
+            "pilot backends remain after emergency cancellation"
+        )
+    return True
 
 
 def stage_build(args, runner):
     if not args.execute:
         raise PilotError("build requires --execute")
+    assert_no_emergency_breach(args.scratch_root)
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     drill = load_report(args.scratch_root, "drill")
@@ -3628,9 +3871,12 @@ def stage_build(args, runner):
         minimum_allowed_bytes=(
             EMERGENCY_FLOOR_BYTES + 512 * 1024**2
         ),
-        on_breach=lambda: cancel_pilot_backends(
+        on_breach=lambda free: cancel_pilot_backends(
             runner,
             args,
+            free,
+            EMERGENCY_FLOOR_BYTES + 512 * 1024**2,
+            "fst",
         ),
     )
     scratch_monitor = FilesystemMonitor(
@@ -3640,9 +3886,12 @@ def stage_build(args, runner):
             if scratch_mount["enabled"]
             else None
         ),
-        on_breach=lambda: cancel_pilot_backends(
+        on_breach=lambda free: cancel_pilot_backends(
             runner,
             args,
+            free,
+            current_capacity.get("scratchReserveBytes"),
+            "scratch",
         ),
     )
     try:
@@ -3767,6 +4016,9 @@ def stage_build(args, runner):
         "filesystemEmergencyThresholdBreached": (
             filesystem_monitor.breached
         ),
+        "filesystemEmergencyCancellationHandled": (
+            filesystem_monitor.breach_handled
+        ),
         "filesystemEmergencyCancellationError": (
             filesystem_monitor.breach_error
         ),
@@ -3776,6 +4028,9 @@ def stage_build(args, runner):
         ),
         "scratchReserveThresholdBreached": (
             scratch_monitor.breached
+        ),
+        "scratchReserveCancellationHandled": (
+            scratch_monitor.breach_handled
         ),
         "scratchReserveCancellationError": (
             scratch_monitor.breach_error
@@ -4295,6 +4550,7 @@ def stage_validate(args, runner):
 def stage_drop(args, runner):
     if not args.execute:
         raise PilotError("drop requires --execute")
+    assert_no_emergency_breach(args.scratch_root)
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     validation = load_report(args.scratch_root, "validate")
@@ -4309,6 +4565,27 @@ def stage_drop(args, runner):
     ):
         raise PilotError(
             "validation and repatriation must both be accepted"
+        )
+    for key in ("copyEvidence", "swapEvidence"):
+        evidence = repatriation.get(key) or {}
+        path = pathlib.Path(str(evidence.get("path", "")))
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or sha256_path(path) != evidence.get("sha256")
+        ):
+            raise PilotError(
+                f"repatriation {key} is unavailable before final drop"
+            )
+    if (
+        not repatriation.get("capacityGate", {}).get("allowed")
+        or repatriation.get("homeBuildResources", {}).get(
+            "filesystemEmergencyThresholdBreached"
+        )
+        is not False
+    ):
+        raise PilotError(
+            "repatriation safety evidence is incomplete"
         )
     archive = load_report(args.scratch_root, "archive")
     load_report(args.scratch_root, "drill")
@@ -4325,6 +4602,9 @@ def stage_drop(args, runner):
     scratch_retired = scratch_retired_name(args.run_id)
     home_primary = home_primary_name(args.run_id)
     home_score = home_score_name(args.run_id)
+    temporary_check = replacement_instrument_check_name(
+        args.run_id
+    )
     source_catalog = source_catalog_names(plan["catalog"])
     scratch_mount = collect_tablespace_mount(args, runner)
     relation_probe = database.json(
@@ -4465,7 +4745,10 @@ def stage_drop(args, runner):
         )
     pre_drop_catalog = database.json(catalog_query())
     if (
-        catalog_semantic_shape(pre_drop_catalog)
+        catalog_semantic_shape(
+            pre_drop_catalog,
+            ignored_constraint_names=(temporary_check,),
+        )
         != catalog_semantic_shape(plan["catalog"])
     ):
         raise PilotError(
@@ -4482,6 +4765,8 @@ def stage_drop(args, runner):
                 {advisory_lock_guard_sql()}
                 DROP TABLE {qualified(retired)};
                 DROP TABLE {qualified(scratch_retired)};
+                ALTER TABLE {qualified(TARGET_PARTITION)}
+                    DROP CONSTRAINT "{temporary_check}";
                 ALTER TABLE {qualified(TARGET_PARTITION)}
                     RENAME CONSTRAINT "{home_primary}"
                     TO "{source_catalog['primaryConstraint']}";
@@ -4611,6 +4896,7 @@ def stage_drop(args, runner):
 def stage_repatriate(args, runner):
     if not args.execute:
         raise PilotError("repatriate requires --execute")
+    assert_no_emergency_breach(args.scratch_root)
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     validation = load_report(args.scratch_root, "validate")
@@ -4656,6 +4942,129 @@ def stage_repatriate(args, runner):
                     'public.{retired}') IS NOT NULL)
         """
     )
+    copy_path = (
+        pathlib.Path(args.scratch_root)
+        / REPORTS_DIR
+        / "repatriate.copy.json"
+    )
+    swap_path = (
+        pathlib.Path(args.scratch_root)
+        / REPORTS_DIR
+        / "repatriate.swap.json"
+    )
+    malformed_evidence = []
+    try:
+        copy_evidence = (
+            read_json(copy_path) if copy_path.exists() else None
+        )
+    except PilotError:
+        copy_evidence = None
+        malformed_evidence.append("copy")
+    try:
+        swap_evidence = (
+            read_json(swap_path) if swap_path.exists() else None
+        )
+    except PilotError:
+        swap_evidence = None
+        malformed_evidence.append("swap")
+    for label, evidence in (
+        ("copy", copy_evidence),
+        ("swap", swap_evidence),
+    ):
+        if evidence is not None and (
+            evidence.get("toolId") != TOOL_ID
+            or evidence.get("runId") != args.run_id
+            or evidence.get("planId") != plan["planId"]
+            or evidence.get("status") != "succeeded"
+        ):
+            raise PilotError(
+                f"existing repatriation {label} evidence is invalid"
+            )
+
+    def rollback_unacknowledged_swap():
+        database.psql(
+            f"""
+                BEGIN;
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                {advisory_lock_guard_sql()}
+                LOCK TABLE {qualified(TARGET_PARENT)}
+                    IN ACCESS EXCLUSIVE MODE;
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    DETACH PARTITION {qualified(TARGET_PARTITION)};
+                ALTER TABLE {qualified(TARGET_PARTITION)}
+                    RENAME TO "{home}";
+                ALTER TABLE {qualified(scratch_retired)}
+                    RENAME TO "{TARGET_PARTITION}";
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    ATTACH PARTITION {qualified(TARGET_PARTITION)}
+                    FOR VALUES IN (
+                        {sql_literal(TARGET_INSTRUMENT)});
+                COMMIT;
+            """,
+            timeout=60,
+        )
+
+    if malformed_evidence:
+        if (
+            state["targetTablespace"] == "pg_default"
+            and state["scratchRetiredExists"]
+        ):
+            rollback_unacknowledged_swap()
+        elif (
+            state["targetTablespace"] != "pg_default"
+            and state["homeExists"]
+        ):
+            database.psql(
+                f"""
+                    BEGIN;
+                    SET LOCAL lock_timeout = '2s';
+                    SET LOCAL statement_timeout = '30s';
+                    {advisory_lock_guard_sql()}
+                    DROP TABLE {qualified(home)};
+                    COMMIT;
+                """,
+                timeout=60,
+            )
+        raise PilotError(
+            "malformed repatriation evidence was recovered to the "
+            "scratch candidate; use a new run"
+        )
+
+    if (
+        state["targetTablespace"] == "pg_default"
+        and state["scratchRetiredExists"]
+        and swap_evidence is None
+    ):
+        rollback_unacknowledged_swap()
+        state["targetTablespace"] = scratch_mount["tablespace"]
+        state["homeExists"] = True
+        state["scratchRetiredExists"] = False
+    if (
+        state["targetTablespace"] != "pg_default"
+        and state["homeExists"]
+        and copy_evidence is None
+    ):
+        database.psql(
+            f"""
+                BEGIN;
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                {advisory_lock_guard_sql()}
+                DROP TABLE {qualified(home)};
+                COMMIT;
+            """,
+            timeout=60,
+        )
+        state["homeExists"] = False
+    if (
+        state["targetTablespace"] != "pg_default"
+        and swap_evidence is not None
+    ):
+        raise PilotError(
+            "prior repatriation swap evidence exists without its "
+            "committed catalog state; use a new run"
+        )
     if not state["originalRetainedExists"]:
         raise PilotError(
             "original rollback relation is missing before repatriation"
@@ -4674,6 +5083,20 @@ def stage_repatriate(args, runner):
         build,
         host["dataFilesystem"]["freeBytes"],
     )
+    if copy_evidence is not None:
+        capacity = copy_evidence.get("capacityGate")
+        if (
+            not isinstance(capacity, dict)
+            or not capacity.get("allowed")
+            or copy_evidence.get(
+                "filesystemEmergencyThresholdBreached"
+            )
+            is not False
+        ):
+            raise PilotError(
+                "repatriation copy evidence lacks a safe capacity "
+                "decision"
+            )
     home_build_elapsed = 0.0
     free_before = host["dataFilesystem"]["freeBytes"]
     if (
@@ -4695,6 +5118,17 @@ def stage_repatriate(args, runner):
             if scratch_mount["enabled"]
             else "pg_default"
         )
+        attempt_path = (
+            pathlib.Path(args.scratch_root)
+            / REPORTS_DIR
+            / (
+                "repatriate.attempt-"
+                + datetime.now(timezone.utc).strftime(
+                    "%Y%m%dT%H%M%S%fZ"
+                )
+                + ".json"
+            )
+        )
         started_lsn = database.scalar(
             "SELECT pg_current_wal_lsn()"
         )
@@ -4704,15 +5138,34 @@ def stage_repatriate(args, runner):
                 "WHERE datname = current_database()"
             )
         )
+        write_json_exclusive(
+            attempt_path,
+            {
+                "formatVersion": FORMAT_VERSION,
+                "toolId": TOOL_ID,
+                "stage": "repatriate",
+                "status": "attempting",
+                "runId": args.run_id,
+                "planId": plan["planId"],
+                "startedAtUtc": utc_now(),
+                "startedLsn": started_lsn,
+                "tempBytesBefore": temp_before,
+                "freeBytesBefore": free_before,
+                "capacityGate": capacity,
+            },
+        )
         started = time.monotonic()
         filesystem_monitor = FilesystemMonitor(
             host["dataPath"],
             minimum_allowed_bytes=(
                 EMERGENCY_FLOOR_BYTES + 512 * 1024**2
             ),
-            on_breach=lambda: cancel_pilot_backends(
+            on_breach=lambda free: cancel_pilot_backends(
                 runner,
                 args,
+                free,
+                EMERGENCY_FLOOR_BYTES + 512 * 1024**2,
+                "fst",
             ),
         )
         try:
@@ -4794,9 +5247,31 @@ def stage_repatriate(args, runner):
                         {filesystem_monitor.samples}::bigint)
             """
         )
+        home_build_resources.update(
+            {
+                "filesystemEmergencyThresholdBytes": (
+                    filesystem_monitor.minimum_allowed_bytes
+                ),
+                "filesystemEmergencyThresholdBreached": (
+                    filesystem_monitor.breached
+                ),
+                "filesystemEmergencyCancellationHandled": (
+                    filesystem_monitor.breach_handled
+                ),
+                "filesystemEmergencyCancellationError": (
+                    filesystem_monitor.breach_error
+                ),
+                "attemptPath": str(attempt_path),
+                "attemptSha256": sha256_path(attempt_path),
+            }
+        )
         state["homeExists"] = True
     else:
-        home_build_resources = None
+        home_build_resources = (
+            copy_evidence.get("resources")
+            if copy_evidence is not None
+            else None
+        )
     if state["homeExists"]:
         home_fingerprint = database.json(
             fingerprint_sql(home),
@@ -4807,13 +5282,36 @@ def stage_repatriate(args, runner):
                 "pg_default repatriation copy differs from the "
                 "accepted retained rows"
             )
+        if copy_evidence is None:
+            copy_evidence = {
+                "formatVersion": FORMAT_VERSION,
+                "toolId": TOOL_ID,
+                "stage": "repatriate.copy",
+                "status": "succeeded",
+                "runId": args.run_id,
+                "planId": plan["planId"],
+                "completedAtUtc": utc_now(),
+                "capacityGate": capacity,
+                "fingerprint": home_fingerprint,
+                "resources": home_build_resources,
+                "filesystemEmergencyThresholdBreached": False,
+            }
+            write_json_exclusive(copy_path, copy_evidence)
+        elif copy_evidence.get("fingerprint") != home_fingerprint:
+            raise PilotError(
+                "repatriation copy evidence fingerprint changed"
+            )
     else:
         home_fingerprint = keep_fingerprint
     resumed_committed_swap = (
         state["targetTablespace"] == "pg_default"
         and state["scratchRetiredExists"]
     )
-    swap_elapsed = 0.0
+    swap_elapsed = (
+        float(swap_evidence["elapsedSeconds"])
+        if resumed_committed_swap
+        else 0.0
+    )
     if (
         state["targetTablespace"] != "pg_default"
         and state["homeExists"]
@@ -4843,7 +5341,38 @@ def stage_repatriate(args, runner):
             timeout=60,
         )
         swap_elapsed = time.monotonic() - started
+        swap_evidence = {
+            "formatVersion": FORMAT_VERSION,
+            "toolId": TOOL_ID,
+            "stage": "repatriate.swap",
+            "status": "succeeded",
+            "runId": args.run_id,
+            "planId": plan["planId"],
+            "completedAtUtc": utc_now(),
+            "elapsedSeconds": round(swap_elapsed, 6),
+            "maximumSwapSeconds": args.maximum_swap_seconds,
+            "withinBound": (
+                swap_elapsed <= args.maximum_swap_seconds
+            ),
+            "copyEvidenceSha256": sha256_path(copy_path),
+        }
+        write_json_exclusive(swap_path, swap_evidence)
         resumed_committed_swap = False
+    if (
+        swap_evidence is None
+        or swap_evidence.get("copyEvidenceSha256")
+        != sha256_path(copy_path)
+        or swap_evidence.get("withinBound") is not True
+    ):
+        if database.scalar(
+            "SELECT to_regclass("
+            f"{sql_literal('public.' + scratch_retired)}) "
+            "IS NOT NULL"
+        ) == "t":
+            rollback_unacknowledged_swap()
+        raise PilotError(
+            "repatriation swap lacks complete bounded evidence"
+        )
     post_swap = database.json(
         f"""
             SELECT json_build_object(
@@ -4862,25 +5391,6 @@ def stage_repatriate(args, runner):
     if post_swap["targetTablespace"] != "pg_default":
         raise PilotError(
             "accepted partition is not back in pg_default"
-        )
-    if database.scalar(
-        "SELECT EXISTS("
-        "SELECT 1 FROM pg_constraint "
-        "WHERE conrelid = "
-        f"'public.{TARGET_PARTITION}'::regclass "
-        f"AND conname = {sql_literal(temporary_check)})"
-    ) == "t":
-        database.psql(
-            f"""
-                BEGIN;
-                SET LOCAL lock_timeout = '2s';
-                SET LOCAL statement_timeout = '30s';
-                {advisory_lock_guard_sql()}
-                ALTER TABLE {qualified(TARGET_PARTITION)}
-                    DROP CONSTRAINT "{temporary_check}";
-                COMMIT;
-            """,
-            timeout=60,
         )
     target_fingerprint = database.json(
         fingerprint_sql(TARGET_PARTITION),
@@ -4917,7 +5427,10 @@ def stage_repatriate(args, runner):
     parity_ok = (
         target_fingerprint == keep_fingerprint
         and scratch_fingerprint == keep_fingerprint
-        and catalog_semantic_shape(candidate_catalog)
+        and catalog_semantic_shape(
+            candidate_catalog,
+            ignored_constraint_names=(temporary_check,),
+        )
         == catalog_semantic_shape(plan["catalog"])
         and reference_ok
         and swap_elapsed <= args.maximum_swap_seconds
@@ -4964,9 +5477,17 @@ def stage_repatriate(args, runner):
             home_build_elapsed, 3
         ),
         "homeBuildResources": home_build_resources,
+        "copyEvidence": {
+            "path": str(copy_path),
+            "sha256": sha256_path(copy_path),
+        },
         "swapElapsedSeconds": round(swap_elapsed, 3),
         "maximumSwapSeconds": args.maximum_swap_seconds,
         "resumedCommittedSwap": resumed_committed_swap,
+        "swapEvidence": {
+            "path": str(swap_path),
+            "sha256": sha256_path(swap_path),
+        },
         "capacityGate": capacity,
         "targetFingerprint": target_fingerprint,
         "scratchRollbackFingerprint": scratch_fingerprint,

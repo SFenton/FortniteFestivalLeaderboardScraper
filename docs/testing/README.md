@@ -100,11 +100,14 @@ protected-only fingerprints, no `GROUPING SETS`, no parallel gather, and a
 checksummed verified-live-archive input. This prevents planning-only work from
 rehashing all historical rows or consuming the FST emergency reserve.
 
-The drill must report exact archive/restore and catalog parity, successful
+The drill must report exact archive/restore distribution, content-hash and
+full catalog parity, successful
 rename-back rollback, successful separate final drop, matching fingerprints,
 immediate filesystem reclaim, removed transient containers/PGDATA, retained
 archives, and truthful archive/build/swap/rollback recovery after simulating a
-missing terminal acknowledgement. Its measured profile must contain at least
+missing terminal acknowledgement. It also zeroes copy evidence and truncates
+swap evidence after repatriation, then requires catalog-driven scratch
+restoration and original rollback. Its measured profile must contain at least
 100,000 total and 10,000 retained rows before production capacity planning
 accepts it. It is isolated evidence only and never authorizes a production
 rewrite.
@@ -112,15 +115,18 @@ rewrite.
 The final-drop lane also runs `repatriate` and must end with the accepted
 partition/catalog in `pg_default`, no scratch-retired relation, and no
 temporary tablespace. Unit tests cover dual-filesystem capacity arithmetic,
-mount/device/path fencing, emergency-floor cancellation, repatriation
-dependencies, and final scratch cleanup.
+mount/device/path fencing, repeated cancel-to-terminate emergency handling,
+atomic evidence publication, malformed-evidence rejection, archive
+distribution/catalog tampering, repatriation dependencies, and final scratch
+cleanup.
 
 The production-derived archive restore additionally records one rejected and
 one accepted ordering. Restoring parent indexes before archived child indexes
 must fail on the duplicate child primary key. Restoring child
 table/data/indexes while detached and attaching afterward must produce
 `308,536,699` rows, 125 snapshot IDs, exact child catalog/checksum parity, zero
-validation temp bytes, and complete restore-PGDATA cleanup.
+validation temp bytes, exact per-snapshot content fingerprints, full canonical
+catalog parity, and complete restore-PGDATA cleanup.
 
 Focused dead/no-op phase cleanup validation:
 

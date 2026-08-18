@@ -704,20 +704,27 @@ the dual-filesystem capacity gate passes. A short-lock transaction detaches and
 retains the original, then renames/attaches the replacement. Validation occurs
 while rename-back rollback is available. Final old-relation drop is separate;
 before it, `repatriate` copies/swaps the retained relation to `pg_default`
-while the original still provides rollback, removes the scratch
-relation/tablespace, and proves final catalog/API parity. The restore-drilled
+while the original still provides rollback and retains the scratch candidate
+as a second rollback relation. Only after repatriation fingerprint/reference/
+catalog/API parity passes does final drop remove both rollback relations,
+normalize names, and remove the temporary tablespace. The restore-drilled
 archive remains on 8 TB through
 acceptance and a later explicit retention decision.
 
-The final 360,000-row scaled drill measured a 144,318,464-byte original,
-19,636,224-byte replacement, 20,455,280 scratch-build WAL bytes, 8,429,568
-temp bytes, 19,771,392 peak scratch growth, and 163,971,072 immediate bytes
+The final 180,000-row drill measured a 75,415,552-byte original,
+19,636,224-byte replacement, 20,423,824 scratch-build WAL bytes, 8,429,568
+temp bytes, 19,689,472 peak scratch growth, and 95,043,584 immediate bytes
 returned when the original plus scratch rollback relation were dropped.
-Rename-back, verified-archive adoption, repatriation to `pg_default`, scratch
-tablespace removal, and final-drop paths all passed.
+Rename-back, verified-archive adoption, repatriation to `pg_default`, durable
+copy/swap evidence, torn-evidence recovery, scratch tablespace removal, and
+final-drop paths all passed.
 
 The read-only live archive is `11,942,257,904` bytes with checksum
 `3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+Its verified input checksum is
+`483cf15e12df3f0fcda370f6fc5ee969b450b8c4f1eeb2c291f7ec2201326c15`;
+it binds 308,536,699 restored rows, exact per-snapshot counts/content hashes,
+and the full canonical restored catalog.
 Its isolated restore proved `308,536,699` exact rows across 125 snapshot IDs
 (`769-1302`), the exact partition/primary/score-index catalog, and a packed
 `129,666,588,672`-byte restored relation. The first restore shape was rejected

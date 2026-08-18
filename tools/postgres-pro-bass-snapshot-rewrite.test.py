@@ -6,6 +6,7 @@ import shutil
 import types
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent
@@ -64,6 +65,21 @@ class CaptureRunner:
     def run(self, arguments, **kwargs):
         self.calls.append((arguments, kwargs))
         return Completed(self.stdout)
+
+
+class CancellationRunner:
+    def __init__(self):
+        self.backend_counts = iter(["1", "1", "1", "1", "1", "0"])
+        self.queries = []
+
+    def run(self, arguments, **_):
+        sql = arguments[-1]
+        self.queries.append(sql)
+        if "COUNT(*) FROM pg_stat_activity" in sql:
+            return Completed(next(self.backend_counts))
+        if "pg_cancel_backend" in sql or "pg_terminate_backend" in sql:
+            return Completed("1")
+        raise AssertionError(f"unexpected command: {arguments}")
 
 
 def plan_fixture():
@@ -319,6 +335,33 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertEqual("0:123", result["device"]["deviceId"])
         self.assertEqual(str(WORK_ROOT.resolve()), result["resolvedPath"])
 
+    def test_scratch_validation_accepts_only_precreated_tablespace_mount(self):
+        tablespace = WORK_ROOT / tool.TABLESPACE_DIR
+        tablespace.mkdir(mode=0o700)
+
+        result = tool.validate_scratch_root(
+            MountRunner(),
+            WORK_ROOT,
+            "0:123",
+            test_mode=True,
+            allow_unclaimed=True,
+        )
+        marker = tool.claim_workspace(
+            WORK_ROOT,
+            result,
+            "synthetic-run-0001",
+            "2026-10-01T00:00:00Z",
+            "a" * 40,
+            "c" * 64,
+            True,
+        )
+
+        self.assertEqual(
+            "synthetic-run-0001",
+            marker["runId"],
+        )
+        self.assertTrue(tablespace.is_dir())
+
     def test_scratch_validation_rejects_device_mismatch(self):
         with self.assertRaisesRegex(
             tool.PilotError,
@@ -538,6 +581,7 @@ class ProBassPilotToolTests(unittest.TestCase):
         validation = WORK_ROOT / "validation.json"
         cleanup = WORK_ROOT / "cleanup.json"
         distribution = WORK_ROOT / "distribution.json"
+        catalog_file = WORK_ROOT / "catalog.json"
         source = {
             "partitionOid": 100,
             "relfilenode": 101,
@@ -548,34 +592,53 @@ class ProBassPilotToolTests(unittest.TestCase):
             "updates": 0,
             "deletes": 0,
         }
-        validation.write_bytes(
-            tool.canonical_json_bytes(
+        catalog = {
+            "parentDefinition": "LIST (instrument)",
+            "partitionBound": (
+                "FOR VALUES IN ('Solo_PeripheralBass')"
+            ),
+            "owner": "fst",
+            "tablespace": "pg_default",
+            "columns": [
                 {
-                    "status": "succeeded",
-                    "productionDatabaseMutated": False,
-                    "sourceChangedDuringArchive": False,
-                    "archive": {
-                        "path": str(archive),
-                        "bytes": archive.stat().st_size,
-                        "sha256": tool.sha256_path(archive),
-                        "checksumMatches": True,
-                    },
-                    "catalog": {
-                        "partitionBound": (
-                            "FOR VALUES IN ('Solo_PeripheralBass')"
-                        ),
-                        "indexes": [
-                            {"name": "pro_bass_pkey"},
-                            {"name": "pro_bass_score_idx"},
-                        ],
-                    },
-                    "data": {
-                        "rowCount": 100,
-                        "snapshotIds": [80, 90],
-                    },
+                    "ordinal": 1,
+                    "name": "snapshot_id",
+                    "type": "bigint",
+                    "notNull": True,
+                    "defaultExpression": None,
                 }
-            )
-        )
+            ],
+            "constraints": [
+                {
+                    "name": "pro_bass_pkey",
+                    "type": "p",
+                    "definition": (
+                        "PRIMARY KEY "
+                        "(snapshot_id, song_id, instrument, account_id)"
+                    ),
+                }
+            ],
+            "indexes": [
+                {
+                    "name": "pro_bass_pkey",
+                    "definition": "primary definition",
+                    "isPrimary": True,
+                    "isUnique": True,
+                    "isValid": True,
+                },
+                {
+                    "name": "pro_bass_score_idx",
+                    "definition": "score definition",
+                    "isPrimary": False,
+                    "isUnique": False,
+                    "isValid": True,
+                },
+            ],
+            "heapBytes": 0,
+            "indexBytes": 0,
+            "totalBytes": 0,
+        }
+        catalog_file.write_bytes(tool.canonical_json_bytes(catalog))
         distribution.write_bytes(
             tool.canonical_json_bytes(
                 {
@@ -583,9 +646,53 @@ class ProBassPilotToolTests(unittest.TestCase):
                     "rowCount": 100,
                     "snapshotIds": [80, 90],
                     "distribution": [
-                        {"snapshotId": 80, "rowCount": 40},
-                        {"snapshotId": 90, "rowCount": 60},
+                        {
+                            "snapshotId": 80,
+                            "rowCount": 40,
+                            "contentHashXor": -10,
+                            "contentHashSum": "-100",
+                        },
+                        {
+                            "snapshotId": 90,
+                            "rowCount": 60,
+                            "contentHashXor": 20,
+                            "contentHashSum": "200",
+                        },
                     ],
+                }
+            )
+        )
+        validation.write_bytes(
+            tool.canonical_json_bytes(
+                {
+                    "status": "succeeded",
+                    "productionDatabaseMutated": False,
+                    "sourceChangedDuringArchive": False,
+                    "source": {
+                        "oid": source["partitionOid"],
+                        "relfilenode": source["relfilenode"],
+                        "heapBytes": source["heapBytes"],
+                        "indexBytes": source["indexBytes"],
+                        "totalBytes": source["totalBytes"],
+                        "inserts": source["inserts"],
+                        "updates": source["updates"],
+                        "deletes": source["deletes"],
+                    },
+                    "archive": {
+                        "path": str(archive),
+                        "bytes": archive.stat().st_size,
+                        "sha256": tool.sha256_path(archive),
+                        "checksumMatches": True,
+                    },
+                    "catalog": catalog,
+                    "data": {
+                        "rowCount": 100,
+                        "snapshotIds": [80, 90],
+                        "distributionPath": str(distribution),
+                        "distributionSha256": tool.sha256_path(
+                            distribution
+                        ),
+                    },
                 }
             )
         )
@@ -636,11 +743,21 @@ class ProBassPilotToolTests(unittest.TestCase):
                 "distributionSha256": tool.sha256_path(
                     distribution
                 ),
+                "catalogPath": str(catalog_file),
+                "catalogSha256": tool.sha256_path(catalog_file),
                 "partitionBound": (
                     "FOR VALUES IN ('Solo_PeripheralBass')"
                 ),
+                "owner": "fst",
+                "primaryConstraint": "pro_bass_pkey",
+                "primaryConstraintDefinition": (
+                    "PRIMARY KEY "
+                    "(snapshot_id, song_id, instrument, account_id)"
+                ),
                 "primaryIndex": "pro_bass_pkey",
+                "primaryIndexDefinition": "primary definition",
                 "scoreIndex": "pro_bass_score_idx",
+                "scoreIndexDefinition": "score definition",
             },
             "cleanup": {
                 "status": "succeeded",
@@ -683,6 +800,116 @@ class ProBassPilotToolTests(unittest.TestCase):
 
         self.assertEqual(value, loaded)
         self.assertEqual(tool.sha256_path(input_path), observed)
+
+        original_distribution = distribution.read_bytes()
+        content_tamper = json.loads(
+            original_distribution.decode("utf-8")
+        )
+        content_tamper["distribution"][0]["contentHashXor"] += 1
+        distribution.write_bytes(
+            tool.canonical_json_bytes(content_tamper)
+        )
+        value["restore"]["distributionSha256"] = tool.sha256_path(
+            distribution
+        )
+        input_path.write_bytes(tool.canonical_json_bytes(value))
+        args.expected_live_archive_input_sha256 = tool.sha256_path(
+            input_path
+        )
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "restore validation is inconsistent",
+        ):
+            tool.load_verified_archive_input(
+                args,
+                MountRunner(target="/workspace"),
+                check,
+                source,
+                verify_archive_checksum=True,
+            )
+
+        distribution.write_bytes(original_distribution)
+        value["restore"]["distributionSha256"] = tool.sha256_path(
+            distribution
+        )
+        original_catalog = catalog_file.read_bytes()
+        catalog_tamper = json.loads(
+            original_catalog.decode("utf-8")
+        )
+        catalog_tamper["columns"][0]["type"] = "integer"
+        catalog_file.write_bytes(
+            tool.canonical_json_bytes(catalog_tamper)
+        )
+        value["restore"]["catalogSha256"] = tool.sha256_path(
+            catalog_file
+        )
+        input_path.write_bytes(tool.canonical_json_bytes(value))
+        args.expected_live_archive_input_sha256 = tool.sha256_path(
+            input_path
+        )
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "restore validation is inconsistent",
+        ):
+            tool.load_verified_archive_input(
+                args,
+                MountRunner(target="/workspace"),
+                check,
+                source,
+                verify_archive_checksum=True,
+            )
+
+        catalog_file.write_bytes(original_catalog)
+        value["restore"]["catalogSha256"] = tool.sha256_path(
+            catalog_file
+        )
+        tampered = json.loads(
+            distribution.read_text(encoding="utf-8")
+        )
+        tampered["distribution"][1]["snapshotId"] = 80
+        distribution.write_bytes(
+            tool.canonical_json_bytes(tampered)
+        )
+        value["restore"]["distributionSha256"] = tool.sha256_path(
+            distribution
+        )
+        input_path.write_bytes(tool.canonical_json_bytes(value))
+        args.expected_live_archive_input_sha256 = tool.sha256_path(
+            input_path
+        )
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "distribution is inconsistent",
+        ):
+            tool.load_verified_archive_input(
+                args,
+                MountRunner(target="/workspace"),
+                check,
+                source,
+                verify_archive_checksum=True,
+            )
+
+    def test_exclusive_write_is_complete_and_leaves_no_temporary_file(self):
+        path = WORK_ROOT / "evidence.json"
+        payload = b'{"status":"succeeded"}\n'
+
+        tool.write_bytes_exclusive(path, payload)
+
+        self.assertEqual(payload, path.read_bytes())
+        self.assertEqual(
+            [],
+            list(WORK_ROOT.glob(".evidence.json.tmp-*")),
+        )
+
+    def test_read_json_rejects_truncated_evidence(self):
+        path = WORK_ROOT / "truncated.json"
+        path.write_text('{"status":', encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "malformed",
+        ):
+            tool.read_json(path)
 
     def test_capacity_gate_preserves_emergency_floor(self):
         result = tool.calculate_capacity(
@@ -740,6 +967,23 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertEqual(
             "temporary_scratch_tablespace",
             result["mode"],
+        )
+
+    def test_repatriation_capacity_uses_measured_copy_and_wal(self):
+        result = tool.calculate_repatriation_capacity(
+            {
+                "sizes": {
+                    "totalBytes": 3_000_000_000,
+                    "walBytes": 3_200_000_000,
+                }
+            },
+            70_000_000_000,
+        )
+
+        self.assertTrue(result["allowed"])
+        self.assertGreater(
+            result["requiredFreeBytes"],
+            tool.EMERGENCY_FLOOR_BYTES + 6_000_000_000,
         )
 
     def test_profile_requires_exact_checksum_and_passed_pg17_drill(self):
@@ -826,6 +1070,85 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertNotEqual(
             tool.physical_relation_identity(original),
             tool.physical_relation_identity(renamed),
+        )
+
+    def test_relation_state_maps_to_verified_source_fence(self):
+        state = {
+            "oid": 123,
+            "relfilenode": 456,
+            "heapBytes": 100,
+            "indexBytes": 200,
+            "totalBytes": 300,
+            "inserts": 10,
+            "updates": 1,
+            "deletes": 2,
+        }
+
+        self.assertEqual(
+            {
+                "partitionOid": 123,
+                "relfilenode": 456,
+                "heapBytes": 100,
+                "indexBytes": 200,
+                "totalBytes": 300,
+                "inserts": 10,
+                "updates": 1,
+                "deletes": 2,
+            },
+            tool.source_fence_from_relation_state(state),
+        )
+
+    def test_filesystem_monitor_retries_breach_handler_until_cleared(self):
+        calls = []
+
+        def handle(_free):
+            calls.append(len(calls) + 1)
+            return len(calls) >= 3
+
+        monitor = tool.FilesystemMonitor(
+            WORK_ROOT,
+            minimum_allowed_bytes=10**30,
+            on_breach=handle,
+        )
+        monitor._observe()
+        monitor._observe()
+        monitor._observe()
+
+        self.assertTrue(monitor.breached)
+        self.assertTrue(monitor.breach_handled)
+        self.assertEqual(3, len(calls))
+
+    def test_emergency_cancellation_escalates_until_no_backend_remains(self):
+        runner = CancellationRunner()
+        args = types.SimpleNamespace(
+            scratch_root=str(WORK_ROOT),
+            pg_container="postgres-test",
+            pg_user="fst",
+            pg_database="fstservice",
+        )
+
+        with mock.patch.object(tool.time, "sleep"):
+            result = tool.cancel_pilot_backends(
+                runner,
+                args,
+                60_000_000_000,
+                61_000_000_000,
+                "fst",
+            )
+
+        self.assertTrue(result)
+        self.assertTrue(
+            any("pg_cancel_backend" in sql for sql in runner.queries)
+        )
+        self.assertTrue(
+            any("pg_terminate_backend" in sql for sql in runner.queries)
+        )
+        self.assertTrue(
+            (
+                WORK_ROOT
+                / tool.REPORTS_DIR
+                / "emergency-floor-breach.json"
+            ).is_file()
         )
 
     def test_snapshot_id_predicate_is_exact_and_rejects_empty_input(self):

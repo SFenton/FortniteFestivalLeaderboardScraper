@@ -181,7 +181,8 @@ The retained live archive is
 `11,942,257,904` bytes, SHA-256
 `3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
 The successful isolated restore proved `308,536,699` rows, 125 snapshot IDs,
-the exact partition/primary/score-index catalog, and an unchanged source
+exact per-snapshot row counts/content hashes, the full canonical parent/column/
+default/nullability/owner/tablespace/constraint/index catalog, and an unchanged source
 during archive. A first restore ordering was rejected for a duplicate child
 primary key; the archive was preserved and the corrected detached-child build
 plus final attach passed. The restore container and `130,771,858,177`-byte
@@ -190,10 +191,18 @@ PGDATA were removed after validation.
 The replacement may use only the run-owned temporary scratch tablespace when
 the measured dual-filesystem gate passes. That is an interim location, not an
 accepted state. While the old rollback relation still exists, `repatriate`
-must copy/swap the retained relation to `pg_default`, remove the scratch
-relation/tablespace, and prove API/catalog parity. Only then may final drop
-remove the original. The archive remains on 8 TB
+must copy/swap the retained relation to `pg_default` and prove fingerprint/
+reference/catalog/API parity while both original and scratch rollback
+relations remain. Final drop removes both rollback relations, normalizes names,
+and removes the tablespace. The archive remains on 8 TB
 scratch through acceptance and a later explicit product-retention decision.
+
+The production-owned Compose bind
+`<scratch-root>/postgres-tablespace:/fst-pro-bass-scratch:rw` must be active
+before `check`; `check` binds the recreated PostgreSQL container identity.
+Critical state uses atomic fsynced publication. A disk-threshold breach writes
+a no-resume marker and repeatedly cancels, then terminates, only exact pilot
+backends until none remain.
 Do not delete it merely because the detached source relation was dropped.
 
 Production build requires the candidate-specific measured gate:
