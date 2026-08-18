@@ -734,14 +734,15 @@ PGDATA was deleted after validation while the archive remained.
 
 Using the exact archive row count, `6,691,993` protected rows, live heap/index
 bytes, and measured ratios projects a `2,685,343,018`-byte replacement and a
-`69,713,820,289`-byte free-space requirement. At `66 GB`, the exact-row
-projection is short by `3,713,820,289` bytes. The older approximately `3.4 GB`
+`69,713,820,289`-byte free-space requirement. At current free space
+`68,545,114,112`, the exact-row direct-build projection is short by
+`1,168,706,177` bytes. The older approximately `3.4 GB`
 retained-size sensitivity remains a conservative `72.19-73.06 GB` requirement.
 The temporary-tablespace candidate instead requires `63,889,690,620` free on
 4 TB and `17,260,886,072` on scratch, so its capacity math passes narrowly at
 the accepted free-space assumptions. Pre-drop repatriation requires
-`66,575,033,638` and is still `575,033,638` short at `66 GB`. Execution
-remains blocked by that final headroom, candidate commit/push, production
+`66,575,033,638`; current projected margin is `1,970,080,474`. Execution
+remains blocked by production
 mount/recreate, fresh preflight/parity, and the no-rewrite boundary for this
 task. See the
 [pilot runbook](../database/ProBassSnapshotRewritePilot.md).

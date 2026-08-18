@@ -298,12 +298,13 @@ procedure restored child data/indexes while detached and attached afterward.
 
 The exact archive row ratio plus measured profile projects a
 `2,685,343,018`-byte replacement and `69,713,820,289` required free bytes,
-still `3,713,820,289` short at `66 GB`. The conservative sensitivity remains
+still `1,168,706,177` short at current `68,545,114,112` free bytes. The
+conservative sensitivity remains
 `72.19-73.06 GB`. With the replacement/temp/failure reserve on the guarded
 temporary tablespace, the candidate requires `63,889,690,620` free on 4 TB and
-`17,260,886,072` on scratch, so capacity passes narrowly but execution remains
-separately gated. Pre-drop repatriation requires `66,575,033,638`, still
-`575,033,638` above the `66 GB` assumption.
+`17,260,886,072` on scratch, giving `4,655,423,492` current 4 TB margin.
+Pre-drop repatriation requires `66,575,033,638`, giving `1,970,080,474`
+projected margin.
 
 Follow the
 [living runbook](../database/ProBassSnapshotRewritePilot.md). The archive

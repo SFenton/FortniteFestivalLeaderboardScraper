@@ -75,19 +75,23 @@ The verified archive contains `308,536,699` rows across 125 snapshot IDs
 (`769-1302`). Applying the measured ratios to the exact row ratio and live
 heap/index bytes estimates a `2,685,343,018`-byte replacement and requires
 `69,713,820,289` free bytes after WAL, temp, failure reserve, and the
-`60,392,999,803`-byte emergency floor. At `66 GB`, the shortfall is
-`3,713,820,289` bytes. The older approximately `3.4 GB` retained-size
+`60,392,999,803`-byte emergency floor. At the current
+`68,545,114,112` free bytes, the direct-build shortfall is
+`1,168,706,177` bytes. The older approximately `3.4 GB` retained-size
 sensitivity remains a conservative `72.19-73.06 GB` requirement.
 
 The temporary-tablespace model keeps replacement/temp/failure bytes on 8 TB
 scratch and budgets only WAL plus the emergency floor on 4 TB. It projects a
 4 TB requirement of `63,889,690,620` bytes, leaving `2,110,309,380` bytes at
-the `66 GB` assumption, and a scratch requirement of `17,260,886,072` bytes.
+the original `66 GB` assumption, and a scratch requirement of
+`17,260,886,072` bytes. Current scratch-build margin is `4,655,423,492`.
 Capacity therefore passes narrowly for that candidate mode, but production
 build/swap remains blocked by the complete sequence: copying the measured
 replacement back to `pg_default` while the original rollback relation still
-exists requires `66,575,033,638` bytes, `575,033,638` above the `66 GB`
-assumption. Candidate commit/push, the production-owned scratch bind
+exists requires `66,575,033,638` bytes. After relocating 17 unreferenced
+evidence directories to temporary 8 TB staging, observed 4 TB free space is
+`68,545,114,112`, leaving `1,970,080,474` bytes of projected repatriation
+margin. Candidate commit/push, the production-owned scratch bind
 mount/container-recreate gate, fresh preflight/parity, and the explicit
 no-rewrite boundary for this task also remain.
 
@@ -456,11 +460,11 @@ For a temporary tablespace build, the 4 TB gate retains the emergency floor
 plus a conservative WAL budget; the 8 TB gate requires measured replacement
 heap/indexes, temp, one replacement-sized failure reserve, and 10 GiB reserve.
 `repatriate` uses the live scratch build's actual relation and WAL bytes and
-must fit while the old rollback relation still exists. At the `66 GB`
-assumption it is short by
-`575,033,638` bytes. The workflow is incomplete while any accepted relation or
-tablespace remains under the scratch root, and final old-relation drop cannot
-precede repatriation.
+must fit while the old rollback relation still exists. The current
+`68,545,114,112` free bytes give `1,970,080,474` bytes of projected margin.
+The workflow is incomplete while any accepted relation or tablespace remains
+under the scratch root, and final old-relation drop cannot precede
+repatriation.
 
 ## Interruption and rollback rules
 
