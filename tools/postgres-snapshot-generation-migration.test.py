@@ -73,6 +73,7 @@ def source_state():
         "inserts": 10,
         "updates": 0,
         "deletes": 0,
+        "statisticsResetAt": None,
         "attached": True,
         "partitionBound": "FOR VALUES IN ('Solo_Guitar')",
         "partitionKey": None,
@@ -389,6 +390,31 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
             self.assertIn(f'"{column}"', expression)
         self.assertEqual(23, len(tool.SNAPSHOT_COLUMNS))
 
+    def test_physical_identity_excludes_resettable_statistics_counters(self):
+        before = source_state()
+        after = {
+            **before,
+            "inserts": 0,
+            "updates": 0,
+            "deletes": 0,
+        }
+
+        self.assertEqual(
+            tool.physical_relation_identity(before),
+            tool.physical_relation_identity(after),
+        )
+        self.assertNotEqual(
+            tool.relation_mutation_counters(before),
+            tool.relation_mutation_counters(after),
+        )
+        self.assertEqual(10, tool.source_fence_from_state(before)["inserts"])
+        self.assertIsNone(tool.relation_statistics_epoch(before))
+        after["statisticsResetAt"] = "2026-08-18T00:00:00Z"
+        self.assertNotEqual(
+            tool.relation_statistics_epoch(before),
+            tool.relation_statistics_epoch(after),
+        )
+
     def test_archive_command_has_only_parent_and_selected_partition(self):
         args = types.SimpleNamespace(
             pg_container="fst-snapshot-generation-test-source",
@@ -638,7 +664,28 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
             ("validate", "archive", "restore"),
             tool.DEPENDENCIES["drop"],
         )
-        self.assertEqual(("archive",), tool.DEPENDENCIES["rollback"])
+        self.assertEqual(
+            ("archive", "restore"),
+            tool.DEPENDENCIES["rollback"],
+        )
+
+    def test_physical_identity_ignores_statistics_counter_drift(self):
+        before = source_state()
+        after = {
+            **before,
+            "inserts": before["inserts"] + 10,
+            "updates": before["updates"] + 3,
+            "deletes": before["deletes"] + 1,
+        }
+
+        self.assertEqual(
+            tool.physical_relation_identity(before),
+            tool.physical_relation_identity(after),
+        )
+        self.assertNotEqual(
+            tool.relation_mutation_counters(before),
+            tool.relation_mutation_counters(after),
+        )
 
     def test_success_reports_are_integrity_bound_and_immutable(self):
         (WORK_ROOT / tool.REPORTS_DIR).mkdir()

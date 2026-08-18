@@ -105,7 +105,7 @@ DEPENDENCIES = {
     "swap": ("build", "archive", "restore"),
     "validate": ("swap", "archive", "restore"),
     "drop": ("validate", "archive", "restore"),
-    "rollback": ("archive",),
+    "rollback": ("archive", "restore"),
 }
 SNAPSHOT_COLUMNS = (
     "snapshot_id",
@@ -1212,6 +1212,10 @@ def relation_state_query(relation_name):
                     'inserts', COALESCE(stats.n_tup_ins, 0),
                     'updates', COALESCE(stats.n_tup_upd, 0),
                     'deletes', COALESCE(stats.n_tup_del, 0),
+                    'statisticsResetAt', (
+                        SELECT stats_reset
+                        FROM pg_stat_database
+                        WHERE datname = current_database()),
                     'attached', EXISTS (
                         SELECT 1
                         FROM pg_inherits
@@ -1246,11 +1250,23 @@ def physical_relation_identity(state):
                 "heapBytes",
                 "indexBytes",
                 "totalBytes",
-                "inserts",
-                "updates",
-                "deletes",
             )
         }
+
+
+def relation_mutation_counters(state):
+        if not state:
+            return None
+        return {
+            key: state[key]
+            for key in ("inserts", "updates", "deletes")
+        }
+
+
+def relation_statistics_epoch(state):
+        if not state:
+            return None
+        return state.get("statisticsResetAt")
 
 
 def source_fence_from_state(state):
@@ -1263,9 +1279,7 @@ def source_fence_from_state(state):
             "heapBytes": identity["heapBytes"],
             "indexBytes": identity["indexBytes"],
             "totalBytes": identity["totalBytes"],
-            "inserts": identity["inserts"],
-            "updates": identity["updates"],
-            "deletes": identity["deletes"],
+            **relation_mutation_counters(state),
         }
 
 
@@ -4331,6 +4345,16 @@ def stage_build(args, runner):
                     raise MigrationError(
                         "replacement data exists outside pg_default"
                     )
+                check_started = time.monotonic()
+                original_check_name = ensure_original_instrument_check(
+                    database,
+                    args,
+                    target,
+                    args.build_timeout_seconds,
+                )
+                original_check_elapsed = (
+                    time.monotonic() - check_started
+                )
                 host_after = collect_host_guard(args, runner)
                 body = {
                     "runId": args.run_id,
@@ -4360,6 +4384,15 @@ def stage_build(args, runner):
                     "sourceRetainedFingerprint": source_fingerprint,
                     "sourceRelationState": guard["target"],
                     "originalStillAttached": True,
+                    "originalInstrumentCheck": {
+                        "name": original_check_name,
+                        "validationElapsedSeconds": round(
+                            original_check_elapsed,
+                            3,
+                        ),
+                        "validationTimeoutSeconds":
+                            args.build_timeout_seconds,
+                    },
                     "resumedCommittedBuild": resumed,
                     "resumedBuildStartEvidence": resumed_start,
                     "buildStartEvidence": {
@@ -4405,7 +4438,33 @@ def swap_probe_query(args, target):
                 """
 
 
-def ensure_original_instrument_check(database, args, target):
+def inspect_original_instrument_check(
+    database,
+    relation_name,
+    check_name,
+):
+                return database.json(
+                    f"""
+                        SELECT json_build_object(
+                            'validated', constraint_row.convalidated,
+                            'definition', pg_get_constraintdef(
+                                constraint_row.oid,
+                                TRUE))
+                        FROM pg_constraint constraint_row
+                        WHERE constraint_row.conrelid =
+                            'public.{relation_name}'::regclass
+                          AND constraint_row.conname =
+                            {sql_literal(check_name)}
+                    """
+                )
+
+
+def ensure_original_instrument_check(
+    database,
+    args,
+    target,
+    validation_timeout_seconds,
+):
                 check_name = original_instrument_check_name(
                     args.run_id,
                     target,
@@ -4414,7 +4473,8 @@ def ensure_original_instrument_check(database, args, target):
                     f"""
                         BEGIN;
                         SET LOCAL lock_timeout = '2s';
-                        SET LOCAL statement_timeout = '30s';
+                        SET LOCAL statement_timeout =
+                            '{int(validation_timeout_seconds)}s';
                         DO $ensure_original_check$
                         BEGIN
                             IF NOT EXISTS (
@@ -4438,25 +4498,19 @@ def ensure_original_instrument_check(database, args, target):
                             VALIDATE CONSTRAINT "{check_name}";
                         COMMIT;
                     """,
-                    timeout=60,
+                    timeout=max(
+                        60,
+                        int(validation_timeout_seconds) + 30,
+                    ),
                 )
                 expected_definition = (
                     "CHECK (instrument = "
                     f"{sql_literal(target.instrument)}::text)"
                 )
-                observed = database.json(
-                    f"""
-                        SELECT json_build_object(
-                            'validated', constraint_row.convalidated,
-                            'definition', pg_get_constraintdef(
-                                constraint_row.oid,
-                                TRUE))
-                        FROM pg_constraint constraint_row
-                        WHERE constraint_row.conrelid =
-                            'public.{target.partition}'::regclass
-                          AND constraint_row.conname =
-                            {sql_literal(check_name)}
-                    """
+                observed = inspect_original_instrument_check(
+                    database,
+                    target.partition,
+                    check_name,
                 )
                 if observed != {
                     "validated": True,
@@ -4551,11 +4605,25 @@ def stage_swap(args, runner):
                         raise MigrationError(
                             "swap committed evidence exists before catalog swap"
                         )
-                    original_check_name = ensure_original_instrument_check(
+                    original_check_name = build[
+                        "originalInstrumentCheck"
+                    ]["name"]
+                    observed_check = inspect_original_instrument_check(
                         database,
-                        args,
-                        target,
+                        target.partition,
+                        original_check_name,
                     )
+                    expected_check = {
+                        "validated": True,
+                        "definition": (
+                            "CHECK (instrument = "
+                            f"{sql_literal(target.instrument)}::text)"
+                        ),
+                    }
+                    if observed_check != expected_check:
+                        raise MigrationError(
+                            "original instrument check changed before swap"
+                        )
                     started = time.monotonic()
                     database.psql(
                         f"""
@@ -5159,6 +5227,7 @@ def stage_rollback(args, runner):
                 check = load_report(args.scratch_root, "check")
                 plan = load_report(args.scratch_root, "plan")
                 load_report(args.scratch_root, "archive")
+                restore = load_report(args.scratch_root, "restore")
                 commit_path = swap_commit_path(args.scratch_root)
                 commit_evidence = load_integrity_evidence(
                     commit_path,
@@ -5226,6 +5295,39 @@ def stage_rollback(args, runner):
                     raise MigrationError(
                         "retained original changed; refusing rollback"
                     )
+                counters_match = (
+                    relation_mutation_counters(original_state)
+                    == relation_mutation_counters(plan["sourceState"])
+                    and relation_statistics_epoch(original_state)
+                    == relation_statistics_epoch(plan["sourceState"])
+                )
+                full_archive_reproof = False
+                if not counters_match:
+                    original_fingerprint = database.json(
+                        fingerprint_sql(original_name),
+                        timeout=args.query_timeout_seconds,
+                        pgoptions=PLAN_QUERY_PGOPTIONS,
+                    )
+                    original_distribution = database.json(
+                        snapshot_distribution_query(original_name),
+                        timeout=args.query_timeout_seconds,
+                        pgoptions=PLAN_QUERY_PGOPTIONS,
+                    )
+                    if (
+                        original_fingerprint
+                        != restore["restoredFingerprint"]
+                        or normalized_distribution(
+                            original_distribution
+                        )
+                        != normalized_distribution(
+                            restore["restoredDistribution"]
+                        )
+                    ):
+                        raise MigrationError(
+                            "retained original failed archive reproof "
+                            "after statistics counter change"
+                        )
+                    full_archive_reproof = True
                 if probe == pre:
                     check_name = original_instrument_check_name(
                         args.run_id,
@@ -5412,6 +5514,8 @@ def stage_rollback(args, runner):
                         "path": str(commit_path),
                         "sha256": sha256_path(commit_path),
                     },
+                    "statisticsCountersMatched": counters_match,
+                    "fullArchiveReproofPerformed": full_archive_reproof,
                 }
                 return write_stage_report(args.scratch_root, "rollback", body)
 

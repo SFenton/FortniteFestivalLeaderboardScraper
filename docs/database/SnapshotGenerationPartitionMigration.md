@@ -170,6 +170,10 @@ bound. The detached original retains that check, so rename-back rollback can
 reattach without a full-table validation scan. Rollback removes the temporary
 check only after the original is attached again.
 
+Check validation runs during `build`, outside the short swap transaction, with
+the configured long build timeout. `swap` only reverifies the already-validated
+constraint before taking the top-parent lock.
+
 Only protected rows are copied. The original remains attached throughout the
 long copy/index work.
 
@@ -320,6 +324,12 @@ duration-bound decision. A catalog-swapped state without measured committed
 evidence is rollback-only; rerunning `swap` cannot replace the lost duration
 with a near-zero idempotent measurement.
 
+PostgreSQL statistics counters are not durable identity: crash recovery can
+reset them. Stable rollback identity uses OID/relfilenode and physical sizes.
+If mutation counters differ from the plan, rollback recomputes the complete
+original fingerprint and per-snapshot distribution and requires exact equality
+with the isolated restore report before reattachment.
+
 Never edit reports, manifests, source fences, checksums, or workspace markers.
 
 ## Validation package
@@ -348,7 +358,9 @@ The drill runs independent rollback and final-drop lanes. It proves custom
 archive/TOC, network-none restore and cleanup, exact protected children plus an
 empty default, top-parent index attachment, rename-back rollback, final drop,
 archive retention, and torn success-report recovery for archive, restore,
-build, swap, validate, and drop.
+build, swap, validate, and drop. The rollback lane force-kills/restarts
+PostgreSQL, resets cumulative statistics, and requires complete archive
+fingerprint/distribution reproof before the original can be reattached.
 
 The implementation validation on 2026-08-18 used 1,400 synthetic source rows
 per lane (`1301` purge; `1302-1303` retained), PostgreSQL `postgres:17`, and

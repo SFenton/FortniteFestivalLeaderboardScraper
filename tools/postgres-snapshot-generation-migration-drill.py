@@ -335,6 +335,7 @@ def seed_sql(purge_rows, retained_rows):
             1, input.row_count) series;
 
         ANALYZE {TARGET_PARTITION};
+        SELECT pg_stat_force_next_flush();
         CHECKPOINT;
     """
 
@@ -565,9 +566,31 @@ def run_lane(root, lane, *, final_action):
             run_stage("validate", scratch, run_id, container)
         )
         if final_action == "rollback":
-            stage_results.append(
-                run_stage("rollback", scratch, run_id, container)
+            run(
+                ["docker", "kill", "--signal", "KILL", container],
+                timeout=60,
             )
+            run(["docker", "start", container], timeout=60)
+            wait_ready(container)
+            psql(container, "SELECT pg_stat_reset();", timeout=60)
+            rollback_result = run_stage(
+                "rollback",
+                scratch,
+                run_id,
+                container,
+            )
+            stage_results.append(rollback_result)
+            rollback_report = json.loads(
+                (
+                    scratch
+                    / "reports"
+                    / "rollback.json"
+                ).read_text(encoding="utf-8")
+            )
+            if not rollback_report.get("fullArchiveReproofPerformed"):
+                raise DrillError(
+                    "rollback did not reprove archive after stats reset"
+                )
             summary = relation_summary(container)
             if (
                 summary["targetKind"] != "r"
