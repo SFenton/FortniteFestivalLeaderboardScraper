@@ -353,6 +353,7 @@ def stage_command(
     container,
     image,
     profile_path=None,
+    verified_input=None,
 ):
     command = [
         sys.executable,
@@ -384,6 +385,7 @@ def stage_command(
         "build",
         "swap",
         "drop",
+        "repatriate",
         "rollback",
     ):
         command.append("--execute")
@@ -394,6 +396,15 @@ def stage_command(
                 str(profile_path),
                 "--expected-profile-sha256",
                 sha256_path(profile_path),
+            ]
+        )
+    if verified_input is not None:
+        command.extend(
+            [
+                "--verified-live-archive-input",
+                str(verified_input),
+                "--expected-live-archive-input-sha256",
+                sha256_path(verified_input),
             ]
         )
     result = run(command, timeout=7200)
@@ -476,6 +487,160 @@ def seed_profile(path):
     write_json(path, value)
 
 
+def create_verified_archive_input(
+    path,
+    scratch,
+    device_source,
+    device_id,
+):
+    check = read_report(scratch, "check")
+    plan = read_report(scratch, "plan")
+    archive = read_report(scratch, "archive")
+    drill = read_report(scratch, "drill")
+    source = plan["sourceRelationState"]
+    snapshot_ids = sorted(
+        row["snapshotId"]
+        for row in drill["restoredSnapshotDistribution"]
+    )
+    distribution_path = path.with_name(
+        "verified-restore-distribution.json"
+    )
+    write_json(
+        distribution_path,
+        {
+            "status": "succeeded",
+            "rowCount": drill["exactRows"]["total"],
+            "snapshotIds": snapshot_ids,
+            "distribution": [
+                {
+                    "snapshotId": row["snapshotId"],
+                    "rowCount": row["rowCount"],
+                }
+                for row in sorted(
+                    drill["restoredSnapshotDistribution"],
+                    key=lambda item: item["snapshotId"],
+                )
+            ],
+        },
+    )
+    validation_path = path.with_name(
+        "verified-restore-validation.json"
+    )
+    validation = {
+        "formatVersion": FORMAT_VERSION,
+        "status": "succeeded",
+        "productionDatabaseMutated": False,
+        "sourceChangedDuringArchive": False,
+        "archive": {
+            "path": archive["archive"]["path"],
+            "bytes": archive["archive"]["bytes"],
+            "sha256": archive["archive"]["sha256"],
+            "checksumMatches": True,
+        },
+        "catalog": {
+            "partitionBound": drill["restoredCatalog"][
+                "partitionBound"
+            ],
+            "indexes": [
+                {
+                    "name": plan["sourceCatalogNames"][
+                        "primaryIndex"
+                    ]
+                },
+                {
+                    "name": plan["sourceCatalogNames"][
+                        "scoreIndex"
+                    ]
+                },
+            ],
+        },
+        "data": {
+            "rowCount": drill["exactRows"]["total"],
+            "snapshotIds": snapshot_ids,
+            "distributionPath": str(distribution_path),
+            "distributionSha256": sha256_path(
+                distribution_path
+            ),
+        },
+    }
+    write_json(validation_path, validation)
+    cleanup_path = path.with_name(
+        "verified-restore-cleanup.json"
+    )
+    cleanup = {
+        "formatVersion": FORMAT_VERSION,
+        "status": "succeeded",
+        "containerRemoved": True,
+        "restorePgdataRemoved": True,
+        "archiveRetained": True,
+        "archivePath": archive["archive"]["path"],
+        "archiveSha256": archive["archive"]["sha256"],
+        "validationPath": str(validation_path),
+        "validationSha256": sha256_path(validation_path),
+    }
+    write_json(cleanup_path, cleanup)
+    value = {
+        "formatVersion": FORMAT_VERSION,
+        "toolId": TOOL_ID,
+        "target": (
+            "public.leaderboard_entries_snapshot_pro_bass"
+        ),
+        "instrument": "Solo_PeripheralBass",
+        "source": {
+            "database": check["identity"]["database"],
+            "systemIdentifier": check["identity"][
+                "systemIdentifier"
+            ],
+            "partitionOid": source["oid"],
+            "relfilenode": source["relfilenode"],
+            "heapBytes": source["heapBytes"],
+            "indexBytes": source["indexBytes"],
+            "totalBytes": source["totalBytes"],
+            "inserts": source["inserts"],
+            "updates": source["updates"],
+            "deletes": source["deletes"],
+            "changedDuringArchive": False,
+        },
+        "archive": {
+            "path": archive["archive"]["path"],
+            "bytes": archive["archive"]["bytes"],
+            "sha256": archive["archive"]["sha256"],
+            "deviceSource": device_source,
+            "deviceId": device_id,
+        },
+        "restore": {
+            "status": "succeeded",
+            "validationPath": str(validation_path),
+            "validationSha256": sha256_path(validation_path),
+            "rowCount": drill["exactRows"]["total"],
+            "snapshotIdCount": len(snapshot_ids),
+            "snapshotIdMin": min(snapshot_ids),
+            "snapshotIdMax": max(snapshot_ids),
+            "snapshotIds": snapshot_ids,
+            "distributionPath": str(distribution_path),
+            "distributionSha256": sha256_path(
+                distribution_path
+            ),
+            "partitionBound": drill["restoredCatalog"][
+                "partitionBound"
+            ],
+            "primaryIndex": plan["sourceCatalogNames"][
+                "primaryIndex"
+            ],
+            "scoreIndex": plan["sourceCatalogNames"]["scoreIndex"],
+        },
+        "cleanup": {
+            "status": "succeeded",
+            "proofPath": str(cleanup_path),
+            "proofSha256": sha256_path(cleanup_path),
+            "containerRemoved": True,
+            "restorePgdataRemoved": True,
+            "archiveRetained": True,
+        },
+    }
+    write_json(path, value)
+
+
 def cleanup_directory(image, directory):
     if not pathlib.Path(directory).exists():
         return
@@ -515,7 +680,8 @@ def derive_profile(
     build = read_report(drop_scratch, "build")
     drill = read_report(drop_scratch, "drill")
     drop = read_report(drop_scratch, "drop")
-    total_rows = plan["planIdentity"]["exactTotalRows"]
+    repatriate = read_report(drop_scratch, "repatriate")
+    total_rows = drill["exactRows"]["total"]
     retained_exact = plan["planIdentity"]["exactRetainedRows"]
     retained_ratio = retained_exact / total_rows
     estimated_source_heap = (
@@ -582,9 +748,15 @@ def derive_profile(
                 "archive",
             )["archive"]["bytes"],
             "restorePeakBytes": drill["restorePeakBytes"],
-            "dropRelationBytes": drop["droppedRelationBytes"],
+            "dropRelationBytes": (
+                drop["droppedOriginalBytes"]
+                + drop["droppedScratchBytes"]
+            ),
             "filesystemBytesReturned": drop[
                 "filesystemBytesReturned"
+            ],
+            "acceptedRelationTablespace": repatriate[
+                "acceptedRelationTablespace"
             ],
         },
         "proof": {
@@ -597,6 +769,11 @@ def derive_profile(
             "dropWorkspace": str(drop_scratch),
             "dropReportSha256": sha256_path(
                 drop_scratch / "reports" / "drop.json"
+            ),
+            "repatriateReportSha256": sha256_path(
+                drop_scratch
+                / "reports"
+                / "repatriate.json"
             ),
             "archiveRestoreReportSha256": sha256_path(
                 drop_scratch / "reports" / "drill.json"
@@ -648,6 +825,17 @@ def main(argv=None):
         ],
         timeout=30,
     ).stdout.strip()
+    device_source = run(
+        [
+            "findmnt",
+            "-T",
+            str(work_root),
+            "-n",
+            "-o",
+            "SOURCE",
+        ],
+        timeout=30,
+    ).stdout.strip()
     container = (
         "fst-pro-bass-pilot-test-"
         + hashlib.sha256(
@@ -656,10 +844,14 @@ def main(argv=None):
     )
     pgdata = work_root / "source-pgdata"
     pgdata.mkdir(mode=0o700)
+    tablespace = work_root / "source-tablespace"
+    tablespace.mkdir(mode=0o700)
     rollback_scratch = work_root / "rollback-path"
     drop_scratch = work_root / "drop-path"
+    adopted_scratch = work_root / "adopted-archive-path"
     rollback_scratch.mkdir(mode=0o700)
     drop_scratch.mkdir(mode=0o700)
+    adopted_scratch.mkdir(mode=0o700)
     seed_path = work_root / "seed-profile.json"
     seed_profile(seed_path)
     interruption_root = work_root / "interruption-recovery"
@@ -683,6 +875,8 @@ def main(argv=None):
             "POSTGRES_DB=fstservice",
             "-v",
             f"{pgdata}:/var/lib/postgresql/data",
+            "-v",
+            f"{tablespace}:/fst-pro-bass-scratch",
             args.image,
         ],
         timeout=120,
@@ -751,6 +945,66 @@ def main(argv=None):
             container,
             f'DROP TABLE public."{failed_relation}"; CHECKPOINT;',
         )
+        rollback_build = read_report(
+            rollback_scratch,
+            "build",
+        )
+        rollback_tablespace = rollback_build["buildStorage"][
+            "tablespace"
+        ]
+        psql(
+            container,
+            f'DROP TABLESPACE "{rollback_tablespace}";',
+        )
+        run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0:0",
+                container,
+                "sh",
+                "-c",
+                (
+                    "find /fst-pro-bass-scratch "
+                    "-mindepth 1 -maxdepth 1 "
+                    "-exec rm -rf -- {} +"
+                ),
+            ],
+            timeout=600,
+        )
+        verified_input = work_root / "verified-archive-input.json"
+        create_verified_archive_input(
+            verified_input,
+            rollback_scratch,
+            device_source,
+            device,
+        )
+        for stage in ("check", "plan", "archive", "drill"):
+            stage_command(
+                stage,
+                adopted_scratch,
+                device,
+                "synthetic-adopted-0001",
+                container,
+                args.image,
+                seed_path,
+                verified_input,
+            )
+        if not read_report(
+            adopted_scratch,
+            "archive",
+        ).get("adoptedVerifiedArchive"):
+            raise DrillError(
+                "archive stage did not adopt verified evidence"
+            )
+        if not read_report(
+            adopted_scratch,
+            "drill",
+        ).get("adoptedVerifiedRestore"):
+            raise DrillError(
+                "drill stage did not adopt verified restore evidence"
+            )
 
         for stage in (
             "check",
@@ -760,6 +1014,7 @@ def main(argv=None):
             "build",
             "swap",
             "validate",
+            "repatriate",
             "drop",
         ):
             stage_command(
@@ -799,7 +1054,13 @@ def main(argv=None):
             "deviceId": device,
             "rollbackPathPassed": True,
             "archiveRestorePassed": True,
+            "archiveBackedPlanningPassed": True,
+            "verifiedArchiveInput": {
+                "path": str(verified_input),
+                "sha256": sha256_path(verified_input),
+            },
             "finalDropPathPassed": True,
+            "repatriationPathPassed": True,
             "interruptionRecoveryPassed": True,
             "interruptionRecovery": interruption_results,
             "originalRows": expected_rows,
@@ -847,6 +1108,9 @@ def main(argv=None):
         cleanup_directory(args.image, pgdata)
         if pgdata.exists():
             pgdata.rmdir()
+        cleanup_directory(args.image, tablespace)
+        if tablespace.exists():
+            tablespace.rmdir()
         cleanup = {
             "temporarySourceContainerRemoved": True,
             "temporarySourcePgdataRemoved": not pgdata.exists(),

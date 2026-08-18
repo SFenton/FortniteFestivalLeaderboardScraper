@@ -147,11 +147,14 @@ authorization.
 
 ### Temporary pro-bass archive/rewrite pilot
 
-The repository candidate is not live execution authorization. No production
-archive, rewrite, swap, or drop occurred during its implementation.
+The repository candidate is not rewrite/drop authorization. A read-only
+production archive and isolated restore drill completed; no production
+replacement, rewrite, swap, rollback, or drop occurred.
 
-The production `plan` stage must use the bounded per-snapshot aggregate query:
-no `GROUPING SETS`, no parallel gather, `work_mem=64MB`, and
+The production `plan` stage must use recursive leading-index snapshot-ID
+enumeration, metadata-only ownership joins, protected-only fingerprints, and
+the checksummed verified-live-archive input for exact total rows/ranges. It
+uses no `GROUPING SETS`, no parallel gather, `work_mem=64MB`, and
 `temp_file_limit=256MB`. A prior unbounded planning query spilled about 61 GB
 of temporary data before it was cancelled; PostgreSQL released the files and
 no live data changed. Stop only the exact pilot backends if the temp limit,
@@ -173,10 +176,25 @@ are rejected. Scratch contains only:
 - isolated restore-drill PGDATA, removed after verification;
 - immutable stage reports and measured capacity profile.
 
-The replacement always uses `pg_default` on the 4 TB drive. The archive remains
-on 8 TB scratch through acceptance and a later explicit product-retention
-decision. Do not delete it merely because the detached source relation was
-dropped.
+The retained live archive is
+`/home/sfenton/fst-temporary/pro-bass-archive-20260817T223105Z/pro-bass-original.custom`,
+`11,942,257,904` bytes, SHA-256
+`3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+The successful isolated restore proved `308,536,699` rows, 125 snapshot IDs,
+the exact partition/primary/score-index catalog, and an unchanged source
+during archive. A first restore ordering was rejected for a duplicate child
+primary key; the archive was preserved and the corrected detached-child build
+plus final attach passed. The restore container and `130,771,858,177`-byte
+PGDATA were removed after validation.
+
+The replacement may use only the run-owned temporary scratch tablespace when
+the measured dual-filesystem gate passes. That is an interim location, not an
+accepted state. While the old rollback relation still exists, `repatriate`
+must copy/swap the retained relation to `pg_default`, remove the scratch
+relation/tablespace, and prove API/catalog parity. Only then may final drop
+remove the original. The archive remains on 8 TB
+scratch through acceptance and a later explicit product-retention decision.
+Do not delete it merely because the detached source relation was dropped.
 
 Production build requires the candidate-specific measured gate:
 
@@ -187,10 +205,17 @@ Production build requires the candidate-specific measured gate:
 + one replacement-sized failure reserve
 ```
 
-The current approximately `66 GB` free does not meet the isolated projection:
-required free is `72.19-73.06 GB`. Do not run `build`, `swap`, or `drop` unless
-a fresh exact plan passes. This does not lower the global `500 GiB` retention
-policy.
+A direct `pg_default` build does not fit: the exact archived row ratio requires
+`69,712,458,213` bytes and is short by `3,712,458,213`; the conservative
+sensitivity requires `72.19-73.06 GB`. The temporary-tablespace candidate
+projects `63,889,388,393` required 4 TB bytes (`2,110,611,607` margin at
+`66 GB`) and `17,259,765,778` scratch bytes. That is capacity readiness only:
+pre-drop repatriation requires `66,574,731,411` bytes and is still
+`574,731,411` short at the same assumption. Do not run `build`, `swap`,
+`repatriate`, or `drop` before merge/review, exact production mount/recreate
+validation, fresh preflight/parity, sufficient repatriation headroom, and the
+separately approved maintenance turn. This does not lower the global
+`500 GiB` retention policy.
 
 Swap/rollback/drop use maintenance and publication advisory locks, a `2s`
 lock timeout, a `30s` statement timeout, and no `CASCADE`. The old detached

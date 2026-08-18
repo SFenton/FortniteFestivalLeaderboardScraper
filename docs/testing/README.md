@@ -93,10 +93,12 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
   --retained-rows 30000
 ```
 
-The unit suite locks the production planning-query shape: one aggregate per
-snapshot ID, no `GROUPING SETS`, no parallel gather, and a 256 MB PostgreSQL
-temp-file limit. This prevents a planning-only query from consuming the FST
-emergency free-space reserve.
+The unit suite locks the production planning-query shape: recursive
+leading-index `MIN(snapshot_id)` probes, metadata-only ownership joins,
+protected-only fingerprints, no `GROUPING SETS`, no parallel gather, and a
+256 MB PostgreSQL temp-file limit. Production stages also require the exact
+checksummed verified-live-archive input. This prevents planning-only work from
+rehashing all historical rows or consuming the FST emergency reserve.
 
 The drill must report exact archive/restore and catalog parity, successful
 rename-back rollback, successful separate final drop, matching fingerprints,
@@ -106,6 +108,19 @@ missing terminal acknowledgement. Its measured profile must contain at least
 100,000 total and 10,000 retained rows before production capacity planning
 accepts it. It is isolated evidence only and never authorizes a production
 rewrite.
+
+The final-drop lane also runs `repatriate` and must end with the accepted
+partition/catalog in `pg_default`, no scratch-retired relation, and no
+temporary tablespace. Unit tests cover dual-filesystem capacity arithmetic,
+mount/device/path fencing, emergency-floor cancellation, repatriation
+dependencies, and final scratch cleanup.
+
+The production-derived archive restore additionally records one rejected and
+one accepted ordering. Restoring parent indexes before archived child indexes
+must fail on the duplicate child primary key. Restoring child
+table/data/indexes while detached and attaching afterward must produce
+`308,536,699` rows, 125 snapshot IDs, exact child catalog/checksum parity, zero
+validation temp bytes, and complete restore-PGDATA cleanup.
 
 Focused dead/no-op phase cleanup validation:
 

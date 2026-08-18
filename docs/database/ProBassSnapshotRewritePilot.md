@@ -18,8 +18,9 @@ update_triggers:
 
 ## Current decision
 
-The repository package is a **candidate only**. It has not archived, rewritten,
-swapped, or dropped the production relation.
+The repository package is a **candidate only**. A read-only production archive
+and isolated restore drill now exist, but no production replacement, rewrite,
+swap, rollback, or drop has run.
 
 The exact target is fixed in code:
 
@@ -39,13 +40,14 @@ and separate final drop. Measurements were:
 |---|---:|
 | Original relation | 144,318,464 |
 | Replacement relation | 19,636,224 |
-| Build WAL | 20,453,512 |
+| Scratch build WAL | 20,455,160 |
 | Build temp | 8,421,376 |
-| Observed build filesystem peak | 19,664,896 |
-| Custom archive | 6,682,304 |
+| Observed scratch-build peak | 19,701,760 |
+| Repatriation WAL/temp | 20,275,720 / 8,429,568 |
+| Custom archive | 6,703,385 |
 | Restore workspace peak | 264,653,337 |
-| Dropped relation | 144,318,464 |
-| Immediate filesystem return | 144,322,560 |
+| Dropped original / scratch rollback | 144,318,464 / 19,636,224 |
+| Immediate filesystem return | 163,958,784 |
 
 The swap took `0.047-0.066s` in the scaled drill. That is isolated evidence,
 not a production lock-duration promise.
@@ -68,13 +70,34 @@ Key SHA-256 values are:
   `4a10a8c8a7564c03a20b620227d4ecd1ea0b403729c297f742aa6cf44f316c1f`;
 - `cleanup-proof.json`:
   `90c14fb44a3a2c3230c27496182fb48ab65c653af6f96e70a440c6e21681a3f6`.
+- `live-archive-summary.json`:
+  `df09e8efe03290bcde0d39be410555d17481c92779fc8d060757d3ab7a6191f7`;
+- `live-archive-capacity-projection.json`:
+  `2f339396e2aee86c8848323355f71a27be5b79c97d73fcdfac7378c96d796073`.
+- `verified-live-archive-input.json`:
+  `233e46dff7a870f314af791001c8d0e6115a180ec7f856eb0bd977277971e5ac`.
+- `dual-filesystem-capacity-projection.json`:
+  `4bd8ccf643879ec84df60519fe7afb69c9c67498cd3770148c5564d05d970ceb`.
 
-The measured ratios applied to the accepted approximately `3.4 GB` retained
-relation estimate require about `72.19-73.06 GB` free, including the
-`60,392,999,803`-byte emergency floor, WAL, temp, replacement, and one complete
-replacement-sized failure reserve. At `66 GB` free, the projected shortfall is
-about `6.19-7.06 GB`. **Production build/swap remains blocked until a fresh
-exact plan passes the candidate-specific gate.**
+The verified archive contains `308,536,699` rows across 125 snapshot IDs
+(`769-1302`). Applying the measured ratios to the exact row ratio and live
+heap/index bytes estimates a `2,685,343,018`-byte replacement and requires
+`69,712,458,213` free bytes after WAL, temp, failure reserve, and the
+`60,392,999,803`-byte emergency floor. At `66 GB`, the shortfall is
+`3,712,458,213` bytes. The older approximately `3.4 GB` retained-size
+sensitivity remains a conservative `72.19-73.06 GB` requirement.
+
+The temporary-tablespace model keeps replacement/temp/failure bytes on 8 TB
+scratch and budgets only WAL plus the emergency floor on 4 TB. It projects a
+4 TB requirement of `63,889,388,393` bytes, leaving `2,110,611,607` bytes at
+the `66 GB` assumption, and a scratch requirement of `17,259,765,778` bytes.
+Capacity therefore passes narrowly for that candidate mode, but production
+build/swap remains blocked by the complete sequence: copying the measured
+replacement back to `pg_default` while the original rollback relation still
+exists requires `66,574,731,411` bytes, `574,731,411` above the `66 GB`
+assumption. PR merge/review, the production-owned scratch bind
+mount/container-recreate gate, fresh preflight/parity, and the explicit
+no-rewrite boundary for this task also remain.
 
 ## Physical-source retention policy
 
@@ -110,8 +133,12 @@ archive or database mutation occurred.
 
 The corrected plan query:
 
-- aggregates each snapshot ID once;
-- derives the whole-partition fingerprint from those per-snapshot aggregates;
+- enumerates snapshot IDs with recursive `MIN(snapshot_id)` probes on the
+  leading primary-key column rather than scanning historical rows;
+- joins only those IDs to scrape/source-map ownership metadata;
+- calculates exact counts/ranges/fingerprints only for protected IDs;
+- takes exact total rows and snapshot-ID bounds from the checksum-verified live
+  archive restore input;
 - disables parallel gather for the plan session;
 - uses `work_mem=64MB`;
 - enforces `temp_file_limit=256MB`.
@@ -119,6 +146,48 @@ The corrected plan query:
 Any future query-shape regression must therefore fail at the bounded temp limit
 instead of consuming the emergency scrape reserve. Do not use the original
 `05bf8d1f` planning query for production work.
+
+### Live archive and restore evidence
+
+The source partition was streamed read-only to
+`/home/sfenton/fst-temporary/pro-bass-archive-20260817T223105Z/`:
+
+- archive: `11,942,257,904` bytes;
+- SHA-256:
+  `3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`;
+- source before/after: same OID/relfilenode, `150,098,894,848` bytes,
+  `40,139,479` inserts, zero updates/deletes;
+- source changed during archive: false.
+
+The first isolated restore attempted to apply the parent primary/score indexes
+before the archived child indexes. PostgreSQL auto-created child indexes at
+partition attach, then correctly rejected the duplicate child primary key.
+The source archive remained unchanged and production was not mutated.
+
+The successful retry restored the child table, data, primary key, and score
+index while detached, then attached the complete child to the indexed parent.
+Bounded validation proved:
+
+- exact row count `308,536,699`;
+- 125 snapshot IDs, minimum `769`, maximum `1302`;
+- score range `0-748,234`;
+- exact pro-bass partition bound, owner, primary key, and score-index
+  definitions;
+- restored heap `67,192,225,792` bytes;
+- restored indexes `62,457,389,056` bytes;
+- restored total `129,666,588,672` bytes;
+- archive checksum exact and zero validation temp bytes.
+
+The smaller restored index footprint is restore/compaction evidence, not
+authorization to rewrite production. After validation the isolated container
+and `130,771,858,177`-byte restore PGDATA were removed, returning
+`130,773,172,224` filesystem bytes. The archive and checksummed validation/
+cleanup reports remain. `restore-snapshot-distribution.json` SHA-256 is
+`734dfebe0badf33762952000a0cdf1ad0d36266901c8cbf62e4b18ac0997b965`;
+`restore-validation.json` SHA-256 is
+`b9c62ed0ed577dc776a81ab8da6fb955d803f01b29c960f1e015e6a03ce0875a`;
+`restore-cleanup-proof.json` SHA-256 is
+`28f4acd933f83a43037fd326ed1f6528569c3b8323590b8128d9d6ac93ecbd4a`.
 
 ## Temporary 8 TB scratch exception
 
@@ -130,9 +199,14 @@ The operator has authorized one temporary workspace on
 - the isolated restore drill and its transient PGDATA;
 - immutable stage reports and the measured capacity profile.
 
-The accepted replacement is always built in `pg_default`, on the 4 TB FST
-PostgreSQL data filesystem. No live or accepted relation uses an 8 TB
-tablespace.
+When the 4 TB direct-build gate fails but the measured dual-filesystem gate
+passes, the replacement may be built in one run-owned temporary tablespace
+backed by `<scratch-root>/postgres-tablespace` and mounted into PostgreSQL at
+`/fst-pro-bass-scratch`. It is never an accepted final location. While the
+original rollback relation still exists, `repatriate` must copy the retained
+relation to `pg_default`, perform another short rollback-safe swap, drop the
+scratch copy/tablespace, and prove no relation remains on 8 TB. Only then may
+the separately guarded final drop remove the original.
 
 The explicit `--scratch-root` must be an empty, operator-created directory.
 `--expected-device-id` must equal `findmnt -T <root> -n -o MAJ:MIN`. The tool
@@ -163,6 +237,9 @@ Every successful stage writes one immutable
 `<scratch-root>/reports/<stage>.json`. A failure writes a typed
 `<stage>.failed-*.json`; it never writes a success-shaped partial report.
 Completed stages are checksum-linked as dependencies and may be resumed.
+When the verified live archive input is supplied, `archive` and `drill`
+revalidate/adopt the existing checksum, restore and cleanup evidence instead
+of streaming or restoring production data again.
 
 | Stage | Purpose | Mutation |
 |---|---|---|
@@ -170,11 +247,12 @@ Completed stages are checksum-linked as dependencies and may be resumed.
 | `plan` | Exact protected/purge IDs, ownership, counts, ranges, fingerprints, references, catalog, and capacity inputs | None |
 | `archive` | Stream `pg_dump -Fc` directly from PostgreSQL to 8 TB scratch; record SHA-256, TOC, catalog, bytes, rows, IDs, and restore command | Scratch only |
 | `drill` | Restore into a network-none PostgreSQL 17 container, verify exact bytes/catalog, then remove transient PGDATA | Isolated scratch only |
-| `build` | Build retained-only heap, primary key, and score index in `pg_default`; measure WAL, temp, relation and filesystem peak | New FST relation only |
+| `build` | Build retained-only heap, primary key, and score index in the guarded temporary tablespace when mounted, otherwise `pg_default` for isolated tests; measure WAL, temp and both filesystems | New candidate only |
 | `swap` | Short transaction: detach original, retain it under a run-owned name, rename/attach replacement | Catalog only; original remains |
 | `validate` | Exact candidate/original fingerprints, publication/source/projection/max-score/reference/API parity, archive checksum | None |
 | `rollback` | Before final drop, detach candidate and rename/attach retained original; keep failed candidate and archive | Catalog only |
-| `drop` | Only after accepted validation: drop exact detached original without `CASCADE`, normalize index names, verify catalog and returned bytes | Destructive, separately gated |
+| `repatriate` | Before old-relation drop, copy the retained rows to `pg_default`, short-swap with rollback, normalize catalog, remove scratch relation/tablespace, and prove API parity | Required after a scratch build |
+| `drop` | Only after accepted validation and repatriation: drop the exact detached original without `CASCADE` and verify returned 4 TB bytes | Destructive, separately gated |
 
 ## Common guards
 
@@ -226,6 +304,12 @@ synthetic rows.
 Do not run these commands until the branch is merged, the live parity gate is
 accepted, the worker is held, and the exact live preflight is approved.
 
+Before `build`, the production-owned PostgreSQL service must expose exactly
+`<scratch-root>/postgres-tablespace:/fst-pro-bass-scratch:rw`. Adding that bind
+mount requires its own reviewed PostgreSQL container-recreate window and
+readiness/public-health validation; this repository-only task does not change
+the live Compose project.
+
 Create an empty dedicated scratch directory on `/dev/nvme2n1p2`, then record:
 
 ```bash
@@ -235,6 +319,8 @@ DEVICE_ID="$(findmnt -T "$SCRATCH_ROOT" -n -o MAJ:MIN)"
 API_BASE="<direct-fstservice-base-url>"
 PROFILE="<accepted-measured-profile.json>"
 PROFILE_SHA256="$(sha256sum "$PROFILE" | awk '{print $1}')"
+ARCHIVE_INPUT="/home/sfenton/fst-temporary/pro-bass-archive-20260817T223105Z/verified-live-archive-input.json"
+ARCHIVE_INPUT_SHA256="233e46dff7a870f314af791001c8d0e6115a180ec7f856eb0bd977277971e5ac"
 ```
 
 Run one stage at a time and review every report:
@@ -250,18 +336,24 @@ tools/postgres-pro-bass-snapshot-rewrite.sh check \
 tools/postgres-pro-bass-snapshot-rewrite.sh plan \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
-  --run-id "$RUN_ID"
+  --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256"
 
 tools/postgres-pro-bass-snapshot-rewrite.sh archive \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --execute
 
 tools/postgres-pro-bass-snapshot-rewrite.sh drill \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --execute
 
 tools/postgres-pro-bass-snapshot-rewrite.sh build \
@@ -270,18 +362,24 @@ tools/postgres-pro-bass-snapshot-rewrite.sh build \
   --run-id "$RUN_ID" \
   --measured-profile "$PROFILE" \
   --expected-profile-sha256 "$PROFILE_SHA256" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --execute
 
 tools/postgres-pro-bass-snapshot-rewrite.sh swap \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --execute
 
 tools/postgres-pro-bass-snapshot-rewrite.sh validate \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --api-base "$API_BASE"
 ```
 
@@ -292,16 +390,33 @@ tools/postgres-pro-bass-snapshot-rewrite.sh rollback \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
   --execute
 ```
 
-Final drop is a separate decision after reviewing validation and monitoring:
+Repatriation is a separate decision after reviewing validation and monitoring.
+It must complete before final old-relation drop:
 
 ```bash
+tools/postgres-pro-bass-snapshot-rewrite.sh repatriate \
+  --scratch-root "$SCRATCH_ROOT" \
+  --expected-device-id "$DEVICE_ID" \
+  --run-id "$RUN_ID" \
+  --measured-profile "$PROFILE" \
+  --expected-profile-sha256 "$PROFILE_SHA256" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
+  --api-base "$API_BASE" \
+  --execute
+
 tools/postgres-pro-bass-snapshot-rewrite.sh drop \
   --scratch-root "$SCRATCH_ROOT" \
   --expected-device-id "$DEVICE_ID" \
   --run-id "$RUN_ID" \
+  --verified-live-archive-input "$ARCHIVE_INPUT" \
+  --expected-live-archive-input-sha256 "$ARCHIVE_INPUT_SHA256" \
+  --api-base "$API_BASE" \
   --execute
 ```
 
@@ -319,7 +434,7 @@ source relation archive budget
 For the accepted `150,098,894,848`-byte source, that is approximately
 `338,796,255,232` bytes. The measured 8 TB free space is sufficient.
 
-FST preflight requires:
+For a direct 4 TB build, FST preflight requires:
 
 ```text
 60,392,999,803 emergency floor
@@ -331,6 +446,15 @@ FST preflight requires:
 
 This candidate-specific model does not lower or replace the global `500 GiB`
 retention policy. It only decides whether this exact premeasured pilot can run.
+
+For a temporary tablespace build, the 4 TB gate retains the emergency floor
+plus a conservative WAL budget; the 8 TB gate requires measured replacement
+heap/indexes, temp, one replacement-sized failure reserve, and 10 GiB reserve.
+`repatriate` must fit the measured replacement plus WAL budget while the old
+rollback relation still exists. At the `66 GB` assumption it is short by
+`574,731,411` bytes. The workflow is incomplete while any accepted relation or
+tablespace remains under the scratch root, and final old-relation drop cannot
+precede repatriation.
 
 ## Interruption and rollback rules
 
@@ -370,5 +494,6 @@ Require:
 - old relation detached and present;
 - no public-health, lock, WAL/temp, or capacity gate failure.
 
-No production archive, build, swap, rollback, or drop occurred while creating
-this candidate package.
+No production build, swap, rollback, or drop occurred while creating and
+validating this candidate package. The production source was read only for the
+archive and bounded plan attempts.

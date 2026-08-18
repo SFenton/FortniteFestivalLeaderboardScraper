@@ -686,9 +686,12 @@ orchestrator with no arbitrary relation input.
 
 Its `plan` stage scans only the exact partition and derives retained IDs from
 authoritative active/projection/publication/rollback ownership. It requires a
-terminal `scrape_log` owner for every archive/purge ID, exact per-ID row/range
-inventory, whole and retained content fingerprints, source/reference parity,
-and the original column/constraint/index/owner/tablespace catalog.
+terminal `scrape_log` owner for every archive/purge ID, but production
+enumeration uses leading-index `MIN(snapshot_id)` probes and metadata joins,
+not a historical-row aggregate. Exact total rows/ranges come from the
+checksummed verified archive restore; PostgreSQL calculates exact
+counts/ranges/fingerprints only for protected IDs. Source/reference parity and
+the original column/constraint/index/owner/tablespace catalog remain required.
 
 The original relation is streamed as a PostgreSQL custom archive directly to
 an explicitly authorized temporary directory on `/dev/nvme2n1p2`. The archive
@@ -696,22 +699,44 @@ contains the partitioned parent, pro-bass child, data, attach records,
 constraints, primary/score indexes, and ownership. It is checksum-verified and
 restored in isolated network-none PostgreSQL 17 before any build is eligible.
 
-The replacement is built in `pg_default` on the 4 TB FST drive. A short-lock
-transaction detaches and retains the original, then renames/attaches the
-replacement. Validation occurs while rename-back rollback is available. Final
-drop is a separate guarded stage and the restore-drilled archive remains on
-the 8 TB device through acceptance and a later explicit retention decision.
+The replacement may be built in one run-owned temporary 8 TB tablespace when
+the dual-filesystem capacity gate passes. A short-lock transaction detaches and
+retains the original, then renames/attaches the replacement. Validation occurs
+while rename-back rollback is available. Final old-relation drop is separate;
+before it, `repatriate` copies/swaps the retained relation to `pg_default`
+while the original still provides rollback, removes the scratch
+relation/tablespace, and proves final catalog/API parity. The restore-drilled
+archive remains on 8 TB through
+acceptance and a later explicit retention decision.
 
 The final 360,000-row scaled drill measured a 144,318,464-byte original,
-19,636,224-byte replacement, 20,453,512 WAL bytes, 8,421,376 temp bytes,
-19,664,896 peak filesystem growth, and 144,322,560 immediate bytes returned.
-Both rename-back rollback and final-drop paths passed.
+19,636,224-byte replacement, 20,455,160 scratch-build WAL bytes, 8,421,376
+temp bytes, 19,701,760 peak scratch growth, and 163,958,784 immediate bytes
+returned when the original plus scratch rollback relation were dropped.
+Rename-back, verified-archive adoption, repatriation to `pg_default`, scratch
+tablespace removal, and final-drop paths all passed.
 
-Applying the measured ratios to the accepted approximately `3.4 GB` retained
-estimate requires `72.19-73.06 GB` free after preserving the
-`60,392,999,803`-byte emergency floor. At `66 GB`, the candidate is short by
-about `6.19-7.06 GB`; production build/swap remains blocked pending a fresh
-exact plan. See the
+The read-only live archive is `11,942,257,904` bytes with checksum
+`3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+Its isolated restore proved `308,536,699` exact rows across 125 snapshot IDs
+(`769-1302`), the exact partition/primary/score-index catalog, and a packed
+`129,666,588,672`-byte restored relation. The first restore shape was rejected
+for a duplicate child primary key; the successful retry built child indexes
+while detached and attached afterward. The `130,771,858,177`-byte restore
+PGDATA was deleted after validation while the archive remained.
+
+Using the exact archive row count, `6,691,993` protected rows, live heap/index
+bytes, and measured ratios projects a `2,685,343,018`-byte replacement and a
+`69,712,458,213`-byte free-space requirement. At `66 GB`, the exact-row
+projection is short by `3,712,458,213` bytes. The older approximately `3.4 GB`
+retained-size sensitivity remains a conservative `72.19-73.06 GB` requirement.
+The temporary-tablespace candidate instead requires `63,889,388,393` free on
+4 TB and `17,259,765,778` on scratch, so its capacity math passes narrowly at
+the accepted free-space assumptions. Pre-drop repatriation requires
+`66,574,731,411` and is still `574,731,411` short at `66 GB`. Execution
+remains blocked by that final headroom, merge/review, production
+mount/recreate, fresh preflight/parity, and the no-rewrite boundary for this
+task. See the
 [pilot runbook](../database/ProBassSnapshotRewritePilot.md).
 
 ## Tier-0 replay evidence packages

@@ -230,13 +230,19 @@ The package:
 
 - protects active, projection, rollback, and current/previous/working
   publication physical source IDs;
+- enumerates production snapshot IDs through leading-index `MIN` probes,
+  joins ownership metadata only, and fingerprints protected rows only;
+- requires the checksummed verified live archive/restore/cleanup input for
+  exact total rows and archive adoption;
 - rejects stale/incomplete/missing scrape ownership;
 - streams a PostgreSQL custom archive directly to the explicitly authorized
   8 TB scratch device;
 - restores and verifies the archive in network-none PostgreSQL 17;
-- builds only in `pg_default` on the 4 TB FST drive;
+- builds in only the exact run-owned temporary tablespace when its mount/gates
+  pass, then requires `repatriate` back to `pg_default`;
 - retains the detached original through exact validation;
 - supports rename-back rollback before a separately guarded final drop;
+- removes every scratch relation/tablespace before accepted completion;
 - never uses `CASCADE`.
 
 Run structural tests with:
@@ -264,14 +270,33 @@ tools/postgres-pro-bass-snapshot-rewrite-drill.sh \
 
 The final accepted isolated drill retained two restore-drilled archives and
 proved both rename-back and final-drop paths. It measured a 144,318,464-byte
-source, 19,636,224-byte replacement, 20,453,512 WAL bytes, 8,421,376 temp
-bytes, 19,664,896 peak build growth, and 144,322,560 filesystem bytes returned.
+source, 19,636,224-byte replacement, 20,455,160 scratch-build WAL bytes,
+8,421,376 temp bytes, 19,701,760 peak scratch growth, and 163,958,784
+filesystem bytes returned after dropping the original plus scratch rollback.
+Repatriation returned the accepted relation/catalog to `pg_default`.
 The rollback lane also proves archive/build/swap/rollback resume after a
 simulated missing terminal report while preserving the first checksummed
 reports.
 The generated production-planning profile is synthetic evidence; live
-execution still needs an exact source plan and currently fails the
-approximately `72.19-73.06 GB` free-space requirement.
+execution still needs an exact source plan.
+
+The live read-only archive is `11,942,257,904` bytes with SHA-256
+`3decc75ffe33e24dad72e379fb874c7b0c7b4a421121de6a227acd0fe344760f`.
+Its corrected isolated restore validated `308,536,699` rows across 125
+snapshot IDs and the exact child catalog, then removed the
+`130,771,858,177`-byte restore PGDATA. The first restore attempt is retained as
+a typed rejection: applying parent indexes before the archived child indexes
+caused PostgreSQL to reject a duplicate child primary key. The successful
+procedure restored child data/indexes while detached and attached afterward.
+
+The exact archive row ratio plus measured profile projects a
+`2,685,343,018`-byte replacement and `69,712,458,213` required free bytes,
+still `3,712,458,213` short at `66 GB`. The conservative sensitivity remains
+`72.19-73.06 GB`. With the replacement/temp/failure reserve on the guarded
+temporary tablespace, the candidate requires `63,889,388,393` free on 4 TB and
+`17,259,765,778` on scratch, so capacity passes narrowly but execution remains
+separately gated. Pre-drop repatriation requires `66,574,731,411`, still
+`574,731,411` above the `66 GB` assumption.
 
 Follow the
 [living runbook](../database/ProBassSnapshotRewritePilot.md). The archive

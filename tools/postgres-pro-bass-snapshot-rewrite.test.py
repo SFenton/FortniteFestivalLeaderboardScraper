@@ -70,7 +70,6 @@ def plan_fixture():
     return {
         "planIdentity": {
             "exactRetainedRows": 6_691_993,
-            "exactTotalRows": 300_000_000,
         },
         "catalog": {
             "heapBytes": 100_000_000_000,
@@ -124,14 +123,38 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertNotIn("relation", option_destinations)
         self.assertNotIn("sql", option_destinations)
 
-    def test_inventory_query_avoids_full_grouping_sets(self):
+    def test_inventory_query_uses_loose_index_scan_without_row_hashing(self):
         sql = tool.inventory_query()
 
         self.assertNotIn("GROUPING SETS", sql)
-        self.assertIn("GROUP BY snapshot.snapshot_id", sql)
-        self.assertIn("SUM(rows.row_count)", sql)
-        self.assertIn("bit_xor(rows.hash_xor_0)", sql)
-        self.assertIn("SUM(rows.hash_sum_2)", sql)
+        self.assertIn("WITH RECURSIVE snapshot_ids", sql)
+        self.assertIn("MIN(next_snapshot.snapshot_id)", sql)
+        self.assertNotIn("GROUP BY snapshot.snapshot_id", sql)
+        self.assertNotIn("hashtextextended", sql)
+        self.assertNotIn("COUNT(*)::bigint AS row_count", sql)
+        self.assertIn(
+            "enable_seqscan=off",
+            tool.LOOSE_ID_PGOPTIONS,
+        )
+
+    def test_production_plan_requires_verified_archive_input(self):
+        args = tool.build_parser().parse_args(
+            [
+                "plan",
+                "--scratch-root",
+                "/not-used-by-argument-validation",
+                "--expected-device-id",
+                "259:4",
+                "--run-id",
+                "production-plan-0001",
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "verified live archive input",
+        ):
+            tool.validate_args(args)
 
     def test_plan_query_options_bound_temp_and_parallelism(self):
         self.assertIn(
@@ -509,11 +532,164 @@ class ProBassPilotToolTests(unittest.TestCase):
                 ),
             )
 
+    def test_verified_archive_input_binds_source_restore_and_cleanup(self):
+        archive = WORK_ROOT / "archive.custom"
+        archive.write_bytes(b"verified archive")
+        validation = WORK_ROOT / "validation.json"
+        cleanup = WORK_ROOT / "cleanup.json"
+        distribution = WORK_ROOT / "distribution.json"
+        source = {
+            "partitionOid": 100,
+            "relfilenode": 101,
+            "heapBytes": 1_000,
+            "indexBytes": 2_000,
+            "totalBytes": 3_000,
+            "inserts": 10,
+            "updates": 0,
+            "deletes": 0,
+        }
+        validation.write_bytes(
+            tool.canonical_json_bytes(
+                {
+                    "status": "succeeded",
+                    "productionDatabaseMutated": False,
+                    "sourceChangedDuringArchive": False,
+                    "archive": {
+                        "path": str(archive),
+                        "bytes": archive.stat().st_size,
+                        "sha256": tool.sha256_path(archive),
+                        "checksumMatches": True,
+                    },
+                    "catalog": {
+                        "partitionBound": (
+                            "FOR VALUES IN ('Solo_PeripheralBass')"
+                        ),
+                        "indexes": [
+                            {"name": "pro_bass_pkey"},
+                            {"name": "pro_bass_score_idx"},
+                        ],
+                    },
+                    "data": {
+                        "rowCount": 100,
+                        "snapshotIds": [80, 90],
+                    },
+                }
+            )
+        )
+        distribution.write_bytes(
+            tool.canonical_json_bytes(
+                {
+                    "status": "succeeded",
+                    "rowCount": 100,
+                    "snapshotIds": [80, 90],
+                    "distribution": [
+                        {"snapshotId": 80, "rowCount": 40},
+                        {"snapshotId": 90, "rowCount": 60},
+                    ],
+                }
+            )
+        )
+        cleanup.write_bytes(
+            tool.canonical_json_bytes(
+                {
+                    "status": "succeeded",
+                    "containerRemoved": True,
+                    "restorePgdataRemoved": True,
+                    "archiveRetained": True,
+                    "archivePath": str(archive),
+                    "archiveSha256": tool.sha256_path(archive),
+                    "validationPath": str(validation),
+                    "validationSha256": tool.sha256_path(
+                        validation
+                    ),
+                }
+            )
+        )
+        value = {
+            "formatVersion": tool.FORMAT_VERSION,
+            "toolId": tool.TOOL_ID,
+            "target": "public.leaderboard_entries_snapshot_pro_bass",
+            "instrument": tool.TARGET_INSTRUMENT,
+            "source": {
+                **source,
+                "database": "fstservice",
+                "systemIdentifier": "system-1",
+                "changedDuringArchive": False,
+            },
+            "archive": {
+                "path": str(archive),
+                "bytes": archive.stat().st_size,
+                "sha256": tool.sha256_path(archive),
+                "deviceSource": "/dev/test",
+                "deviceId": "0:123",
+            },
+            "restore": {
+                "status": "succeeded",
+                "validationPath": str(validation),
+                "validationSha256": tool.sha256_path(validation),
+                "rowCount": 100,
+                "snapshotIdCount": 2,
+                "snapshotIdMin": 80,
+                "snapshotIdMax": 90,
+                "snapshotIds": [80, 90],
+                "distributionPath": str(distribution),
+                "distributionSha256": tool.sha256_path(
+                    distribution
+                ),
+                "partitionBound": (
+                    "FOR VALUES IN ('Solo_PeripheralBass')"
+                ),
+                "primaryIndex": "pro_bass_pkey",
+                "scoreIndex": "pro_bass_score_idx",
+            },
+            "cleanup": {
+                "status": "succeeded",
+                "proofPath": str(cleanup),
+                "proofSha256": tool.sha256_path(cleanup),
+                "containerRemoved": True,
+                "restorePgdataRemoved": True,
+                "archiveRetained": True,
+                "archivePath": str(archive),
+                "archiveSha256": tool.sha256_path(archive),
+                "validationPath": str(validation),
+                "validationSha256": tool.sha256_path(
+                    validation
+                ),
+            },
+        }
+        input_path = WORK_ROOT / "verified-input.json"
+        input_path.write_bytes(tool.canonical_json_bytes(value))
+        args = types.SimpleNamespace(
+            verified_live_archive_input=str(input_path),
+            expected_live_archive_input_sha256=tool.sha256_path(
+                input_path
+            ),
+            test_mode=True,
+        )
+        check = {
+            "identity": {
+                "systemIdentifier": "system-1",
+                "database": "fstservice",
+            }
+        }
+
+        loaded, observed = tool.load_verified_archive_input(
+            args,
+            MountRunner(target="/workspace"),
+            check,
+            source,
+            verify_archive_checksum=True,
+        )
+
+        self.assertEqual(value, loaded)
+        self.assertEqual(tool.sha256_path(input_path), observed)
+
     def test_capacity_gate_preserves_emergency_floor(self):
         result = tool.calculate_capacity(
             plan_fixture(),
             profile_fixture(),
             66_000_000_000,
+            300_000_000,
         )
 
         self.assertEqual(
@@ -534,6 +710,7 @@ class ProBassPilotToolTests(unittest.TestCase):
             plan_fixture(),
             profile_fixture(),
             600_000_000_000,
+            300_000_000,
         )
 
         self.assertTrue(result["measured"])
@@ -543,6 +720,27 @@ class ProBassPilotToolTests(unittest.TestCase):
         )
         self.assertTrue(result["allowed"])
         self.assertLess(result["requiredFreeBytes"], 500 * 1024**3)
+
+    def test_scratch_capacity_keeps_fst_above_emergency_floor(self):
+        result = tool.calculate_scratch_capacity(
+            plan_fixture(),
+            profile_fixture(),
+            66_000_000_000,
+            5_000_000_000_000,
+            300_000_000,
+        )
+
+        self.assertTrue(result["allowed"])
+        self.assertGreater(
+            result["fstRequiredFreeBytes"],
+            tool.EMERGENCY_FLOOR_BYTES,
+        )
+        self.assertGreater(result["fstMarginBytes"], 0)
+        self.assertGreater(result["scratchMarginBytes"], 0)
+        self.assertEqual(
+            "temporary_scratch_tablespace",
+            result["mode"],
+        )
 
     def test_profile_requires_exact_checksum_and_passed_pg17_drill(self):
         profile_path = WORK_ROOT / "profile.json"
@@ -601,6 +799,48 @@ class ProBassPilotToolTests(unittest.TestCase):
         self.assertIn("hashXor1", sql)
         self.assertIn("hashSum2", sql)
 
+    def test_physical_relation_identity_ignores_rename_and_attachment(self):
+        original = {
+            "oid": 123,
+            "relfilenode": 456,
+            "heapBytes": 100,
+            "indexBytes": 200,
+            "totalBytes": 300,
+            "inserts": 10,
+            "updates": 0,
+            "deletes": 0,
+            "attached": True,
+            "partitionBound": "FOR VALUES IN ('x')",
+        }
+        renamed = {
+            **original,
+            "attached": False,
+            "partitionBound": None,
+        }
+
+        self.assertEqual(
+            tool.physical_relation_identity(original),
+            tool.physical_relation_identity(renamed),
+        )
+        renamed["updates"] = 1
+        self.assertNotEqual(
+            tool.physical_relation_identity(original),
+            tool.physical_relation_identity(renamed),
+        )
+
+    def test_snapshot_id_predicate_is_exact_and_rejects_empty_input(self):
+        predicate = tool.snapshot_id_predicate([1302, 1301])
+
+        self.assertEqual(
+            "snapshot_id = ANY(ARRAY[1302, 1301]::bigint[])",
+            predicate,
+        )
+        with self.assertRaisesRegex(
+            tool.PilotError,
+            "cannot be empty",
+        ):
+            tool.snapshot_id_predicate([])
+
     def test_relation_names_are_deterministic_and_bounded(self):
         first = tool.replacement_name("synthetic-run-0001")
         second = tool.replacement_name("synthetic-run-0001")
@@ -622,6 +862,11 @@ class ProBassPilotToolTests(unittest.TestCase):
             tool.replacement_instrument_check_name(
                 "synthetic-run-0001"
             ),
+            tool.home_name("synthetic-run-0001"),
+            tool.home_primary_name("synthetic-run-0001"),
+            tool.home_score_name("synthetic-run-0001"),
+            tool.scratch_retired_name("synthetic-run-0001"),
+            tool.tablespace_name("synthetic-run-0001"),
         ):
             self.assertLessEqual(len(name), 63)
             self.assertRegex(name, r"^[a-z][a-z0-9_]+$")
@@ -712,8 +957,12 @@ class ProBassPilotToolTests(unittest.TestCase):
             tool.DEPENDENCIES["swap"],
         )
         self.assertEqual(
-            ("validate", "archive", "drill"),
+            ("repatriate", "archive", "drill"),
             tool.DEPENDENCIES["drop"],
+        )
+        self.assertEqual(
+            ("validate", "archive", "drill"),
+            tool.DEPENDENCIES["repatriate"],
         )
         self.assertNotIn("drop", tool.DEPENDENCIES["rollback"])
 

@@ -48,11 +48,17 @@ PLAN_QUERY_PGOPTIONS = (
     "-c temp_file_limit=262144kB "
     "-c max_parallel_workers_per_gather=0"
 )
+LOOSE_ID_PGOPTIONS = (
+    PLAN_QUERY_PGOPTIONS
+    + " -c enable_seqscan=off"
+)
 WORKSPACE_MARKER = ".fst-pro-bass-pilot-workspace.json"
 LOCK_FILE = ".fst-pro-bass-pilot.lock"
 REPORTS_DIR = "reports"
 ARCHIVE_DIR = "archive"
 RESTORE_DIR = "restore-drill"
+TABLESPACE_DIR = "postgres-tablespace"
+TABLESPACE_CONTAINER_PATH = "/fst-pro-bass-scratch"
 EMERGENCY_FLOOR_BYTES = 60_392_999_803
 PUBLICATION_ADVISORY_LOCK_KEY = 5_067_481_511_116_519_500
 MAINTENANCE_ADVISORY_LOCK_KEY = 5_067_481_511_116_519_501
@@ -77,6 +83,7 @@ STAGES = (
     "build",
     "swap",
     "validate",
+    "repatriate",
     "drop",
     "rollback",
 )
@@ -84,6 +91,7 @@ MUTATING_DATABASE_STAGES = {
     "build",
     "swap",
     "drop",
+    "repatriate",
     "rollback",
 }
 DEPENDENCIES = {
@@ -93,7 +101,8 @@ DEPENDENCIES = {
     "build": ("plan", "drill"),
     "swap": ("build", "archive", "drill"),
     "validate": ("swap", "archive", "drill"),
-    "drop": ("validate", "archive", "drill"),
+    "repatriate": ("validate", "archive", "drill"),
+    "drop": ("repatriate", "archive", "drill"),
     "rollback": ("swap", "archive"),
 }
 SNAPSHOT_COLUMNS = (
@@ -242,6 +251,14 @@ def failed_name(run_id):
     return f"{TARGET_PARTITION}_failed_{relation_token(run_id)}"
 
 
+def scratch_retired_name(run_id):
+    return f"pb_scratch_retired_{relation_token(run_id)}"
+
+
+def home_name(run_id):
+    return f"pb_home_{relation_token(run_id)}"
+
+
 def replacement_primary_name(run_id):
     return f"pb_rewrite_{relation_token(run_id)}_pkey"
 
@@ -252,6 +269,18 @@ def replacement_score_name(run_id):
 
 def replacement_instrument_check_name(run_id):
     return f"pb_rewrite_{relation_token(run_id)}_instrument_ck"
+
+
+def home_primary_name(run_id):
+    return f"pb_home_{relation_token(run_id)}_pkey"
+
+
+def home_score_name(run_id):
+    return f"pb_home_{relation_token(run_id)}_score_idx"
+
+
+def tablespace_name(run_id):
+    return f"fst_pb_{relation_token(run_id)}"
 
 
 def snapshot_row_expression(alias="row"):
@@ -291,6 +320,69 @@ def fingerprint_sql(relation_name, predicate="TRUE"):
     """
 
 
+def snapshot_id_predicate(snapshot_ids):
+    values = [
+        ensure_integer(value, "snapshot ID", 1)
+        for value in snapshot_ids
+    ]
+    if not values:
+        raise PilotError("snapshot ID predicate cannot be empty")
+    return (
+        "snapshot_id = ANY(ARRAY["
+        + ", ".join(str(value) for value in values)
+        + "]::bigint[])"
+    )
+
+
+def relation_state_query(relation_name):
+    relation = f"{TARGET_SCHEMA}.{relation_name}"
+    return f"""
+        SELECT json_build_object(
+            'oid', relation.oid,
+            'relfilenode', relation.relfilenode,
+            'heapBytes', pg_relation_size(relation.oid),
+            'indexBytes', pg_indexes_size(relation.oid),
+            'totalBytes', pg_total_relation_size(relation.oid),
+            'estimatedRows', relation.reltuples::bigint,
+            'inserts', COALESCE(stats.n_tup_ins, 0),
+            'updates', COALESCE(stats.n_tup_upd, 0),
+            'deletes', COALESCE(stats.n_tup_del, 0),
+            'attached', EXISTS (
+                SELECT 1
+                FROM pg_inherits
+                WHERE inhrelid = relation.oid),
+            'partitionBound', pg_get_expr(
+                relation.relpartbound, relation.oid, true),
+            'tablespace', COALESCE(
+                tablespace.spcname, 'pg_default'))
+        FROM pg_class relation
+        JOIN pg_namespace namespace
+          ON namespace.oid = relation.relnamespace
+        LEFT JOIN pg_stat_all_tables stats
+          ON stats.relid = relation.oid
+        LEFT JOIN pg_tablespace tablespace
+          ON tablespace.oid = relation.reltablespace
+        WHERE namespace.nspname = {sql_literal(TARGET_SCHEMA)}
+          AND relation.relname = {sql_literal(relation_name)}
+    """
+
+
+def physical_relation_identity(state):
+    return {
+        key: state[key]
+        for key in (
+            "oid",
+            "relfilenode",
+            "heapBytes",
+            "indexBytes",
+            "totalBytes",
+            "inserts",
+            "updates",
+            "deletes",
+        )
+    }
+
+
 def catalog_shape(catalog):
     return {
         key: catalog[key]
@@ -303,6 +395,85 @@ def catalog_shape(catalog):
             "constraints",
             "indexes",
         )
+    }
+
+
+def catalog_semantic_shape(catalog):
+    indexes = []
+    for item in catalog["indexes"]:
+        definition = re.sub(
+            r"^CREATE (UNIQUE )?INDEX \S+ ON \S+ ",
+            lambda match: (
+                "CREATE UNIQUE INDEX <name> ON <table> "
+                if match.group(1)
+                else "CREATE INDEX <name> ON <table> "
+            ),
+            item["definition"],
+        )
+        indexes.append(
+            {
+                "definition": definition,
+                "isPrimary": item["isPrimary"],
+                "isUnique": item["isUnique"],
+                "isValid": item["isValid"],
+            }
+        )
+    return {
+        "parentDefinition": catalog["parentDefinition"],
+        "partitionBound": catalog["partitionBound"],
+        "owner": catalog["owner"],
+        "tablespace": catalog["tablespace"],
+        "columns": catalog["columns"],
+        "constraints": sorted(
+            (
+                {
+                    "type": item["type"],
+                    "definition": item["definition"],
+                }
+                for item in catalog["constraints"]
+            ),
+            key=lambda item: (
+                item["type"],
+                item["definition"],
+            ),
+        ),
+        "indexes": sorted(
+            indexes,
+            key=lambda item: (
+                not item["isPrimary"],
+                item["definition"],
+            ),
+        ),
+    }
+
+
+def source_fence_matches(expected, observed):
+    keys = (
+        "partitionOid",
+        "relfilenode",
+        "heapBytes",
+        "indexBytes",
+        "totalBytes",
+        "inserts",
+        "updates",
+        "deletes",
+    )
+    return all(
+        int(expected[key]) == int(observed[key])
+        for key in keys
+    )
+
+
+def source_fence_from_relation_state(state):
+    return {
+        "partitionOid": state["oid"],
+        "relfilenode": state["relfilenode"],
+        "heapBytes": state["heapBytes"],
+        "indexBytes": state["indexBytes"],
+        "totalBytes": state["totalBytes"],
+        "inserts": state["inserts"],
+        "updates": state["updates"],
+        "deletes": state["deletes"],
     }
 
 
@@ -486,22 +657,46 @@ class Database:
 
 
 class FilesystemMonitor:
-    def __init__(self, path, interval_seconds=0.25):
+    def __init__(
+        self,
+        path,
+        interval_seconds=0.25,
+        minimum_allowed_bytes=None,
+        on_breach=None,
+    ):
         self.path = pathlib.Path(path)
         self.interval_seconds = interval_seconds
+        self.minimum_allowed_bytes = minimum_allowed_bytes
+        self.on_breach = on_breach
         self.minimum_free_bytes = shutil.disk_usage(self.path).free
         self.samples = 1
+        self.breached = False
+        self.breach_error = None
         self._stopped = threading.Event()
         self._thread = None
 
+    def _observe(self):
+        free = shutil.disk_usage(self.path).free
+        self.minimum_free_bytes = min(
+            self.minimum_free_bytes,
+            free,
+        )
+        self.samples += 1
+        if (
+            self.minimum_allowed_bytes is not None
+            and free < self.minimum_allowed_bytes
+            and not self.breached
+        ):
+            self.breached = True
+            if self.on_breach is not None:
+                try:
+                    self.on_breach()
+                except Exception as error:
+                    self.breach_error = str(error)
+
     def _run(self):
         while not self._stopped.wait(self.interval_seconds):
-            free = shutil.disk_usage(self.path).free
-            self.minimum_free_bytes = min(
-                self.minimum_free_bytes,
-                free,
-            )
-            self.samples += 1
+            self._observe()
 
     def __enter__(self):
         self._thread = threading.Thread(
@@ -515,12 +710,7 @@ class FilesystemMonitor:
     def __exit__(self, *_):
         self._stopped.set()
         self._thread.join(timeout=5)
-        free = shutil.disk_usage(self.path).free
-        self.minimum_free_bytes = min(
-            self.minimum_free_bytes,
-            free,
-        )
-        self.samples += 1
+        self._observe()
 
 
 def find_mount(runner, path):
@@ -648,6 +838,7 @@ def validate_scratch_root(
             REPORTS_DIR,
             ARCHIVE_DIR,
             RESTORE_DIR,
+            TABLESPACE_DIR,
         }
         foreign = sorted(entries - allowed)
         if foreign:
@@ -655,7 +846,12 @@ def validate_scratch_root(
                 "scratch workspace contains foreign entries: "
                 + ", ".join(foreign[:10])
             )
-        for name in (REPORTS_DIR, ARCHIVE_DIR, RESTORE_DIR):
+        for name in (
+            REPORTS_DIR,
+            ARCHIVE_DIR,
+            RESTORE_DIR,
+            TABLESPACE_DIR,
+        ):
             child = resolved / name
             metadata = child.lstat()
             if child.is_symlink() or not stat.S_ISDIR(
@@ -665,6 +861,18 @@ def validate_scratch_root(
                     "workspace-owned path is not a real directory: "
                     f"{child}"
                 )
+    elif entries and allow_unclaimed and entries == {TABLESPACE_DIR}:
+        tablespace_path = resolved / TABLESPACE_DIR
+        metadata = tablespace_path.lstat()
+        if (
+            tablespace_path.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or any(tablespace_path.iterdir())
+        ):
+            raise PilotError(
+                "pre-created tablespace mount directory must be "
+                "real and empty"
+            )
     elif entries and not allow_unclaimed:
         raise PilotError(
             "unclaimed scratch workspace is not empty: "
@@ -720,8 +928,13 @@ def claim_workspace(
         "scratch": scratch_info,
     }
     write_json_exclusive(marker_path, marker)
-    for name in (REPORTS_DIR, ARCHIVE_DIR, RESTORE_DIR):
-        (root / name).mkdir(mode=0o700)
+    for name in (
+        REPORTS_DIR,
+        ARCHIVE_DIR,
+        RESTORE_DIR,
+        TABLESPACE_DIR,
+    ):
+        (root / name).mkdir(mode=0o700, exist_ok=True)
     return marker
 
 
@@ -877,6 +1090,148 @@ def inspect_container(runner, name):
     if len(rows) != 1:
         raise PilotError(f"unexpected docker inspect result for {name}")
     return rows[0]
+
+
+def collect_tablespace_mount(args, runner):
+    postgres = inspect_container(runner, args.pg_container)
+    expected_source = (
+        pathlib.Path(args.scratch_root) / TABLESPACE_DIR
+    ).resolve(strict=True)
+    matches = [
+        mount
+        for mount in postgres.get("Mounts") or []
+        if mount.get("Destination") == TABLESPACE_CONTAINER_PATH
+    ]
+    if args.test_mode and not matches:
+        return {
+            "enabled": False,
+            "tablespace": "pg_default",
+            "hostPath": None,
+            "containerPath": None,
+        }
+    if len(matches) != 1:
+        raise PilotError(
+            "PostgreSQL must have exactly one guarded pro-bass "
+            "scratch mount"
+        )
+    mount = matches[0]
+    observed_source = pathlib.Path(
+        mount.get("Source", "")
+    ).resolve(strict=True)
+    if (
+        mount.get("Type") != "bind"
+        or not mount.get("RW")
+        or (
+            not args.test_mode
+            and observed_source != expected_source
+        )
+    ):
+        raise PilotError(
+            "PostgreSQL scratch mount differs from the claimed "
+            "workspace tablespace directory"
+        )
+    return {
+        "enabled": True,
+        "tablespace": tablespace_name(args.run_id),
+        "hostPath": str(observed_source),
+        "containerPath": TABLESPACE_CONTAINER_PATH,
+        "readWrite": True,
+    }
+
+
+def prepare_scratch_tablespace(args, runner, database):
+    mount = collect_tablespace_mount(args, runner)
+    if not mount["enabled"]:
+        return mount
+    name = mount["tablespace"]
+    existing = database.json(
+        f"""
+            SELECT COALESCE((
+                SELECT json_build_object(
+                    'name', tablespace.spcname,
+                    'owner', pg_get_userbyid(tablespace.spcowner),
+                    'location', pg_tablespace_location(
+                        tablespace.oid))
+                FROM pg_tablespace tablespace
+                WHERE tablespace.spcname = {sql_literal(name)}
+            ), 'null'::json)
+        """
+    )
+    if existing is None:
+        postgres_uid = runner.run(
+            [
+                "docker",
+                "exec",
+                args.pg_container,
+                "id",
+                "-u",
+                "postgres",
+            ],
+            timeout=30,
+        ).stdout.strip()
+        postgres_gid = runner.run(
+            [
+                "docker",
+                "exec",
+                args.pg_container,
+                "id",
+                "-g",
+                "postgres",
+            ],
+            timeout=30,
+        ).stdout.strip()
+        if (
+            not postgres_uid.isdigit()
+            or not postgres_gid.isdigit()
+        ):
+            raise PilotError(
+                "could not identify the PostgreSQL container user"
+            )
+        runner.run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0:0",
+                args.pg_container,
+                "sh",
+                "-c",
+                (
+                    f"test -d {TABLESPACE_CONTAINER_PATH} && "
+                    f"test -z \"$(find {TABLESPACE_CONTAINER_PATH} "
+                    "-mindepth 1 -maxdepth 1 -print -quit)\" && "
+                    f"chown {postgres_uid}:{postgres_gid} "
+                    f"{TABLESPACE_CONTAINER_PATH} && "
+                    f"chmod 700 {TABLESPACE_CONTAINER_PATH}"
+                ),
+            ],
+            timeout=120,
+        )
+        database.psql(
+            f"""
+                CREATE TABLESPACE "{name}"
+                OWNER "{args.pg_user}"
+                LOCATION {sql_literal(TABLESPACE_CONTAINER_PATH)}
+            """,
+            timeout=120,
+        )
+        existing = {
+            "name": name,
+            "owner": args.pg_user,
+            "location": TABLESPACE_CONTAINER_PATH,
+        }
+    if existing != {
+        "name": name,
+        "owner": args.pg_user,
+        "location": TABLESPACE_CONTAINER_PATH,
+    }:
+        raise PilotError(
+            "existing scratch tablespace identity is unsafe"
+        )
+    return {
+        **mount,
+        "database": existing,
+    }
 
 
 def collect_host_guard(args, runner):
@@ -1035,6 +1390,11 @@ def collect_database_guard(database):
                     'partitionOid',
                         to_regclass(
                             'public.{TARGET_PARTITION}')::oid,
+                    'relfilenode', (
+                        SELECT relfilenode
+                        FROM pg_class
+                        WHERE oid = to_regclass(
+                            'public.{TARGET_PARTITION}')),
                     'attached', EXISTS (
                         SELECT 1
                         FROM pg_inherits
@@ -1068,7 +1428,22 @@ def collect_database_guard(database):
                     'indexBytes', pg_indexes_size(
                         'public.{TARGET_PARTITION}'),
                     'totalBytes', pg_total_relation_size(
-                        'public.{TARGET_PARTITION}')))
+                        'public.{TARGET_PARTITION}'),
+                    'inserts', (
+                        SELECT COALESCE(n_tup_ins, 0)
+                        FROM pg_stat_user_tables
+                        WHERE relid = to_regclass(
+                            'public.{TARGET_PARTITION}')),
+                    'updates', (
+                        SELECT COALESCE(n_tup_upd, 0)
+                        FROM pg_stat_user_tables
+                        WHERE relid = to_regclass(
+                            'public.{TARGET_PARTITION}')),
+                    'deletes', (
+                        SELECT COALESCE(n_tup_del, 0)
+                        FROM pg_stat_user_tables
+                        WHERE relid = to_regclass(
+                            'public.{TARGET_PARTITION}'))))
         )
     """
     guard = database.json(query)
@@ -1225,8 +1600,231 @@ def require_clean_repository(runner):
         )
 
 
+def load_verified_archive_input(
+    args,
+    runner,
+    check,
+    observed_source_fence,
+    *,
+    verify_archive_checksum,
+):
+    path_value = args.verified_live_archive_input
+    expected_sha = args.expected_live_archive_input_sha256
+    if not path_value or not expected_sha:
+        raise PilotError(
+            "production planning requires --verified-live-archive-input "
+            "and --expected-live-archive-input-sha256"
+        )
+    path = pathlib.Path(path_value)
+    observed_sha = sha256_path(path)
+    if observed_sha != expected_sha:
+        raise PilotError(
+            "verified live archive input checksum mismatch"
+        )
+    value = read_json(path)
+    if (
+        value.get("formatVersion") != FORMAT_VERSION
+        or value.get("toolId") != TOOL_ID
+        or value.get("target")
+        != f"{TARGET_SCHEMA}.{TARGET_PARTITION}"
+        or value.get("instrument") != TARGET_INSTRUMENT
+    ):
+        raise PilotError(
+            "verified live archive input identity is invalid"
+        )
+    source = value.get("source") or {}
+    restore = value.get("restore") or {}
+    cleanup = value.get("cleanup") or {}
+    archive = value.get("archive") or {}
+    if source.get("changedDuringArchive") is not False:
+        raise PilotError("source changed during the verified archive")
+    if (
+        restore.get("status") != "succeeded"
+        or cleanup.get("status") != "succeeded"
+        or not cleanup.get("containerRemoved")
+        or not cleanup.get("restorePgdataRemoved")
+        or not cleanup.get("archiveRetained")
+    ):
+        raise PilotError(
+            "verified archive restore/cleanup evidence is incomplete"
+        )
+    if (
+        str(source.get("systemIdentifier"))
+        != str(check["identity"]["systemIdentifier"])
+        or source.get("database") != check["identity"]["database"]
+    ):
+        raise PilotError(
+            "verified archive belongs to another PostgreSQL cluster"
+        )
+    if not source_fence_matches(source, observed_source_fence):
+        raise PilotError(
+            "production source fence changed after verified archive"
+        )
+    if (
+        int(restore.get("rowCount", 0)) <= 0
+        or int(restore.get("snapshotIdCount", 0)) <= 0
+        or int(restore.get("snapshotIdMin", 0)) <= 0
+        or int(restore.get("snapshotIdMax", 0))
+        < int(restore.get("snapshotIdMin", 0))
+    ):
+        raise PilotError(
+            "verified archive row/snapshot evidence is invalid"
+        )
+    snapshot_ids = [
+        ensure_integer(value, "verified archive snapshot ID", 1)
+        for value in restore.get("snapshotIds") or []
+    ]
+    if (
+        snapshot_ids != sorted(set(snapshot_ids))
+        or len(snapshot_ids) != int(restore["snapshotIdCount"])
+        or snapshot_ids[0] != int(restore["snapshotIdMin"])
+        or snapshot_ids[-1] != int(restore["snapshotIdMax"])
+    ):
+        raise PilotError(
+            "verified archive exact snapshot IDs are invalid"
+        )
+    archive_path = pathlib.Path(str(archive.get("path", "")))
+    if (
+        not archive_path.is_absolute()
+        or not archive_path.is_file()
+        or archive_path.is_symlink()
+    ):
+        raise PilotError("verified archive file is unavailable")
+    mount = find_mount(runner, archive_path)
+    if (
+        mount["source"] != archive.get("deviceSource")
+        or mount["deviceId"] != archive.get("deviceId")
+        or (
+            not args.test_mode
+            and mount["source"] != PRODUCTION_SCRATCH_DEVICE
+        )
+        or (
+            not args.test_mode
+            and mount["mountTarget"] != "/"
+        )
+    ):
+        raise PilotError(
+            "verified archive device identity changed"
+        )
+    if archive_path.stat().st_size != int(archive.get("bytes", -1)):
+        raise PilotError("verified archive byte size changed")
+    if verify_archive_checksum:
+        archive_sha = sha256_path(archive_path)
+        if archive_sha != archive.get("sha256"):
+            raise PilotError("verified archive checksum changed")
+    distribution_path = pathlib.Path(
+        str(restore.get("distributionPath", ""))
+    )
+    if (
+        not distribution_path.is_file()
+        or distribution_path.is_symlink()
+        or sha256_path(distribution_path)
+        != restore.get("distributionSha256")
+    ):
+        raise PilotError(
+            "verified archive distribution checksum changed"
+        )
+    distribution = read_json(distribution_path)
+    if (
+        distribution.get("status") != "succeeded"
+        or int(distribution.get("rowCount", -1))
+        != int(restore["rowCount"])
+        or distribution.get("snapshotIds") != snapshot_ids
+        or len(distribution.get("distribution") or [])
+        != len(snapshot_ids)
+        or sum(
+            ensure_integer(
+                row.get("rowCount"),
+                "verified archive distribution row count",
+                1,
+            )
+            for row in distribution["distribution"]
+        )
+        != int(restore["rowCount"])
+    ):
+        raise PilotError(
+            "verified archive distribution is inconsistent"
+        )
+    evidence_values = {}
+    for evidence_path_key, evidence_sha_key, container, label in (
+        (
+            "validationPath",
+            "validationSha256",
+            restore,
+            "restore validation",
+        ),
+        (
+            "proofPath",
+            "proofSha256",
+            cleanup,
+            "cleanup proof",
+        ),
+    ):
+        evidence_path = pathlib.Path(
+            str(container.get(evidence_path_key, ""))
+        )
+        if (
+            not evidence_path.is_file()
+            or evidence_path.is_symlink()
+            or sha256_path(evidence_path)
+            != container.get(evidence_sha_key)
+        ):
+            raise PilotError(
+                "verified archive evidence checksum changed"
+            )
+        evidence_values[label] = read_json(evidence_path)
+    validation = evidence_values["restore validation"]
+    cleanup_proof = evidence_values["cleanup proof"]
+    validation_data = validation.get("data") or {}
+    validation_archive = validation.get("archive") or {}
+    validation_catalog = validation.get("catalog") or {}
+    if (
+        validation.get("status") != "succeeded"
+        or validation.get("productionDatabaseMutated") is not False
+        or validation.get("sourceChangedDuringArchive") is not False
+        or validation_archive.get("checksumMatches") is not True
+        or validation_archive.get("path") != str(archive_path)
+        or int(validation_archive.get("bytes", -1))
+        != int(archive["bytes"])
+        or validation_archive.get("sha256") != archive["sha256"]
+        or int(validation_data.get("rowCount", -1))
+        != int(restore["rowCount"])
+        or validation_data.get("snapshotIds") != snapshot_ids
+        or validation_catalog.get("partitionBound")
+        != restore.get("partitionBound")
+        or restore.get("primaryIndex") not in {
+            item.get("name")
+            for item in validation_catalog.get("indexes") or []
+        }
+        or restore.get("scoreIndex") not in {
+            item.get("name")
+            for item in validation_catalog.get("indexes") or []
+        }
+    ):
+        raise PilotError(
+            "verified archive restore validation is inconsistent"
+        )
+    if (
+        cleanup_proof.get("status") != "succeeded"
+        or cleanup_proof.get("containerRemoved") is not True
+        or cleanup_proof.get("restorePgdataRemoved") is not True
+        or cleanup_proof.get("archiveRetained") is not True
+        or cleanup_proof.get("archivePath") != str(archive_path)
+        or cleanup_proof.get("archiveSha256") != archive["sha256"]
+        or cleanup_proof.get("validationPath")
+        != restore["validationPath"]
+        or cleanup_proof.get("validationSha256")
+        != restore["validationSha256"]
+    ):
+        raise PilotError(
+            "verified archive cleanup proof is inconsistent"
+        )
+    return value, observed_sha
+
+
 def stage_check(args, runner, scratch_info, marker):
     host = collect_host_guard(args, runner)
+    tablespace_mount = collect_tablespace_mount(args, runner)
     database = Database(
         runner,
         args.pg_container,
@@ -1248,6 +1846,7 @@ def stage_check(args, runner, scratch_info, marker):
             "arbitraryTargetInputAccepted": False,
         },
         "scratch": scratch_info,
+        "tablespaceMount": tablespace_mount,
         "host": host,
         "databaseGuard": guard,
         "identity": {
@@ -1371,9 +1970,28 @@ def protected_sources_query(rollback_count):
 
 
 def inventory_query():
-    row_expression = snapshot_row_expression("snapshot")
     return f"""
-        WITH named_publication_scrapes AS (
+        WITH RECURSIVE snapshot_ids(snapshot_id) AS (
+            (
+                SELECT MIN(snapshot_id)
+                FROM {qualified(TARGET_PARTITION)}
+            )
+            UNION ALL
+            SELECT (
+                SELECT MIN(next_snapshot.snapshot_id)
+                FROM {qualified(TARGET_PARTITION)} next_snapshot
+                WHERE next_snapshot.snapshot_id >
+                    current_snapshot.snapshot_id
+            )
+            FROM snapshot_ids current_snapshot
+            WHERE current_snapshot.snapshot_id IS NOT NULL
+        ),
+        existing_snapshot_ids AS (
+            SELECT snapshot_id
+            FROM snapshot_ids
+            WHERE snapshot_id IS NOT NULL
+        ),
+        named_publication_scrapes AS (
             SELECT generation.scrape_id
             FROM scrape_publication_state state
             CROSS JOIN LATERAL unnest(ARRAY[
@@ -1386,26 +2004,6 @@ def inventory_query():
                     selected.publication_id
             WHERE state.id = TRUE
               AND selected.publication_id IS NOT NULL
-        ),
-        rows_by_snapshot AS (
-            SELECT
-                   snapshot.snapshot_id,
-                   COUNT(*)::bigint AS row_count,
-                   MIN(snapshot.song_id) AS song_id_min,
-                   MAX(snapshot.song_id) AS song_id_max,
-                   MIN(snapshot.account_id) AS account_id_min,
-                   MAX(snapshot.account_id) AS account_id_max,
-                   MIN(snapshot.score) AS score_min,
-                   MAX(snapshot.score) AS score_max,
-                   COALESCE(bit_xor(hashtextextended(
-                       {row_expression}, 0)), 0) AS hash_xor_0,
-                   COALESCE(bit_xor(hashtextextended(
-                       {row_expression}, 1)), 0) AS hash_xor_1,
-                   COALESCE(SUM(hashtextextended(
-                       {row_expression}, 2)::numeric), 0) AS
-                       hash_sum_2
-            FROM {qualified(TARGET_PARTITION)} snapshot
-            GROUP BY snapshot.snapshot_id
         ),
         source_ownership AS (
             SELECT source.source_snapshot_id AS snapshot_id,
@@ -1426,79 +2024,38 @@ def inventory_query():
               AND source.source_snapshot_id IS NOT NULL
             GROUP BY source.source_snapshot_id
         )
-        SELECT json_build_object(
-            'inventory', (
-                SELECT COALESCE(
-                    json_agg(
-                        json_build_object(
-                            'snapshotId', rows.snapshot_id,
-                            'rowCount', rows.row_count,
-                            'songIdMin', rows.song_id_min,
-                            'songIdMax', rows.song_id_max,
-                            'accountIdMinHash',
-                                md5(rows.account_id_min),
-                            'accountIdMaxHash',
-                                md5(rows.account_id_max),
-                            'scoreMin', rows.score_min,
-                            'scoreMax', rows.score_max,
-                            'hashXor0', rows.hash_xor_0,
-                            'hashXor1', rows.hash_xor_1,
-                            'hashSum2', rows.hash_sum_2::text,
-                            'scrapeLogPresent',
-                                scrape.id IS NOT NULL,
-                            'scrapeCompletedAt',
-                                scrape.completed_at,
-                            'scrapeStatus',
-                                COALESCE(
-                                    to_jsonb(scrape)->>'status',
-                                    CASE WHEN
-                                        scrape.completed_at IS NULL
-                                        THEN 'running'
-                                        ELSE 'completed' END),
-                            'sourceMapCount',
-                                COALESCE(
-                                    ownership.source_map_count, 0),
-                            'namedSourceMapCount',
-                                COALESCE(
-                                    ownership.named_source_map_count,
-                                    0),
-                            'publishedScrapeIds',
-                                COALESCE(
-                                    ownership.published_scrape_ids,
-                                    ARRAY[]::bigint[]))
-                        ORDER BY rows.snapshot_id DESC),
-                    '[]'::json)
-                FROM rows_by_snapshot rows
-                LEFT JOIN scrape_log scrape
-                  ON scrape.id = rows.snapshot_id
-                LEFT JOIN source_ownership ownership
-                  ON ownership.snapshot_id = rows.snapshot_id
-                ),
-            'wholeFingerprint', (
-                SELECT json_build_object(
-                    'rowCount', COALESCE(
-                        SUM(rows.row_count), 0),
-                    'snapshotIdMin', MIN(rows.snapshot_id),
-                    'snapshotIdMax', MAX(rows.snapshot_id),
-                    'songIdMin', MIN(rows.song_id_min),
-                    'songIdMax', MAX(rows.song_id_max),
-                    'accountIdMinHash',
-                        md5(MIN(rows.account_id_min)),
-                    'accountIdMaxHash',
-                        md5(MAX(rows.account_id_max)),
-                    'scoreMin', MIN(rows.score_min),
-                    'scoreMax', MAX(rows.score_max),
-                    'hashXor0', COALESCE(
-                        bit_xor(rows.hash_xor_0), 0),
-                    'hashXor1', COALESCE(
-                        bit_xor(rows.hash_xor_1), 0),
-                    'hashSum2', COALESCE(
-                        SUM(rows.hash_sum_2), 0)::text)
-                FROM rows_by_snapshot rows))
+        SELECT COALESCE(
+            json_agg(
+                json_build_object(
+                    'snapshotId', ids.snapshot_id,
+                    'scrapeLogPresent', scrape.id IS NOT NULL,
+                    'scrapeCompletedAt', scrape.completed_at,
+                    'scrapeStatus',
+                        COALESCE(
+                            to_jsonb(scrape)->>'status',
+                            CASE WHEN scrape.completed_at IS NULL
+                                 THEN 'running'
+                                 ELSE 'completed' END),
+                    'sourceMapCount',
+                        COALESCE(ownership.source_map_count, 0),
+                    'namedSourceMapCount',
+                        COALESCE(
+                            ownership.named_source_map_count, 0),
+                    'publishedScrapeIds',
+                        COALESCE(
+                            ownership.published_scrape_ids,
+                            ARRAY[]::bigint[]))
+                ORDER BY ids.snapshot_id DESC),
+            '[]'::json)
+        FROM existing_snapshot_ids ids
+        LEFT JOIN scrape_log scrape
+          ON scrape.id = ids.snapshot_id
+        LEFT JOIN source_ownership ownership
+          ON ownership.snapshot_id = ids.snapshot_id
     """
 
 
-def snapshot_distribution_query(relation_name):
+def snapshot_distribution_query(relation_name, predicate="TRUE"):
     expression = snapshot_row_expression("snapshot")
     return f"""
         SELECT COALESCE(
@@ -1536,6 +2093,7 @@ def snapshot_distribution_query(relation_name):
                        {expression}, 2)::numeric), 0)::text AS
                        hash_sum_2
             FROM {qualified(relation_name)} snapshot
+            WHERE {predicate}
             GROUP BY snapshot.snapshot_id
         ) distribution
     """
@@ -1695,15 +2253,9 @@ def classify_inventory(protected, inventory):
         inventory_by_id.items(),
         reverse=True,
     ):
-        row_count = ensure_integer(
-            row.get("rowCount"),
-            f"snapshot {snapshot_id} rowCount",
-            1,
-        )
         item = {
             **row,
             "snapshotId": snapshot_id,
-            "rowCount": row_count,
         }
         if snapshot_id in reasons_by_id:
             item["classification"] = "keep"
@@ -1764,12 +2316,37 @@ def stage_plan(args, runner):
         protected_sources_query(args.rollback_completed_to_keep),
         timeout=args.query_timeout_seconds,
     )
-    inventory_bundle = database.json(
-        inventory_query(),
-        timeout=args.query_timeout_seconds,
-        pgoptions=PLAN_QUERY_PGOPTIONS,
-    )
-    inventory = inventory_bundle["inventory"]
+    verified_archive = None
+    verified_archive_sha = None
+    if args.test_mode and not args.verified_live_archive_input:
+        inventory = database.json(
+            inventory_query(),
+            timeout=args.query_timeout_seconds,
+            pgoptions=PLAN_QUERY_PGOPTIONS,
+        )
+    else:
+        verified_archive, verified_archive_sha = (
+            load_verified_archive_input(
+                args,
+                runner,
+                check,
+                guard["target"],
+                verify_archive_checksum=True,
+            )
+        )
+        inventory = database.json(
+            inventory_query(),
+            timeout=args.query_timeout_seconds,
+            pgoptions=LOOSE_ID_PGOPTIONS,
+        )
+        snapshot_ids = sorted(
+            row["snapshotId"] for row in inventory
+        )
+        restore = verified_archive["restore"]
+        if snapshot_ids != restore["snapshotIds"]:
+            raise PilotError(
+                "loose-index snapshot IDs differ from verified archive"
+            )
     classification = classify_inventory(protected, inventory)
     if classification["blocked"]:
         raise PilotError(
@@ -1793,48 +2370,42 @@ def stage_plan(args, runner):
     keep_ids = [
         row["snapshotId"] for row in classification["keep"]
     ]
-    keep_predicate = (
-        "snapshot_id = ANY(ARRAY["
-        + ", ".join(str(value) for value in keep_ids)
-        + "]::bigint[])"
-    )
+    keep_predicate = snapshot_id_predicate(keep_ids)
     retained_fingerprint = database.json(
         fingerprint_sql(TARGET_PARTITION, keep_predicate),
         timeout=args.query_timeout_seconds,
         pgoptions=PLAN_QUERY_PGOPTIONS,
     )
-    whole_fingerprint = inventory_bundle["wholeFingerprint"]
     catalog = database.json(catalog_query())
     if catalog["tablespace"] != "pg_default":
         raise PilotError(
             "pilot target must reside in the default FST tablespace"
         )
     catalog_names = source_catalog_names(catalog)
-    exact_total_rows = sum(
-        row["rowCount"] for row in inventory
+    exact_retained_rows = ensure_integer(
+        retained_fingerprint.get("rowCount"),
+        "protected fingerprint row count",
+        1,
     )
-    exact_retained_rows = sum(
-        row["rowCount"] for row in classification["keep"]
+    exact_total_rows = (
+        int(verified_archive["restore"]["rowCount"])
+        if verified_archive is not None
+        else None
     )
-    exact_purge_rows = sum(
-        row["rowCount"]
-        for row in classification["archiveThenPurge"]
+    exact_purge_rows = (
+        exact_total_rows - exact_retained_rows
+        if exact_total_rows is not None
+        else None
     )
-    if (
-        exact_retained_rows + exact_purge_rows
-        != exact_total_rows
-    ):
+    if exact_purge_rows is not None and exact_purge_rows <= 0:
         raise PilotError(
-            "retained and purge counts do not cover the partition"
+            "verified archive has no purgeable rows after protection"
         )
-    if retained_fingerprint.get("rowCount") != exact_retained_rows:
-        raise PilotError(
-            "protected fingerprint row count differs from inventory"
-        )
-    if whole_fingerprint.get("rowCount") != exact_total_rows:
-        raise PilotError(
-            "whole-partition fingerprint row count differs from inventory"
-        )
+    source_relation_state = database.json(
+        relation_state_query(TARGET_PARTITION)
+    )
+    if not source_relation_state:
+        raise PilotError("source relation state is unavailable")
     pre_swap_reference_parity = database.json(
         reference_parity_query(TARGET_PARTITION),
         timeout=args.query_timeout_seconds,
@@ -1843,16 +2414,22 @@ def stage_plan(args, runner):
         "runId": args.run_id,
         "partitionOid": guard["target"]["partitionOid"],
         "publicationFence": check["publicationFence"],
+        "snapshotIds": [
+            row["snapshotId"] for row in inventory
+        ],
         "keepSnapshotIds": keep_ids,
         "purgeSnapshotIds": [
             row["snapshotId"]
             for row in classification["archiveThenPurge"]
         ],
-        "exactTotalRows": exact_total_rows,
         "exactRetainedRows": exact_retained_rows,
+        "exactTotalRows": exact_total_rows,
         "exactPurgeRows": exact_purge_rows,
-        "wholeFingerprint": whole_fingerprint,
         "retainedFingerprint": retained_fingerprint,
+        "sourceRelationIdentity": physical_relation_identity(
+            source_relation_state
+        ),
+        "verifiedLiveArchiveInputSha256": verified_archive_sha,
         "referenceParity": pre_swap_reference_parity,
     }
     plan_hash = sha256_bytes(canonical_json_bytes(plan_identity))
@@ -1864,6 +2441,20 @@ def stage_plan(args, runner):
         "protectedSources": protected,
         "classification": classification,
         "catalog": catalog,
+        "sourceRelationState": source_relation_state,
+        "verifiedLiveArchive": (
+            {
+                "inputPath": str(args.verified_live_archive_input),
+                "inputSha256": verified_archive_sha,
+                "archivePath": verified_archive["archive"]["path"],
+                "archiveSha256": verified_archive["archive"]["sha256"],
+                "archiveBytes": verified_archive["archive"]["bytes"],
+                "restore": verified_archive["restore"],
+                "cleanup": verified_archive["cleanup"],
+            }
+            if verified_archive is not None
+            else None
+        ),
         "sourceCatalogNames": catalog_names,
         "replacementRelation": (
             f"{TARGET_SCHEMA}.{replacement_name(args.run_id)}"
@@ -1924,16 +2515,53 @@ def stage_archive(args, runner):
     guard = collect_database_guard(database)
     assert_identity_matches(check, host, guard)
     assert_plan_target_matches(plan, guard)
-    pre_archive_fingerprint = database.json(
-        fingerprint_sql(TARGET_PARTITION),
-        timeout=args.query_timeout_seconds,
+    pre_archive_state = database.json(
+        relation_state_query(TARGET_PARTITION)
     )
     if (
-        pre_archive_fingerprint
-        != plan["planIdentity"]["wholeFingerprint"]
+        physical_relation_identity(pre_archive_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
     ):
         raise PilotError(
             "source partition changed after exact planning"
+        )
+    if plan.get("verifiedLiveArchive") is not None:
+        verified, verified_sha = load_verified_archive_input(
+            args,
+            runner,
+            check,
+            guard["target"],
+            verify_archive_checksum=True,
+        )
+        if (
+            verified_sha
+            != plan["verifiedLiveArchive"]["inputSha256"]
+        ):
+            raise PilotError(
+                "verified archive input differs from the plan"
+            )
+        body = {
+            "runId": args.run_id,
+            "planId": plan["planId"],
+            "adoptedVerifiedArchive": True,
+            "verifiedLiveArchiveInput": {
+                "path": str(args.verified_live_archive_input),
+                "sha256": verified_sha,
+            },
+            "archive": {
+                "path": verified["archive"]["path"],
+                "bytes": verified["archive"]["bytes"],
+                "sha256": verified["archive"]["sha256"],
+                "format": "PostgreSQL custom",
+            },
+            "sourceExactRows": verified["restore"]["rowCount"],
+            "sourceRelationState": pre_archive_state,
+            "sourceChangedDuringArchive": False,
+        }
+        return write_stage_report(
+            args.scratch_root,
+            "archive",
+            body,
         )
     archive_root = pathlib.Path(args.scratch_root) / ARCHIVE_DIR
     scratch_usage = shutil.disk_usage(args.scratch_root)
@@ -2031,6 +2659,16 @@ def stage_archive(args, runner):
             "custom archive lacks required schema/data/index entries: "
             + ", ".join(missing_tokens)
         )
+    post_archive_state = database.json(
+        relation_state_query(TARGET_PARTITION)
+    )
+    if (
+        physical_relation_identity(post_archive_state)
+        != physical_relation_identity(pre_archive_state)
+    ):
+        raise PilotError(
+            "source partition changed while the archive was streaming"
+        )
     catalog_path = archive_root / "original-catalog.json"
     write_or_verify_json(catalog_path, plan["catalog"])
     manifest_path = archive_root / "manifest.json"
@@ -2060,7 +2698,10 @@ def stage_archive(args, runner):
             "databaseIdentity": check["identity"],
             "publicationFence": check["publicationFence"],
             "partitionOid": plan["planIdentity"]["partitionOid"],
-            "exactRows": plan["planIdentity"]["exactTotalRows"],
+            "estimatedRows": pre_archive_state["estimatedRows"],
+            "exactProtectedRows": plan["planIdentity"][
+                "exactRetainedRows"
+            ],
             "snapshotIds": [
                 row["snapshotId"]
                 for row in (
@@ -2090,9 +2731,11 @@ def stage_archive(args, runner):
                 plan["classification"]["keep"]
                 + plan["classification"]["archiveThenPurge"]
             ),
-            "fingerprint": plan["planIdentity"][
-                "wholeFingerprint"
+            "retainedFingerprint": plan["planIdentity"][
+                "retainedFingerprint"
             ],
+            "relationStateBefore": pre_archive_state,
+            "relationStateAfter": post_archive_state,
         },
         "restoreCommandTemplate": (
             "pg_restore --exit-on-error --dbname <isolated-db> "
@@ -2124,9 +2767,15 @@ def stage_archive(args, runner):
             "sha256": sha256_path(manifest_path),
         },
         "archive": manifest["archive"],
-        "sourceFingerprint": manifest["source"]["fingerprint"],
-        "sourceExactRows": manifest["source"]["exactRows"],
-        "preArchiveFingerprint": pre_archive_fingerprint,
+        "sourceRetainedFingerprint": manifest["source"][
+            "retainedFingerprint"
+        ],
+        "sourceExactProtectedRows": manifest["source"][
+            "exactProtectedRows"
+        ],
+        "sourceEstimatedRows": manifest["source"]["estimatedRows"],
+        "sourceRelationStateBefore": pre_archive_state,
+        "sourceRelationStateAfter": post_archive_state,
         "scratchCapacityGate": scratch_gate,
         "resumedExistingArchive": resumed_archive,
     }
@@ -2215,6 +2864,68 @@ def stage_drill(args, runner):
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     archive = load_report(args.scratch_root, "archive")
+    if archive.get("adoptedVerifiedArchive"):
+        host = collect_host_guard(args, runner)
+        database = Database(
+            runner,
+            args.pg_container,
+            args.pg_user,
+            args.pg_database,
+        )
+        guard = collect_database_guard(database)
+        assert_identity_matches(check, host, guard)
+        verified, verified_sha = load_verified_archive_input(
+            args,
+            runner,
+            check,
+            guard["target"],
+            verify_archive_checksum=True,
+        )
+        total_rows = ensure_integer(
+            verified["restore"]["rowCount"],
+            "verified archive row count",
+            1,
+        )
+        retained_rows = ensure_integer(
+            plan["planIdentity"]["exactRetainedRows"],
+            "exact retained row count",
+            1,
+        )
+        purge_rows = total_rows - retained_rows
+        if purge_rows <= 0:
+            raise PilotError(
+                "verified archive contains no purgeable rows"
+            )
+        body = {
+            "runId": args.run_id,
+            "planId": plan["planId"],
+            "adoptedVerifiedRestore": True,
+            "verifiedLiveArchiveInput": {
+                "path": str(args.verified_live_archive_input),
+                "sha256": verified_sha,
+            },
+            "archiveSha256": verified["archive"]["sha256"],
+            "exactRows": {
+                "total": total_rows,
+                "retained": retained_rows,
+                "purge": purge_rows,
+            },
+            "restoredCatalog": {
+                "partitionBound": verified["restore"][
+                    "partitionBound"
+                ],
+                "primaryIndex": verified["restore"][
+                    "primaryIndex"
+                ],
+                "scoreIndex": verified["restore"]["scoreIndex"],
+            },
+            "cleanupProof": verified["cleanup"],
+        }
+        return write_stage_report(
+            args.scratch_root,
+            "drill",
+            body,
+        )
     manifest = read_json(
         pathlib.Path(args.scratch_root)
         / ARCHIVE_DIR
@@ -2305,21 +3016,30 @@ def stage_drill(args, runner):
             fingerprint_sql(TARGET_PARTITION),
             timeout=args.query_timeout_seconds,
         )
+        restored_retained_fingerprint = restored.json(
+            fingerprint_sql(
+                TARGET_PARTITION,
+                snapshot_id_predicate(
+                    plan["planIdentity"]["keepSnapshotIds"]
+                ),
+            ),
+            timeout=args.query_timeout_seconds,
+        )
         restored_catalog = restored.json(catalog_query())
         restored_distribution = restored.json(
             snapshot_distribution_query(TARGET_PARTITION),
             timeout=args.query_timeout_seconds,
         )
-        expected_distribution = data_distribution(
-            plan["classification"]["keep"]
-            + plan["classification"]["archiveThenPurge"]
+        expected_snapshot_ids = sorted(
+            plan["planIdentity"]["snapshotIds"],
+            reverse=True,
         )
-        if (
-            restored_fingerprint
-            != plan["planIdentity"]["wholeFingerprint"]
-        ):
+        restored_snapshot_ids = [
+            row["snapshotId"] for row in restored_distribution
+        ]
+        if restored_snapshot_ids != expected_snapshot_ids:
             raise PilotError(
-                "restored partition fingerprint differs from source"
+                "restored snapshot IDs differ from the production plan"
             )
         if catalog_shape(restored_catalog) != catalog_shape(
             plan["catalog"]
@@ -2328,9 +3048,37 @@ def stage_drill(args, runner):
                 "restored schema/index/constraint/ownership catalog "
                 "differs from source"
             )
-        if restored_distribution != expected_distribution:
+        if (
+            restored_retained_fingerprint
+            != plan["planIdentity"]["retainedFingerprint"]
+        ):
             raise PilotError(
-                "restored per-snapshot distribution differs from source"
+                "restored protected rows differ from the production plan"
+            )
+        exact_total_rows = ensure_integer(
+            restored_fingerprint.get("rowCount"),
+            "restored exact row count",
+            1,
+        )
+        distribution_rows = sum(
+            ensure_integer(
+                row.get("rowCount"),
+                "restored snapshot row count",
+                1,
+            )
+            for row in restored_distribution
+        )
+        if distribution_rows != exact_total_rows:
+            raise PilotError(
+                "restored distribution does not cover the archive"
+            )
+        exact_purge_rows = (
+            exact_total_rows
+            - plan["planIdentity"]["exactRetainedRows"]
+        )
+        if exact_purge_rows <= 0:
+            raise PilotError(
+                "archive restore does not contain purgeable rows"
             )
         restore_elapsed = time.monotonic() - started
         restore_bytes = int(
@@ -2371,8 +3119,16 @@ def stage_drill(args, runner):
         "planId": plan["planId"],
         "archiveSha256": manifest["archive"]["sha256"],
         "restoredFingerprint": restored_fingerprint,
+        "restoredRetainedFingerprint": (
+            restored_retained_fingerprint
+        ),
         "restoredCatalog": restored_catalog,
         "restoredSnapshotDistribution": restored_distribution,
+        "exactRows": {
+            "total": exact_total_rows,
+            "retained": plan["planIdentity"]["exactRetainedRows"],
+            "purge": exact_purge_rows,
+        },
         "restoreElapsedSeconds": round(restore_elapsed, 3),
         "restorePeakBytes": restore_bytes,
         "cleanupProof": cleanup_proof,
@@ -2386,14 +3142,19 @@ def stage_drill(args, runner):
     return write_stage_report(args.scratch_root, "drill", body)
 
 
-def calculate_capacity(plan, profile, free_bytes):
+def calculate_capacity(
+    plan,
+    profile,
+    free_bytes,
+    exact_total_rows,
+):
     retained_rows = ensure_integer(
         plan["planIdentity"]["exactRetainedRows"],
         "exactRetainedRows",
         1,
     )
     total_rows = ensure_integer(
-        plan["planIdentity"]["exactTotalRows"],
+        exact_total_rows,
         "exactTotalRows",
         1,
     )
@@ -2460,6 +3221,87 @@ def calculate_capacity(plan, profile, free_bytes):
     }
 
 
+def calculate_scratch_capacity(
+    plan,
+    profile,
+    fst_free_bytes,
+    scratch_free_bytes,
+    exact_total_rows,
+):
+    measured = calculate_capacity(
+        plan,
+        profile,
+        fst_free_bytes,
+        exact_total_rows,
+    )
+    wal_budget = max(
+        int(measured["estimatedWalBytes"] * 1.25),
+        measured["estimatedWalBytes"] + 512 * 1024**2,
+    )
+    fst_required = EMERGENCY_FLOOR_BYTES + wal_budget
+    scratch_reserve = 10 * 1024**3
+    scratch_required = (
+        measured["estimatedReplacementHeapBytes"]
+        + measured["estimatedReplacementIndexBytes"]
+        + measured["estimatedTempBytes"]
+        + measured["failureReserveBytes"]
+        + scratch_reserve
+    )
+    return {
+        **measured,
+        "mode": "temporary_scratch_tablespace",
+        "walBudgetBytes": wal_budget,
+        "fstRequiredFreeBytes": fst_required,
+        "fstObservedFreeBytes": fst_free_bytes,
+        "fstMarginBytes": fst_free_bytes - fst_required,
+        "scratchReserveBytes": scratch_reserve,
+        "scratchRequiredFreeBytes": scratch_required,
+        "scratchObservedFreeBytes": scratch_free_bytes,
+        "scratchMarginBytes": scratch_free_bytes - scratch_required,
+        "requiredFreeBytes": fst_required,
+        "observedFreeBytes": fst_free_bytes,
+        "marginBytes": fst_free_bytes - fst_required,
+        "allowed": (
+            fst_free_bytes >= fst_required
+            and scratch_free_bytes >= scratch_required
+        ),
+    }
+
+
+def calculate_repatriation_capacity(build, free_bytes):
+    sizes = build["sizes"]
+    replacement_bytes = ensure_integer(
+        sizes["totalBytes"],
+        "built replacement bytes",
+        1,
+    )
+    observed_wal = ensure_integer(
+        sizes["walBytes"],
+        "built replacement WAL bytes",
+        0,
+    )
+    wal_budget = max(
+        int(observed_wal * 1.25),
+        observed_wal + 512 * 1024**2,
+    )
+    required = (
+        EMERGENCY_FLOOR_BYTES
+        + replacement_bytes
+        + wal_budget
+    )
+    return {
+        "mode": "pre_drop_pg_default_repatriation",
+        "measuredReplacementBytes": replacement_bytes,
+        "measuredWalBytes": observed_wal,
+        "walBudgetBytes": wal_budget,
+        "emergencyFloorBytes": EMERGENCY_FLOOR_BYTES,
+        "requiredFreeBytes": required,
+        "observedFreeBytes": free_bytes,
+        "marginBytes": free_bytes - required,
+        "allowed": free_bytes >= required,
+    }
+
+
 def verify_profile(path, expected_sha256, *, allow_seed=False):
     if not path or not expected_sha256:
         raise PilotError(
@@ -2511,12 +3353,40 @@ def advisory_lock_guard_sql():
     """
 
 
+def cancel_pilot_backends(runner, args):
+    runner.run(
+        [
+            "docker",
+            "exec",
+            args.pg_container,
+            "psql",
+            "-X",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            args.pg_user,
+            "-d",
+            args.pg_database,
+            "-At",
+            "-c",
+            (
+                "SELECT COALESCE(bool_and(pg_cancel_backend(pid)), TRUE) "
+                "FROM pg_stat_activity "
+                "WHERE pid <> pg_backend_pid() "
+                "AND application_name = "
+                f"{sql_literal(APPLICATION_NAME)}"
+            ),
+        ],
+        timeout=30,
+    )
+
+
 def stage_build(args, runner):
     if not args.execute:
         raise PilotError("build requires --execute")
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
-    load_report(args.scratch_root, "drill")
+    drill = load_report(args.scratch_root, "drill")
     host = collect_host_guard(args, runner)
     database = Database(
         runner,
@@ -2567,15 +3437,31 @@ def stage_build(args, runner):
         raise PilotError(
             "replacement exists without immutable build-start evidence"
         )
+    scratch_mount = collect_tablespace_mount(args, runner)
+    scratch_free_before = shutil.disk_usage(
+        args.scratch_root
+    ).free
     observed_free_before = host["dataFilesystem"]["freeBytes"]
-    capacity = (
-        build_started["capacityGate"]
-        if build_started is not None
+    current_capacity = (
+        calculate_scratch_capacity(
+            plan,
+            profile,
+            observed_free_before,
+            scratch_free_before,
+            drill["exactRows"]["total"],
+        )
+        if scratch_mount["enabled"]
         else calculate_capacity(
             plan,
             profile,
             observed_free_before,
+            drill["exactRows"]["total"],
         )
+    )
+    capacity = (
+        build_started["capacityGate"]
+        if resumed_existing_build
+        else current_capacity
     )
     if not capacity["allowed"]:
         raise PilotError(
@@ -2583,13 +3469,44 @@ def stage_build(args, runner):
             f"need {capacity['requiredFreeBytes']} bytes, "
             f"observed {capacity['observedFreeBytes']} bytes"
         )
-    source_fingerprint = database.json(
-        fingerprint_sql(TARGET_PARTITION),
-        timeout=args.query_timeout_seconds,
+    build_storage = prepare_scratch_tablespace(
+        args,
+        runner,
+        database,
     )
-    if source_fingerprint != plan["planIdentity"]["wholeFingerprint"]:
+    build_tablespace = build_storage["tablespace"]
+    if build_started is not None and (
+        build_started.get("buildTablespace") != build_tablespace
+    ):
+        raise PilotError(
+            "existing build-start evidence names another tablespace"
+        )
+    source_relation_state = database.json(
+        relation_state_query(TARGET_PARTITION)
+    )
+    if (
+        physical_relation_identity(source_relation_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
         raise PilotError(
             "source partition changed before replacement build"
+        )
+    source_retained_fingerprint = database.json(
+        fingerprint_sql(
+            TARGET_PARTITION,
+            snapshot_id_predicate(
+                plan["planIdentity"]["keepSnapshotIds"]
+            ),
+        ),
+        timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
+    )
+    if (
+        source_retained_fingerprint
+        != plan["planIdentity"]["retainedFingerprint"]
+    ):
+        raise PilotError(
+            "protected source rows changed before replacement build"
         )
     keep_ids = plan["planIdentity"]["keepSnapshotIds"]
     keep_array = ", ".join(str(value) for value in keep_ids)
@@ -2617,19 +3534,60 @@ def stage_build(args, runner):
             "freeBytesBefore": observed_free_before,
             "profileSha256": profile_sha,
             "capacityGate": capacity,
+            "buildTablespace": build_tablespace,
+            "scratchMount": build_storage,
         }
         write_json_exclusive(build_started_path, build_started)
-    started_lsn = build_started["startedLsn"]
-    temp_bytes_before = build_started["tempBytesBefore"]
-    free_before = build_started["freeBytesBefore"]
+    if resumed_existing_build:
+        attempt_path = build_started_path
+        attempt = build_started
+    else:
+        attempt_path = (
+            pathlib.Path(args.scratch_root)
+            / REPORTS_DIR
+            / (
+                "build.attempt-"
+                + datetime.now(timezone.utc).strftime(
+                    "%Y%m%dT%H%M%S%fZ"
+                )
+                + ".json"
+            )
+        )
+        attempt = {
+            "formatVersion": FORMAT_VERSION,
+            "toolId": TOOL_ID,
+            "stage": "build",
+            "status": "attempting",
+            "runId": args.run_id,
+            "planId": plan["planId"],
+            "startedAtUtc": utc_now(),
+            "startedLsn": database.scalar(
+                "SELECT pg_current_wal_lsn()"
+            ),
+            "tempBytesBefore": int(
+                database.scalar(
+                    "SELECT temp_bytes FROM pg_stat_database "
+                    "WHERE datname = current_database()"
+                )
+            ),
+            "freeBytesBefore": observed_free_before,
+            "scratchFreeBytesBefore": scratch_free_before,
+            "capacityGate": current_capacity,
+        }
+        write_json_exclusive(attempt_path, attempt)
+    started_lsn = attempt["startedLsn"]
+    temp_bytes_before = attempt["tempBytesBefore"]
+    free_before = attempt["freeBytesBefore"]
     started_wall = datetime.fromisoformat(
-        build_started["startedAtUtc"].replace("Z", "+00:00")
+        attempt["startedAtUtc"].replace("Z", "+00:00")
     )
     started = time.monotonic()
     sql = f"""
         BEGIN;
         SET LOCAL lock_timeout = '2s';
         SET LOCAL statement_timeout = '0';
+        SET LOCAL temp_tablespaces =
+            {sql_literal(build_tablespace)};
         {advisory_lock_guard_sql()}
         CREATE TABLE {qualified(replacement)}
             (LIKE {qualified(TARGET_PARTITION)}
@@ -2638,7 +3596,7 @@ def stage_build(args, runner):
                 INCLUDING STORAGE
                 INCLUDING GENERATED
                 INCLUDING IDENTITY)
-            TABLESPACE pg_default;
+            TABLESPACE "{build_tablespace}";
         ALTER TABLE {qualified(replacement)}
             ADD CONSTRAINT "{instrument_check_name}"
             CHECK (
@@ -2651,19 +3609,66 @@ def stage_build(args, runner):
         FROM {qualified(TARGET_PARTITION)}
         WHERE snapshot_id = ANY(
             ARRAY[{keep_array}]::bigint[]);
+        CREATE UNIQUE INDEX "{primary_name}"
+            ON {qualified(replacement)}
+            (snapshot_id, song_id, instrument, account_id)
+            TABLESPACE "{build_tablespace}";
         ALTER TABLE {qualified(replacement)}
             ADD CONSTRAINT "{primary_name}"
-            PRIMARY KEY (
-                snapshot_id, song_id, instrument, account_id);
+            PRIMARY KEY USING INDEX "{primary_name}";
         CREATE INDEX "{score_name}"
             ON {qualified(replacement)}
-            (snapshot_id, song_id, instrument, score DESC);
+            (snapshot_id, song_id, instrument, score DESC)
+            TABLESPACE "{build_tablespace}";
         ANALYZE {qualified(replacement)};
         COMMIT;
     """
-    with FilesystemMonitor(host["dataPath"]) as filesystem_monitor:
-        if not resumed_existing_build:
-            database.psql(sql, timeout=args.build_timeout_seconds)
+    filesystem_monitor = FilesystemMonitor(
+        host["dataPath"],
+        minimum_allowed_bytes=(
+            EMERGENCY_FLOOR_BYTES + 512 * 1024**2
+        ),
+        on_breach=lambda: cancel_pilot_backends(
+            runner,
+            args,
+        ),
+    )
+    scratch_monitor = FilesystemMonitor(
+        args.scratch_root,
+        minimum_allowed_bytes=(
+            current_capacity.get("scratchReserveBytes")
+            if scratch_mount["enabled"]
+            else None
+        ),
+        on_breach=lambda: cancel_pilot_backends(
+            runner,
+            args,
+        ),
+    )
+    try:
+        with filesystem_monitor, scratch_monitor:
+            if not resumed_existing_build:
+                database.psql(
+                    sql,
+                    timeout=args.build_timeout_seconds,
+                )
+    except CommandError as error:
+        if filesystem_monitor.breached or scratch_monitor.breached:
+            raise PilotError(
+                "replacement build was cancelled before breaching a "
+                "filesystem reserve"
+            ) from error
+        raise
+    if filesystem_monitor.breached:
+        raise PilotError(
+            "replacement build crossed the emergency cancellation "
+            "threshold"
+        )
+    if scratch_monitor.breached:
+        raise PilotError(
+            "replacement build crossed the scratch reserve "
+            "cancellation threshold"
+        )
     invocation_elapsed = time.monotonic() - started
     wall_elapsed = (
         datetime.now(timezone.utc) - started_wall
@@ -2688,9 +3693,21 @@ def stage_build(args, runner):
                     {sql_literal(completed_lsn)}::pg_lsn,
                     {sql_literal(started_lsn)}::pg_lsn)::bigint,
                 'tempBytes',
-                    {max(0, temp_bytes_after - temp_bytes_before)}::bigint)
+                    {max(0, temp_bytes_after - temp_bytes_before)}::bigint,
+                'tablespace', (
+                    SELECT COALESCE(
+                        tablespace.spcname, 'pg_default')
+                    FROM pg_class relation
+                    LEFT JOIN pg_tablespace tablespace
+                      ON tablespace.oid = relation.reltablespace
+                    WHERE relation.oid =
+                        'public.{replacement}'::regclass))
         """
     )
+    if sizes["tablespace"] != build_tablespace:
+        raise PilotError(
+            "replacement was built in an unexpected tablespace"
+        )
     built_fingerprint = database.json(
         fingerprint_sql(replacement),
         timeout=args.query_timeout_seconds,
@@ -2729,7 +3746,40 @@ def stage_build(args, runner):
             0,
             free_before - filesystem_monitor.minimum_free_bytes,
         ),
+        "scratchFreeBytesBefore": scratch_free_before,
+        "scratchFreeBytesAfter": shutil.disk_usage(
+            args.scratch_root
+        ).free,
+        "observedScratchGrowthBytes": max(
+            0,
+            scratch_free_before
+            - shutil.disk_usage(args.scratch_root).free,
+        ),
+        "observedPeakScratchGrowthBytes": max(
+            0,
+            scratch_free_before
+            - scratch_monitor.minimum_free_bytes,
+        ),
         "filesystemMonitorSamples": filesystem_monitor.samples,
+        "filesystemEmergencyThresholdBytes": (
+            filesystem_monitor.minimum_allowed_bytes
+        ),
+        "filesystemEmergencyThresholdBreached": (
+            filesystem_monitor.breached
+        ),
+        "filesystemEmergencyCancellationError": (
+            filesystem_monitor.breach_error
+        ),
+        "scratchMonitorSamples": scratch_monitor.samples,
+        "scratchReserveThresholdBytes": (
+            scratch_monitor.minimum_allowed_bytes
+        ),
+        "scratchReserveThresholdBreached": (
+            scratch_monitor.breached
+        ),
+        "scratchReserveCancellationError": (
+            scratch_monitor.breach_error
+        ),
         "filesystemPeakMeasurementComplete": (
             not resumed_existing_build
         ),
@@ -2738,14 +3788,20 @@ def stage_build(args, runner):
             "path": str(build_started_path),
             "sha256": sha256_path(build_started_path),
         },
+        "buildAttemptEvidence": {
+            "path": str(attempt_path),
+            "sha256": sha256_path(attempt_path),
+        },
         "capacityGate": capacity,
+        "buildStorage": build_storage,
         "measuredProfile": {
             "path": str(args.measured_profile),
             "sha256": profile_sha,
         },
         "oldPartitionStillAttached": True,
         "resumedExistingAtomicBuild": resumed_existing_build,
-        "sourceFingerprint": source_fingerprint,
+        "sourceRetainedFingerprint": source_retained_fingerprint,
+        "sourceRelationState": source_relation_state,
     }
     return write_stage_report(args.scratch_root, "build", body)
 
@@ -2756,7 +3812,7 @@ def stage_swap(args, runner):
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     build = load_report(args.scratch_root, "build")
-    load_report(args.scratch_root, "archive")
+    archive = load_report(args.scratch_root, "archive")
     load_report(args.scratch_root, "drill")
     host = collect_host_guard(args, runner)
     database = Database(
@@ -3082,7 +4138,7 @@ def stage_validate(args, runner):
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     archive = load_report(args.scratch_root, "archive")
-    load_report(args.scratch_root, "drill")
+    drill = load_report(args.scratch_root, "drill")
     load_report(args.scratch_root, "swap")
     host = collect_host_guard(args, runner)
     database = Database(
@@ -3094,20 +4150,36 @@ def stage_validate(args, runner):
     guard = collect_database_guard(database)
     assert_identity_matches(check, host, guard)
     retired = retired_name(args.run_id)
-    original_fingerprint = database.json(
-        fingerprint_sql(retired),
+    original_relation_state = database.json(
+        relation_state_query(retired)
+    )
+    if (
+        physical_relation_identity(original_relation_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
+        raise PilotError(
+            "retained original relation changed after the swap"
+        )
+    original_retained_fingerprint = database.json(
+        fingerprint_sql(
+            retired,
+            snapshot_id_predicate(
+                plan["planIdentity"]["keepSnapshotIds"]
+            ),
+        ),
         timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
     )
     candidate_fingerprint = database.json(
         fingerprint_sql(TARGET_PARTITION),
         timeout=args.query_timeout_seconds,
     )
     if (
-        original_fingerprint
-        != plan["planIdentity"]["wholeFingerprint"]
+        original_retained_fingerprint
+        != plan["planIdentity"]["retainedFingerprint"]
     ):
         raise PilotError(
-            "retained original relation differs from the plan"
+            "protected rows in the retained original differ from the plan"
         )
     if (
         candidate_fingerprint
@@ -3165,27 +4237,50 @@ def stage_validate(args, runner):
         raise PilotError(
             "representative public API body/header fingerprints changed"
         )
-    manifest = read_json(
-        pathlib.Path(args.scratch_root)
-        / ARCHIVE_DIR
-        / "manifest.json"
-    )
-    archive_path = pathlib.Path(manifest["archive"]["path"])
-    if sha256_path(archive_path) != manifest["archive"]["sha256"]:
-        raise PilotError(
-            "archive checksum changed during validation"
+    if archive.get("adoptedVerifiedArchive"):
+        verified, _ = load_verified_archive_input(
+            args,
+            runner,
+            check,
+            source_fence_from_relation_state(
+                original_relation_state
+            ),
+            verify_archive_checksum=True,
         )
+        archive_path = pathlib.Path(verified["archive"]["path"])
+        archive_sha = verified["archive"]["sha256"]
+        archived_whole_fingerprint = None
+    else:
+        manifest = read_json(
+            pathlib.Path(args.scratch_root)
+            / ARCHIVE_DIR
+            / "manifest.json"
+        )
+        archive_path = pathlib.Path(manifest["archive"]["path"])
+        archive_sha = manifest["archive"]["sha256"]
+        if sha256_path(archive_path) != archive_sha:
+            raise PilotError(
+                "archive checksum changed during validation"
+            )
+        archived_whole_fingerprint = drill[
+            "restoredFingerprint"
+        ]
     body = {
         "runId": args.run_id,
         "planId": plan["planId"],
         "accepted": True,
         "candidateFingerprint": candidate_fingerprint,
-        "retainedOriginalFingerprint": original_fingerprint,
+        "retainedOriginalFingerprint": (
+            original_retained_fingerprint
+        ),
+        "retainedOriginalRelationState": original_relation_state,
+        "archivedWholeFingerprint": archived_whole_fingerprint,
+        "archivedExactRows": drill["exactRows"],
         "referenceParity": reference_parity,
         "publicApi": api,
         "archive": {
             "path": str(archive_path),
-            "sha256": manifest["archive"]["sha256"],
+            "sha256": archive_sha,
             "present": archive_path.is_file(),
         },
         "oldRelationStillPresent": True,
@@ -3203,9 +4298,19 @@ def stage_drop(args, runner):
     check = load_report(args.scratch_root, "check")
     plan = load_report(args.scratch_root, "plan")
     validation = load_report(args.scratch_root, "validate")
-    if not validation.get("accepted"):
-        raise PilotError("validation was not accepted")
-    load_report(args.scratch_root, "archive")
+    repatriation = load_report(
+        args.scratch_root,
+        "repatriate",
+    )
+    build = load_report(args.scratch_root, "build")
+    if (
+        not validation.get("accepted")
+        or not repatriation.get("accepted")
+    ):
+        raise PilotError(
+            "validation and repatriation must both be accepted"
+        )
+    archive = load_report(args.scratch_root, "archive")
     load_report(args.scratch_root, "drill")
     host = collect_host_guard(args, runner)
     database = Database(
@@ -3217,58 +4322,158 @@ def stage_drop(args, runner):
     guard = collect_database_guard(database)
     assert_identity_matches(check, host, guard)
     retired = retired_name(args.run_id)
-    replacement = replacement_name(args.run_id)
-    primary_name = replacement_primary_name(args.run_id)
-    score_name = replacement_score_name(args.run_id)
-    instrument_check_name = replacement_instrument_check_name(
-        args.run_id
-    )
-    catalog_names = source_catalog_names(plan["catalog"])
-    original_primary_constraint = catalog_names[
-        "primaryConstraint"
-    ]
-    original_primary_index = catalog_names["primaryIndex"]
-    original_score_index = catalog_names["scoreIndex"]
-    manifest = read_json(
-        pathlib.Path(args.scratch_root)
-        / ARCHIVE_DIR
-        / "manifest.json"
-    )
-    archive_path = pathlib.Path(manifest["archive"]["path"])
-    if (
-        not archive_path.is_file()
-        or sha256_path(archive_path)
-        != manifest["archive"]["sha256"]
-    ):
-        raise PilotError(
-            "verified archive is unavailable; refusing final drop"
-        )
-    retired_probe = database.json(
+    scratch_retired = scratch_retired_name(args.run_id)
+    home_primary = home_primary_name(args.run_id)
+    home_score = home_score_name(args.run_id)
+    source_catalog = source_catalog_names(plan["catalog"])
+    scratch_mount = collect_tablespace_mount(args, runner)
+    relation_probe = database.json(
         f"""
             SELECT json_build_object(
-                'exists', to_regclass(
+                'originalExists', to_regclass(
                     'public.{retired}') IS NOT NULL,
-                'attached', EXISTS (
+                'originalAttached', EXISTS (
                     SELECT 1 FROM pg_inherits
                     WHERE inhrelid = to_regclass(
                         'public.{retired}')),
-                'totalBytes', CASE
+                'originalBytes', CASE
                     WHEN to_regclass(
                         'public.{retired}') IS NULL
                     THEN NULL
                     ELSE pg_total_relation_size(
                         to_regclass('public.{retired}'))
-                END)
+                END,
+                'scratchExists', to_regclass(
+                    'public.{scratch_retired}') IS NOT NULL,
+                'scratchAttached', EXISTS (
+                    SELECT 1 FROM pg_inherits
+                    WHERE inhrelid = to_regclass(
+                        'public.{scratch_retired}')),
+                'scratchBytes', CASE
+                    WHEN to_regclass(
+                        'public.{scratch_retired}') IS NULL
+                    THEN NULL
+                    ELSE pg_total_relation_size(
+                        to_regclass('public.{scratch_retired}'))
+                END,
+                'targetTablespace', (
+                    SELECT COALESCE(
+                        tablespace.spcname, 'pg_default')
+                    FROM pg_class relation
+                    LEFT JOIN pg_tablespace tablespace
+                      ON tablespace.oid = relation.reltablespace
+                    WHERE relation.oid =
+                        'public.{TARGET_PARTITION}'::regclass))
         """
     )
-    resumed_committed_drop = not retired_probe["exists"]
-    if retired_probe["exists"] and retired_probe["attached"]:
+    pre_drop = (
+        relation_probe["originalExists"]
+        and relation_probe["scratchExists"]
+    )
+    post_drop = (
+        not relation_probe["originalExists"]
+        and not relation_probe["scratchExists"]
+    )
+    if not (pre_drop or post_drop):
         raise PilotError(
-            "old relation is attached before final drop"
+            f"mixed final-drop relation state: {relation_probe}"
+        )
+    if (
+        relation_probe["originalAttached"]
+        or relation_probe["scratchAttached"]
+    ):
+        raise PilotError(
+            "a rollback relation is attached before final drop"
+        )
+    if relation_probe["targetTablespace"] != "pg_default":
+        raise PilotError(
+            "accepted partition is not in pg_default before final drop"
+        )
+    retired_relation_state = (
+        database.json(relation_state_query(retired))
+        if relation_probe["originalExists"]
+        else None
+    )
+    if (
+        retired_relation_state is not None
+        and physical_relation_identity(retired_relation_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
+        raise PilotError(
+            "old relation changed before final drop"
+        )
+    source_fence = (
+        source_fence_from_relation_state(
+            retired_relation_state
+        )
+        if retired_relation_state is not None
+        else source_fence_from_relation_state(
+            validation["retainedOriginalRelationState"]
+        )
+    )
+    if archive.get("adoptedVerifiedArchive"):
+        verified, _ = load_verified_archive_input(
+            args,
+            runner,
+            check,
+            source_fence,
+            verify_archive_checksum=True,
+        )
+        archive_path = pathlib.Path(verified["archive"]["path"])
+        archive_sha = verified["archive"]["sha256"]
+    else:
+        manifest = read_json(
+            pathlib.Path(args.scratch_root)
+            / ARCHIVE_DIR
+            / "manifest.json"
+        )
+        archive_path = pathlib.Path(manifest["archive"]["path"])
+        archive_sha = manifest["archive"]["sha256"]
+        if (
+            not archive_path.is_file()
+            or sha256_path(archive_path) != archive_sha
+        ):
+            raise PilotError(
+                "verified archive is unavailable; refusing final drop"
+            )
+    if pre_drop:
+        scratch_fingerprint = database.json(
+            fingerprint_sql(scratch_retired),
+            timeout=args.query_timeout_seconds,
+        )
+        if (
+            scratch_fingerprint
+            != plan["planIdentity"]["retainedFingerprint"]
+        ):
+            raise PilotError(
+                "scratch rollback relation differs before final drop"
+            )
+    else:
+        scratch_fingerprint = repatriation[
+            "scratchRollbackFingerprint"
+        ]
+    target_fingerprint = database.json(
+        fingerprint_sql(TARGET_PARTITION),
+        timeout=args.query_timeout_seconds,
+    )
+    if (
+        target_fingerprint
+        != plan["planIdentity"]["retainedFingerprint"]
+    ):
+        raise PilotError(
+            "accepted pg_default relation differs before final drop"
+        )
+    pre_drop_catalog = database.json(catalog_query())
+    if (
+        catalog_semantic_shape(pre_drop_catalog)
+        != catalog_semantic_shape(plan["catalog"])
+    ):
+        raise PilotError(
+            "accepted pg_default catalog differs before final drop"
         )
     free_before = host["dataFilesystem"]["freeBytes"]
     started = time.monotonic()
-    if not resumed_committed_drop:
+    if pre_drop:
         database.psql(
             f"""
                 BEGIN;
@@ -3276,15 +4481,12 @@ def stage_drop(args, runner):
                 SET LOCAL statement_timeout = '30s';
                 {advisory_lock_guard_sql()}
                 DROP TABLE {qualified(retired)};
+                DROP TABLE {qualified(scratch_retired)};
                 ALTER TABLE {qualified(TARGET_PARTITION)}
-                    DROP CONSTRAINT
-                        "{instrument_check_name}";
-                ALTER TABLE {qualified(TARGET_PARTITION)}
-                    RENAME CONSTRAINT "{primary_name}"
-                    TO "{original_primary_constraint}";
-                ALTER INDEX
-                    {qualified(score_name)}
-                    RENAME TO "{original_score_index}";
+                    RENAME CONSTRAINT "{home_primary}"
+                    TO "{source_catalog['primaryConstraint']}";
+                ALTER INDEX {qualified(home_score)}
+                    RENAME TO "{source_catalog['scoreIndex']}";
                 COMMIT;
             """,
             timeout=60,
@@ -3292,33 +4494,60 @@ def stage_drop(args, runner):
     elapsed = time.monotonic() - started
     if database.scalar(
         "SELECT to_regclass("
-        f"{sql_literal('public.' + retired)}) IS NULL"
+        f"{sql_literal('public.' + retired)}) IS NULL "
+        "AND to_regclass("
+        f"{sql_literal('public.' + scratch_retired)}) IS NULL"
     ) != "t":
-        raise PilotError("old relation remains after final drop")
+        raise PilotError(
+            "a rollback relation remains after final drop"
+        )
+    tablespace_removed = False
+    if scratch_mount["enabled"]:
+        tablespace = scratch_mount["tablespace"]
+        relation_count = int(
+            database.scalar(
+                "SELECT COUNT(*) FROM pg_class "
+                "WHERE reltablespace = ("
+                "SELECT oid FROM pg_tablespace WHERE spcname = "
+                f"{sql_literal(tablespace)})"
+            )
+        )
+        if relation_count != 0:
+            raise PilotError(
+                "relations remain in the temporary scratch tablespace"
+            )
+        if database.scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_tablespace "
+            f"WHERE spcname = {sql_literal(tablespace)})"
+        ) == "t":
+            database.psql(
+                f'DROP TABLESPACE "{tablespace}"',
+                timeout=120,
+            )
+        runner.run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0:0",
+                args.pg_container,
+                "sh",
+                "-c",
+                (
+                    f"find {TABLESPACE_CONTAINER_PATH} "
+                    "-mindepth 1 -maxdepth 1 "
+                    "-exec rm -rf -- {} +"
+                ),
+            ],
+            timeout=600,
+        )
+        tablespace_removed = True
     host_after = collect_host_guard(args, runner)
     free_after = host_after["dataFilesystem"]["freeBytes"]
     final_catalog = database.json(catalog_query())
-    final_primary = [
-        item
-        for item in final_catalog["indexes"]
-        if item["isPrimary"]
-    ]
-    final_score = [
-        item
-        for item in final_catalog["indexes"]
-        if not item["isPrimary"]
-    ]
-    if [item["name"] for item in final_primary] != [
-        original_primary_index
-    ] or [item["name"] for item in final_score] != [
-        original_score_index
-    ]:
-        raise PilotError(
-            "final partition index names differ from the source catalog"
-        )
     if catalog_shape(final_catalog) != catalog_shape(plan["catalog"]):
         raise PilotError(
-            "final partition catalog differs from the source catalog"
+            "final partition catalog differs from the source"
         )
     public_api = (
         capture_api_fingerprints(args.api_base)
@@ -3335,11 +4564,19 @@ def stage_drop(args, runner):
     body = {
         "runId": args.run_id,
         "planId": plan["planId"],
-        "droppedRelation": f"{TARGET_SCHEMA}.{retired}",
-        "droppedRelationBytes": (
-            retired_probe["totalBytes"]
-            if retired_probe["totalBytes"] is not None
+        "droppedRelations": [
+            f"{TARGET_SCHEMA}.{retired}",
+            f"{TARGET_SCHEMA}.{scratch_retired}",
+        ],
+        "droppedOriginalBytes": (
+            relation_probe["originalBytes"]
+            if relation_probe["originalBytes"] is not None
             else plan["catalog"]["totalBytes"]
+        ),
+        "droppedScratchBytes": (
+            relation_probe["scratchBytes"]
+            if relation_probe["scratchBytes"] is not None
+            else build["sizes"]["totalBytes"]
         ),
         "elapsedSeconds": round(elapsed, 3),
         "freeBytesBefore": free_before,
@@ -3348,23 +4585,412 @@ def stage_drop(args, runner):
             0,
             free_after - free_before,
         ),
-        "resumedCommittedDrop": resumed_committed_drop,
+        "resumedCommittedDrop": post_drop,
         "filesystemDeltaObservedDuringThisInvocation": (
-            not resumed_committed_drop
+            pre_drop
         ),
         "archiveRetained": {
             "path": str(archive_path),
-            "sha256": manifest["archive"]["sha256"],
+            "sha256": archive_sha,
             "deletionDecision": "deferred",
         },
         "rollbackModeAfterDrop": (
             "archive restore only; rename-back rollback is no longer "
             "available"
         ),
+        "droppedRelationState": retired_relation_state,
+        "scratchRollbackFingerprint": scratch_fingerprint,
+        "targetFingerprint": target_fingerprint,
         "finalCatalog": final_catalog,
+        "temporaryTablespaceRemoved": tablespace_removed,
         "publicApi": public_api,
     }
     return write_stage_report(args.scratch_root, "drop", body)
+
+
+def stage_repatriate(args, runner):
+    if not args.execute:
+        raise PilotError("repatriate requires --execute")
+    check = load_report(args.scratch_root, "check")
+    plan = load_report(args.scratch_root, "plan")
+    validation = load_report(args.scratch_root, "validate")
+    if not validation.get("accepted"):
+        raise PilotError("validation was not accepted")
+    load_report(args.scratch_root, "drill")
+    build = load_report(args.scratch_root, "build")
+    host = collect_host_guard(args, runner)
+    database = Database(
+        runner,
+        args.pg_container,
+        args.pg_user,
+        args.pg_database,
+    )
+    guard = collect_database_guard(database)
+    assert_identity_matches(check, host, guard)
+    scratch_mount = collect_tablespace_mount(args, runner)
+    home = home_name(args.run_id)
+    scratch_retired = scratch_retired_name(args.run_id)
+    home_primary = home_primary_name(args.run_id)
+    home_score = home_score_name(args.run_id)
+    temporary_check = replacement_instrument_check_name(
+        args.run_id
+    )
+    keep_fingerprint = plan["planIdentity"]["retainedFingerprint"]
+    retired = retired_name(args.run_id)
+    state = database.json(
+        f"""
+            SELECT json_build_object(
+                'targetTablespace', (
+                    SELECT COALESCE(
+                        tablespace.spcname, 'pg_default')
+                    FROM pg_class relation
+                    LEFT JOIN pg_tablespace tablespace
+                      ON tablespace.oid = relation.reltablespace
+                    WHERE relation.oid =
+                        'public.{TARGET_PARTITION}'::regclass),
+                'homeExists', to_regclass(
+                    'public.{home}') IS NOT NULL,
+                'scratchRetiredExists', to_regclass(
+                    'public.{scratch_retired}') IS NOT NULL,
+                'originalRetainedExists', to_regclass(
+                    'public.{retired}') IS NOT NULL)
+        """
+    )
+    if not state["originalRetainedExists"]:
+        raise PilotError(
+            "original rollback relation is missing before repatriation"
+        )
+    original_state = database.json(
+        relation_state_query(retired)
+    )
+    if (
+        physical_relation_identity(original_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
+        raise PilotError(
+            "original rollback relation changed before repatriation"
+        )
+    capacity = calculate_repatriation_capacity(
+        build,
+        host["dataFilesystem"]["freeBytes"],
+    )
+    home_build_elapsed = 0.0
+    free_before = host["dataFilesystem"]["freeBytes"]
+    if (
+        state["targetTablespace"] != "pg_default"
+        and not state["homeExists"]
+        and not state["scratchRetiredExists"]
+    ):
+        if not capacity["allowed"]:
+            raise PilotError(
+                "pre-drop pg_default repatriation capacity gate failed: "
+                f"need {capacity['requiredFreeBytes']} bytes, "
+                f"observed {capacity['observedFreeBytes']} bytes"
+            )
+        owner = plan["catalog"]["owner"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", owner):
+            raise PilotError(f"unsafe target owner name: {owner}")
+        tablespace_for_temp = (
+            scratch_mount["tablespace"]
+            if scratch_mount["enabled"]
+            else "pg_default"
+        )
+        started_lsn = database.scalar(
+            "SELECT pg_current_wal_lsn()"
+        )
+        temp_before = int(
+            database.scalar(
+                "SELECT temp_bytes FROM pg_stat_database "
+                "WHERE datname = current_database()"
+            )
+        )
+        started = time.monotonic()
+        filesystem_monitor = FilesystemMonitor(
+            host["dataPath"],
+            minimum_allowed_bytes=(
+                EMERGENCY_FLOOR_BYTES + 512 * 1024**2
+            ),
+            on_breach=lambda: cancel_pilot_backends(
+                runner,
+                args,
+            ),
+        )
+        try:
+            with filesystem_monitor:
+                database.psql(
+                    f"""
+                        BEGIN;
+                        SET LOCAL lock_timeout = '2s';
+                        SET LOCAL statement_timeout = '0';
+                        SET LOCAL temp_tablespaces =
+                            {sql_literal(tablespace_for_temp)};
+                        {advisory_lock_guard_sql()}
+                        CREATE TABLE {qualified(home)}
+                            (LIKE {qualified(TARGET_PARTITION)}
+                                INCLUDING DEFAULTS
+                                INCLUDING CONSTRAINTS
+                                INCLUDING STORAGE
+                                INCLUDING GENERATED
+                                INCLUDING IDENTITY)
+                            TABLESPACE pg_default;
+                        ALTER TABLE {qualified(home)}
+                            OWNER TO "{owner}";
+                        INSERT INTO {qualified(home)}
+                        SELECT * FROM {qualified(TARGET_PARTITION)};
+                        CREATE UNIQUE INDEX "{home_primary}"
+                            ON {qualified(home)}
+                            (snapshot_id, song_id, instrument, account_id)
+                            TABLESPACE pg_default;
+                        ALTER TABLE {qualified(home)}
+                            ADD CONSTRAINT "{home_primary}"
+                            PRIMARY KEY USING INDEX "{home_primary}";
+                        CREATE INDEX "{home_score}"
+                            ON {qualified(home)}
+                            (snapshot_id, song_id, instrument, score DESC)
+                            TABLESPACE pg_default;
+                        ANALYZE {qualified(home)};
+                        COMMIT;
+                    """,
+                    timeout=args.build_timeout_seconds,
+                )
+        except CommandError as error:
+            if filesystem_monitor.breached:
+                raise PilotError(
+                    "repatriation build was cancelled before breaching "
+                    "the 4 TB emergency floor"
+                ) from error
+            raise
+        if filesystem_monitor.breached:
+            raise PilotError(
+                "repatriation build crossed the emergency threshold"
+            )
+        home_build_elapsed = time.monotonic() - started
+        completed_lsn = database.scalar(
+            "SELECT pg_current_wal_lsn()"
+        )
+        temp_after = int(
+            database.scalar(
+                "SELECT temp_bytes FROM pg_stat_database "
+                "WHERE datname = current_database()"
+            )
+        )
+        home_build_resources = database.json(
+            f"""
+                SELECT json_build_object(
+                    'heapBytes', pg_relation_size(
+                        'public.{home}'),
+                    'indexBytes', pg_indexes_size(
+                        'public.{home}'),
+                    'totalBytes', pg_total_relation_size(
+                        'public.{home}'),
+                    'walBytes', pg_wal_lsn_diff(
+                        {sql_literal(completed_lsn)}::pg_lsn,
+                        {sql_literal(started_lsn)}::pg_lsn)::bigint,
+                    'tempBytes',
+                        {max(0, temp_after - temp_before)}::bigint,
+                    'minimumFstFreeBytes',
+                        {filesystem_monitor.minimum_free_bytes}::bigint,
+                    'monitorSamples',
+                        {filesystem_monitor.samples}::bigint)
+            """
+        )
+        state["homeExists"] = True
+    else:
+        home_build_resources = None
+    if state["homeExists"]:
+        home_fingerprint = database.json(
+            fingerprint_sql(home),
+            timeout=args.query_timeout_seconds,
+        )
+        if home_fingerprint != keep_fingerprint:
+            raise PilotError(
+                "pg_default repatriation copy differs from the "
+                "accepted retained rows"
+            )
+    else:
+        home_fingerprint = keep_fingerprint
+    resumed_committed_swap = (
+        state["targetTablespace"] == "pg_default"
+        and state["scratchRetiredExists"]
+    )
+    swap_elapsed = 0.0
+    if (
+        state["targetTablespace"] != "pg_default"
+        and state["homeExists"]
+        and not state["scratchRetiredExists"]
+    ):
+        started = time.monotonic()
+        database.psql(
+            f"""
+                BEGIN;
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                {advisory_lock_guard_sql()}
+                LOCK TABLE {qualified(TARGET_PARENT)}
+                    IN ACCESS EXCLUSIVE MODE;
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    DETACH PARTITION {qualified(TARGET_PARTITION)};
+                ALTER TABLE {qualified(TARGET_PARTITION)}
+                    RENAME TO "{scratch_retired}";
+                ALTER TABLE {qualified(home)}
+                    RENAME TO "{TARGET_PARTITION}";
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    ATTACH PARTITION {qualified(TARGET_PARTITION)}
+                    FOR VALUES IN (
+                        {sql_literal(TARGET_INSTRUMENT)});
+                COMMIT;
+            """,
+            timeout=60,
+        )
+        swap_elapsed = time.monotonic() - started
+        resumed_committed_swap = False
+    post_swap = database.json(
+        f"""
+            SELECT json_build_object(
+                'targetTablespace', (
+                    SELECT COALESCE(
+                        tablespace.spcname, 'pg_default')
+                    FROM pg_class relation
+                    LEFT JOIN pg_tablespace tablespace
+                      ON tablespace.oid = relation.reltablespace
+                    WHERE relation.oid =
+                        'public.{TARGET_PARTITION}'::regclass),
+                'scratchRetiredExists', to_regclass(
+                    'public.{scratch_retired}') IS NOT NULL)
+        """
+    )
+    if post_swap["targetTablespace"] != "pg_default":
+        raise PilotError(
+            "accepted partition is not back in pg_default"
+        )
+    if database.scalar(
+        "SELECT EXISTS("
+        "SELECT 1 FROM pg_constraint "
+        "WHERE conrelid = "
+        f"'public.{TARGET_PARTITION}'::regclass "
+        f"AND conname = {sql_literal(temporary_check)})"
+    ) == "t":
+        database.psql(
+            f"""
+                BEGIN;
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                {advisory_lock_guard_sql()}
+                ALTER TABLE {qualified(TARGET_PARTITION)}
+                    DROP CONSTRAINT "{temporary_check}";
+                COMMIT;
+            """,
+            timeout=60,
+        )
+    target_fingerprint = database.json(
+        fingerprint_sql(TARGET_PARTITION),
+        timeout=args.query_timeout_seconds,
+    )
+    scratch_fingerprint = database.json(
+        fingerprint_sql(scratch_retired),
+        timeout=args.query_timeout_seconds,
+    )
+    candidate_catalog = database.json(catalog_query())
+    reference_parity = database.json(
+        reference_parity_query(TARGET_PARTITION),
+        timeout=args.query_timeout_seconds,
+    )
+    baseline_reference = plan["planIdentity"]["referenceParity"]
+    reference_ok = (
+        not reference_parity["missingRequiredSourceIds"]
+        and reference_parity["activeStateMissingRows"] == 0
+        and reference_parity["projectionMissingRows"] == 0
+        and all(
+            reference_parity[key] == baseline_reference[key]
+            for key in (
+                "sourceMapRows",
+                "maxScoreFingerprint",
+                "referenceCount",
+            )
+        )
+    )
+    public_api = (
+        capture_api_fingerprints(args.api_base)
+        if args.api_base
+        else []
+    )
+    parity_ok = (
+        target_fingerprint == keep_fingerprint
+        and scratch_fingerprint == keep_fingerprint
+        and catalog_semantic_shape(candidate_catalog)
+        == catalog_semantic_shape(plan["catalog"])
+        and reference_ok
+        and swap_elapsed <= args.maximum_swap_seconds
+        and compare_api_snapshots(
+            check.get("publicApiBaseline", []),
+            public_api,
+        )
+    )
+    if not parity_ok and post_swap["scratchRetiredExists"]:
+        database.psql(
+            f"""
+                BEGIN;
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                {advisory_lock_guard_sql()}
+                LOCK TABLE {qualified(TARGET_PARENT)}
+                    IN ACCESS EXCLUSIVE MODE;
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    DETACH PARTITION {qualified(TARGET_PARTITION)};
+                ALTER TABLE {qualified(TARGET_PARTITION)}
+                    RENAME TO "{home}";
+                ALTER TABLE {qualified(scratch_retired)}
+                    RENAME TO "{TARGET_PARTITION}";
+                ALTER TABLE {qualified(TARGET_PARENT)}
+                    ATTACH PARTITION {qualified(TARGET_PARTITION)}
+                    FOR VALUES IN (
+                        {sql_literal(TARGET_INSTRUMENT)});
+                COMMIT;
+            """,
+            timeout=60,
+        )
+        raise PilotError(
+            "repatriation parity failed and the scratch candidate "
+            "was restored"
+        )
+    if not parity_ok:
+        raise PilotError("repatriation parity failed")
+    host_after = collect_host_guard(args, runner)
+    body = {
+        "runId": args.run_id,
+        "planId": plan["planId"],
+        "accepted": True,
+        "homeBuildElapsedSeconds": round(
+            home_build_elapsed, 3
+        ),
+        "homeBuildResources": home_build_resources,
+        "swapElapsedSeconds": round(swap_elapsed, 3),
+        "maximumSwapSeconds": args.maximum_swap_seconds,
+        "resumedCommittedSwap": resumed_committed_swap,
+        "capacityGate": capacity,
+        "targetFingerprint": target_fingerprint,
+        "scratchRollbackFingerprint": scratch_fingerprint,
+        "candidateCatalog": candidate_catalog,
+        "referenceParity": reference_parity,
+        "publicApi": public_api,
+        "originalRollbackRelationPresent": True,
+        "scratchRollbackRelationPresent": True,
+        "acceptedRelationTablespace": candidate_catalog[
+            "tablespace"
+        ],
+        "freeBytesBefore": free_before,
+        "freeBytesAfter": host_after["dataFilesystem"][
+            "freeBytes"
+        ],
+        "buildReportSha256": sha256_path(
+            report_path(args.scratch_root, "build")
+        ),
+    }
+    return write_stage_report(
+        args.scratch_root,
+        "repatriate",
+        body,
+    )
 
 
 def stage_rollback(args, runner):
@@ -3419,19 +5045,35 @@ def stage_rollback(args, runner):
             f"unexpected rollback relation state: {relation_state}"
         )
     resumed_committed_rollback = relation_state == post_rollback
-    if resumed_committed_rollback:
-        original_fingerprint = database.json(
-            fingerprint_sql(TARGET_PARTITION),
-            timeout=args.query_timeout_seconds,
-        )
-    else:
-        original_fingerprint = database.json(
-            fingerprint_sql(retired),
-            timeout=args.query_timeout_seconds,
-        )
-    if original_fingerprint != plan["planIdentity"]["wholeFingerprint"]:
+    original_relation_name = (
+        TARGET_PARTITION if resumed_committed_rollback else retired
+    )
+    original_relation_state = database.json(
+        relation_state_query(original_relation_name)
+    )
+    if (
+        physical_relation_identity(original_relation_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
         raise PilotError(
-            "retained original fingerprint changed; refusing rollback"
+            "retained original relation changed; refusing rollback"
+        )
+    original_retained_fingerprint = database.json(
+        fingerprint_sql(
+            original_relation_name,
+            snapshot_id_predicate(
+                plan["planIdentity"]["keepSnapshotIds"]
+            ),
+        ),
+        timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
+    )
+    if (
+        original_retained_fingerprint
+        != plan["planIdentity"]["retainedFingerprint"]
+    ):
+        raise PilotError(
+            "protected rows in the retained original changed"
         )
     started = time.monotonic()
     if not resumed_committed_rollback:
@@ -3458,13 +5100,32 @@ def stage_rollback(args, runner):
             timeout=60,
         )
     elapsed = time.monotonic() - started
-    restored = database.json(
-        fingerprint_sql(TARGET_PARTITION),
-        timeout=args.query_timeout_seconds,
+    restored_relation_state = database.json(
+        relation_state_query(TARGET_PARTITION)
     )
-    if restored != plan["planIdentity"]["wholeFingerprint"]:
+    if (
+        physical_relation_identity(restored_relation_state)
+        != plan["planIdentity"]["sourceRelationIdentity"]
+    ):
         raise PilotError(
-            "rename-back rollback fingerprint differs from original"
+            "rename-back rollback relation differs from the original"
+        )
+    restored_retained_fingerprint = database.json(
+        fingerprint_sql(
+            TARGET_PARTITION,
+            snapshot_id_predicate(
+                plan["planIdentity"]["keepSnapshotIds"]
+            ),
+        ),
+        timeout=args.query_timeout_seconds,
+        pgoptions=PLAN_QUERY_PGOPTIONS,
+    )
+    if (
+        restored_retained_fingerprint
+        != plan["planIdentity"]["retainedFingerprint"]
+    ):
+        raise PilotError(
+            "rename-back protected rows differ from the original"
         )
     public_api = (
         capture_api_fingerprints(args.api_base)
@@ -3482,7 +5143,10 @@ def stage_rollback(args, runner):
         "runId": args.run_id,
         "planId": plan["planId"],
         "elapsedSeconds": round(elapsed, 3),
-        "restoredFingerprint": restored,
+        "restoredRetainedFingerprint": (
+            restored_retained_fingerprint
+        ),
+        "restoredRelationState": restored_relation_state,
         "restoredRelation": (
             f"{TARGET_SCHEMA}.{TARGET_PARTITION}"
         ),
@@ -3554,6 +5218,10 @@ def build_parser():
     )
     parser.add_argument("--measured-profile")
     parser.add_argument("--expected-profile-sha256")
+    parser.add_argument("--verified-live-archive-input")
+    parser.add_argument(
+        "--expected-live-archive-input-sha256"
+    )
     parser.add_argument("--api-base")
     return parser
 
@@ -3576,6 +5244,14 @@ def validate_args(args):
             raise PilotError(f"--{label.replace('_', '-')} must be positive")
     if args.maximum_swap_seconds <= 0:
         raise PilotError("--maximum-swap-seconds must be positive")
+    if args.stage == "build" and (
+        not args.measured_profile
+        or not args.expected_profile_sha256
+    ):
+        raise PilotError(
+            f"{args.stage} requires --measured-profile and "
+            "--expected-profile-sha256"
+        )
     if not args.test_mode:
         if pathlib.Path(args.compose_dir).resolve() != PRODUCTION_COMPOSE_DIR:
             raise PilotError(
@@ -3596,10 +5272,19 @@ def validate_args(args):
                 "production restore drill must use the exact checked "
                 "PostgreSQL image"
             )
+        if args.stage != "check" and (
+            not args.verified_live_archive_input
+            or not args.expected_live_archive_input_sha256
+        ):
+            raise PilotError(
+                "production stages after check require the verified "
+                "live archive input and SHA-256"
+            )
         if args.stage in (
             "check",
             "validate",
             "drop",
+            "repatriate",
             "rollback",
         ) and not args.api_base:
             raise PilotError(
@@ -3623,6 +5308,7 @@ def stage_function(stage):
         "swap": stage_swap,
         "validate": stage_validate,
         "drop": stage_drop,
+        "repatriate": stage_repatriate,
         "rollback": stage_rollback,
     }[stage]
 
