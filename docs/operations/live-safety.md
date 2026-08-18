@@ -267,7 +267,29 @@ read-only archive/evidence package at
 its archive SHA-256 is
 `94d499d94b21dcf17aee0ba3c006590176b17c4dd494c4b2ff8117f2d60c136e`.
 Keep the package until a separate deletion decision. The worker remains held
-while the other eight fixed instruments are migrated.
+until the generation-aware worker is deployed for the next scrape.
+
+The guarded pro-guitar generation migration then completed on 2026-08-18 from
+the same branch. Run `snapshot-generation-pro-guitar-20260818T191034Z`
+archive/restore-proved `1,015,961,791` rows across 245 generations, retained
+`9,239,429` rows from `1302-1303`, removed `1,006,722,362` rows, and returned
+`588,232,740,864` filesystem bytes. The final `4,074,053,632`-byte tree is in
+`pg_default`, its default child is empty, and no `sgm_pg_*` artifacts remain.
+
+Swap time was `0.047` seconds. The complete locked original reproof plus final
+drop/report took `5,988.277` seconds; 1,158 API-monitor samples had zero
+failures and exact public song/ranking hashes remained unchanged. Rename-back
+rollback ended at final drop. The independent recovery package is
+`/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`;
+archive SHA-256 is
+`0cd7b95105959dc6618b94c2c283804f3aa1b521645746c94db7d5d35674f476`.
+Keep it until a separate deletion decision.
+
+Operator cadence now requires one successful scrape/publication window after
+each instrument migration. Before that scrape, deploy the generation-aware
+writer so the new snapshot ID receives a dedicated child instead of routing
+to the default partition. Hold the worker again after terminal publication
+before migrating the next instrument.
 
 ### Completed stale solo rank-index retirement
 

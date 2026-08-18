@@ -808,6 +808,14 @@ filesystem bytes while exact publication/reference/API parity remained
 unchanged. The other eight instrument partitions still use the legacy regular
 table layout.
 
+`pro-guitar` completed the same conversion later on 2026-08-18. The exact
+archive contained `1,015,961,791` rows across 245 generations; only
+`9,239,429` rows from `1302-1303` remained protected. The accepted run removed
+`1,006,722,362` hot rows, returned `588,232,740,864` filesystem bytes, and
+left a `4,074,053,632`-byte `pg_default` tree with an empty default child and
+no migration artifacts. Seven instrument partitions remain on the legacy
+regular-table layout.
+
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
 implemented by the layout migration itself. It must preserve

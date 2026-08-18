@@ -98,6 +98,37 @@ drop; the independent read-only recovery package under
 `/home/sfenton/fst-temporary/snapshot-generation-pro-bass-20260818T190019Z`
 is now authoritative until a separate deletion decision.
 
+### Accepted production pro-guitar generation migration
+
+Run `snapshot-generation-pro-guitar-20260818T191034Z` retained physical
+snapshots `1302-1303` and removed 243 obsolete generations from hot storage:
+
+- exact source/archive rows: `1,015,961,791`;
+- retained rows: `9,239,429`;
+- removed rows: `1,006,722,362`;
+- source bytes: `588,213,903,360`;
+- final partition tree: `4,074,053,632` bytes;
+- immediate filesystem return: `588,232,740,864` bytes;
+- swap: `0.047` seconds;
+- finalization: `5,988.277` seconds;
+- archive: `42,109,010,793` bytes, SHA-256
+  `0cd7b95105959dc6618b94c2c283804f3aa1b521645746c94db7d5d35674f476`;
+- final report SHA-256:
+  `8c287af2d92f04040a6cc277860d95ac4b6a8fc83aeaf32a058c6c9fb2a3a508`.
+
+The network-none restore peaked at `448,530,678,492` bytes and proved all 245
+snapshot generations. Final live reproof scanned the complete original
+fingerprint and distribution before the short destructive DDL. The final root
+has only generation children `1302`, `1303`, and an empty default; all
+relations/indexes are in `pg_default` and no `sgm_pg_*` artifacts remain.
+Candidate/original retained evidence, 1,404 named sources, active/projection
+references, and exact public songs/rankings bodies matched. The API monitor
+recorded 1,158 successful samples and zero failures. FST free space rose from
+`186,709,254,144` to `774,941,995,008` bytes. The independent recovery package
+under
+`/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`
+remains authoritative until a separate deletion decision.
+
 ## Current protected-source expectation
 
 Validation scrape `1303` is current and `1302` is previous. Publication
