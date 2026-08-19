@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-18
-last_verified_commit: 3c467408
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -26,15 +26,20 @@ physical snapshot IDs still required by active state, the solo current
 projection, and the current/previous/working publication source maps.
 
 The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
-target completed production migration on 2026-08-18; the other eight targets
-remain unmigrated. This runbook is not authorization to start a scrape,
-unfreeze reads, select alternate scratch storage, delete an archive, or weaken
-a failed gate.
+and `pro-guitar` targets completed production migration on 2026-08-18; seven
+targets remain unmigrated. Generation-aware validation scrape `1304`
+subsequently completed through publication, notifications, registration
+drain, and normal run-once worker exit. This runbook is not authorization to
+start a scrape, unfreeze reads, select alternate scratch storage, delete an
+archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
-generation retention. Do not resume normal worker scheduling after the nine
-instrument migrations until a separate archive-before-child-drop owner is
-implemented, restore-tested, documented, and accepted.
+generation retention. After each instrument migration, run exactly one
+guarded run-once validation scrape and hold the worker again after terminal
+publication, notification recovery, registration drain, and exit. Do not
+resume unattended normal worker scheduling after the nine instrument
+migrations until a separate archive-before-child-drop owner is implemented,
+restore-tested, documented, and accepted.
 
 Production Compose ownership remains:
 
@@ -129,12 +134,60 @@ under
 `/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`
 remains authoritative until a separate deletion decision.
 
+### Accepted generation-aware validation scrape 1304
+
+Run-once worker image `fstservice:snapshot-generation-a682a16c` completed
+scrape `1304` from 2026-08-18 23:55 UTC through normal worker exit on
+2026-08-19 20:50 UTC:
+
+- all `8,448` solo and band scope manifests completed, all `603,015`
+  persisted page statuses were `success`, and no scope exhausted retries;
+- the network phase took `4,972.372` seconds (`82.873` minutes), `3.46%`
+  above the accepted `80.1`-minute scrape `1303` baseline and within the
+  `10%` gate;
+- pro bass routed `1,395,539` rows into
+  `leaderboard_entries_snapshot_pro_bass_s1304`, which occupies
+  `726,654,976` bytes; its full tree is now `2,940,837,888` bytes;
+- pro guitar routed `3,674,245` rows into
+  `leaderboard_entries_snapshot_pro_guitar_s1304`, which occupies
+  `2,013,806,592` bytes; its full tree is now `6,087,860,224` bytes;
+- the corresponding published source rows total exactly those child row
+  counts; pro bass has `254` nonempty `1304` sources plus two empty scopes,
+  and pro guitar has `509` `1304` sources;
+- both default children remained empty in all `1,214` monitor samples;
+- all `6,336` published solo scope sources are complete, publication `92`
+  advanced scrape `1304` to current, public reads unfroze, and representative
+  songs, rankings, pro-bass, and pro-guitar routes returned HTTP `200`;
+- notification runs `220` and `221` completed with `67` player and `665` band
+  events; the post-publication drain claimed `40` backfill accounts,
+  completed history reconstruction for `17` accounts, inserted `789`
+  sessions, and issued `65,728` history API calls;
+- the worker exited `0`, durable worker status is offline, no worker query
+  remains, and registered backfill/history queues are empty.
+
+Publication preparation required two deferred retries before attempt three
+committed. Publication-critical projection cleanup and precompute completed.
+Rank-history, band-rank-history, and service-level retention cleanup were
+safely skipped because three active vacuums and `16,124,112` watched dead
+tuples tripped the database-pressure guard; they were not counted as scrape
+failures. FST free space moved from `774,941,876,224` to approximately
+`753.7` GB, with a `63,718,576,128`-byte peak transient excursion.
+
+The terminal evidence package is:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-pro-guitar-scrape-20260818T235135Z
+```
+
+The worker is held offline. The next migration target is `solo-guitar`; do
+not migrate another instrument in the same scrape interval.
+
 ## Current protected-source expectation
 
-Validation scrape `1303` is current and `1302` is previous. Publication
-generations `89` and `80` currently resolve to those scrapes, and observed
-source maps reuse physical IDs `1302` and `1303`. That is planning evidence,
-not a hard-coded retention list.
+Validation scrape `1304` is current and `1303` is previous. Publication
+generations `92` and `89` currently resolve to those scrapes. Observed
+pro-bass and pro-guitar source maps reuse physical IDs `1302`, `1303`, and
+`1304`. That is planning evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 

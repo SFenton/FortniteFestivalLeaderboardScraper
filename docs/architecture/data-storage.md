@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -38,6 +38,7 @@ sources:
   - deploy/postgres.Dockerfile
   - tools/postgres-pro-bass-snapshot-rewrite.py
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
   - Schema, persistence ownership, publication storage, retention, restore, or source-of-truth behavior changes.
 ---
@@ -771,10 +772,9 @@ recovery.
 Validation scrape `1303` then reused 1,717 scopes / 6,112,541 rows globally.
 Pro bass reused 350 scopes / 1,436,731 rows from `1302`, wrote 1,910,331 rows
 for `1303`, and grew by `1,000,898,560` bytes. The worker-role default now
-enables fingerprints and unchanged-snapshot reuse. Physical IDs `1301-1303`
-remain in the regular instrument partition until the next migration converts
-snapshot generations into independently droppable children and removes
-obsolete `1301`.
+enables fingerprints and unchanged-snapshot reuse. The subsequent generation
+migration removed obsolete `1301` and converted the retained physical IDs
+into independently droppable children.
 
 ### Snapshot-generation subpartition layout
 
@@ -800,21 +800,31 @@ torn committed drop to be reported without trusting the original archive; the
 independent package remains authoritative until the separate archive-deletion
 decision.
 
-`pro-bass` completed this conversion on 2026-08-18. Its live tree now contains
-only snapshot children `1302-1303` plus an empty default, occupies
-`2,214,182,912` bytes, and has no `sgm_pb_*` migration artifacts. The accepted
-run removed `3,345,859` obsolete `1301` rows and returned `3,812,192,256`
+`pro-bass` completed this conversion on 2026-08-18. The accepted migration
+removed `3,345,859` obsolete `1301` rows and returned `3,812,192,256`
 filesystem bytes while exact publication/reference/API parity remained
-unchanged. The other eight instrument partitions still use the legacy regular
-table layout.
+unchanged. Validation scrape `1304` added `1,395,539` rows in a
+`726,654,976`-byte dedicated child. Its live tree now contains snapshot
+children `1302-1304` plus an empty default and occupies `2,940,837,888`
+bytes.
 
 `pro-guitar` completed the same conversion later on 2026-08-18. The exact
 archive contained `1,015,961,791` rows across 245 generations; only
 `9,239,429` rows from `1302-1303` remained protected. The accepted run removed
 `1,006,722,362` hot rows, returned `588,232,740,864` filesystem bytes, and
 left a `4,074,053,632`-byte `pg_default` tree with an empty default child and
-no migration artifacts. Seven instrument partitions remain on the legacy
-regular-table layout.
+no migration artifacts. Validation scrape `1304` added `3,674,245` rows in a
+`2,013,806,592`-byte dedicated child. Its live tree now contains snapshot
+children `1302-1304` plus an empty default and occupies `6,087,860,224`
+bytes. Seven instrument partitions remain on the legacy regular-table layout.
+
+Scrape `1304` proved the mixed-layout writer in production. All `8,448` scope
+manifests and `603,015` persisted page statuses completed successfully.
+Published source rows mapped exactly to the two new generation-child row
+counts, all `6,336` published solo scopes were complete, publication `92`
+advanced and unfroze, notification recovery and post-publication registration
+drain completed, and the run-once worker exited normally. The worker is held
+before the next single-instrument migration.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -823,7 +833,8 @@ current/previous/working publication sources, active snapshot state, and
 projection sources; archive/restore-prove nonempty obsolete children; and keep
 the default child empty. Readers continue to query the unchanged parent
 relation. Normal scheduling remains held until this recurring lifecycle is
-accepted.
+accepted. One guarded run-once scrape is required after each instrument
+migration, followed by another worker hold before the next migration.
 
 The existing generic retention service remains the compatibility owner for
 unmigrated regular instrument partitions only. It deliberately produces no

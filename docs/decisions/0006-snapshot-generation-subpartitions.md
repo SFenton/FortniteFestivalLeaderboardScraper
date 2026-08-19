@@ -1,8 +1,8 @@
 ---
 status: decision
 owner: data
-last_verified: 2026-08-18
-last_verified_commit: 3c467408
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/LeaderboardSpoolWriterFactory.cs
@@ -57,6 +57,14 @@ scopes, but the regular partition still grew by 1,000,898,560 bytes and retained
 obsolete snapshot 1301. Snapshot reuse reduces new writes; it does not make old
 generations independently reclaimable.
 
+Pro bass and pro guitar were then converted to generation children. Validation
+scrape 1304 routed `1,395,539` pro-bass rows and `3,674,245` pro-guitar rows
+into dedicated `1304` children while both defaults remained empty. Exact
+published source counts matched the children, publication advanced and
+unfroze, notifications and registration drain completed, and the run-once
+worker exited normally. This validates mixed legacy/generation write routing;
+it does not implement recurring child retention.
+
 ## Rationale
 
 - Existing reads already constrain `snapshot_id` and `instrument`, so the
@@ -110,10 +118,13 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
    anchored authoritative path so a torn post-commit report can be rebuilt
    without the original archive. Retain that package until the separate
    archive-deletion decision.
-8. Repeat one instrument at a time.
-9. Implement and validate recurring archive-before-child-drop retention,
+8. Run exactly one guarded generation-aware validation scrape through
+   publication, notification recovery, post-publication registration drain,
+   and normal run-once worker exit; then hold the worker again.
+9. Repeat the migration and validation cycle one instrument at a time.
+10. Implement and validate recurring archive-before-child-drop retention,
    including empty/default-child auditing.
-10. Restore normal scraping only after all nine instruments are migrated and
+11. Restore unattended normal scraping only after all nine instruments are migrated and
     the recurring retention owner is ready.
 
 ## Consequences
@@ -125,6 +136,8 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
 - Retention becomes child-drop maintenance rather than table rewrite.
 - Layout migration does not make child drop automatic; recurring archive/drop
   ownership remains an explicit promotion gate.
+- Each migrated instrument receives one complete run-once scrape validation
+  before another instrument is migrated.
 - Archives remain required before destructive migration or removal.
 - Existing SQL readers continue to query `leaderboard_entries_snapshot`
   unchanged.

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -21,6 +21,7 @@ sources:
   - tools/postgres-retire-ix-le-song-rank.sh
   - tools/postgres-pro-bass-snapshot-rewrite.sh
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -290,6 +291,27 @@ each instrument migration. Before that scrape, deploy the generation-aware
 writer so the new snapshot ID receives a dedicated child instead of routing
 to the default partition. Hold the worker again after terminal publication
 before migrating the next instrument.
+
+Validation scrape `1304` completed that full boundary on 2026-08-19 using
+run-once worker image `fstservice:snapshot-generation-a682a16c`. All `8,448`
+scope manifests completed and all `603,015` persisted page statuses were
+successful. Pro bass routed `1,395,539` rows to its `1304` child and pro guitar
+routed `3,674,245`; both default children remained empty across `1,214`
+monitor samples.
+
+Publication `92` advanced scrape `1304` after two deferred retries, public
+reads unfroze, and representative shell, songs, rankings, pro-bass, and
+pro-guitar requests returned HTTP `200`. Player notification run `220` and
+band run `221` completed with `67` and `665` events. The post-publication
+drain claimed `40` backfill accounts and completed history reconstruction for
+`17` accounts before the worker exited `0`; no worker query or registered
+queue remains.
+
+Publication-critical projection cleanup and precompute completed. Three
+best-effort retention cleanups were safely skipped because active vacuums and
+dead-tuple pressure tripped their guard. Do not rerun those cleanups blindly
+or treat their skip as permission to overlap maintenance with the next
+migration. The worker is offline; `solo-guitar` is the next single target.
 
 ### Completed stale solo rank-index retirement
 
