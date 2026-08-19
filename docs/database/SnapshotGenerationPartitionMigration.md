@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified_commit: e3d40227
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -203,6 +203,18 @@ snapshot source is null/nonpositive, the protected set is empty, or any
 protected ID is absent from that instrument. It does not retain an arbitrary
 number of recent completed scrapes and does not protect source maps belonging
 only to unnamed historical publication generations.
+
+An active or projection snapshot reference may legitimately have no physical
+row only for an authoritative empty scope. The current publication must contain
+an `alltime` source with `source_kind=empty`, null physical snapshot ID, zero
+rows, and complete status. The ready projection must independently contain
+zero rows with `source_kind=snapshot`; for active-state validation its source
+snapshot ID must equal the active snapshot ID. The plan fingerprints the
+current empty-source count and content across swap, validation, and rollback.
+Missing either side of this evidence, or any malformed empty source, fails
+closed. The complete planned reference JSON is rechecked under the migration
+advisory locks before swap DDL, after normal or resumed swap, and inside the
+final-drop transaction before the destructive decision.
 
 ## Required live gates
 
