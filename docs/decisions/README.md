@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified: 2026-08-18
+last_verified_commit: 3c467408
 sources:
   - docs/decisions/
 update_triggers:
@@ -18,6 +18,7 @@ update_triggers:
 | [0003](0003-vpn-http-proxy-isolation.md) | Proxy only Epic scrape traffic through Gluetun HTTP endpoints |
 | [0004](0004-web-deployment-modes.md) | Prefer a standalone Nginx web container while retaining an embedded fallback |
 | [0005](0005-post-scrape-modular-monolith.md) | Keep post-scrape work in a modular monolith and add same-binary isolated replay before new processes or services |
+| [0006](0006-snapshot-generation-subpartitions.md) | Subpartition physical leaderboard snapshots by retained generation |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.

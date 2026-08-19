@@ -418,15 +418,190 @@ public static class DatabaseInitializer
             PRIMARY KEY (snapshot_id, song_id, instrument, account_id)
         ) PARTITION BY LIST (instrument);
 
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_guitar    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Guitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_bass      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Bass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_drums     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Drums');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_vocals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Vocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_guitar     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralGuitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_bass       PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralBass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_vocals     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralVocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_cymbals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralCymbals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_drums      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralDrums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_guitar    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Guitar')            PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_bass      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Bass')              PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_drums     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Drums')             PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_vocals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Vocals')            PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_guitar     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralGuitar')  PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_bass       PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralBass')    PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_vocals     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralVocals')  PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_cymbals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralCymbals') PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_drums      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralDrums')   PARTITION BY LIST (snapshot_id);
+
+        DO $snapshot_defaults$
+        DECLARE
+            partition_name TEXT;
+        BEGIN
+            FOREACH partition_name IN ARRAY ARRAY[
+                'leaderboard_entries_snapshot_solo_guitar',
+                'leaderboard_entries_snapshot_solo_bass',
+                'leaderboard_entries_snapshot_solo_drums',
+                'leaderboard_entries_snapshot_solo_vocals',
+                'leaderboard_entries_snapshot_pro_guitar',
+                'leaderboard_entries_snapshot_pro_bass',
+                'leaderboard_entries_snapshot_pro_vocals',
+                'leaderboard_entries_snapshot_pro_cymbals',
+                'leaderboard_entries_snapshot_pro_drums'
+            ]
+            LOOP
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_class relation
+                    JOIN pg_namespace namespace
+                      ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = 'public'
+                      AND relation.relname = partition_name
+                      AND relation.relkind = 'p'
+                ) THEN
+                    EXECUTE format(
+                        'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.%I DEFAULT',
+                        partition_name || '_default',
+                        partition_name);
+                END IF;
+            END LOOP;
+        END
+        $snapshot_defaults$;
+
+        CREATE OR REPLACE FUNCTION ensure_leaderboard_snapshot_generation_partition(
+            p_instrument TEXT,
+            p_snapshot_id BIGINT)
+        RETURNS TEXT
+        LANGUAGE plpgsql
+        AS $snapshot_generation$
+        DECLARE
+            instrument_partition TEXT;
+            generation_partition TEXT;
+            observed_bound TEXT;
+        BEGIN
+            IF p_snapshot_id <= 0 THEN
+                RAISE EXCEPTION 'snapshot generation ID must be positive';
+            END IF;
+
+            instrument_partition := CASE p_instrument
+                WHEN 'Solo_Guitar' THEN 'leaderboard_entries_snapshot_solo_guitar'
+                WHEN 'Solo_Bass' THEN 'leaderboard_entries_snapshot_solo_bass'
+                WHEN 'Solo_Drums' THEN 'leaderboard_entries_snapshot_solo_drums'
+                WHEN 'Solo_Vocals' THEN 'leaderboard_entries_snapshot_solo_vocals'
+                WHEN 'Solo_PeripheralGuitar' THEN 'leaderboard_entries_snapshot_pro_guitar'
+                WHEN 'Solo_PeripheralBass' THEN 'leaderboard_entries_snapshot_pro_bass'
+                WHEN 'Solo_PeripheralVocals' THEN 'leaderboard_entries_snapshot_pro_vocals'
+                WHEN 'Solo_PeripheralCymbals' THEN 'leaderboard_entries_snapshot_pro_cymbals'
+                WHEN 'Solo_PeripheralDrums' THEN 'leaderboard_entries_snapshot_pro_drums'
+                ELSE NULL
+            END;
+
+            IF instrument_partition IS NULL THEN
+                RAISE EXCEPTION 'unsupported snapshot instrument: %', p_instrument;
+            END IF;
+
+            -- Existing production partitions remain regular tables until the
+            -- guarded migration converts them. The write path stays compatible
+            -- before and after that cutover.
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_class relation
+                JOIN pg_namespace namespace
+                  ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND relation.relname = instrument_partition
+                  AND relation.relkind = 'p'
+            ) THEN
+                RETURN instrument_partition;
+            END IF;
+
+            generation_partition :=
+                instrument_partition || '_s' || p_snapshot_id::TEXT;
+
+            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
+            INTO observed_bound
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS NOT NULL THEN
+                IF observed_bound IS DISTINCT FROM
+                        format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                    RAISE EXCEPTION
+                        'snapshot generation partition % has unexpected bound %',
+                        generation_partition,
+                        observed_bound;
+                END IF;
+                RETURN generation_partition;
+            END IF;
+
+            IF to_regclass('public.' || generation_partition) IS NOT NULL THEN
+                RAISE EXCEPTION
+                    'snapshot generation relation % exists outside expected parent',
+                    generation_partition;
+            END IF;
+
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended(instrument_partition, p_snapshot_id));
+
+            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
+            INTO observed_bound
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS NOT NULL THEN
+                IF observed_bound IS DISTINCT FROM
+                        format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                    RAISE EXCEPTION
+                        'snapshot generation partition % has unexpected bound %',
+                        generation_partition,
+                        observed_bound;
+                END IF;
+                RETURN generation_partition;
+            END IF;
+
+            IF to_regclass('public.' || generation_partition) IS NOT NULL THEN
+                RAISE EXCEPTION
+                    'snapshot generation relation % exists outside expected parent',
+                    generation_partition;
+            END IF;
+
+            EXECUTE format(
+                'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.%I FOR VALUES IN (%s)',
+                generation_partition,
+                instrument_partition,
+                p_snapshot_id);
+
+            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
+            INTO observed_bound
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS DISTINCT FROM
+                    format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                RAISE EXCEPTION
+                    'snapshot generation partition % has unexpected bound %',
+                    generation_partition,
+                    observed_bound;
+            END IF;
+
+            RETURN generation_partition;
+        END
+        $snapshot_generation$;
 
         CREATE INDEX IF NOT EXISTS ix_les_snapshot_song_score
             ON leaderboard_entries_snapshot (snapshot_id, song_id, instrument, score DESC);

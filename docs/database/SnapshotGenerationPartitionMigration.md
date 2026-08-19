@@ -1,0 +1,565 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
+sources:
+  - tools/postgres-snapshot-generation-migration.py
+  - tools/postgres-snapshot-generation-migration.sh
+  - tools/postgres-snapshot-generation-migration-drill.py
+  - tools/postgres-snapshot-generation-migration.test.py
+  - tools/postgres-pro-bass-snapshot-rewrite.py
+  - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/operations/live-safety.md
+update_triggers:
+  - Snapshot instrument bounds, protected-source ownership, archive/restore evidence, migration stages, capacity margins, rollback, or retention rules change.
+---
+
+# Snapshot generation partition migration
+
+## Status and boundary
+
+The fixed migration package converts one
+`leaderboard_entries_snapshot` instrument partition at a time from a regular
+table into a `LIST (snapshot_id)` partitioned table. It retains only the exact
+physical snapshot IDs still required by active state, the solo current
+projection, and the current/previous/working publication source maps.
+
+The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
+and `pro-guitar` targets completed production migration on 2026-08-18; seven
+targets remain unmigrated. Generation-aware validation scrape `1304`
+subsequently completed through publication, notifications, registration
+drain, and normal run-once worker exit. This runbook is not authorization to
+start a scrape, unfreeze reads, select alternate scratch storage, delete an
+archive, or weaken a failed gate.
+
+This package migrates physical layout only. It does not implement recurring
+generation retention. After each instrument migration, run exactly one
+guarded run-once validation scrape and hold the worker again after terminal
+publication, notification recovery, registration drain, and exit. Do not
+resume unattended normal worker scheduling after the nine instrument
+migrations until a separate archive-before-child-drop owner is implemented,
+restore-tested, documented, and accepted.
+
+Production Compose ownership remains:
+
+```text
+/home/sfenton/Docker/FestivalServiceTracker
+```
+
+Repository Compose files are templates. The only authorized temporary scratch
+device is `/dev/nvme2n1p2`, mounted at `/`. Accepted PostgreSQL relations and
+every retained generation child must finish in `pg_default` on the 4 TB FST
+PGDATA filesystem. The tool never creates an 8 TB tablespace.
+
+## Fixed targets
+
+The command accepts only these nine compiled instrument keys. There is no
+relation, table, partition-bound, or SQL argument.
+
+| Key | Fixed partition | Fixed bound |
+|---|---|---|
+| `solo-guitar` | `leaderboard_entries_snapshot_solo_guitar` | `Solo_Guitar` |
+| `solo-bass` | `leaderboard_entries_snapshot_solo_bass` | `Solo_Bass` |
+| `solo-drums` | `leaderboard_entries_snapshot_solo_drums` | `Solo_Drums` |
+| `solo-vocals` | `leaderboard_entries_snapshot_solo_vocals` | `Solo_Vocals` |
+| `pro-guitar` | `leaderboard_entries_snapshot_pro_guitar` | `Solo_PeripheralGuitar` |
+| `pro-bass` | `leaderboard_entries_snapshot_pro_bass` | `Solo_PeripheralBass` |
+| `pro-vocals` | `leaderboard_entries_snapshot_pro_vocals` | `Solo_PeripheralVocals` |
+| `pro-cymbals` | `leaderboard_entries_snapshot_pro_cymbals` | `Solo_PeripheralCymbals` |
+| `pro-drums` | `leaderboard_entries_snapshot_pro_drums` | `Solo_PeripheralDrums` |
+
+The accepted pro-bass rewrite and its historical custom archive remain
+independent evidence. Converting the current pro-bass relation into generation
+children still creates and restore-proves a new archive of that exact current
+source before dropping it. Existing pro-bass evidence must not be deleted or
+treated as scratch capacity.
+
+### Accepted production pro-bass generation migration
+
+Run `snapshot-generation-pro-bass-20260818T190019Z` retained physical
+snapshots `1302-1303` and removed obsolete `1301` from hot storage:
+
+- exact source/archive rows: `8,602,324`;
+- retained rows: `5,256,465`;
+- removed rows: `3,345,859`;
+- source bytes: `3,812,302,848`;
+- final partition tree: `2,214,182,912` bytes;
+- immediate filesystem return: `3,812,192,256` bytes;
+- swap: `0.054` seconds;
+- finalization: `79.669` seconds;
+- archive: `323,003,699` bytes, SHA-256
+  `94d499d94b21dcf17aee0ba3c006590176b17c4dd494c4b2ff8117f2d60c136e`;
+- final report SHA-256:
+  `2d9ac6d8e5252ffab70404aa87d74dab77639c1a07db012c4f5576ebc43fb98e`.
+
+The final root has only generation children `1302`, `1303`, and an empty
+default child; all root/leaf relations and indexes are in `pg_default`.
+Candidate/original retained fingerprints, per-generation hashes, 1,404 named
+publication-source rows, active/projection references, and exact public
+`/api/songs` and `/api/rankings/overview` bodies matched. Seventeen final-drop
+API-monitor samples had zero failures. Rename-back rollback ended at final
+drop; the independent read-only recovery package under
+`/home/sfenton/fst-temporary/snapshot-generation-pro-bass-20260818T190019Z`
+is now authoritative until a separate deletion decision.
+
+### Accepted production pro-guitar generation migration
+
+Run `snapshot-generation-pro-guitar-20260818T191034Z` retained physical
+snapshots `1302-1303` and removed 243 obsolete generations from hot storage:
+
+- exact source/archive rows: `1,015,961,791`;
+- retained rows: `9,239,429`;
+- removed rows: `1,006,722,362`;
+- source bytes: `588,213,903,360`;
+- final partition tree: `4,074,053,632` bytes;
+- immediate filesystem return: `588,232,740,864` bytes;
+- swap: `0.047` seconds;
+- finalization: `5,988.277` seconds;
+- archive: `42,109,010,793` bytes, SHA-256
+  `0cd7b95105959dc6618b94c2c283804f3aa1b521645746c94db7d5d35674f476`;
+- final report SHA-256:
+  `8c287af2d92f04040a6cc277860d95ac4b6a8fc83aeaf32a058c6c9fb2a3a508`.
+
+The network-none restore peaked at `448,530,678,492` bytes and proved all 245
+snapshot generations. Final live reproof scanned the complete original
+fingerprint and distribution before the short destructive DDL. The final root
+has only generation children `1302`, `1303`, and an empty default; all
+relations/indexes are in `pg_default` and no `sgm_pg_*` artifacts remain.
+Candidate/original retained evidence, 1,404 named sources, active/projection
+references, and exact public songs/rankings bodies matched. The API monitor
+recorded 1,158 successful samples and zero failures. FST free space rose from
+`186,709,254,144` to `774,941,995,008` bytes. The independent recovery package
+under
+`/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`
+remains authoritative until a separate deletion decision.
+
+### Accepted generation-aware validation scrape 1304
+
+Run-once worker image `fstservice:snapshot-generation-a682a16c` completed
+scrape `1304` from 2026-08-18 23:55 UTC through normal worker exit on
+2026-08-19 20:50 UTC:
+
+- all `8,448` solo and band scope manifests completed, all `603,015`
+  persisted page statuses were `success`, and no scope exhausted retries;
+- the network phase took `4,972.372` seconds (`82.873` minutes), `3.46%`
+  above the accepted `80.1`-minute scrape `1303` baseline and within the
+  `10%` gate;
+- pro bass routed `1,395,539` rows into
+  `leaderboard_entries_snapshot_pro_bass_s1304`, which occupies
+  `726,654,976` bytes; its full tree is now `2,940,837,888` bytes;
+- pro guitar routed `3,674,245` rows into
+  `leaderboard_entries_snapshot_pro_guitar_s1304`, which occupies
+  `2,013,806,592` bytes; its full tree is now `6,087,860,224` bytes;
+- the corresponding published source rows total exactly those child row
+  counts; pro bass has `254` nonempty `1304` sources plus two empty scopes,
+  and pro guitar has `509` `1304` sources;
+- both default children remained empty in all `1,214` monitor samples;
+- all `6,336` published solo scope sources are complete, publication `92`
+  advanced scrape `1304` to current, public reads unfroze, and representative
+  songs, rankings, pro-bass, and pro-guitar routes returned HTTP `200`;
+- notification runs `220` and `221` completed with `67` player and `665` band
+  events; the post-publication drain claimed `40` backfill accounts,
+  completed history reconstruction for `17` accounts, inserted `789`
+  sessions, and issued `65,728` history API calls;
+- the worker exited `0`, durable worker status is offline, no worker query
+  remains, and registered backfill/history queues are empty.
+
+Publication preparation required two deferred retries before attempt three
+committed. Publication-critical projection cleanup and precompute completed.
+Rank-history, band-rank-history, and service-level retention cleanup were
+safely skipped because three active vacuums and `16,124,112` watched dead
+tuples tripped the database-pressure guard; they were not counted as scrape
+failures. FST free space moved from `774,941,876,224` to approximately
+`753.7` GB, with a `63,718,576,128`-byte peak transient excursion.
+
+The terminal evidence package is:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-pro-guitar-scrape-20260818T235135Z
+```
+
+The worker is held offline. The next migration target is `solo-guitar`; do
+not migrate another instrument in the same scrape interval.
+
+## Current protected-source expectation
+
+Validation scrape `1304` is current and `1303` is previous. Publication
+generations `92` and `89` currently resolve to those scrapes. Observed
+pro-bass and pro-guitar source maps reuse physical IDs `1302`, `1303`, and
+`1304`. That is planning evidence, not a hard-coded retention list.
+
+For each instrument, `plan` independently derives and groups IDs from:
+
+1. `leaderboard_snapshot_state.active_snapshot_id`;
+2. `solo_current_projection_scope.source_snapshot_id`;
+3. `leaderboard_published_scope_source.source_snapshot_id` for publication
+   generations named by
+   `scrape_publication_state.current_publication_id`,
+   `previous_publication_id`, and `working_publication_id`.
+
+The stage fails closed if a named publication does not resolve, a named
+snapshot source is null/nonpositive, the protected set is empty, or any
+protected ID is absent from that instrument. It does not retain an arbitrary
+number of recent completed scrapes and does not protect source maps belonging
+only to unnamed historical publication generations.
+
+## Required live gates
+
+Every stage rechecks the fixed host and database identity. Do not continue if
+any gate fails.
+
+- PostgreSQL is the exact `fst-postgres` container in project
+  `festivalservicetracker`, from the production Compose working directory.
+- PostgreSQL 17 is healthy and its `data_directory` is inside the single
+  read-write `/var/lib/postgresql/data` bind mount beneath
+  `/mnt/docker-storage`.
+- Container ID/image, PGDATA source/device, database OID, system identifier,
+  and top-parent OID still match the `check` report.
+- `fstworker` is stopped and durable worker status is offline/stopped/idle.
+- No scrape or scrape phase is running.
+- Public reads are unfrozen, current and previous publication IDs exist,
+  working publication is null, and publication/max-score mutation intents are
+  empty.
+- There are no waiting locks, worker/scrape backends, competing maintenance
+  backends, or locks on the top parent/current target.
+- The parent is exactly `LIST (instrument)` in `pg_default`; the selected
+  partition is attached with its fixed bound.
+- No `sgm_*` artifact from another instrument exists. A rollback candidate
+  intentionally blocks starting another instrument until it is reconciled.
+- Representative `/api/songs` and `/api/rankings/overview` body/header
+  fingerprints remain exact; readiness/service-info routes remain HTTP 200
+  with the same content type.
+
+The initial production `check` also requires a clean repository checkout. The
+workspace marker binds the commit and SHA-256 of the migration/drill entry
+points, so changing code requires a new workspace.
+
+## Archive and storage rules
+
+Before any source drop, the selected original is streamed to a PostgreSQL
+custom archive on `/dev/nvme2n1p2`. The archive package contains:
+
+- the exact parent and selected instrument only;
+- archive SHA-256 and byte count;
+- `pg_restore -l` TOC with the selected table, table data, primary key, and
+  score index;
+- the source catalog;
+- source OID/relfilenode/heap/index/total bytes and insert/update/delete
+  counters before and after the stream;
+- the protected fingerprint and publication/database identity.
+
+The before/after fence must be unchanged. The archive is then restored into a
+deterministic, run-owned, `--network none` PostgreSQL 17 container. The restore
+must prove the complete snapshot-ID distribution, whole-archive fingerprint,
+protected distribution, source catalog, cleanup of transient PGDATA, container
+removal, and continued archive checksum.
+
+The archive survives `drop`. Deletion is a separate retention decision outside
+this migration. Never count retained archives as reclaimable bytes.
+
+## Replacement shape
+
+`build` runs only after the archive restore proof and uses `pg_default`
+directly. For the derived protected set, it creates:
+
+```text
+<instrument partition> PARTITION BY LIST (snapshot_id)
+├── <instrument partition>_s<protected ID>
+├── ... one child for every and only protected ID
+└── <instrument partition>_default   (empty)
+```
+
+The root has a partitioned primary key on
+`(snapshot_id, song_id, instrument, account_id)` and a partitioned score index
+on `(snapshot_id, song_id, instrument, score DESC)`. The fixed instrument
+check allows the short-lock top-parent attach to avoid rescanning retained
+data. Validation requires both root indexes to attach to the corresponding
+top-parent indexes and every root/child relation to resolve to `pg_default`.
+
+Before detaching the original, `swap` adds and validates a run-owned exact
+instrument check while the source is still attached to its known instrument
+bound. The detached original retains that check, so rename-back rollback can
+reattach without a full-table validation scan. Rollback removes the temporary
+check only after the original is attached again.
+
+Check validation runs during `build`, outside the short swap transaction, with
+the configured long build timeout. `swap` only reverifies the already-validated
+constraint before taking the top-parent lock.
+
+Only protected rows are copied. The original remains attached throughout the
+long copy/index work.
+
+## Recurring retention ownership
+
+The subpartition layout prevents future reclaim from requiring another
+instrument-wide rewrite, but it does not prevent growth unless obsolete
+children are actively retired.
+
+A follow-up retention package must:
+
+1. derive protected IDs from current/previous/working publication source maps,
+   active snapshot state, and current projection sources;
+2. inventory exact generation children and require the default child to remain
+   empty;
+3. create a custom archive for each nonempty unprotected child, including its
+   heap/index/catalog/checksum and source ownership;
+4. restore-prove that archive in isolated PostgreSQL before any live drop;
+5. drop one exact child under short lock/statement timeouts, no `CASCADE`, and
+   verify parent/index/publication/API parity plus returned filesystem bytes;
+6. retain the archive until a separate product-retention decision.
+
+Empty generation children may be dropped without a data archive only after
+their exact zero-row and zero-reference state is recorded. No numeric
+“latest-two” rule is sufficient because snapshot reuse can keep older physical
+IDs behind current or previous publications.
+
+## Capacity and emergency cancellation
+
+Scratch preflight budgets 2.20 times source bytes for the custom archive plus
+its independent final-drop recovery copy, 1.25 times source bytes plus 10 GiB
+for isolated restore PGDATA, and a fixed 20 GiB scratch reserve.
+Before recalculating free space, `drop` removes only run-owned, regular
+same-directory `.partial-*` recovery-copy files left by an interrupted copy
+and fsyncs each affected directory.
+
+The 4 TB build model uses the accepted pro-bass live profile with fixed
+conservative margins:
+
+- replacement: 1.50 times proportional retained source bytes, minimum 64 MiB;
+- WAL: 1.50 times replacement, minimum 512 MiB;
+- temp: 0.75 times replacement;
+- failure reserve: one replacement;
+- emergency 4 TB floor: `60,392,999,803` bytes.
+
+Only one instrument is built at a time. A filesystem monitor samples through
+archive, restore, and build. Crossing the scratch reserve or the 4 TB floor
+writes `reports/emergency-floor-breach.json`, cancels/terminates only the
+migration application backends (or stops the owned restore container), and
+durably blocks that workspace. Do not delete or edit breach evidence; reconcile
+PostgreSQL/WAL/storage and start a new run.
+
+## Stages
+
+| Stage | Mutation | Result |
+|---|---|---|
+| `check` | none | Claims the empty workspace, captures host/database/publication/API identity, and classifies the fixed source. |
+| `plan` | none | Derives exact protected IDs, protected fingerprints/reference parity, source catalog/fence, and archive capacity. |
+| `archive` | scratch only | Writes custom archive, checksum, TOC, catalog, and unchanged source fence. |
+| `restore` | isolated scratch only | Restores in network-none PostgreSQL 17, validates all archived rows/catalog, then removes transient PGDATA/container. |
+| `build` | creates detached 4 TB candidate | Copies only protected rows into exact generation children plus empty default; builds compatible partitioned indexes. |
+| `swap` | short-lock DDL | Validates the original instrument check, detaches/renames the original, attaches the candidate, and writes committed-swap evidence with the real duration. |
+| `validate` | none | Proves retained fingerprints, references, publication/API parity, child/index catalog, archive, and `pg_default`. |
+| `rollback` | short-lock DDL | Accepts committed-swap evidence even if the terminal swap report tore, reattaches the checked original without a full scan, removes its temporary check, and retains the failed candidate. |
+| `drop` | destructive DDL | Requires accepted validation and pre-drop API parity, then holds both advisory fences while rechecking publication, protected IDs, target fingerprint, original identity/archive reproof, and destructive DDL; normalizes names and revalidates `pg_default`/API/archive. |
+
+No stage uses `CASCADE`.
+
+## Operator sequence
+
+Create one new empty workspace per instrument on the authorized scratch
+filesystem. The run ID and path below are examples; substitute the fixed key
+being processed and a unique timestamp.
+
+```bash
+cd /home/sfenton/FortniteFestivalLeaderboardScraper
+
+instrument=solo-guitar
+run_id="snapshot-generation-${instrument}-20260818T120000Z"
+scratch="/home/sfenton/fst-temporary/${run_id}"
+mkdir -m 700 "$scratch"
+device_id="$(findmnt -T "$scratch" -n -o MAJ:MIN)"
+
+common=(
+  --instrument "$instrument"
+  --scratch-root "$scratch"
+  --expected-device-id "$device_id"
+  --run-id "$run_id"
+)
+
+tools/postgres-snapshot-generation-migration.sh \
+  check "${common[@]}" \
+  --claim-workspace \
+  --api-base "<service-base-url>"
+
+tools/postgres-snapshot-generation-migration.sh plan "${common[@]}"
+tools/postgres-snapshot-generation-migration.sh \
+  archive "${common[@]}" --execute
+tools/postgres-snapshot-generation-migration.sh \
+  restore "${common[@]}" --execute
+tools/postgres-snapshot-generation-migration.sh \
+  build "${common[@]}" --execute
+tools/postgres-snapshot-generation-migration.sh \
+  swap "${common[@]}" --execute
+tools/postgres-snapshot-generation-migration.sh \
+  validate "${common[@]}" --api-base "<service-base-url>"
+```
+
+At this point choose exactly one path.
+
+Accepted finalization:
+
+```bash
+tools/postgres-snapshot-generation-migration.sh \
+  drop "${common[@]}" \
+  --execute \
+  --api-base "<service-base-url>"
+```
+
+Rename-back rollback before `drop`:
+
+```bash
+tools/postgres-snapshot-generation-migration.sh \
+  rollback "${common[@]}" \
+  --execute \
+  --api-base "<service-base-url>"
+```
+
+Do not start another instrument until the current target has either completed
+`drop` with no migration artifacts or rollback artifacts have been separately
+reconciled. Recheck 4 TB and scratch capacity from the next target's reports;
+do not extrapolate the previous instrument.
+
+## Resumption and evidence handling
+
+Each success report is typed, dependency-checksummed, integrity-hashed, written
+atomically in the workspace filesystem, and fsynced with its directory.
+Archive/build start evidence is durable before long work begins.
+
+If a final stage report is zero-length or malformed after a process
+interruption, the next invocation moves it to `recovered-evidence/`, records a
+recovery proof, inspects the archive/database state, and reconstructs the
+report only when the committed state is exact. Complete restore validation and
+cleanup evidence is reused; a partial restore evidence set is preserved before
+the isolated restore is repeated. Valid JSON with a failed integrity hash is
+not treated as a torn write and blocks automatically.
+
+`swap.committed.json` is separate from the terminal stage report. It is written
+immediately after the DDL transaction with the actual elapsed time and
+duration-bound decision. A catalog-swapped state without measured committed
+evidence is rollback-only; rerunning `swap` cannot replace the lost duration
+with a near-zero idempotent measurement.
+
+PostgreSQL statistics counters are not durable identity: crash recovery can
+reset them. Stable rollback identity uses OID/relfilenode and physical sizes.
+If mutation counters differ from the plan, rollback recomputes the complete
+original fingerprint and per-snapshot distribution and requires exact equality
+with the isolated restore report before reattachment.
+
+Final drop keeps one transaction open from reproof through DDL. Target and
+original relations are held in read-compatible `SHARE` mode while complete
+fingerprints and per-snapshot distributions are recomputed, and a five-second
+public API monitor runs beside the scan. The PostgreSQL session pauses at a
+decision boundary with those locks still held; any API-monitor failure rolls
+the transaction back. Monitor shutdown must be confirmed; a join timeout or
+still-running probe is also a failure. Only after a clean, stopped monitor does
+the same session re-read and exactly compare the complete root and per-child
+bound/default, tablespace, owner, column/default/nullability, constraint,
+leaf/root-index (including every index tablespace), and parent-index-attachment
+catalog under those locks. It then
+acquires the advisory fences, rechecks the unfrozen publication and protected
+IDs, and executes the short DDL. The resulting complete shape/catalog is
+validated again inside the uncommitted transaction before `COMMIT`.
+The transaction explicitly disables
+`idle_in_transaction_session_timeout` locally because the locked decision
+interval includes API-monitor shutdown and archive verification.
+
+Before the long reproof starts, `drop` binds the run ID, plan ID, archive,
+manifest, plan/archive/restore/validation reports, and their SHA-256 chain. It
+creates independent byte-for-byte recovery copies of every bound file, verifies
+their checksums, makes them read-only, and opens both source and recovery files
+under kernel read leases. Each recovery inode also has an anchor inside a
+read-only recovery-package directory, so removing or replacing the working
+copy cannot orphan the verified bytes. Scratch capacity is checked before
+copying. A checksummed `drop.recovery.json` binding the run, plan, archive, and
+all recovery paths is itself copied and anchored by a checksum-bearing file
+name before destructive DDL. The package includes copied check, plan, archive,
+restore, and validation reports, so recovery never needs mutable working
+metadata. After the API monitor stops, the tool rechecks source/recovery path
+identity, metadata, complete archive checksum, manifest checksum, and report
+chain before allowing phase two. A removed or replaced path rolls the database
+transaction back while the independent recovery package remains intact.
+
+After phase-two DDL but before `COMMIT`, a second decision boundary rechecks the
+report/manifest hash chain, source and recovery inode/size/link-count/timestamp
+identity, and whether any writer requested a lease break. A same-inode writer
+that starts after this last check is kernel-blocked until the destructive
+transaction, post-commit archive/recovery checks, API/catalog validation, and
+durable `drop.json` report are complete. The report names the independent
+archive copy as authoritative; the original path may change after leases are
+released without destroying recovery. Recovery copies remain governed by the
+same separate archive-deletion decision. If the process dies after `COMMIT`
+but before `drop.json`, the next `drop` invocation recognizes the finalized
+catalog, loads the pre-commit recovery manifest, verifies the anchored recovery
+archive and copied lifecycle reports, and reconstructs the terminal report
+without trusting the potentially changed original archive path or working
+reports. Terminal `drop.json` dependencies point to the copied evidence.
+At report publication, the tool revalidates and, when needed, repairs each
+writable recovery-copy path from its read-only anchor. The checksum-addressed
+recovery manifest has working and anchored names, so renaming the package
+directory cannot strand recovery or invalidate terminal dependency paths.
+Resumed recovery does not require the original package directory to remain at
+its initial name.
+
+Never edit reports, manifests, source fences, checksums, or workspace markers.
+
+## Validation package
+
+Structural tests:
+
+```bash
+bash -n \
+  tools/postgres-snapshot-generation-migration.sh \
+  tools/postgres-snapshot-generation-migration-drill.sh
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-snapshot-generation-migration.test.py
+```
+
+Isolated PostgreSQL 17 lifecycle:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-snapshot-generation-migration-drill.py \
+  --work-root \
+  artifacts/snapshot-generation-migration-drills/<new-empty-run>
+```
+
+The drill runs independent rollback, guarded final-drop, write-lease/torn-
+commit recovery, recovery-publication, and package-rename lanes. It proves
+custom
+archive/TOC, network-none restore and cleanup, exact protected children plus an
+empty default, top-parent index attachment, rename-back rollback, final drop,
+archive retention, and torn success-report recovery for archive, restore,
+build, swap, validate, and drop. The rollback lane force-kills/restarts
+PostgreSQL, resets cumulative statistics, and requires complete archive
+fingerprint/distribution reproof before the original can be reattached.
+The final-drop lane adds an unexpected child-local `NOT VALID` check both
+before `validate` and after accepted validation, proving neither the
+independent build contract nor the locked catalog guard can bless it. It also
+removes/replaces the archive at both the pre-DDL and post-DDL/pre-commit
+decision boundaries, proves that neither attempt commits destructive DDL,
+restores the original path from the independent recovery copy, and then
+completes the accepted drop. The write-lease lane starts a same-inode archive
+writer at commit entry, proves the kernel blocks it through `COMMIT`, kills the
+migration before `drop.json`, lets the writer corrupt the original, and proves
+the next invocation reconstructs the committed drop solely from the anchored
+recovery package. The publication lane proves its read-only anchor cannot be
+unlinked and repairs the authoritative working path after it is replaced by a
+hard link to the source. The package-rename
+lane renames the complete anchor directory at report entry and proves the
+process can be killed there and the next invocation still publishes from the
+revalidated working archive and copied terminal dependencies.
+
+The implementation validation on 2026-08-18 used 1,400 synthetic source rows
+per lane (`1301` purge; `1302-1303` retained), PostgreSQL `postgres:17`, and
+completed all five lanes without a production connection or mutation.
+Synthetic
+sizes and timings are correctness evidence only, not production performance
+estimates.
+
+`SnapshotGenerationPartitionTests` additionally proves that dropping one
+generation child removes only that snapshot, leaves another generation
+readable through the unchanged top parent, keeps the default child empty, and
+preserves both remaining leaf-index attachments. This is layout evidence only;
+it is not the recurring archive/drop owner described above.

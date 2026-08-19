@@ -35,6 +35,9 @@ public static class LeaderboardSpoolWriterFactory
         try
         {
             using var conn = db.DataSource.OpenConnection();
+            if (scrapeId > 0)
+                EnsureSnapshotGenerationPartition(conn, scrapeId, activeInstrument);
+
             using var tx = conn.BeginTransaction();
             using (var sc = conn.CreateCommand())
             {
@@ -194,6 +197,42 @@ public static class LeaderboardSpoolWriterFactory
             throw;
         }
     }
+
+    private static void EnsureSnapshotGenerationPartition(
+        Npgsql.NpgsqlConnection connection,
+        long snapshotId,
+        string instrument)
+    {
+        using var transaction = connection.BeginTransaction();
+        using (var timeout = connection.CreateCommand())
+        {
+            timeout.Transaction = transaction;
+            timeout.CommandText = """
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '30s';
+                """;
+            timeout.ExecuteNonQuery();
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandTimeout = 30;
+            command.CommandText = BuildEnsureSnapshotGenerationPartitionSql();
+            command.Parameters.AddWithValue("snapshotId", snapshotId);
+            command.Parameters.AddWithValue("instrument", instrument);
+            command.ExecuteScalar();
+        }
+
+        transaction.Commit();
+    }
+
+    internal static string BuildEnsureSnapshotGenerationPartitionSql() =>
+        """
+        SELECT ensure_leaderboard_snapshot_generation_partition(
+            @instrument,
+            @snapshotId)
+        """;
 
     internal static string BuildSnapshotInsertSql() =>
         """

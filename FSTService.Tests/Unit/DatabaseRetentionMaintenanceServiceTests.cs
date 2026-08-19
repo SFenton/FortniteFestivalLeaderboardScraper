@@ -68,6 +68,32 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithGenerationLayout_DoesNotRunLegacyRewrite()
+    {
+        SeedSnapshotRetentionCandidate(useLegacyLayout: false);
+        var sut = CreateSut(new DatabaseMaintenanceOptions
+        {
+            SnapshotRetentionRewriteEnabled = true,
+            SnapshotRetentionReportOnlyWhenDisabled = true,
+            SnapshotRetentionMinimumEstimatedPurgeBytes = 0,
+            SnapshotRetentionMaxPartitionsPerRun = 1,
+            MetadataTtlCleanupEnabled = false,
+        });
+
+        var result = await sut.RunAsync(CancellationToken.None);
+
+        Assert.Empty(result.SnapshotRetention.Candidates);
+        Assert.Empty(result.SnapshotRetention.RewriteResults);
+        Assert.Equal(50, CountSnapshotRows("Solo_Guitar"));
+        Assert.Equal(30, CountSnapshotRows("Solo_Guitar", 100));
+        Assert.Equal(
+            30,
+            CountRows(
+                "leaderboard_entries_snapshot_solo_guitar_s100",
+                "TRUE"));
+    }
+
+    [Fact]
     public async Task RunAsync_WithMetadataTtlCleanup_PrunesOnlyUnpinnedMetadataRows()
     {
         SeedMetadataRetentionRows();
@@ -210,8 +236,32 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
             NullLogger<DatabaseRetentionMaintenanceService>.Instance);
     }
 
-    private void SeedSnapshotRetentionCandidate()
+    private void SeedSnapshotRetentionCandidate(bool useLegacyLayout = true)
     {
+        if (useLegacyLayout)
+        {
+            Execute("""
+                ALTER TABLE leaderboard_entries_snapshot
+                    DETACH PARTITION
+                        leaderboard_entries_snapshot_solo_guitar;
+                DROP TABLE
+                    leaderboard_entries_snapshot_solo_guitar CASCADE;
+                CREATE TABLE
+                    leaderboard_entries_snapshot_solo_guitar
+                    PARTITION OF leaderboard_entries_snapshot
+                    FOR VALUES IN ('Solo_Guitar');
+                """);
+        }
+        else
+        {
+            Execute("""
+                SELECT ensure_leaderboard_snapshot_generation_partition(
+                    'Solo_Guitar', ids.snapshot_id)
+                FROM unnest(ARRAY[100, 101, 102]::BIGINT[])
+                    AS ids(snapshot_id);
+                """);
+        }
+
         var now = DateTime.UtcNow;
         ScrapeRunTestHelper.EnsureAllocated(
             _fixture.DataSource,

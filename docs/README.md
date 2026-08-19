@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-17
-last_verified_commit: 57efc5bd
+last_verified: 2026-08-18
+last_verified_commit: 3c467408
 sources:
   - README.md
   - AGENTS.md
@@ -10,6 +10,7 @@ sources:
   - docs/architecture/replay-artifacts.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -55,6 +56,7 @@ again. Verify their preconditions and current code before execution.
 - [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
 - [Pro-bass snapshot archive/rewrite pilot](database/ProBassSnapshotRewritePilot.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
+- [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
 - [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)

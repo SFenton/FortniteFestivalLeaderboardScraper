@@ -74,6 +74,9 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
 This proves current, previous, and working publication physical source IDs are
 protected through the publication-generation-to-scrape mapping, while stale
 source maps for unnamed generations do not remain protected forever.
+It also keeps the legacy instrument-rewrite tests on an explicit regular
+partition and proves the generic retention service skips a generation-
+subpartitioned root rather than rewriting or deleting its children.
 
 Pro-bass pilot structural and isolated lifecycle validation:
 
@@ -127,6 +130,22 @@ table/data/indexes while detached and attaching afterward must produce
 `308,536,699` rows, 125 snapshot IDs, exact child catalog/checksum parity, zero
 validation temp bytes, exact per-snapshot content fingerprints, full canonical
 catalog parity, and complete restore-PGDATA cleanup.
+
+Snapshot-generation schema/write routing:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationPartitionTests|FullyQualifiedName~LeaderboardSpoolWriterTests'
+```
+
+This proves fresh instrument partitions are subpartitioned by `snapshot_id`,
+default children exist, the fixed ensure helper is idempotent and rejects
+unknown instruments, rows route to the exact generation child, and the spool
+writer invokes the helper before snapshot insertion. It also proves an exact
+generation-child drop removes only that snapshot while another generation,
+its two index attachments, and the empty default child remain intact. This
+does not substitute for the separately required recurring archive-before-drop
+retention package.
 
 Focused dead/no-op phase cleanup validation:
 

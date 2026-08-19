@@ -538,6 +538,29 @@ The held worker definition is updated to official merge image `2bc7e9f9` but
 remains Created/offline. Its first publication-switch validation is deferred
 to the next natural capacity-permitted scrape card.
 
+## Physical snapshot generation routing
+
+Snapshot reuse remains the first write-reduction gate: unchanged scopes retain
+their prior published physical source and write no duplicate snapshot rows.
+For changed scopes, `LeaderboardSpoolWriterFactory` ensures the exact
+instrument/snapshot generation child exists before inserting.
+
+The PostgreSQL helper is fixed to the nine supported instruments and validates
+the resulting `FOR VALUES IN (snapshot_id)` bound. Concurrent batch writers
+serialize first-child creation with an advisory transaction lock. Before an
+instrument is migrated, the helper detects its regular-table layout and
+returns without mutation, so the same worker image is compatible across the
+rolling migration.
+
+Fresh schemas also include an empty default child beneath every instrument.
+Direct test/diagnostic inserts remain possible, while normal scrape writes
+route to a named generation child. After all live instruments are migrated,
+a future guarded retention owner can archive and drop obsolete generation
+children without rewriting the full instrument partition. That owner is not
+part of the migration candidate: normal scheduling remains held until
+archive-before-child-drop, default-child auditing, rollback, and public parity
+are implemented and accepted.
+
 ## Service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention

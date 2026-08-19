@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-17
-last_verified_commit: bd11b749
+last_verified: 2026-08-19
+last_verified_commit: a682a16c
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -21,6 +21,7 @@ sources:
   - tools/postgres-retire-ix-le-song-rank.sh
   - tools/postgres-pro-bass-snapshot-rewrite.sh
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
   - Production ownership, preflight, maintenance, parity, publication, storage, or recovery rules change.
 ---
@@ -35,9 +36,9 @@ update_triggers:
 - All database data, scratch, exports, migration artifacts, repacks, and
   retention work stay on the 4 TB FST drive unless the operator explicitly
   overrides the rule.
-- The only current alternate-device override is the temporary pro-bass pilot
-  archive/restore workspace on `/dev/nvme2n1p2`, mounted at `/`. It does not
-  authorize a permanent FST store or PostgreSQL tablespace there.
+- The only current alternate-device override is temporary snapshot migration
+  archive/restore/recovery work on `/dev/nvme2n1p2`, mounted at `/`. It does
+  not authorize a permanent FST store or PostgreSQL tablespace there.
 - Keep secrets out of commands, logs, documentation, artifacts, e-mail, and
   commits.
 
@@ -243,6 +244,74 @@ lock timeout, a `30s` statement timeout, and no `CASCADE`. The old detached
 relation remains until validation. A mismatch or timeout aborts the attempt;
 do not lengthen timeouts or retry blindly. Follow the
 [pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
+
+### Completed pro-bass generation subpartition migration
+
+The guarded generation migration completed on 2026-08-18 from repository
+commit `f89d444b`. Run
+`snapshot-generation-pro-bass-20260818T190019Z` converted
+`leaderboard_entries_snapshot_pro_bass` from a regular instrument partition
+into `LIST (snapshot_id)` children for protected IDs `1302-1303` plus an empty
+default child.
+
+The run archive/restore-proved `8,602,324` rows, retained `5,256,465`, removed
+`3,345,859` obsolete `1301` rows, and returned `3,812,192,256` filesystem
+bytes. The final tree is `2,214,182,912` bytes in `pg_default`; no
+`sgm_pb_*` artifacts remain. Swap time was `0.054` seconds and finalization
+was `79.669` seconds. Candidate/original fingerprints, generation
+distributions, publication sources, active/projection references, index
+attachments/tablespaces, and exact public song/ranking responses matched.
+
+Rename-back rollback ended at final drop. Recovery now uses the independent
+read-only archive/evidence package at
+`/home/sfenton/fst-temporary/snapshot-generation-pro-bass-20260818T190019Z`;
+its archive SHA-256 is
+`94d499d94b21dcf17aee0ba3c006590176b17c4dd494c4b2ff8117f2d60c136e`.
+Keep the package until a separate deletion decision. The worker remains held
+until the generation-aware worker is deployed for the next scrape.
+
+The guarded pro-guitar generation migration then completed on 2026-08-18 from
+the same branch. Run `snapshot-generation-pro-guitar-20260818T191034Z`
+archive/restore-proved `1,015,961,791` rows across 245 generations, retained
+`9,239,429` rows from `1302-1303`, removed `1,006,722,362` rows, and returned
+`588,232,740,864` filesystem bytes. The final `4,074,053,632`-byte tree is in
+`pg_default`, its default child is empty, and no `sgm_pg_*` artifacts remain.
+
+Swap time was `0.047` seconds. The complete locked original reproof plus final
+drop/report took `5,988.277` seconds; 1,158 API-monitor samples had zero
+failures and exact public song/ranking hashes remained unchanged. Rename-back
+rollback ended at final drop. The independent recovery package is
+`/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`;
+archive SHA-256 is
+`0cd7b95105959dc6618b94c2c283804f3aa1b521645746c94db7d5d35674f476`.
+Keep it until a separate deletion decision.
+
+Operator cadence now requires one successful scrape/publication window after
+each instrument migration. Before that scrape, deploy the generation-aware
+writer so the new snapshot ID receives a dedicated child instead of routing
+to the default partition. Hold the worker again after terminal publication
+before migrating the next instrument.
+
+Validation scrape `1304` completed that full boundary on 2026-08-19 using
+run-once worker image `fstservice:snapshot-generation-a682a16c`. All `8,448`
+scope manifests completed and all `603,015` persisted page statuses were
+successful. Pro bass routed `1,395,539` rows to its `1304` child and pro guitar
+routed `3,674,245`; both default children remained empty across `1,214`
+monitor samples.
+
+Publication `92` advanced scrape `1304` after two deferred retries, public
+reads unfroze, and representative shell, songs, rankings, pro-bass, and
+pro-guitar requests returned HTTP `200`. Player notification run `220` and
+band run `221` completed with `67` and `665` events. The post-publication
+drain claimed `40` backfill accounts and completed history reconstruction for
+`17` accounts before the worker exited `0`; no worker query or registered
+queue remains.
+
+Publication-critical projection cleanup and precompute completed. Three
+best-effort retention cleanups were safely skipped because active vacuums and
+dead-tuple pressure tripped their guard. Do not rerun those cleanups blindly
+or treat their skip as permission to overlap maintenance with the next
+migration. The worker is offline; `solo-guitar` is the next single target.
 
 ### Completed stale solo rank-index retirement
 
