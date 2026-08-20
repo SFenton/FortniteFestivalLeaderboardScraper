@@ -194,6 +194,7 @@ public class ScraperWorkerTests : IDisposable
         Assert.False(opts.SetupOnly);
         Assert.False(opts.RunOnce);
         Assert.Equal(0, opts.ResumeScrapeId);
+        Assert.Equal(2, opts.RivalsMaxDegreeOfParallelism);
         Assert.False(opts.ResolveOnly);
         Assert.Null(opts.TestSongQuery);
     }

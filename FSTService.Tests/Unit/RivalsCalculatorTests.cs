@@ -318,6 +318,114 @@ public sealed class RivalsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public async Task PrepareCurrentScoresForAccounts_groups_and_reuses_profiles()
+    {
+        using var persistence = CreatePersistence();
+        var guitarDb =
+            persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb =
+            persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        for (var index = 0;
+             index < RivalsCalculator.MinUserSongsPerInstrument;
+             index++)
+        {
+            SeedEntries(
+                guitarDb,
+                $"guitar_{index}",
+                ("user", 10_000 - index),
+                ("rival", 9_000 - index));
+            SeedEntries(
+                bassDb,
+                $"bass_{index}",
+                ("user", 20_000 - index),
+                ("rival", 19_000 - index));
+        }
+
+        var calculator = CreateCalculator(persistence);
+        var prepared = await calculator.PrepareCurrentScoresForAccountsAsync(
+            ["user", "missing"]);
+
+        Assert.Equal(2, prepared.Count);
+        Assert.Equal(
+            RivalsCalculator.MinUserSongsPerInstrument,
+            prepared["user"].ScoresByInstrument["Solo_Guitar"].Count);
+        Assert.Equal(
+            RivalsCalculator.MinUserSongsPerInstrument,
+            prepared["user"].ScoresByInstrument["Solo_Bass"].Count);
+        Assert.Equal(
+            calculator.CountValidCombos("user"),
+            prepared["user"].TotalCombos);
+        Assert.Equal(0, prepared["missing"].ScoreCount);
+        Assert.Equal(0, prepared["missing"].TotalCombos);
+
+        var direct = calculator.ComputeRivals("user");
+        var reused = calculator.ComputeRivals(
+            "user",
+            dirtyInstruments: null,
+            onProgress: null,
+            preparedScoresByInstrument:
+                prepared["user"].ScoresByInstrument);
+        Assert.Equal(direct.CombosComputed, reused.CombosComputed);
+        Assert.Equal(
+            direct.Rivals
+                .Select(static row => (
+                    row.InstrumentCombo,
+                    row.Direction,
+                    row.RivalAccountId))
+                .OrderBy(static row => row)
+                .ToArray(),
+            reused.Rivals
+                .Select(static row => (
+                    row.InstrumentCombo,
+                    row.Direction,
+                    row.RivalAccountId))
+                .OrderBy(static row => row)
+                .ToArray());
+
+        var directSelection =
+            calculator.ComputeSelectionState("user");
+        var reusedSelection =
+            calculator.ComputeSelectionState(
+                "user",
+                preparedScoresByInstrument:
+                    prepared["user"].ScoresByInstrument);
+        Assert.Equal(
+            directSelection.InstrumentStates
+                .Select(static state => (
+                    state.Instrument,
+                    state.SongCount,
+                    state.IsEligible))
+                .OrderBy(static state => state.Instrument)
+                .ToArray(),
+            reusedSelection.InstrumentStates
+                .Select(static state => (
+                    state.Instrument,
+                    state.SongCount,
+                    state.IsEligible))
+                .OrderBy(static state => state.Instrument)
+                .ToArray());
+        Assert.Equal(
+            directSelection.Fingerprints
+                .Select(static row => (
+                    row.Instrument,
+                    row.SongId,
+                    row.UserRank,
+                    row.NeighborhoodSignature))
+                .OrderBy(static row => row.Instrument)
+                .ThenBy(static row => row.SongId)
+                .ToArray(),
+            reusedSelection.Fingerprints
+                .Select(static row => (
+                    row.Instrument,
+                    row.SongId,
+                    row.UserRank,
+                    row.NeighborhoodSignature))
+                .OrderBy(static row => row.Instrument)
+                .ThenBy(static row => row.SongId)
+                .ToArray());
+    }
+
+    [Fact]
     public void ComputeRivals_writes_pro_drums_family_scope_for_aggregate_family_overlap()
     {
         using var persistence = CreatePersistence();

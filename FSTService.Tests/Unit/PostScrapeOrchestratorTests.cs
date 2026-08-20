@@ -264,8 +264,11 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     private PostScrapeOrchestrator CreateOrchestratorWithImprovementNotifications(
-        ImprovementNotificationOptions? improvementOptions = null)
+        ImprovementNotificationOptions? improvementOptions = null,
+        ScraperOptions? scraperOptions = null)
     {
+        var resolvedScraperOptions =
+            scraperOptions ?? new ScraperOptions();
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
@@ -276,9 +279,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             _progress,
             new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
             new ResponseCacheService(TimeSpan.FromMinutes(5)),
-            Substitute.For<ILogger<RivalsOrchestrator>>());
+            Substitute.For<ILogger<RivalsOrchestrator>>(),
+            Options.Create(resolvedScraperOptions));
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
-        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(resolvedScraperOptions), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var notificationOptions = Options.Create(improvementOptions ?? new ImprovementNotificationOptions
         {
             Enabled = true,
@@ -308,10 +312,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             new BandScrapePhase(
                 scraper,
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                _pathDataStore, _pool, _progress, Options.Create(resolvedScraperOptions),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions()), _log,
+            Options.Create(resolvedScraperOptions), _log,
             _registrationMutations, null,
             improvementNotifications: improvementNotifications,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
@@ -2287,6 +2291,55 @@ public class PostScrapeOrchestratorTests : IDisposable
         var status = notifications.GetPublicationStatus();
         Assert.Equal(publishedScrapeId, status.MarkerScrapeId);
         Assert.Equal("completed", status.MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_AllowsCompletedMarkerWhileFrozen()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications(
+            scraperOptions: new ScraperOptions
+            {
+                RunOnce = true,
+                ResumeScrapeId = 1305,
+                EnabledPhases = ScrapePhase.SoloRankings,
+            });
+        var publishedScrapeId = PublishCompletedScrape();
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            "later-candidate");
+
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        var status = notifications.GetPublicationStatus();
+        Assert.Equal(publishedScrapeId, status.MarkerScrapeId);
+        Assert.Equal("completed", status.MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_RejectsCompletedMarkerWhileFrozenOutsideResume()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            "later-candidate");
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+                    CancellationToken.None));
+
+        Assert.Contains("public reads are frozen", exception.Message);
     }
 
     [Fact]

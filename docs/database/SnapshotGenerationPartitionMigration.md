@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-19
-last_verified_commit: e3d40227
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -26,12 +26,13 @@ physical snapshot IDs still required by active state, the solo current
 projection, and the current/previous/working publication source maps.
 
 The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
-and `pro-guitar` targets completed production migration on 2026-08-18; seven
-targets remain unmigrated. Generation-aware validation scrape `1304`
-subsequently completed through publication, notifications, registration
-drain, and normal run-once worker exit. This runbook is not authorization to
-start a scrape, unfreeze reads, select alternate scratch storage, delete an
-archive, or weaken a failed gate.
+and `pro-guitar` targets completed production migration on 2026-08-18, and
+`solo-guitar` completed on 2026-08-20; six targets remain unmigrated.
+Generation-aware validation scrapes `1304` and `1305` subsequently completed
+through publication, notifications, registration drain, and normal run-once
+worker exit. This runbook is not authorization to start a scrape, unfreeze
+reads, select alternate scratch storage, delete an archive, or weaken a failed
+gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -134,6 +135,32 @@ under
 `/home/sfenton/fst-temporary/snapshot-generation-pro-guitar-20260818T191034Z`
 remains authoritative until a separate deletion decision.
 
+### Accepted production solo-guitar generation migration
+
+Run `snapshot-generation-solo-guitar-20260819T235344Z` retained physical
+snapshots `1302-1304` and removed 169 obsolete generations from hot storage:
+
+- exact source/archive rows: `902,057,650`;
+- retained rows: `17,888,406`;
+- removed rows: `884,169,244`;
+- source bytes: `445,955,399,680`;
+- final partition tree: `7,126,245,376` bytes;
+- immediate filesystem return: `445,956,923,392` bytes;
+- swap: `0.634` seconds;
+- finalization: `5,284.958` seconds;
+- archive: `35,890,035,966` bytes, SHA-256
+  `d5ea6a42d199e5e72f2146a3587b26a08734415bbc3101e8f4ddfb7f22a86f74`;
+- isolated PostgreSQL 17 restore peak: `358,729,507,548` bytes.
+
+The final children contain `6,849,320`, `5,885,574`, and `5,153,512` rows for
+snapshots `1302`, `1303`, and `1304`; the default child is empty. The
+network-none restore container and transient PGDATA were removed. The live API
+monitor recorded `1,021` successful samples and zero failures. The
+authoritative recovery package remains under
+`/home/sfenton/fst-temporary/snapshot-generation-solo-guitar-20260819T235344Z`;
+the earlier failed workspace
+`snapshot-generation-solo-guitar-20260819T230609Z` remains forensic evidence.
+
 ### Accepted generation-aware validation scrape 1304
 
 Run-once worker image `fstservice:snapshot-generation-a682a16c` completed
@@ -179,15 +206,88 @@ The terminal evidence package is:
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-pro-guitar-scrape-20260818T235135Z
 ```
 
-The worker is held offline. The next migration target is `solo-guitar`; do
-not migrate another instrument in the same scrape interval.
+### Accepted generation-aware validation scrape 1305 and OOM recovery
+
+Scrape `1305` retained the accepted `800/32/4` network profile and reached its
+durable core checkpoint with `704` songs, `40,764,011` entries, `409,088`
+requests, `59,082,543,837` received bytes, `8,448/8,448` complete manifests,
+and `6,336/6,336` complete publication sources. The first worker attempt
+completed BandMaintenance and rankings, then the unbounded 45-account Rivals
+fan-out OOM-killed PostgreSQL backends. PostgreSQL recovered without a
+postmaster restart, public reads stayed fail-closed on publication `92` /
+scrape `1304`, and the worker exited before durable failure isolation could be
+recorded.
+
+The accepted recovery implementation:
+
+- bulk-loads all target accounts once per instrument with source-selection
+  parity, then reuses those score rows for combo counts, rivals, samples,
+  dirty comparison, and selection-state fingerprints;
+- defaults `Scraper:RivalsMaxDegreeOfParallelism` to `2`;
+- adds cancellable bulk reads and cancellation checkpoints;
+- permits an already-completed notification marker while a later candidate
+  holds the freeze;
+- adds a guarded `scrape-resume` profile requiring the exact stalled/updating
+  candidate, positive resume metrics, `SoloRankings`, correctness gates, and
+  the exact account cap.
+
+The resume used image `fstservice:rivals-resume-20260820`, publication catalog
+94, and no network/writer phases. Accepted timings were:
+
+| Phase | Duration |
+|---|---:|
+| Early shadow activation | `00:01:16.898` |
+| ComputeRankings | `00:43:18.419` |
+| Rivals | `02:44:52.950` |
+| LeaderboardRivals | `03:15:09.542` |
+| PlayerStatsTiers | `00:00:03.847` |
+| Cleanup.SoloCurrentProjection | `00:14:48.451` |
+| Cleanup.PrecomputeAll | `00:08:56.755` |
+| Publication preparation | `00:04:13.823` |
+
+Rivals preloaded `42,682` score rows in nine queries and `300,551.174` ms,
+then completed all 45 accounts without another OOM. Leaderboard Rivals
+completed all `765/765` user/instrument/method scopes for 17 users. Temporary
+PostgreSQL memory headroom was increased during the live recovery as measured
+working sets grew, then restored to the production `16 GiB` memory /
+`20 GiB` memory-swap limits after worker exit; cgroup OOM/OOM-kill counters
+remained `9/2` throughout the resume.
+
+Publication `94` became ready at `2026-08-20 20:20:56 UTC` and current at
+`20:21:14 UTC`. Notification recovery completed with `62` player and `107`
+band events. The post-publication drain completed history reconstruction for
+17 users, inserted 10 sessions, issued 1,380 API calls, reached zero queued
+registered backfills/history, and exited the worker with code `0`.
+
+Published scrape-1305 source rows with physical snapshot `1305` match the
+generation children exactly:
+
+| Instrument | Published rows | Physical child rows | Default rows |
+|---|---:|---:|---:|
+| Pro Bass | `1,691,233` | `1,691,233` | `0` |
+| Pro Guitar | `4,089,613` | `4,089,613` | `0` |
+| Solo Guitar | `5,632,637` | `5,632,637` | `0` |
+
+All 13 publication-critical outcomes completed. Three retention phases were
+explicitly skipped as best-effort under vacuum/maintenance pressure. Public
+service-info, songs, features, and rankings-overview routes returned HTTP 200;
+publication 1305 is current and unfrozen.
+
+Terminal evidence is under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-guitar-scrape-20260820T041909Z/resume-20260820T125414Z
+```
+
+The worker is held offline. The next migration target is `solo-vocals`; do not
+migrate another instrument in the same scrape interval.
 
 ## Current protected-source expectation
 
-Validation scrape `1304` is current and `1303` is previous. Publication
-generations `92` and `89` currently resolve to those scrapes. Observed
-pro-bass and pro-guitar source maps reuse physical IDs `1302`, `1303`, and
-`1304`. That is planning evidence, not a hard-coded retention list.
+Validation scrape `1305` is current and `1304` is previous. Publication
+generations `94` and `92` currently resolve to those scrapes. Observed
+pro-bass, pro-guitar, and solo-guitar source maps reuse physical IDs `1302`
+through `1305`. That is planning evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 

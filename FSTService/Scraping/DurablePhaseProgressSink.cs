@@ -154,6 +154,7 @@ public sealed class DurablePhaseProgressSink
         "Scraper:BandMembershipRebuildBatchSize",
         "Scraper:SoloProjectionCleanupMaxDegreeOfParallelism",
         "Scraper:RankHistorySnapshotMaxDegreeOfParallelism",
+        "Scraper:RivalsMaxDegreeOfParallelism",
         "Scraper:LeaderboardRivalsMaxDegreeOfParallelism",
         "Scraper:RefreshCurrentSeasonSessions",
         "Features:EnforcePublicationCriticalPhases",

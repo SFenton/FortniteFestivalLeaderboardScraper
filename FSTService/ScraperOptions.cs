@@ -671,6 +671,12 @@ public sealed class ScraperOptions
 
     /// <summary>
     /// Maximum registered accounts processed concurrently while rebuilding
+    /// song-rival rows after rankings.
+    /// </summary>
+    public int RivalsMaxDegreeOfParallelism { get; set; } = 2;
+
+    /// <summary>
+    /// Maximum registered accounts processed concurrently while rebuilding
     /// leaderboard-rival rows after rankings.
     /// </summary>
     public int LeaderboardRivalsMaxDegreeOfParallelism { get; set; } = 4;

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -124,6 +124,26 @@ rollback. Enabling it in production requires a capacity-safe matched full
 scrape A/B and exact publication/data parity; isolated replay timing is not
 promotion evidence.
 
+## Player rivals
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
+
+The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
+post-scrape rivals first load all target users' current scores once per
+instrument, sequentially across instruments, then reuse those immutable score
+lists for combo counting, neighborhood scans, and selection-state persistence.
+The account limit applies only after that shared preload. Direct single-user
+and backfill calls retain their existing on-demand read path.
+
+Lower the value to reduce PostgreSQL memory, temp-file, and parallel-query
+pressure. Raising it requires a matched full-scrape capacity test because each
+account can execute many neighborhood reads and fingerprint queries. The
+setting changes scheduling only; rival eligibility, methods, directions,
+samples, persistence, publication criticality, and result ordering are
+unchanged.
+
 ## Role differences
 
 `deploy/config/fstservice-role.env` enables published-source reads while
@@ -195,6 +215,20 @@ examples (`Features__AppManual`). Shell-friendly aliases such as
 These variables configure host-side
 `tools/fst-worker-compose-guard.sh` mutation/recovery behavior. They are not
 FSTService options and do not belong in container environment arrays.
+
+Run-once guard actions require a named data profile. `scrape-resume` is the
+only profile that permits `Scraper:EnabledPhases=SoloRankings`; it also
+requires positive `Scraper:Resume*` metrics,
+`Scraper:RegistrationSyncWorkerOnly=false`, the publication correctness and
+snapshot-reuse gates, and
+`Scraper:RivalsMaxDegreeOfParallelism=2`. This profile is for an existing
+resume-eligible candidate only and does not authorize a new network scrape.
+With runtime probes enabled, the guard also requires a stopped worker, an
+`updating` or `stalled` service state for the exact configured resume scrape,
+frozen public reads with reason `post-process`, and a different published
+scrape ID before it may recreate the worker. The profile is rejected for
+ordinary `--check`/`--recreate`; only `--check-runonce` and
+`--recreate-runonce` may use it.
 
 | Variable | Default | Purpose |
 |---|---:|---|

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -49,6 +49,11 @@ diagnostic or replay data without becoming the published generation.
    - Wait for startup initialization and load the song catalog.
    - Resume a publication that was durably prepared but deferred.
    - Complete required improvement-notification recovery before another scrape.
+   - A marker already completed for the exact published scrape remains terminal
+     while a later candidate is frozen only in explicit run-once resume mode
+     with a positive different scrape ID and exact resume phases; incomplete,
+     mismatched, or ordinary-worker recovery still waits for the freeze to
+     clear.
 2. **Authentication**
    - Acquire or refresh the Epic session before entering the scheduled loop.
 3. **Exact catalog selection**
@@ -139,6 +144,15 @@ nonblocking and reasoned in durable progress.
 - Publication lookup/read-gate failures fail closed.
 - Run-once exits only after its publication decision and any permitted
   registration drain.
+
+Scrape `1305` exercised the interrupted-candidate resume contract after a
+PostgreSQL backend OOM. Public reads stayed frozen on scrape `1304`; the guard
+required the exact stalled candidate, positive persisted metrics, and
+resume-only phases. The worker reloaded publication `94`'s immutable catalog,
+ran no network/writer phases, completed the solo-leaderboards chain, published
+scrape `1305`, unfroze reads, completed notification recovery and registration
+history drain, then exited `0`. Manual freeze clearing or direct candidate
+promotion is not equivalent to this fail-closed recovery path.
 
 ## Same-publication max-score maintenance
 
