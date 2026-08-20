@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -169,8 +169,8 @@ long-run distribution.
 | `RefreshRegisteredUsers` | 10 | About 24 minutes | About 44-minute tail |
 | `Cleanup.PrecomputeAll` | 10 | About 13 minutes | Stable |
 | `Cleanup.SoloCurrentProjection` | 10 | About 12 minutes | About 18-minute tail |
-| `LeaderboardRivals` | 5 | About 5 minutes | One recent run about 20 minutes; feature is recent |
-| `Rivals` | 10 | About 50 seconds | One recent run about 30 minutes |
+| `LeaderboardRivals` | 6 | About 5 minutes | Scrape `1304` took 7h00m02s; scrape `1305` resume took 3h15m10s for the same 17 users but used temporary PostgreSQL headroom, so this is not a matched code A/B |
+| `Rivals` | 11 | About 50 seconds | Scrape `1305` launched 45 accounts without a bound, duplicated current-score reads, and OOM-killed PostgreSQL. The accepted resume bulk-loaded 42,682 rows in nine queries/5m00.6s, capped accounts at 2, and completed all users in 2h44m53s without another OOM |
 | Each shadow activation | 10 | About 2.3–2.5 minutes | Broad snapshot-state query |
 | `BandExtraction` | 10 | About 1.5 minutes | Already bounded-parallel |
 | First-seen, names, stats, checkpoint, legacy prune | 10 | Usually seconds or no-op | Not optimization priorities |
@@ -370,7 +370,7 @@ required before performance acceptance.
 | Rank-history snapshots | First optimize latest-state scan; then test existing overlap flag or DOP change separately | Largest ranking subphase; do not combine concurrency hypotheses | Isolated current-history query plan and one-variable A/B | Exact histories; meaningful wall reduction; no >10% resource regression | Overlap/DOP off | `full-scrape-ab` |
 | Band rankings | Split from solo ranking stage and retain dependency on completed BandMaintenance | Can run only after prune/current band input is terminal | Phase contract tests and isolated ranking parity | Exact band rank/stat/history rows | Existing monolithic `ComputeAllAsync` | `full-scrape-ab` |
 | Solo projection prepare | Keep dormant until snapshot-overlay reader migration is promoted | No current optimization work | Existing reader migration parity gate | Full public/worker parity | Flag off | `full-scrape-ab` |
-| Song rivals | Bound account concurrency and persist skip/recompute/input counts | Potential overlap with player stats later; not before query/resource evidence | Registered-account slice replay | Exact rivals/samples; lower query count and p95 | Existing task fan-out | `full-scrape-ab` |
+| Song rivals | Accepted: bulk-load target scores once per instrument, reuse them, and cap accounts at 2. Next: batch per-score selection-state fingerprints | Potential overlap with player stats later; not before query/resource evidence | Registered-account slice replay | Exact rivals/samples/fingerprints; lower query count and p95 | Existing task fan-out / per-score fingerprints | `full-scrape-ab` |
 | Leaderboard rivals | Bulk-load neighborhoods and selected neighbor scores; add input fingerprints | Recompute only users whose ranking neighborhood changed | One-account, then full registered-slice replay | Exact rows/samples; ≥25% query/wall reduction | Existing per-user algorithm | `full-scrape-ab` |
 | Player stats | Add per-chunk timing | Usually seconds; leave serial unless recurring tail appears | Three comparable scrapes | No output difference; optimize only if material | Remove counters | `continuous-safe` |
 | Checkpoint/cache warm | Candidate removes verified PostgreSQL no-ops | Stable checkpoint ID remains reserved; no persistence contract remains | PostgreSQL API-absence and worker-flow tests plus full scrape parity | Zero output/cache difference | Revert deletion | `full-scrape-ab` |
@@ -769,7 +769,7 @@ metrics. Correctness/publication differences reject regardless of speed.
 | Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
-| Rival tail cause | Unknown | Per-account decisions/query counts/timing | No concurrency change before attribution |
+| Rival tail cause | Partially measured | Batch and benchmark per-score selection-state fingerprint neighborhoods; preserve exact fingerprints and skip decisions | No broader concurrency increase; accepted account cap remains `2` |
 | Precompute subphase cost | Unknown | Stable subphase timing and cache counts | No parallel flag promotion |
 | Replay dataset size | Unknown | Tier 0, then bounded Tier 1 export/import size/runtime | Must fit same-drive reserve |
 | Raw compression/dedup | Deferred unknown | Only after parser requirement; bounded sample | No current work |

@@ -563,6 +563,25 @@ public sealed class PostScrapeOrchestrator
 
         var publishedScrapeId = status.PublishedScrapeId.Value;
         var markerMatchesPublished = status.MarkerScrapeId == publishedScrapeId;
+        var scraperOptions = _options.Value;
+        var explicitResumeContext =
+            scraperOptions.RunOnce
+            && scraperOptions.ResumeScrapeId > 0
+            && scraperOptions.ResumeScrapeId != publishedScrapeId
+            && scraperOptions.ResolvedPhases ==
+                ScrapePhaseResolver.SoloLeaderboardsGroup;
+        if (markerMatchesPublished
+            && status.MarkerStatus == "completed"
+            && status.IsCompleteForPublishedScrape(
+                options.IncludePlayers,
+                options.IncludeBands,
+                options.IncludeSongEvents,
+                options.IncludeRankings)
+            && (!status.PublicReadsFrozen
+                || explicitResumeContext))
+        {
+            return;
+        }
         if (status.PublicReadsFrozen)
         {
             throw new InvalidOperationException(

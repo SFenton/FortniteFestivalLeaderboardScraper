@@ -322,6 +322,61 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
         self.assertNotIn("rollback", sql.lower())
         self.assertNotIn("ORDER BY id DESC", sql)
 
+    def test_reference_parity_requires_dual_empty_scope_evidence(self):
+        sql = tool.reference_parity_query(
+            tool.TARGET_BY_KEY["solo-guitar"],
+            "leaderboard_entries_snapshot_solo_guitar",
+        )
+
+        self.assertIn("current_sources AS", sql)
+        self.assertIn("source.scope_kind = 'alltime'", sql)
+        self.assertIn("source.source_kind = 'empty'", sql)
+        self.assertIn("source.source_snapshot_id IS NULL", sql)
+        self.assertIn("source.row_count = 0", sql)
+        self.assertIn("source.is_complete = TRUE", sql)
+        self.assertIn("scope.source_kind = 'snapshot'", sql)
+        self.assertIn("scope.row_count = 0", sql)
+        self.assertIn("scope.status = 'ready'", sql)
+        self.assertIn("'currentEmptySourceFingerprint'", sql)
+        self.assertIn("'invalidCurrentEmptySourceRows'", sql)
+
+    def test_reference_parity_fails_closed_for_nonzero_missing_counts(self):
+        base = {
+            "missingNamedSourceRows": 0,
+            "activeStateMissingRows": 0,
+            "projectionMissingRows": 0,
+            "invalidCurrentEmptySourceRows": 0,
+        }
+
+        self.assertIsNone(tool.assert_reference_parity(base))
+        for key in base:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(
+                    tool.MigrationError,
+                    key,
+                ):
+                    tool.assert_reference_parity({**base, key: 1})
+
+    def test_transactional_reference_guard_compares_complete_json(self):
+        sql = tool.transactional_reference_parity_guard_sql(
+            tool.TARGET_BY_KEY["solo-guitar"],
+            "leaderboard_entries_snapshot_solo_guitar",
+            {
+                "missingNamedSourceRows": 0,
+                "activeStateMissingRows": 0,
+                "projectionMissingRows": 0,
+                "invalidCurrentEmptySourceRows": 0,
+                "currentEmptySourceCount": 2,
+                "currentEmptySourceFingerprint": "empty-fingerprint",
+            },
+            "test_reference_guard",
+        )
+
+        self.assertIn("observed_reference", sql)
+        self.assertIn("currentEmptySourceFingerprint", sql)
+        self.assertIn("reference parity changed before test_reference_guard", sql)
+        self.assertIn("IS DISTINCT FROM", sql)
+
     def test_derive_protected_ids_returns_exact_physical_set(self):
         result = {
             "unresolvedPublicationCount": 0,
@@ -522,11 +577,16 @@ class SnapshotGenerationMigrationTests(unittest.TestCase):
         share_lock = sql.index("IN SHARE MODE")
         fingerprint = sql.index("hashtextextended")
         advisory = sql.index("pg_try_advisory_xact_lock")
+        reference = sql.index(
+            "reference parity changed before final_drop_reference_guard"
+        )
         protected = sql.index("protected IDs changed")
         drop = sql.index("DROP TABLE")
 
         self.assertLess(share_lock, fingerprint)
         self.assertLess(fingerprint, advisory)
+        self.assertLess(advisory, reference)
+        self.assertLess(reference, protected)
         self.assertLess(advisory, protected)
         self.assertLess(protected, drop)
         self.assertIn("public_reads_frozen = FALSE", sql)

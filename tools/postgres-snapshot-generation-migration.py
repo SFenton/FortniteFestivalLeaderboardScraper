@@ -2372,6 +2372,16 @@ def reference_parity_query(target, relation_name):
                 WHERE source.instrument =
                         {sql_literal(target.instrument)}
                   AND source.source_kind = 'snapshot'
+            ),
+            current_sources AS (
+                SELECT source.*
+                FROM named_publications publication
+                JOIN leaderboard_published_scope_source source
+                  ON source.published_scrape_id =
+                        publication.published_scrape_id
+                WHERE publication.slot = 'current'
+                  AND source.instrument =
+                        {sql_literal(target.instrument)}
             )
             SELECT json_build_object(
                 'publication', (
@@ -2411,7 +2421,24 @@ def reference_parity_query(target, relation_name):
                                     state.active_snapshot_id
                             AND snapshot.song_id = state.song_id
                             AND snapshot.instrument =
-                                    {sql_literal(target.instrument)})),
+                                   {sql_literal(target.instrument)})
+                      AND NOT EXISTS (
+                         SELECT 1
+                         FROM current_sources source
+                         JOIN solo_current_projection_scope scope
+                           ON scope.song_id = state.song_id
+                          AND scope.instrument = state.instrument
+                         WHERE source.song_id = state.song_id
+                           AND source.scope_kind = 'alltime'
+                           AND source.source_kind = 'empty'
+                           AND source.source_snapshot_id IS NULL
+                           AND source.row_count = 0
+                           AND source.is_complete = TRUE
+                           AND scope.source_snapshot_id =
+                                   state.active_snapshot_id
+                           AND scope.source_kind = 'snapshot'
+                           AND scope.row_count = 0
+                           AND scope.status = 'ready')),
                 'projectionMissingRows', (
                     SELECT COUNT(*)::bigint
                     FROM solo_current_projection_scope scope
@@ -2425,7 +2452,28 @@ def reference_parity_query(target, relation_name):
                                     scope.source_snapshot_id
                             AND snapshot.song_id = scope.song_id
                             AND snapshot.instrument =
-                                    {sql_literal(target.instrument)})),
+                                   {sql_literal(target.instrument)})
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM current_sources source
+                          WHERE source.song_id = scope.song_id
+                           AND source.scope_kind = 'alltime'
+                           AND source.source_kind = 'empty'
+                           AND source.source_snapshot_id IS NULL
+                           AND source.row_count = 0
+                           AND source.is_complete = TRUE
+                           AND scope.source_kind = 'snapshot'
+                           AND scope.row_count = 0
+                           AND scope.status = 'ready')),
+                'invalidCurrentEmptySourceRows', (
+                    SELECT COUNT(*)::bigint
+                    FROM current_sources source
+                    WHERE source.source_kind = 'empty'
+                      AND (
+                          source.scope_kind <> 'alltime'
+                          OR source.source_snapshot_id IS NOT NULL
+                          OR source.row_count <> 0
+                          OR source.is_complete IS NOT TRUE)),
                 'namedSourceCount', (
                     SELECT COUNT(*)::bigint
                     FROM named_sources),
@@ -2444,6 +2492,27 @@ def reference_parity_query(target, relation_name):
                             slot, published_scrape_id, song_id, scope_kind),
                         ''))
                     FROM named_sources),
+                'currentEmptySourceCount', (
+                    SELECT COUNT(*)::bigint
+                    FROM current_sources source
+                    WHERE source.source_kind = 'empty'),
+                'currentEmptySourceFingerprint', (
+                    SELECT md5(COALESCE(string_agg(
+                        md5(concat_ws('|',
+                            published_scrape_id::text,
+                            song_id,
+                            scope_kind,
+                            source_kind,
+                            source_scrape_id::text,
+                            row_count::text,
+                            content_fingerprint,
+                            coverage_fingerprint,
+                            is_complete::text)),
+                        '' ORDER BY
+                            published_scrape_id, song_id, scope_kind),
+                        ''))
+                    FROM current_sources source
+                    WHERE source.source_kind = 'empty'),
                 'activeStateFingerprint', (
                     SELECT md5(COALESCE(string_agg(
                         md5(concat_ws('|',
@@ -2478,11 +2547,45 @@ def assert_reference_parity(value):
             "missingNamedSourceRows",
             "activeStateMissingRows",
             "projectionMissingRows",
+            "invalidCurrentEmptySourceRows",
     ):
             if ensure_integer(value.get(key), key) != 0:
                 raise MigrationError(
                     f"reference parity failed: {key} is nonzero"
                 )
+
+
+def transactional_reference_parity_guard_sql(
+    target,
+    relation_name,
+    expected,
+    label,
+):
+                query = reference_parity_query(target, relation_name)
+                expected_json = json.dumps(
+                    expected,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                message = sql_literal(
+                    f"reference parity changed before {label}"
+                )
+                return f"""
+                    DO ${label}$
+                    DECLARE
+                        observed_reference JSONB;
+                    BEGIN
+                        SELECT result.value::jsonb
+                        INTO observed_reference
+                        FROM ({query}) AS result(value);
+                        IF observed_reference IS DISTINCT FROM
+                                {sql_literal(expected_json)}::jsonb
+                        THEN
+                            RAISE EXCEPTION USING MESSAGE = {message};
+                        END IF;
+                    END
+                    ${label}$;
+                """
 
 
 def partition_shape_query(target, relation_name):
@@ -6140,6 +6243,14 @@ def stage_swap(args, runner):
                         raise MigrationError(
                             "original instrument check changed before swap"
                         )
+                    pre_swap_reference_guard = (
+                        transactional_reference_parity_guard_sql(
+                            target,
+                            target.partition,
+                            plan["planIdentity"]["referenceParity"],
+                            "pre_swap_reference_guard",
+                        )
+                    )
                     started = time.monotonic()
                     database.psql(
                         f"""
@@ -6149,6 +6260,7 @@ def stage_swap(args, runner):
                             {advisory_lock_guard_sql()}
                             LOCK TABLE {qualified(TARGET_PARENT)}
                                 IN ACCESS EXCLUSIVE MODE;
+                            {pre_swap_reference_guard}
                             ALTER TABLE {qualified(TARGET_PARENT)}
                                 DETACH PARTITION {qualified(target.partition)};
                             ALTER TABLE {qualified(target.partition)}
@@ -6224,6 +6336,27 @@ def stage_swap(args, runner):
                     raise MigrationError(
                         f"post-swap relation state is unexpected: {post}"
                     )
+                post_swap_reference_guard = (
+                    transactional_reference_parity_guard_sql(
+                        target,
+                        target.partition,
+                        plan["planIdentity"]["referenceParity"],
+                        "post_swap_reference_guard",
+                    )
+                )
+                database.psql(
+                    f"""
+                        BEGIN;
+                        SET LOCAL lock_timeout = '2s';
+                        SET LOCAL statement_timeout = '30s';
+                        {advisory_lock_guard_sql()}
+                        LOCK TABLE {qualified(target.partition)}
+                            IN SHARE MODE;
+                        {post_swap_reference_guard}
+                        COMMIT;
+                    """,
+                    timeout=60,
+                )
                 retired_state = database.json(relation_state_query(retired))
                 if (
                     physical_relation_identity(retired_state)
@@ -6299,6 +6432,8 @@ def compare_reference_parity(expected, observed):
                 for key in (
                     "namedSourceCount",
                     "namedSourceFingerprint",
+                    "currentEmptySourceCount",
+                    "currentEmptySourceFingerprint",
                     "activeStateFingerprint",
                     "projectionFingerprint",
                 ):
@@ -6931,6 +7066,14 @@ def final_drop_sql(
                 original_distribution_query = snapshot_distribution_query(
                     retired
                 )
+                reference_guard = (
+                    transactional_reference_parity_guard_sql(
+                        target,
+                        target.partition,
+                        plan["planIdentity"]["referenceParity"],
+                        "final_drop_reference_guard",
+                    )
+                )
                 return f"""
                     BEGIN;
                     SET LOCAL idle_in_transaction_session_timeout = 0;
@@ -7021,6 +7164,7 @@ def final_drop_sql(
 
                     SET LOCAL statement_timeout = '30s';
                     {advisory_lock_guard_sql()}
+                    {reference_guard}
                     DO $final_drop_guard$
                     DECLARE
                         current_ids BIGINT[];

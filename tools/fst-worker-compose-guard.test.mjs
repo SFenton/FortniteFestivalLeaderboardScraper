@@ -91,14 +91,17 @@ function serviceInfo() {
         ? scenario.postStartCurrentUpdateStatus
           ?? scenario.currentUpdateStatus
           ?? "idle"
-        : scenario.currentUpdateStatus ?? "idle"
+        : scenario.currentUpdateStatus ?? "idle",
+      scrapeId: scenario.currentScrapeId ?? 1305
     },
     publication: {
       publicReadsFrozen: afterWorkerStart
         ? scenario.postStartPublicReadsFrozen
           ?? scenario.publicReadsFrozen
           ?? false
-        : scenario.publicReadsFrozen ?? false
+        : scenario.publicReadsFrozen ?? false,
+      publishedScrapeId: scenario.publishedScrapeId ?? 1304,
+      freezeReason: scenario.freezeReason ?? "post-process"
     },
     workerStatus: workerReady
       ? {
@@ -337,6 +340,37 @@ function buildPublicationCacheRunonceConfig({
     Features__WritePublishedScopeSources: "true",
     Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
     Features__SkipUnchangedPhysicalLeaderboardSnapshots: "false"
+  });
+  return config;
+}
+
+function buildScrapeResumeRunonceConfig({
+  resumeScrapeId = "1305",
+  resumeTotalBytes = "59082543837",
+  rivalsMaxDegreeOfParallelism = "2"
+} = {}) {
+  const config = buildComposeConfig({ runOnce: true });
+  Object.assign(config.services.fstworker.environment, {
+    Scraper__EnabledPhases: "SoloRankings",
+    Scraper__RegistrationSyncWorkerOnly: "false",
+    Scraper__RegisteredUserRefreshTimeout: "00:00:00",
+    Scraper__ResumeScrapeId: resumeScrapeId,
+    Scraper__ResumeSongsScraped: "704",
+    Scraper__ResumeTotalEntries: "40764011",
+    Scraper__ResumeTotalRequests: "409088",
+    Scraper__ResumeTotalBytes: resumeTotalBytes,
+    Scraper__ResumeEpicReportedOver100Pages: "false",
+    Scraper__RivalsMaxDegreeOfParallelism:
+      rivalsMaxDegreeOfParallelism,
+    Features__EnforcePublicationCriticalPhases: "true",
+    Features__EnforceScopeCompletenessManifests: "true",
+    Features__RequireSuccessfulScrapeWriters: "true",
+    Features__UseLeaderboardScopeFingerprints: "true",
+    Features__WritePublishedScopeSources: "true",
+    Features__SkipUnchangedPhysicalLeaderboardSnapshots: "true",
+    Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
+    Features__WriteLogicalLeaderboardVersions: "false",
+    DatabaseMaintenance__SnapshotRetentionRewriteEnabled: "false"
   });
   return config;
 }
@@ -1046,6 +1080,185 @@ describe("fstworker Compose startup recovery", () => {
       );
     } finally {
       await harness.cleanup();
+    }
+  });
+
+  it("accepts a guarded scrape resume with exact metrics and rivals cap", async () => {
+    const harness = await createHarness({
+      config: buildScrapeResumeRunonceConfig()
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "scrape-resume",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stdout, /data_profile=scrape-resume/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a scrape resume without positive persisted metrics", async () => {
+    for (const config of [
+      buildScrapeResumeRunonceConfig({ resumeScrapeId: "0" }),
+      buildScrapeResumeRunonceConfig({ resumeTotalBytes: "0" })
+    ]) {
+      const harness = await createHarness({ config });
+      try {
+        const result = await harness.run([
+          "--check-runonce",
+          "--config-only",
+          "--data-profile",
+          "scrape-resume",
+          "--expected-worker-image",
+          "example.invalid/fstworker:test"
+        ]);
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(result.stderr, /must be greater than zero/);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
+  it("rejects a scrape resume with an unapproved rivals account cap", async () => {
+    const harness = await createHarness({
+      config: buildScrapeResumeRunonceConfig({
+        rivalsMaxDegreeOfParallelism: "4"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "scrape-resume",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /RivalsMaxDegreeOfParallelism=2/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects scrape-resume profile outside run-once guard actions", async () => {
+    for (const { action, configOnly } of [
+      { action: "--check", configOnly: true },
+      { action: "--recreate", configOnly: false }
+    ]) {
+      const harness = await createHarness({
+        config: buildScrapeResumeRunonceConfig()
+      });
+      try {
+        const result = await harness.run([
+          action,
+          ...(configOnly ? ["--config-only"] : []),
+          "--data-profile",
+          "scrape-resume",
+          "--expected-worker-image",
+          "example.invalid/fstworker:test"
+        ]);
+        assert.equal(result.code, 64);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(
+          result.stderr,
+          /requires --check-runonce or --recreate-runonce/);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
+  it("starts a scrape resume only from the matching frozen candidate", async () => {
+    const harness = await createHarness({
+      config: buildScrapeResumeRunonceConfig(),
+      scenario: {
+        currentUpdateStatus: "stalled",
+        currentScrapeId: 1305,
+        publicReadsFrozen: true,
+        publishedScrapeId: 1304
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate-runonce",
+        "--data-profile",
+        "scrape-resume",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker"
+      ]);
+      assert.match(
+        result.stdout,
+        /resume=preflight worker=stopped scrape=1305/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects scrape resume when candidate identity or freeze is lost", async () => {
+    const cases = [
+      {
+        currentUpdateStatus: "updating",
+        currentScrapeId: 1306,
+        publicReadsFrozen: true,
+        expected: /does not match the configured scrape/
+      },
+      {
+        currentUpdateStatus: "updating",
+        currentScrapeId: 1305,
+        publicReadsFrozen: false,
+        expected: /requires public reads to remain frozen/
+      },
+      {
+        currentUpdateStatus: "idle",
+        currentScrapeId: 1305,
+        publicReadsFrozen: true,
+        expected: /current update state to be updating or stalled/
+      },
+      {
+        currentUpdateStatus: "stalled",
+        currentScrapeId: 1305,
+        publicReadsFrozen: true,
+        freezeReason: "max-score-maintenance:test",
+        expected: /freeze reason post-process/
+      }
+    ];
+
+    for (const scenario of cases) {
+      const harness = await createHarness({
+        config: buildScrapeResumeRunonceConfig(),
+        scenario
+      });
+      try {
+        const result = await harness.run([
+          "--check-runonce",
+          "--data-profile",
+          "scrape-resume",
+          "--expected-worker-image",
+          "example.invalid/fstworker:test"
+        ]);
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(result.stderr, scenario.expected);
+      } finally {
+        await harness.cleanup();
+      }
     }
   });
 

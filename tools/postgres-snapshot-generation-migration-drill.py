@@ -211,7 +211,8 @@ def seed_sql(purge_rows, retained_rows):
             updated_at timestamptz NOT NULL,
             PRIMARY KEY (song_id, instrument));
         INSERT INTO leaderboard_snapshot_state VALUES
-            ('current-song', '{INSTRUMENT}', 1303, 1303, true, now());
+            ('current-song', '{INSTRUMENT}', 1303, 1303, true, now()),
+            ('empty-song', '{INSTRUMENT}', 1303, 1303, true, now());
 
         CREATE TABLE solo_current_projection_scope (
             song_id text NOT NULL,
@@ -227,7 +228,9 @@ def seed_sql(purge_rows, retained_rows):
             ('current-song', '{INSTRUMENT}', 1303, {retained_rows},
              1303, 'snapshot', 'ready', now()),
             ('previous-song', '{INSTRUMENT}', 1303, {retained_rows},
-             1302, 'snapshot', 'ready', now());
+             1302, 'snapshot', 'ready', now()),
+            ('empty-song', '{INSTRUMENT}', 1303, 0,
+             1303, 'snapshot', 'ready', now());
 
         CREATE TABLE leaderboard_published_scope_source (
             published_scrape_id bigint NOT NULL,
@@ -252,6 +255,10 @@ def seed_sql(purge_rows, retained_rows):
              'snapshot', 1303, 1303, {retained_rows},
              'current-content', 'current-coverage',
              {retained_rows}, 1, true, now(), now()),
+            (1303, 'empty-song', '{INSTRUMENT}', 'alltime',
+             'empty', NULL, 1303, 0,
+             'empty-content', 'empty-coverage',
+             0, 0, true, now(), now()),
             (1302, 'previous-song', '{INSTRUMENT}', 'alltime',
              'snapshot', 1302, 1302, {retained_rows},
              'previous-content', 'previous-coverage',

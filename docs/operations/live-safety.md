@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -311,7 +311,18 @@ Publication-critical projection cleanup and precompute completed. Three
 best-effort retention cleanups were safely skipped because active vacuums and
 dead-tuple pressure tripped their guard. Do not rerun those cleanups blindly
 or treat their skip as permission to overlap maintenance with the next
-migration. The worker is offline; `solo-guitar` is the next single target.
+migration.
+
+Solo Guitar migration and validation scrape `1305` supersede that boundary.
+Scrape `1305` completed `8,448/8,448` manifests, published generation `94`,
+unfroze reads, completed `62` player and `107` band notification events,
+drained registered history work, and exited `0`. Pro Bass, Pro Guitar, and
+Solo Guitar `1305` child counts exactly match their published source sums and
+all three default children are empty. PostgreSQL OOM recovery used the guarded
+resume path; temporary memory headroom was restored to `16 GiB` memory /
+`20 GiB` memory-swap after exit. The worker is offline and publication `1305`
+is current. `solo-vocals` is the next single target; do not migrate another
+instrument in the same scrape interval.
 
 ### Completed stale solo rank-index retirement
 

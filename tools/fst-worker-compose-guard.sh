@@ -56,6 +56,7 @@ Options:
                              catalog-path-notification-source-cut
                              snapshot-reuse
                              legacy-reader-migration
+                             scrape-resume
                            Every run-once config requires a data profile.
   --expected-worker-image I
                            Require the resolved fstworker image to match I.
@@ -139,7 +140,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -155,6 +156,13 @@ fi
 
 if [[ "$ACTION" == "recover-start" && "$DATA_PROFILE" != "none" ]]; then
     printf 'ERROR: --recover-start cannot be used with a data profile\n' >&2
+    exit 64
+fi
+
+if [[ "$DATA_PROFILE" == "scrape-resume" \
+    && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
+then
+    printf 'ERROR: data profile scrape-resume requires --check-runonce or --recreate-runonce\n' >&2
     exit 64
 fi
 
@@ -643,6 +651,42 @@ if data_profile == "snapshot-reuse":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile snapshot-reuse requires {name}=false")
+if data_profile == "scrape-resume":
+    exact_value("Scraper__EnabledPhases", "SoloRankings")
+    exact_value("Scraper__RegistrationSyncWorkerOnly", "false")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    for name in (
+        "Scraper__ResumeScrapeId",
+        "Scraper__ResumeSongsScraped",
+        "Scraper__ResumeTotalEntries",
+        "Scraper__ResumeTotalRequests",
+        "Scraper__ResumeTotalBytes",
+    ):
+        integer(name)
+    boolean("Scraper__ResumeEpicReportedOver100Pages")
+    if integer("Scraper__RivalsMaxDegreeOfParallelism") != 2:
+        raise SystemExit(
+            "ERROR: data profile scrape-resume requires "
+            "Scraper__RivalsMaxDegreeOfParallelism=2")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
+        "Features__WritePublishedScopeSources",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile scrape-resume requires {name}=true")
+    for name in (
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile scrape-resume requires {name}=false")
 if data_profile == "legacy-reader-migration":
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
@@ -970,6 +1014,84 @@ print(heartbeat if isinstance(heartbeat, str) else "")
     else
         recovery_baseline_worker_heartbeat=""
     fi
+}
+
+validate_scrape_resume_runtime_state() {
+    local worker_state worker_runtime_status service_info resume_scrape_id
+
+    worker_state="$(inspect_container_state "fstworker")"
+    worker_runtime_status="${worker_state%%|*}"
+    case "$worker_runtime_status" in
+        missing|created|exited|dead)
+            ;;
+        *)
+            printf 'ERROR: scrape resume requires fstworker to be stopped or absent\n' >&2
+            return 1
+            ;;
+    esac
+
+    resume_scrape_id="$(
+        python3 -c '
+import json
+import sys
+config = json.load(sys.stdin)
+environment = (
+    config.get("services", {})
+    .get("fstworker", {})
+    .get("environment", {})
+)
+print(environment.get("Scraper__ResumeScrapeId", ""))
+' <<< "$compose_json"
+    )"
+
+    if ! service_info="$(
+        docker exec fstservice \
+            curl -fsS --connect-timeout 2 --max-time 10 \
+            http://localhost:8080/api/service-info 2>/dev/null
+    )"
+    then
+        printf 'ERROR: scrape resume could not read the operational service state\n' >&2
+        return 1
+    fi
+
+    if ! python3 -c '
+import json
+import sys
+
+expected_scrape_id = int(sys.argv[1])
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, TypeError):
+    raise SystemExit(
+        "ERROR: scrape resume received an invalid operational service response")
+
+current = payload.get("currentUpdate")
+publication = payload.get("publication")
+if not isinstance(current, dict) or not isinstance(publication, dict):
+    raise SystemExit(
+        "ERROR: scrape resume requires current update and publication state")
+if current.get("status") not in {"updating", "stalled"}:
+    raise SystemExit(
+        "ERROR: scrape resume requires the current update state to be updating or stalled")
+if current.get("scrapeId") != expected_scrape_id:
+    raise SystemExit(
+        "ERROR: scrape resume current update does not match the configured scrape")
+if publication.get("publicReadsFrozen") is not True:
+    raise SystemExit(
+        "ERROR: scrape resume requires public reads to remain frozen")
+if publication.get("freezeReason") != "post-process":
+    raise SystemExit(
+        "ERROR: scrape resume requires publication freeze reason post-process")
+if publication.get("publishedScrapeId") == expected_scrape_id:
+    raise SystemExit(
+        "ERROR: scrape resume target is already published")
+' "$resume_scrape_id" <<< "$service_info"
+    then
+        return 1
+    fi
+
+    printf 'compose_guard resume=preflight worker=stopped scrape=%s update=resume-eligible reads=frozen\n' \
+        "$resume_scrape_id"
 }
 
 declare -a unhealthy_effective_nodes=()
@@ -1470,6 +1592,12 @@ print(hashlib.sha256(value.encode()).hexdigest())
     else
         printf 'compose_guard runtime=ok healthy=%s unique_egress=%s dns=%s control=%s\n' \
             "$expected_count" "${#egress_owner[@]}" "$expected_count" "$expected_count"
+    fi
+fi
+
+if $RUNTIME_PROBES && [[ "$DATA_PROFILE" == "scrape-resume" ]]; then
+    if ! validate_scrape_resume_runtime_state; then
+        exit 1
     fi
 fi
 

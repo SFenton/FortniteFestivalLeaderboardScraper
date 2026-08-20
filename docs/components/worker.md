@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-20
+last_verified_commit: 42583b72
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -17,6 +17,8 @@ sources:
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/RivalsCalculator.cs
+  - FSTService/Scraping/RivalsOrchestrator.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -93,6 +95,24 @@ directs the operator to the no-progress watchdog instead of risking a stranded
 candidate. PostgreSQL, API, and web roles are never restarted. Candidate
 profiles are run-once-only and are not continuous startup authorization.
 
+An interrupted candidate with complete manifests and zero writer/critical
+failures uses the guard data profile `scrape-resume`. The profile authorizes
+only `SoloRankings` run-once recovery, requires positive persisted scrape
+metrics, full-worker mode, the publication correctness and snapshot-reuse
+gates, and `Scraper:RivalsMaxDegreeOfParallelism=2`. It rejects normal scrape
+phases, zero/missing resume metrics, a different account cap, logical-version
+or stored-rank candidates, and retention rewriting. The worker then validates
+`ResumeScrapeId` against durable state, reloads the candidate's immutable song
+catalog, skips network/writer phases, reruns the solo-leaderboards chain, and
+retains the existing freeze until publication or durable failure isolation.
+Before a full guard check or recreate, the live preflight also requires the
+worker container stopped, `currentUpdate.status` equal to `updating` or
+`stalled`, the exact configured resume scrape ID, public reads still frozen,
+freeze reason exactly `post-process`, and a different currently published
+scrape ID. A gracefully stopped
+interrupted worker normally reports `stalled`; both states are
+resume-eligible only for the same exact candidate.
+
 ## Continuous loop
 
 After startup the worker:
@@ -106,6 +126,14 @@ After startup the worker:
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+The pre-scrape notification gate treats an exact published-scrape marker with
+all required notification surfaces already complete as terminal during a
+freeze only in explicit run-once resume mode: positive `ResumeScrapeId`, a
+different published scrape, and the exact `SoloRankings` resume phase set.
+Pending, failed, mismatched, or ordinary-worker notification recovery remains
+blocked while frozen. This lets a resume-eligible candidate continue without
+weakening candidate isolation.
 
 Registration-sync work also observes the durable max-score maintenance freeze.
 The worker reports a pause before invoking a writer, and each backfill/history
@@ -278,6 +306,19 @@ PostgreSQL has no per-wrapper cache warm or manual checkpoint implementation.
 The worker no longer schedules those retired calls at startup, after network
 writes, or during finalization.
 
+Scheduled player-rivals work uses a shared score preload before account
+neighborhood scans. The worker loads all target accounts once per instrument,
+sequentially across instruments, and reuses those score lists for eligibility,
+combo totals, rival computation, and selection-state persistence. This removes
+the former per-account counting pass and its duplicate current-score reads.
+`Scraper:RivalsMaxDegreeOfParallelism` then bounds concurrent account
+neighborhood/fingerprint work; it defaults to `2` and is part of the durable
+phase configuration identity. Progress reports
+`preloading_rivals_scores` before `per_song_rivals`, then advances exact
+account completion against the final target-account denominator. Direct
+single-user and backfill recomputation remain on-demand and do not allocate a
+global preload.
+
 Matched production scrapes `1299` (control) and `1300` (candidate) accepted
 this cleanup. Both covered 702 songs, 8,424 complete scope manifests, and 6,318
 complete published solo-source mappings; both published, unfroze, completed
@@ -421,8 +462,9 @@ total within 10%, then pass the `0.35` coefficient-of-variation gate. Emitted
 ranges are monotonic and carry model version, confidence, and sample count.
 The configuration fingerprint covers an allowlist of phase, network,
 persistence, publication, ranking, notification, and retention controls; it
-also distinguishes the default-off batched member-stat candidate. It never
-stores credentials or resolved provider endpoints.
+also distinguishes the player-rivals account limit and the default-off batched
+member-stat candidate. It never stores credentials or resolved provider
+endpoints.
 
 The fallback `service_worker_status` row is also instance-fenced. A newer
 worker start may claim the row; later heartbeats or activity from an older
