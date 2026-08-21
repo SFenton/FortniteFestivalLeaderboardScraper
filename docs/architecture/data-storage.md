@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified: 2026-08-21
+last_verified_commit: 070daf14
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -816,7 +816,24 @@ left a `4,074,053,632`-byte `pg_default` tree with an empty default child and
 no migration artifacts. Validation scrape `1304` added `3,674,245` rows in a
 `2,013,806,592`-byte dedicated child. Its live tree now contains snapshot
 children `1302-1304` plus an empty default and occupies `6,087,860,224`
-bytes. Seven instrument partitions remain on the legacy regular-table layout.
+bytes.
+
+`solo-guitar` completed on 2026-08-20. The exact archive contained
+`902,057,650` rows across 172 generations; `17,888,406` rows from
+`1302-1304` remained protected. The accepted run removed `884,169,244` hot
+rows, returned `445,956,923,392` filesystem bytes, and left a
+`7,126,245,376`-byte `pg_default` tree with an empty default child. Validation
+scrape `1305` added `5,632,637` rows in a dedicated `1305` child and completed
+through publication, notifications, registration drain, and normal worker
+exit.
+
+`solo-vocals` completed on 2026-08-21. The restore proved
+`912,731,557` exact rows across 174 generations; `23,925,998` rows from
+`1302-1305` remained protected. The accepted run removed `888,805,559` hot
+rows, returned `445,096,439,808` filesystem bytes, and left a
+`9,389,801,472`-byte `pg_default` tree with an empty default child and no
+migration artifacts. Five instrument partitions remain on the legacy
+regular-table layout.
 
 Scrape `1304` proved the mixed-layout writer in production. All `8,448` scope
 manifests and `603,015` persisted page statuses completed successfully.
@@ -824,7 +841,10 @@ Published source rows mapped exactly to the two new generation-child row
 counts, all `6,336` published solo scopes were complete, publication `92`
 advanced and unfroze, notification recovery and post-publication registration
 drain completed, and the run-once worker exited normally. The worker is held
-before the next single-instrument migration.
+before the next single-instrument migration. Scrape `1305` subsequently proved
+the Pro Bass, Pro Guitar, and Solo Guitar `1305` children through the same
+terminal gates. A complete post-Solo Vocals scrape is required before any
+fifth instrument migration.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -878,14 +898,14 @@ source-of-truth or restore targets.
 
 - Production data, scratch, exports, repacks, and migration artifacts stay on
   the 4 TB FST drive unless the operator explicitly overrides the rule.
-- The pro-bass pilot has one explicit exception for temporary archive,
-  restore-drill, and immutable report files on `/dev/nvme2n1p2`. No accepted
-  PostgreSQL relation or permanent FST artifact may use that device. The
-  archive remains temporary but retained until a separate deletion/retention
-  decision.
-- Current FST free space is approximately `66 GB`. Trustworthy report-only
-  planning and the isolated pilot do not authorize live rewrite or reduction
-  of the `500 GiB` free-space gate.
+- The operator-authorized generation migrations use `/dev/nvme2n1p2` only for
+  temporary archive, isolated restore, and immutable recovery/report files.
+  No accepted PostgreSQL relation or permanent FST artifact may use that
+  device. Each recovery package remains temporary but retained until a
+  separate deletion/retention decision.
+- FST free space after the accepted Solo Vocals final drop is
+  `1,618,626,166,784` bytes. This measured capacity does not reduce any
+  migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
 - Current-publication max-score correction requires the canonical manifest and
