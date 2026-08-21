@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-21
+last_verified_commit: 070daf14
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -42,11 +42,12 @@ update_triggers:
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
-- Treat storage capacity as the next active safety lane before another
-  post-scrape optimization. The existing
-  report-only snapshot-retention planner must fail closed on incomplete
-  statistics, and exact reclaim/workspace evidence must pass the current gate
-  before any rewrite proposal.
+- Continue the one-instrument-at-a-time snapshot-generation conversion as the
+  active storage lane. Four instruments are accepted, five remain, and the
+  post-Solo Vocals full scrape must complete before another migration.
+- Keep exact archive/restore, retained-source parity, rollback, capacity, and
+  live API gates for every remaining instrument and for any future recurring
+  generation-retention owner.
 - After a safe capacity window exists, use the accepted timing foundation to
   optimize measured bottlenecks rather than inferred phase cost. The first
   BandMaintenance target remains current projection refresh.
@@ -99,7 +100,7 @@ resolved through repository and bounded runtime evidence.
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
+| Storage sustainability | Improving but incomplete: four instrument partitions are generation-partitioned and Solo Vocals raised measured free space to about 1.619 TB; five legacy partitions and recurring child retention remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -239,20 +240,20 @@ evaluation.
 ### Snapshot capacity
 
 **Verified:** snapshot generations share nine fixed instrument partitions.
-Another candidate appends one generation; it does not allocate another 2.381
-TB. Historical full-scrape evidence observed roughly 15–20 GB snapshot-family
-growth per new generation before other WAL/derived costs.
+Pro Bass, Pro Guitar, Solo Guitar, and Solo Vocals now use snapshot-ID
+children. Their accepted generation migrations returned
+`1,483,098,296,320` filesystem bytes in total, and measured FST free space
+after Solo Vocals is `1,618,626,166,784` bytes. Another scrape appends one
+generation child per migrated instrument rather than another cumulative copy.
 
-**Inference:** most snapshot rows are older than the current and one rollback
-generation. Current plus previous mapped rows are about 1.8% of the catalog
-row estimate. This does not prove exact reclaimable bytes because row width,
-index distribution, failed-candidate evidence, source bindings, and retention
-protection vary.
+**Verified:** a complete guarded scrape is required between instrument
+migrations. Scrapes `1304` and `1305` proved generation-aware writes for the
+first three migrations; the post-Solo Vocals scrape is the current gate.
 
-**Unknown:** the exact planner candidate list, protected generations, retained
-bytes, purge bytes, rewrite workspace, and rollback objects. The report-only
-planner is already enabled, but its exact result is not currently persisted in
-available evidence.
+**Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
+build/WAL demand, and rollback objects for each of the five remaining legacy
+partitions until its read-only `check` and `plan` pass. Recurring
+archive-before-child-drop retention is also unimplemented.
 
 ## Exact current dependency map
 

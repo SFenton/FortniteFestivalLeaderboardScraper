@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-21
+last_verified_commit: 070daf14
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -26,13 +26,15 @@ physical snapshot IDs still required by active state, the solo current
 projection, and the current/previous/working publication source maps.
 
 The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
-and `pro-guitar` targets completed production migration on 2026-08-18, and
-`solo-guitar` completed on 2026-08-20; six targets remain unmigrated.
-Generation-aware validation scrapes `1304` and `1305` subsequently completed
-through publication, notifications, registration drain, and normal run-once
-worker exit. This runbook is not authorization to start a scrape, unfreeze
-reads, select alternate scratch storage, delete an archive, or weaken a failed
-gate.
+and `pro-guitar` targets completed production migration on 2026-08-18,
+`solo-guitar` completed on 2026-08-20, and `solo-vocals` completed on
+2026-08-21; five targets remain unmigrated. Generation-aware validation
+scrapes `1304` and `1305` completed through publication, notifications,
+registration drain, and normal run-once worker exit for the earlier
+migrations. A complete post-`solo-vocals` validation scrape is now required
+before another instrument migration. This runbook is not authorization to
+start a scrape, unfreeze reads, select alternate scratch storage, delete an
+archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -161,6 +163,35 @@ authoritative recovery package remains under
 the earlier failed workspace
 `snapshot-generation-solo-guitar-20260819T230609Z` remains forensic evidence.
 
+### Accepted production solo-vocals generation migration
+
+Run `snapshot-generation-solo-vocals-20260820T223324Z` retained physical
+snapshots `1302-1305` and removed 170 obsolete generations from hot storage:
+
+- exact source/archive rows: `912,731,557`;
+- retained rows: `23,925,998`;
+- removed rows: `888,805,559`;
+- source bytes: `445,078,241,280`;
+- final partition tree: `9,389,801,472` bytes;
+- immediate filesystem return: `445,096,439,808` bytes;
+- swap: `0.471` seconds;
+- finalization: `5,407.036` seconds;
+- archive: `36,064,790,508` bytes, SHA-256
+  `898dab8368048ef1ba18eae2586e2ef4599115e9b066a4ce5b707243d8576d84`;
+- isolated PostgreSQL 17 restore peak: `358,083,150,556` bytes;
+- final report SHA-256:
+  `a662d2dfb450d321f5290fc1499f4dbf0914c3af167137750a4455f747b448d5`.
+
+The final children contain `6,914,186`, `6,083,195`, `5,144,706`, and
+`5,783,911` rows for snapshots `1302`, `1303`, `1304`, and `1305`; the
+default child is empty. All accepted relations and indexes are in
+`pg_default`, no `sgm_sv_*` artifact remains, and the network-none restore
+container and transient PGDATA were removed. The live API monitor recorded
+`1,040` successful samples and zero failures. The authoritative recovery
+package remains under
+`/home/sfenton/fst-temporary/snapshot-generation-solo-vocals-20260820T223324Z`
+until a separate deletion decision.
+
 ### Accepted generation-aware validation scrape 1304
 
 Run-once worker image `fstservice:snapshot-generation-a682a16c` completed
@@ -279,15 +310,18 @@ Terminal evidence is under:
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-guitar-scrape-20260820T041909Z/resume-20260820T125414Z
 ```
 
-The worker is held offline. The next migration target is `solo-vocals`; do not
-migrate another instrument in the same scrape interval.
+The worker is held offline. The `solo-vocals` migration is accepted, but a
+complete guarded validation scrape must now finish through publication,
+notifications, cleanup, registration drain, and normal worker exit before
+another instrument is selected or migrated.
 
 ## Current protected-source expectation
 
 Validation scrape `1305` is current and `1304` is previous. Publication
 generations `94` and `92` currently resolve to those scrapes. Observed
-pro-bass, pro-guitar, and solo-guitar source maps reuse physical IDs `1302`
-through `1305`. That is planning evidence, not a hard-coded retention list.
+pro-bass, pro-guitar, solo-guitar, and solo-vocals source maps reuse physical
+IDs `1302` through `1305`. That is planning evidence, not a hard-coded
+retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 
