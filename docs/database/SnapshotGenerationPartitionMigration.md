@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-21
-last_verified_commit: 070daf14
+last_verified_commit: 3368137a
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -310,17 +310,78 @@ Terminal evidence is under:
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-guitar-scrape-20260820T041909Z/resume-20260820T125414Z
 ```
 
-The worker is held offline. The `solo-vocals` migration is accepted, but a
-complete guarded validation scrape must now finish through publication,
-notifications, cleanup, registration drain, and normal worker exit before
-another instrument is selected or migrated.
+### Accepted generation-aware validation scrape 1306
+
+The official `070daf14` run-once worker completed scrape `1306` from
+`2026-08-21 03:10:42 UTC` through normal worker exit at `15:23:57 UTC` using
+the exact `800/32/4` network profile and Rivals account cap `2`:
+
+- `707` songs, `40,799,586` leaderboard entries, `603,829` requests, and
+  `92,108,177,594` received bytes;
+- all `8,484` scope manifests complete, all `603,829` persisted page statuses
+  `success`, zero retry-exhausted scopes, and zero manifest failures;
+- all `6,363` expected published solo sources validated and mapped, with zero
+  missing rows;
+- all 13 publication-critical phase outcomes completed; the three retention
+  phases were skipped safely under the database-pressure guard;
+- cgroup OOM/OOM-kill counters remained `9/2`.
+
+Published scrape-1306 source rows with physical snapshot `1306` match the
+generation children exactly:
+
+| Instrument | Published rows | Physical child rows | Default rows |
+|---|---:|---:|---:|
+| Pro Bass | `1,738,972` | `1,738,972` | `0` |
+| Pro Guitar | `3,484,122` | `3,484,122` | `0` |
+| Solo Guitar | `5,227,744` | `5,227,744` | `0` |
+| Solo Vocals | `5,380,894` | `5,380,894` | `0` |
+
+Accepted phase timings were:
+
+| Phase | Duration |
+|---|---:|
+| BandMaintenance | `03:17:40.426` |
+| ComputeRankings | `01:12:43.369` |
+| Rivals | `00:11:30.081` |
+| LeaderboardRivals | `05:21:43.486` |
+| PlayerStatsTiers | `00:00:03.854` |
+| Cleanup.SoloCurrentProjection | `00:15:56.821` |
+| Cleanup.PrecomputeAll | `00:13:20.339` |
+| Publication preparation | `00:04:32.781` |
+
+Band current projection selected and published `13,118/54,301` impacted
+scopes, wrote `23,458,737` rows, deleted `23,471,872` old rows, and recorded
+zero failures. Rivals preloaded `1,960` score rows for nine accounts in
+`296,148.203` ms and completed with max degree `2`. Leaderboard Rivals
+completed all 18 users without another OOM.
+
+Publication `96` became ready at `2026-08-21 15:21:20 UTC` and current at
+`15:21:38 UTC`; the exclusive publication lock lasted `3,609.567` ms with
+zero lock rejections or retries. Notification recovery completed with `77`
+player and `142` band events. Post-publication work completed a four-account
+backfill (`19` entries, `45` API calls) and one-user history reconstruction
+(`5` sessions, `792` API calls); the cyclical worker reported zero active
+attachments and exited `0`.
+
+Public service-info, songs, features, and rankings-overview routes returned
+HTTP `200`. FST free space after terminal worker exit was
+`1,590,535,684,096` bytes. Terminal evidence is under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-vocals-scrape-20260821T031004Z
+```
+
+The worker is held offline. `solo-drums` is the next single-instrument target
+because its remaining legacy partition is the largest at
+`428,560,547,840` bytes. Do not migrate a second instrument before the next
+complete guarded scrape.
 
 ## Current protected-source expectation
 
-Validation scrape `1305` is current and `1304` is previous. Publication
-generations `94` and `92` currently resolve to those scrapes. Observed
+Validation scrape `1306` is current and `1305` is previous. Publication
+generations `96` and `94` currently resolve to those scrapes. Observed
 pro-bass, pro-guitar, solo-guitar, and solo-vocals source maps reuse physical
-IDs `1302` through `1305`. That is planning evidence, not a hard-coded
+IDs `1302` through `1306`. That is planning evidence, not a hard-coded
 retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
