@@ -832,7 +832,14 @@ exit.
 `1302-1305` remained protected. The accepted run removed `888,805,559` hot
 rows, returned `445,096,439,808` filesystem bytes, and left a
 `9,389,801,472`-byte `pg_default` tree with an empty default child and no
-migration artifacts. Five instrument partitions remain on the legacy
+migration artifacts.
+
+`solo-drums` completed later on 2026-08-21. The isolated restore proved
+`904,310,454` exact rows across 176 generations; `28,959,242` rows from
+`1302-1306` remained protected. The accepted run removed `875,351,212` hot
+rows, returned `428,561,866,752` filesystem bytes, and left an
+`11,075,510,272`-byte `pg_default` tree with an empty default child and no
+migration artifacts. Four instrument partitions remain on the legacy
 regular-table layout.
 
 Scrape `1304` proved the mixed-layout writer in production. All `8,448` scope
@@ -843,8 +850,10 @@ advanced and unfroze, notification recovery and post-publication registration
 drain completed, and the run-once worker exited normally. The worker is held
 before the next single-instrument migration. Scrape `1305` subsequently proved
 the Pro Bass, Pro Guitar, and Solo Guitar `1305` children through the same
-terminal gates. A complete post-Solo Vocals scrape is required before any
-fifth instrument migration.
+terminal gates. Scrape `1306` then proved the Pro Bass, Pro Guitar, Solo
+Guitar, and Solo Vocals `1306` children through publication, notifications,
+registration drain, and normal worker exit. A complete post-Solo Drums scrape
+is required before any sixth instrument migration.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -903,8 +912,8 @@ source-of-truth or restore targets.
   No accepted PostgreSQL relation or permanent FST artifact may use that
   device. Each recovery package remains temporary but retained until a
   separate deletion/retention decision.
-- FST free space after the accepted Solo Vocals final drop is
-  `1,618,626,166,784` bytes. This measured capacity does not reduce any
+- FST free space after the accepted Solo Drums final drop is
+  `2,020,845,260,800` bytes. This measured capacity does not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.

@@ -27,14 +27,14 @@ projection, and the current/previous/working publication source maps.
 
 The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
 and `pro-guitar` targets completed production migration on 2026-08-18,
-`solo-guitar` completed on 2026-08-20, and `solo-vocals` completed on
-2026-08-21; five targets remain unmigrated. Generation-aware validation
-scrapes `1304` and `1305` completed through publication, notifications,
-registration drain, and normal run-once worker exit for the earlier
-migrations. A complete post-`solo-vocals` validation scrape is now required
-before another instrument migration. This runbook is not authorization to
-start a scrape, unfreeze reads, select alternate scratch storage, delete an
-archive, or weaken a failed gate.
+`solo-guitar` completed on 2026-08-20, and `solo-vocals` and `solo-drums`
+completed on 2026-08-21; four targets remain unmigrated. Generation-aware
+validation scrapes `1304`, `1305`, and `1306` completed through publication,
+notifications, registration drain, and normal run-once worker exit for the
+first four migrations. A complete post-`solo-drums` validation scrape is now
+required before another instrument migration. This runbook is not
+authorization to start a scrape, unfreeze reads, select alternate scratch
+storage, delete an archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -190,6 +190,35 @@ container and transient PGDATA were removed. The live API monitor recorded
 `1,040` successful samples and zero failures. The authoritative recovery
 package remains under
 `/home/sfenton/fst-temporary/snapshot-generation-solo-vocals-20260820T223324Z`
+until a separate deletion decision.
+
+### Accepted production solo-drums generation migration
+
+Run `snapshot-generation-solo-drums-20260821T153515Z` retained physical
+snapshots `1302-1306` and removed 171 obsolete generations from hot storage:
+
+- exact source/archive rows: `904,310,454`;
+- retained rows: `28,959,242`;
+- removed rows: `875,351,212`;
+- source bytes: `428,560,547,840`;
+- final partition tree: `11,075,510,272` bytes;
+- immediate filesystem return: `428,561,866,752` bytes;
+- swap: `0.469` seconds;
+- finalization: `5,662.084` seconds;
+- archive: `36,036,312,306` bytes, SHA-256
+  `95112639111d3989891fb689224b72e5a1fac97086263a05e8b574c644f24d4d`;
+- isolated PostgreSQL 17 restore peak: `345,121,186,524` bytes;
+- final report SHA-256:
+  `5173e61dacf625214b32092ffc37fcae34d127798e63a7c34e0164d9f7ba372f`.
+
+The final children contain `6,767,917`, `6,101,098`, `5,146,860`,
+`5,713,732`, and `5,229,635` rows for snapshots `1302`, `1303`, `1304`,
+`1305`, and `1306`; the default child is empty. All accepted relations and
+indexes are in `pg_default`, no `sgm_sd_*` artifact remains, and the
+network-none restore container and transient PGDATA were removed. The live
+API monitor recorded `1,079` successful samples and zero failures. The
+authoritative recovery package remains under
+`/home/sfenton/fst-temporary/snapshot-generation-solo-drums-20260821T153515Z`
 until a separate deletion decision.
 
 ### Accepted generation-aware validation scrape 1304
