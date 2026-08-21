@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-21
-last_verified_commit: 070daf14
+last_verified_commit: 3368137a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -850,10 +850,18 @@ advanced and unfroze, notification recovery and post-publication registration
 drain completed, and the run-once worker exited normally. The worker is held
 before the next single-instrument migration. Scrape `1305` subsequently proved
 the Pro Bass, Pro Guitar, and Solo Guitar `1305` children through the same
-terminal gates. Scrape `1306` then proved the Pro Bass, Pro Guitar, Solo
-Guitar, and Solo Vocals `1306` children through publication, notifications,
-registration drain, and normal worker exit. A complete post-Solo Drums scrape
-is required before any sixth instrument migration.
+terminal gates.
+
+Scrape `1306` then proved all four migrated instruments through publication,
+notifications, post-publication drain, and exit. Published-source sums match
+the physical `1306` children exactly: Pro Bass `1,738,972`, Pro Guitar
+`3,484,122`, Solo Guitar `5,227,744`, and Solo Vocals `5,380,894`; every
+default child remains empty. Their complete live trees now occupy
+`4,762,746,880`, `10,302,300,160`, `12,533,440,512`, and
+`12,095,324,160` bytes respectively. Publication `96` is current and
+unfrozen, and the worker was held before the Solo Drums migration. Solo Drums
+subsequently completed under that hold; a complete post-Solo Drums scrape is
+required before any sixth instrument migration.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -912,8 +920,9 @@ source-of-truth or restore targets.
   No accepted PostgreSQL relation or permanent FST artifact may use that
   device. Each recovery package remains temporary but retained until a
   separate deletion/retention decision.
-- FST free space after the accepted Solo Drums final drop is
-  `2,020,845,260,800` bytes. This measured capacity does not reduce any
+- FST free space after the accepted Solo Vocals validation scrape was
+  `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
+  `2,020,845,260,800` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.

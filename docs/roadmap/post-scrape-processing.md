@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-21
-last_verified_commit: 070daf14
+last_verified_commit: 3368137a
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -165,13 +165,13 @@ long-run distribution.
 
 | Phase | Samples | p50 or representative duration | Tail/variance note |
 |---|---:|---:|---|
-| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1303` took 213.3 minutes: current projection 183.4 minutes, prune 18.9 minutes, search refresh 11.0 minutes. This reinforces current projection as the first target |
-| `ComputeRankings` | 10+ | About 68 minutes | Scrape `1303` took 88.3 minutes; investigate the >10% tail before accepting any ranking concurrency change |
-| `RefreshRegisteredUsers` | 10 | About 24 minutes | About 44-minute tail |
-| `Cleanup.PrecomputeAll` | 10 | About 13 minutes | Stable |
-| `Cleanup.SoloCurrentProjection` | 10 | About 12 minutes | About 18-minute tail |
-| `LeaderboardRivals` | 6 | About 5 minutes | Scrape `1304` took 7h00m02s; scrape `1305` resume took 3h15m10s for the same 17 users but used temporary PostgreSQL headroom, so this is not a matched code A/B |
-| `Rivals` | 11 | About 50 seconds | Scrape `1305` launched 45 accounts without a bound, duplicated current-score reads, and OOM-killed PostgreSQL. The accepted resume bulk-loaded 42,682 rows in nine queries/5m00.6s, capped accounts at 2, and completed all users in 2h44m53s without another OOM |
+| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1306` took 197.7 minutes; current projection alone took 166.0 minutes for 13,118/54,301 scopes, reinforcing it as the first target |
+| `ComputeRankings` | 10+ | About 68 minutes | Scrape `1306` took 72.7 minutes; rank-history snapshots were 37.7 minutes and band rankings 18.0 minutes |
+| `RefreshRegisteredUsers` | 10+ | About 24 minutes | Scrape `1306` completed in 4.1 minutes; retain the historical 44-minute tail until more bounded samples exist |
+| `Cleanup.PrecomputeAll` | 10+ | About 13 minutes | Scrape `1306` took 13.3 minutes; stable |
+| `Cleanup.SoloCurrentProjection` | 10+ | About 12 minutes | Scrape `1306` took 16.0 minutes for 6,053 scopes |
+| `LeaderboardRivals` | 7 | About 5 minutes | Scrape `1306` took 5h21m43s for 18 users at the production 16 GiB limit; bulk neighborhood/profile reuse remains required |
+| `Rivals` | 12 | About 50 seconds | Scrape `1306` preloaded 1,960 rows for nine accounts in 4m56s, capped accounts at 2, and completed in 11m30s without OOM |
 | Each shadow activation | 10 | About 2.3–2.5 minutes | Broad snapshot-state query |
 | `BandExtraction` | 10 | About 1.5 minutes | Already bounded-parallel |
 | First-seen, names, stats, checkpoint, legacy prune | 10 | Usually seconds or no-op | Not optimization priorities |
