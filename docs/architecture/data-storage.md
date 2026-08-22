@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-22
-last_verified_commit: 091d2e10
+last_verified_commit: 494f1ef6
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -868,9 +868,15 @@ Their complete live trees occupy `5,628,272,640`, `12,227,526,656`,
 `14,962,409,472`, `14,549,868,544`, and `13,431,971,840` bytes respectively.
 All `6,363` publication sources are complete, publication `98` is current and
 unfrozen, public routes are healthy, and the run-once worker exited `0` and
-remains held offline. The next migration target must be selected by fresh
-read-only `check` and `plan` evidence; migrate only one instrument before the
-next complete guarded scrape.
+remains held offline.
+
+Solo Bass was subsequently converted under that worker hold. Its exact
+archive/restore contained `895,497,806` rows, retained `28,995,467` rows from
+snapshots `1302-1307`, and removed `866,502,339` obsolete rows. The final
+`11,351,261,184`-byte tree and all indexes are in `pg_default`, the default
+child is empty, no migration artifact remains, and `429,125,984,256`
+filesystem bytes were returned. A complete post-Solo Bass scrape is required
+before selecting or migrating another instrument.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -932,7 +938,8 @@ source-of-truth or restore targets.
 - FST free space after the accepted Solo Vocals validation scrape was
   `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
   `2,020,845,260,800` bytes; after accepted validation scrape `1307` it is
-  `1,994,932,432,896` bytes. These measured capacities do not reduce any
+  `1,994,932,432,896` bytes; after the accepted Solo Bass final drop it is
+  `2,426,681,905,152` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
