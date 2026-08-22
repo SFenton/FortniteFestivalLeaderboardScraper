@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-22
+last_verified_commit: 494f1ef6
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -589,10 +589,21 @@ instrument/snapshot generation child exists before inserting.
 
 The PostgreSQL helper is fixed to the nine supported instruments and validates
 the resulting `FOR VALUES IN (snapshot_id)` bound. Concurrent batch writers
-serialize first-child creation with an advisory transaction lock. Before an
-instrument is migrated, the helper detects its regular-table layout and
-returns without mutation, so the same worker image is compatible across the
-rolling migration.
+acquire one global generation-DDL advisory transaction lock in a separate SQL
+statement before invoking the helper. The separate statement gives a waiter a
+fresh `READ COMMITTED` catalog snapshot, while the global key serializes child
+table and inherited-index naming across instruments. Before an instrument is
+migrated, the helper detects its regular-table layout and returns without
+mutation, so the same worker image is compatible across the rolling migration.
+
+The first post-Solo Bass validation attempt, scrape `1308`, exposed the prior
+per-instrument lock boundary: concurrent first batches created generation
+children for different instruments, and PostgreSQL selected the same truncated
+inherited-index name, producing SQLSTATE `23505` in one 13-row Solo Bass batch.
+The writer retained that page as a replay artifact, failed the candidate,
+skipped post-scrape/publication work, unfroze reads on publication `98`, and
+exited normally. A clean full retry is required; the failed candidate is not
+publication evidence.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes

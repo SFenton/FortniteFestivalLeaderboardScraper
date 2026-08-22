@@ -541,8 +541,13 @@ public static class DatabaseInitializer
                     generation_partition;
             END IF;
 
+            -- PostgreSQL chooses inherited index names in the shared schema.
+            -- Serialize generation DDL across instruments so concurrent first
+            -- batches cannot select the same truncated index name.
             PERFORM pg_advisory_xact_lock(
-                hashtextextended(instrument_partition, p_snapshot_id));
+                hashtextextended(
+                    'fst.snapshot-generation-partition-ddl',
+                    0));
 
             SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
             INTO observed_bound

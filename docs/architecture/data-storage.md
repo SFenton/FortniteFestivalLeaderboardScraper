@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-22
-last_verified_commit: 091d2e10
+last_verified_commit: 494f1ef6
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -868,9 +868,25 @@ Their complete live trees occupy `5,628,272,640`, `12,227,526,656`,
 `14,962,409,472`, `14,549,868,544`, and `13,431,971,840` bytes respectively.
 All `6,363` publication sources are complete, publication `98` is current and
 unfrozen, public routes are healthy, and the run-once worker exited `0` and
-remains held offline. The next migration target must be selected by fresh
-read-only `check` and `plan` evidence; migrate only one instrument before the
-next complete guarded scrape.
+remains held offline.
+
+Solo Bass was subsequently converted under that worker hold. Its exact
+archive/restore contained `895,497,806` rows, retained `28,995,467` rows from
+snapshots `1302-1307`, and removed `866,502,339` obsolete rows. The final
+`11,351,261,184`-byte tree and all indexes are in `pg_default`, the default
+child is empty, no migration artifact remains, and `429,125,984,256`
+filesystem bytes were returned. A complete post-Solo Bass scrape is required
+before selecting or migrating another instrument.
+
+The first validation attempt, scrape `1308`, completed network collection and
+all `2,121` band manifests but failed closed on one 13-row Solo Bass writer
+batch. Concurrent first-batch generation DDL for different instruments raced
+while PostgreSQL selected truncated inherited-index names, raising SQLSTATE
+`23505`. The failed page is retained for replay, publication `98` remains
+current and unfrozen, and no post-scrape phase ran. The writer now acquires one
+global generation-DDL advisory lock in a separate statement before partition
+creation so the post-wait catalog snapshot is current and cross-instrument
+index naming is serialized. A clean full scrape retry remains mandatory.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -879,8 +895,14 @@ current/previous/working publication sources, active snapshot state, and
 projection sources; archive/restore-prove nonempty obsolete children; and keep
 the default child empty. Readers continue to query the unchanged parent
 relation. Normal scheduling remains held until this recurring lifecycle is
-accepted. One guarded run-once scrape is required after each instrument
-migration, followed by another worker hold before the next migration.
+accepted. Normally one guarded run-once scrape is required after each
+instrument migration, followed by another worker hold before the next
+migration. The only current exception is the operator-authorized final
+interval: after a clean post-Solo Bass retry proves all six migrated writer
+paths, Pro Vocals, Pro Cymbals, and Pro Drums may be migrated sequentially
+under one hold, with every target independently completing the full migration
+state machine. One complete scrape across all nine instruments is required
+immediately afterward.
 
 The existing generic retention service remains the compatibility owner for
 unmigrated regular instrument partitions only. It deliberately produces no
@@ -932,7 +954,8 @@ source-of-truth or restore targets.
 - FST free space after the accepted Solo Vocals validation scrape was
   `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
   `2,020,845,260,800` bytes; after accepted validation scrape `1307` it is
-  `1,994,932,432,896` bytes. These measured capacities do not reduce any
+  `1,994,932,432,896` bytes; after the accepted Solo Bass final drop it is
+  `2,426,681,905,152` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.

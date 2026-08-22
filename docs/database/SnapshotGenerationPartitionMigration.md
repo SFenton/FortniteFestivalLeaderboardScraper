@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-22
-last_verified_commit: 091d2e10
+last_verified_commit: 494f1ef6
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -28,14 +28,15 @@ projection, and the current/previous/working publication source maps.
 The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
 and `pro-guitar` targets completed production migration on 2026-08-18,
 `solo-guitar` completed on 2026-08-20, and `solo-vocals` and `solo-drums`
-completed on 2026-08-21; four targets remain unmigrated. Generation-aware
+completed on 2026-08-21. `solo-bass` completed on 2026-08-22; three targets
+remain unmigrated. Generation-aware
 validation scrapes `1304`, `1305`, `1306`, and `1307` completed through
 publication, notifications, registration drain, and normal run-once worker
-exit. Scrape `1307` accepted the `solo-drums` writer path, and the worker is
-held offline before the next one-instrument migration. Select that target only
-after a fresh read-only `check` and `plan`. This runbook is not authorization
-to start a scrape, unfreeze reads, select alternate scratch storage, delete an
-archive, or weaken a failed gate.
+exit. Scrape `1307` accepted the `solo-drums` writer path. The `solo-bass`
+migration is accepted, and the worker is held offline pending its complete
+validation scrape before another instrument is selected. This runbook is not
+authorization to start a scrape, unfreeze reads, select alternate scratch
+storage, delete an archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -44,6 +45,14 @@ publication, notification recovery, registration drain, and exit. Do not
 resume unattended normal worker scheduling after the nine instrument
 migrations until a separate archive-before-child-drop owner is implemented,
 restore-tested, documented, and accepted.
+
+The operator-authorized exception for the final migration interval applies
+only after a clean post-Solo Bass retry proves the six migrated writer paths.
+Pro Vocals, Pro Cymbals, and Pro Drums may then be migrated sequentially in one
+worker hold without an intervening scrape, but each target must independently
+complete every archive, network-none restore, build, swap, validate, drop,
+API, capacity, and recovery gate. One complete scrape across all nine
+instruments is required immediately afterward.
 
 Production Compose ownership remains:
 
@@ -220,6 +229,35 @@ network-none restore container and transient PGDATA were removed. The live
 API monitor recorded `1,079` successful samples and zero failures. The
 authoritative recovery package remains under
 `/home/sfenton/fst-temporary/snapshot-generation-solo-drums-20260821T153515Z`
+until a separate deletion decision.
+
+### Accepted production solo-bass generation migration
+
+Run `snapshot-generation-solo-bass-20260822T111348Z` retained physical
+snapshots `1302-1307` and removed 166 obsolete generations from hot storage:
+
+- exact source/archive rows: `895,497,806`;
+- retained rows: `28,995,467`;
+- removed rows: `866,502,339`;
+- source bytes: `429,124,583,424`;
+- final partition tree: `11,351,261,184` bytes;
+- immediate filesystem return: `429,125,984,256` bytes;
+- swap: `0.460` seconds;
+- finalization: `5,397.909` seconds;
+- archive: `35,598,305,328` bytes, SHA-256
+  `ceba77be3b41235fe16180f93a4be95308d8e9e20016c6560aca2e1c70a970c2`;
+- isolated PostgreSQL 17 restore peak: `348,066,407,132` bytes;
+- final report SHA-256:
+  `1a5b9bbc99ff1c75c961a64ac0f6a28b43ec1dfacb45204bfc4d65d28e54d8e6`.
+
+The final children contain `6,698,206`, `5,197,807`, `4,011,463`,
+`4,724,434`, `4,508,477`, and `3,855,080` rows for snapshots `1302`, `1303`,
+`1304`, `1305`, `1306`, and `1307`; the default child is empty. All accepted
+relations and indexes are in `pg_default`, no `sgm_sb_*` artifact remains,
+and the network-none restore container and transient PGDATA were removed. The
+live API monitor recorded `1,040` successful samples and zero failures. The
+authoritative recovery package remains under
+`/home/sfenton/fst-temporary/snapshot-generation-solo-bass-20260822T111348Z`
 until a separate deletion decision.
 
 ### Accepted generation-aware validation scrape 1304
@@ -465,19 +503,37 @@ under:
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-drums-scrape-20260821T202634Z/terminal
 ```
 
-The post-`solo-drums` validation gate is accepted. The worker remains held
-offline. Run fresh read-only `check` and `plan` stages for the remaining
-legacy instruments, select exactly one target from current evidence, migrate
-only that target, and require another complete guarded scrape before selecting
-the following instrument.
+The post-`solo-drums` validation gate is accepted. Solo Bass was subsequently
+migrated under that worker hold. The worker remains offline, and a complete
+post-Solo Bass guarded scrape is required before selecting or migrating
+another instrument.
+
+### Failed Solo Bass validation attempt 1308
+
+The first master-image validation attempt collected all `6,363` solo scopes,
+flushed all `194,623` band pages, and completed all `2,121` band manifests.
+It then failed the writer gate because one 13-row Solo Bass page was retained
+for replay. Concurrent first-batch partition creation for different
+instruments selected the same truncated inherited-index relation name and
+raised SQLSTATE `23505` on
+`leaderboard_entries_snapshot_solo_bass_s1308`.
+
+The failure remained fail-closed: no post-scrape phase or publication ran,
+publication `98` stayed authoritative, reads unfroze, and the run-once worker
+exited normally. The six `1308` generation children and the retained replay
+artifact remain forensic candidate evidence, not accepted publication state.
+The retry image must acquire one global generation-DDL advisory lock in a
+separate statement before calling the partition helper. Only a complete retry
+with exact physical-child/published-source parity clears the Solo Bass gate
+and authorizes the final three-instrument migration interval.
 
 ## Current protected-source expectation
 
 Validation scrape `1307` is current and `1306` is previous. Publication
 generations `98` and `96` currently resolve to those scrapes. Observed
-pro-bass, pro-guitar, solo-guitar, solo-vocals, and solo-drums source maps
-reuse physical IDs `1302` through `1307`. That is planning evidence, not a
-hard-coded retention list.
+pro-bass, pro-guitar, solo-guitar, solo-bass, solo-vocals, and solo-drums
+source maps reuse physical IDs `1302` through `1307`. That is planning
+evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 
