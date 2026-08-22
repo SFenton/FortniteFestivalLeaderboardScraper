@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-21
-last_verified_commit: 3368137a
+last_verified: 2026-08-22
+last_verified_commit: 091d2e10
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -29,12 +29,13 @@ The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
 and `pro-guitar` targets completed production migration on 2026-08-18,
 `solo-guitar` completed on 2026-08-20, and `solo-vocals` and `solo-drums`
 completed on 2026-08-21; four targets remain unmigrated. Generation-aware
-validation scrapes `1304`, `1305`, and `1306` completed through publication,
-notifications, registration drain, and normal run-once worker exit for the
-first four migrations. A complete post-`solo-drums` validation scrape is now
-required before another instrument migration. This runbook is not
-authorization to start a scrape, unfreeze reads, select alternate scratch
-storage, delete an archive, or weaken a failed gate.
+validation scrapes `1304`, `1305`, `1306`, and `1307` completed through
+publication, notifications, registration drain, and normal run-once worker
+exit. Scrape `1307` accepted the `solo-drums` writer path, and the worker is
+held offline before the next one-instrument migration. Select that target only
+after a fresh read-only `check` and `plan`. This runbook is not authorization
+to start a scrape, unfreeze reads, select alternate scratch storage, delete an
+archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -400,18 +401,83 @@ HTTP `200`. FST free space after terminal worker exit was
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-vocals-scrape-20260821T031004Z
 ```
 
-The worker is held offline. `solo-drums` is the next single-instrument target
-because its remaining legacy partition is the largest at
-`428,560,547,840` bytes. Do not migrate a second instrument before the next
-complete guarded scrape.
+### Accepted generation-aware validation scrape 1307
+
+The official
+`ghcr.io/sfenton/fstservice:sha-070daf14e01a0961ad7261d7ed3ec79d58265919`
+run-once worker completed scrape `1307` from `2026-08-21 20:27:10 UTC`
+through normal worker exit at `2026-08-22 09:06:13 UTC` using the exact
+`800/32/4` network profile and Rivals account cap `2`:
+
+- `707` songs, `40,844,329` leaderboard entries, `604,390` requests, and
+  `92,184,020,371` received bytes;
+- all `8,484` scope manifests complete, all `604,390` persisted page statuses
+  `success`, zero retry-exhausted scopes, and zero manifest failures;
+- all `6,363` published solo sources complete across all nine instruments,
+  with zero incomplete rows;
+- all 13 publication-critical phase outcomes completed; the three retention
+  phases were skipped safely under the database-pressure guard;
+- cgroup OOM/OOM-kill counters remained `9/2`.
+
+Published scrape-1307 source rows with physical snapshot `1307` match the
+generation children exactly:
+
+| Instrument | Published rows | Physical child rows | Default rows |
+|---|---:|---:|---:|
+| Pro Bass | `1,652,632` | `1,652,632` | `0` |
+| Pro Guitar | `3,463,985` | `3,463,985` | `0` |
+| Solo Guitar | `4,761,707` | `4,761,707` | `0` |
+| Solo Vocals | `4,910,955` | `4,910,955` | `0` |
+| Solo Drums | `4,842,176` | `4,842,176` | `0` |
+
+Accepted phase timings were:
+
+| Phase | Duration |
+|---|---:|
+| BandMaintenance | `03:00:20.460` |
+| ComputeRankings | `01:13:19.294` |
+| Rivals | `00:45:06.674` |
+| LeaderboardRivals | `05:21:13.566` |
+| PlayerStatsTiers | `00:00:04.109` |
+| Cleanup.SoloCurrentProjection | `00:18:42.782` |
+| Cleanup.PrecomputeAll | `00:12:22.111` |
+| Publication preparation | `00:05:18.013` |
+
+Band current projection selected and published `11,184/54,258` impacted
+scopes, wrote `19,868,524` rows, and recorded zero failed scopes.
+Leaderboard Rivals completed all `810/810` user/instrument/method scopes.
+
+Publication `98` became ready at `2026-08-22 09:03:45 UTC` and current at
+`09:03:53 UTC`; the exclusive publication lock lasted `3,514.100` ms with
+zero lock rejections or retries. Notification recovery completed player run
+`226` with `111` events and band run `227` with `92` events. The
+post-publication drain completed two registration backfills with `14` entries,
+zero history sessions, and `45` API calls. No backfill or history
+reconstruction remained in progress, no worker query or lock waiter remained,
+and the worker exited `0`.
+
+Public readiness, service-info, songs, features, and rankings-overview routes
+returned HTTP `200`. Publication `98` is current and unfrozen. FST free space
+after terminal worker exit was `1,994,932,432,896` bytes. Terminal evidence is
+under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-drums-scrape-20260821T202634Z/terminal
+```
+
+The post-`solo-drums` validation gate is accepted. The worker remains held
+offline. Run fresh read-only `check` and `plan` stages for the remaining
+legacy instruments, select exactly one target from current evidence, migrate
+only that target, and require another complete guarded scrape before selecting
+the following instrument.
 
 ## Current protected-source expectation
 
-Validation scrape `1306` is current and `1305` is previous. Publication
-generations `96` and `94` currently resolve to those scrapes. Observed
-pro-bass, pro-guitar, solo-guitar, and solo-vocals source maps reuse physical
-IDs `1302` through `1306`. That is planning evidence, not a hard-coded
-retention list.
+Validation scrape `1307` is current and `1306` is previous. Publication
+generations `98` and `96` currently resolve to those scrapes. Observed
+pro-bass, pro-guitar, solo-guitar, solo-vocals, and solo-drums source maps
+reuse physical IDs `1302` through `1307`. That is planning evidence, not a
+hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 

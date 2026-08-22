@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-21
-last_verified_commit: 3368137a
+last_verified: 2026-08-22
+last_verified_commit: 091d2e10
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -856,12 +856,21 @@ Scrape `1306` then proved all four migrated instruments through publication,
 notifications, post-publication drain, and exit. Published-source sums match
 the physical `1306` children exactly: Pro Bass `1,738,972`, Pro Guitar
 `3,484,122`, Solo Guitar `5,227,744`, and Solo Vocals `5,380,894`; every
-default child remains empty. Their complete live trees now occupy
-`4,762,746,880`, `10,302,300,160`, `12,533,440,512`, and
-`12,095,324,160` bytes respectively. Publication `96` is current and
-unfrozen, and the worker was held before the Solo Drums migration. Solo Drums
-subsequently completed under that hold; a complete post-Solo Drums scrape is
-required before any sixth instrument migration.
+default child remained empty. The worker was held before the Solo Drums
+migration.
+
+Scrape `1307` then proved all five migrated instruments through publication,
+notification recovery, post-publication registration drain, and exit.
+Published-source sums match the physical `1307` children exactly: Pro Bass
+`1,652,632`, Pro Guitar `3,463,985`, Solo Guitar `4,761,707`, Solo Vocals
+`4,910,955`, and Solo Drums `4,842,176`; every default child remains empty.
+Their complete live trees occupy `5,628,272,640`, `12,227,526,656`,
+`14,962,409,472`, `14,549,868,544`, and `13,431,971,840` bytes respectively.
+All `6,363` publication sources are complete, publication `98` is current and
+unfrozen, public routes are healthy, and the run-once worker exited `0` and
+remains held offline. The next migration target must be selected by fresh
+read-only `check` and `plan` evidence; migrate only one instrument before the
+next complete guarded scrape.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -922,7 +931,8 @@ source-of-truth or restore targets.
   separate deletion/retention decision.
 - FST free space after the accepted Solo Vocals validation scrape was
   `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
-  `2,020,845,260,800` bytes. These measured capacities do not reduce any
+  `2,020,845,260,800` bytes; after accepted validation scrape `1307` it is
+  `1,994,932,432,896` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
