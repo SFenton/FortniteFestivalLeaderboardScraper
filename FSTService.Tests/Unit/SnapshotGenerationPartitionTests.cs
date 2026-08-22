@@ -1,3 +1,4 @@
+using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Npgsql;
 
@@ -95,6 +96,119 @@ public sealed class SnapshotGenerationPartitionTests : IDisposable
                 transaction));
 
         transaction.Rollback();
+    }
+
+    [Fact]
+    public async Task EnsureGenerationPartition_SerializesConcurrentCrossInstrumentCreation()
+    {
+        string[] instruments =
+        [
+            "Solo_Guitar",
+            "Solo_Bass",
+            "Solo_Drums",
+            "Solo_Vocals",
+            "Solo_PeripheralGuitar",
+            "Solo_PeripheralBass",
+        ];
+
+        for (var round = 0; round < 3; round++)
+        {
+            var snapshotId = 2101L + round;
+            using var start = new Barrier(instruments.Length);
+            var tasks = instruments.Select(instrument => Task.Run(() =>
+            {
+                using var connection = _fixture.DataSource.OpenConnection();
+                if (!start.SignalAndWait(TimeSpan.FromSeconds(30)))
+                    throw new TimeoutException("Concurrent partition test did not synchronize.");
+
+                LeaderboardSpoolWriterFactory.EnsureSnapshotGenerationPartition(
+                    connection,
+                    snapshotId,
+                    instrument);
+            })).ToArray();
+
+            await Task.WhenAll(tasks);
+
+            using var verify = _fixture.DataSource.OpenConnection();
+            using var command = verify.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_class child
+                JOIN pg_namespace namespace
+                  ON namespace.oid = child.relnamespace
+                JOIN pg_inherits inheritance
+                  ON inheritance.inhrelid = child.oid
+                WHERE namespace.nspname = 'public'
+                  AND child.relname = ANY(@childNames)
+                  AND pg_get_expr(
+                        child.relpartbound,
+                        child.oid,
+                        TRUE) = format(
+                            'FOR VALUES IN (%L)',
+                            @snapshotId)
+                """;
+            command.Parameters.AddWithValue(
+                "childNames",
+                instruments.Select(instrument =>
+                    $"leaderboard_entries_snapshot_{InstrumentNameMap[instrument]}_s{snapshotId}")
+                    .ToArray());
+            command.Parameters.AddWithValue("snapshotId", snapshotId);
+            Assert.Equal(instruments.Length, Convert.ToInt32(command.ExecuteScalar()));
+
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_index child_index
+                JOIN pg_class child
+                  ON child.oid = child_index.indrelid
+                WHERE child.relname = ANY(@childNames)
+                """;
+            Assert.Equal(
+                instruments.Length * 2,
+                Convert.ToInt32(command.ExecuteScalar()));
+        }
+    }
+
+    [Fact]
+    public async Task EnsureGenerationPartition_WaitsBeyondCatalogLockTimeout()
+    {
+        using var blockerConnection = _fixture.DataSource.OpenConnection();
+        using var blockerTransaction = blockerConnection.BeginTransaction();
+        using (var acquire = blockerConnection.CreateCommand())
+        {
+            acquire.Transaction = blockerTransaction;
+            acquire.CommandText =
+                LeaderboardSpoolWriterFactory
+                    .BuildAcquireSnapshotGenerationPartitionLockSql();
+            acquire.ExecuteNonQuery();
+        }
+
+        var ensureTask = Task.Run(() =>
+        {
+            using var connection = _fixture.DataSource.OpenConnection();
+            LeaderboardSpoolWriterFactory.EnsureSnapshotGenerationPartition(
+                connection,
+                2201,
+                "Solo_Guitar");
+        });
+
+        await Task.Delay(TimeSpan.FromMilliseconds(2500));
+        Assert.False(ensureTask.IsCompleted);
+
+        blockerTransaction.Commit();
+        await ensureTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        using var verify = _fixture.DataSource.OpenConnection();
+        Assert.Equal(
+            "leaderboard_entries_snapshot_solo_guitar_s2201",
+            Scalar<string>(
+                verify,
+                """
+                SELECT inhrelid::regclass::text
+                FROM pg_inherits
+                WHERE inhrelid =
+                    'public.leaderboard_entries_snapshot_solo_guitar_s2201'
+                        ::regclass
+                """));
     }
 
     [Fact]
@@ -288,6 +402,17 @@ public sealed class SnapshotGenerationPartitionTests : IDisposable
         command.Parameters.AddWithValue("snapshotId", snapshotId);
         return Assert.IsType<string>(command.ExecuteScalar());
     }
+
+    private static readonly IReadOnlyDictionary<string, string> InstrumentNameMap =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Solo_Guitar"] = "solo_guitar",
+            ["Solo_Bass"] = "solo_bass",
+            ["Solo_Drums"] = "solo_drums",
+            ["Solo_Vocals"] = "solo_vocals",
+            ["Solo_PeripheralGuitar"] = "pro_guitar",
+            ["Solo_PeripheralBass"] = "pro_bass",
+        };
 
     private static T Scalar<T>(
         NpgsqlConnection connection,

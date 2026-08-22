@@ -878,6 +878,16 @@ child is empty, no migration artifact remains, and `429,125,984,256`
 filesystem bytes were returned. A complete post-Solo Bass scrape is required
 before selecting or migrating another instrument.
 
+The first validation attempt, scrape `1308`, completed network collection and
+all `2,121` band manifests but failed closed on one 13-row Solo Bass writer
+batch. Concurrent first-batch generation DDL for different instruments raced
+while PostgreSQL selected truncated inherited-index names, raising SQLSTATE
+`23505`. The failed page is retained for replay, publication `98` remains
+current and unfrozen, and no post-scrape phase ran. The writer now acquires one
+global generation-DDL advisory lock in a separate statement before partition
+creation so the post-wait catalog snapshot is current and cross-instrument
+index naming is serialized. A clean full scrape retry remains mandatory.
+
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
 implemented by the layout migration itself. It must preserve
@@ -885,8 +895,14 @@ current/previous/working publication sources, active snapshot state, and
 projection sources; archive/restore-prove nonempty obsolete children; and keep
 the default child empty. Readers continue to query the unchanged parent
 relation. Normal scheduling remains held until this recurring lifecycle is
-accepted. One guarded run-once scrape is required after each instrument
-migration, followed by another worker hold before the next migration.
+accepted. Normally one guarded run-once scrape is required after each
+instrument migration, followed by another worker hold before the next
+migration. The only current exception is the operator-authorized final
+interval: after a clean post-Solo Bass retry proves all six migrated writer
+paths, Pro Vocals, Pro Cymbals, and Pro Drums may be migrated sequentially
+under one hold, with every target independently completing the full migration
+state machine. One complete scrape across all nine instruments is required
+immediately afterward.
 
 The existing generic retention service remains the compatibility owner for
 unmigrated regular instrument partitions only. It deliberately produces no

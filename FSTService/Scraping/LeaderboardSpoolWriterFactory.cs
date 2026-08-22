@@ -198,7 +198,7 @@ public static class LeaderboardSpoolWriterFactory
         }
     }
 
-    private static void EnsureSnapshotGenerationPartition(
+    internal static void EnsureSnapshotGenerationPartition(
         Npgsql.NpgsqlConnection connection,
         long snapshotId,
         string instrument)
@@ -208,10 +208,27 @@ public static class LeaderboardSpoolWriterFactory
         {
             timeout.Transaction = transaction;
             timeout.CommandText = """
-                SET LOCAL lock_timeout = '2s';
+                SET LOCAL lock_timeout = '30s';
                 SET LOCAL statement_timeout = '30s';
                 """;
             timeout.ExecuteNonQuery();
+        }
+
+        // Acquire the global DDL lock in a separate statement. A waiter then
+        // starts the function call with a fresh READ COMMITTED catalog snapshot.
+        using (var ddlLock = connection.CreateCommand())
+        {
+            ddlLock.Transaction = transaction;
+            ddlLock.CommandTimeout = 30;
+            ddlLock.CommandText = BuildAcquireSnapshotGenerationPartitionLockSql();
+            ddlLock.ExecuteNonQuery();
+        }
+
+        using (var ddlTimeout = connection.CreateCommand())
+        {
+            ddlTimeout.Transaction = transaction;
+            ddlTimeout.CommandText = "SET LOCAL lock_timeout = '2s'";
+            ddlTimeout.ExecuteNonQuery();
         }
 
         using (var command = connection.CreateCommand())
@@ -226,6 +243,14 @@ public static class LeaderboardSpoolWriterFactory
 
         transaction.Commit();
     }
+
+    internal static string BuildAcquireSnapshotGenerationPartitionLockSql() =>
+        """
+        SELECT pg_advisory_xact_lock(
+            hashtextextended(
+                'fst.snapshot-generation-partition-ddl',
+                0))
+        """;
 
     internal static string BuildEnsureSnapshotGenerationPartitionSql() =>
         """

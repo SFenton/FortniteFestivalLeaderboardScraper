@@ -45,8 +45,8 @@ update_triggers:
 - Continue the one-instrument-at-a-time snapshot-generation conversion as the
   active storage lane. Six instruments are generation-partitioned, five are
   accepted through validation scrape `1307`, three legacy instruments remain,
-  and Solo Bass must complete its validation scrape before another target is
-  selected.
+  and Solo Bass must complete a clean validation retry before the final three
+  targets may be migrated sequentially in one worker hold.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -254,7 +254,10 @@ migrations. Scrapes `1304`, `1305`, `1306`, and `1307` proved
 generation-aware writes for all five migrated instruments. Scrape `1307`
 completed publication `98`, notification recovery, registration drain, and
 normal worker exit; the post-Solo Drums gate is accepted. Solo Bass was then
-migrated, and its post-migration scrape is the current gate.
+migrated. Scrape `1308` failed closed on one 13-row Solo Bass writer batch
+when concurrent cross-instrument generation DDL collided on a truncated
+inherited-index name. Publication `98` remained current and unfrozen. The
+global generation-DDL lock fix and a clean full retry are the current gate.
 
 **Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
 build/WAL demand, and rollback objects for each of the three remaining legacy
@@ -636,10 +639,13 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. run the complete post-Solo Bass guarded scrape through publication,
-   notifications, drain, and worker exit; prove exact child/source parity,
-   then refresh read-only `check` and `plan` evidence for the three remaining
-   legacy partitions before selecting the next single target;
+1. deploy the global generation-DDL lock fix and rerun the complete post-Solo
+   Bass guarded scrape through publication, notifications, drain, and worker
+   exit. After exact six-instrument child/source parity passes, refresh
+   read-only `check` and `plan` evidence for Pro Vocals, Pro Cymbals, and Pro
+   Drums; migrate those three sequentially in the same worker hold, with every
+   target independently passing the full migration state machine, then run one
+   final complete scrape across all nine migrated instruments;
 2. review and qualify the freeze-safe publication API cache candidate. The
    repository implementation reuses canonical rows, eagerly adds songs plus
    bounded top-10 song/instrument rows, and lazily admits only overview sizes

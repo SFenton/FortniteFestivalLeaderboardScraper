@@ -46,6 +46,14 @@ resume unattended normal worker scheduling after the nine instrument
 migrations until a separate archive-before-child-drop owner is implemented,
 restore-tested, documented, and accepted.
 
+The operator-authorized exception for the final migration interval applies
+only after a clean post-Solo Bass retry proves the six migrated writer paths.
+Pro Vocals, Pro Cymbals, and Pro Drums may then be migrated sequentially in one
+worker hold without an intervening scrape, but each target must independently
+complete every archive, network-none restore, build, swap, validate, drop,
+API, capacity, and recovery gate. One complete scrape across all nine
+instruments is required immediately afterward.
+
 Production Compose ownership remains:
 
 ```text
@@ -499,6 +507,25 @@ The post-`solo-drums` validation gate is accepted. Solo Bass was subsequently
 migrated under that worker hold. The worker remains offline, and a complete
 post-Solo Bass guarded scrape is required before selecting or migrating
 another instrument.
+
+### Failed Solo Bass validation attempt 1308
+
+The first master-image validation attempt collected all `6,363` solo scopes,
+flushed all `194,623` band pages, and completed all `2,121` band manifests.
+It then failed the writer gate because one 13-row Solo Bass page was retained
+for replay. Concurrent first-batch partition creation for different
+instruments selected the same truncated inherited-index relation name and
+raised SQLSTATE `23505` on
+`leaderboard_entries_snapshot_solo_bass_s1308`.
+
+The failure remained fail-closed: no post-scrape phase or publication ran,
+publication `98` stayed authoritative, reads unfroze, and the run-once worker
+exited normally. The six `1308` generation children and the retained replay
+artifact remain forensic candidate evidence, not accepted publication state.
+The retry image must acquire one global generation-DDL advisory lock in a
+separate statement before calling the partition helper. Only a complete retry
+with exact physical-child/published-source parity clears the Solo Bass gate
+and authorizes the final three-instrument migration interval.
 
 ## Current protected-source expectation
 
