@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-21
-last_verified_commit: 3368137a
+last_verified: 2026-08-22
+last_verified_commit: 091d2e10
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -43,8 +43,9 @@ update_triggers:
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
 - Continue the one-instrument-at-a-time snapshot-generation conversion as the
-  active storage lane. Four instruments and their validation scrapes are
-  accepted, five remain, and Solo Drums is the next target.
+  active storage lane. Five instruments and validation scrape `1307` are
+  accepted, four instruments remain, and fresh read-only `check`/`plan`
+  evidence must select the next single target.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -100,7 +101,7 @@ resolved through repository and bounded runtime evidence.
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Improving but incomplete: four instrument partitions are generation-partitioned, scrape 1306 completed with about 1.591 TB free, and five legacy partitions plus recurring child retention remain | High |
+| Storage sustainability | Improving but incomplete: five instrument partitions are generation-partitioned, scrape 1307 left about 1.995 TB free, and four legacy partitions plus recurring child retention remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -240,19 +241,21 @@ evaluation.
 ### Snapshot capacity
 
 **Verified:** snapshot generations share nine fixed instrument partitions.
-Pro Bass, Pro Guitar, Solo Guitar, and Solo Vocals now use snapshot-ID
-children. Their accepted generation migrations returned
-`1,483,098,296,320` filesystem bytes in total, and measured FST free space
-after Solo Vocals is `1,618,626,166,784` bytes. Another scrape appends one
-generation child per migrated instrument rather than another cumulative copy.
+Pro Bass, Pro Guitar, Solo Guitar, Solo Vocals, and Solo Drums now use
+snapshot-ID children. Their accepted generation migrations returned
+`1,911,660,163,072` filesystem bytes in total, and measured FST free space
+after accepted validation scrape `1307` is `1,994,932,432,896` bytes. Another
+scrape appends one generation child per migrated instrument rather than
+another cumulative copy.
 
 **Verified:** a complete guarded scrape is required between instrument
-migrations. Scrapes `1304`, `1305`, and `1306` proved generation-aware writes
-for all four migrated instruments. Solo Drums is the current one-instrument
-gate.
+migrations. Scrapes `1304`, `1305`, `1306`, and `1307` proved
+generation-aware writes for all five migrated instruments. Scrape `1307`
+completed publication `98`, notification recovery, registration drain, and
+normal worker exit; the post-Solo Drums gate is accepted.
 
 **Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
-build/WAL demand, and rollback objects for each of the five remaining legacy
+build/WAL demand, and rollback objects for each of the four remaining legacy
 partitions until its read-only `check` and `plan` pass. Recurring
 archive-before-child-drop retention is also unimplemented.
 
@@ -631,16 +634,17 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. review and qualify the freeze-safe publication API cache candidate. The
+1. refresh read-only `check` and `plan` evidence for the four remaining legacy
+   snapshot partitions, select exactly one target, complete its guarded
+   archive/restore/build/swap/validation/drop workflow, and require another
+   full scrape through publication, notifications, drain, and worker exit
+   before selecting the following target;
+2. review and qualify the freeze-safe publication API cache candidate. The
    repository implementation reuses canonical rows, eagerly adds songs plus
    bounded top-10 song/instrument rows, and lazily admits only overview sizes
    25/50 after sub-11 ms measured compute p95. Promotion still requires one
    full scrape/publication window, same-publication freeze injection, exact
    key/JSON/ETag parity, and no protected precompute/WAL/API regression;
-2. snapshot-capacity recovery investigation: refresh the read-only protected
-   generation, row-distribution, relation-size, and exact workspace evidence;
-   do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
-   existing parity/capacity contract passes;
 3. BandMaintenance current projection refresh. PR #47 merges the
    implementation default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
