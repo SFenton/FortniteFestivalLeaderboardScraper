@@ -607,6 +607,10 @@ children were created, all `6,363` solo manifests and `2,121` band manifests
 completed, writer failures remained zero, and publication `101` committed.
 The failed `1308` candidate remains forensic evidence only.
 
+All nine instrument roots are now generation-partitioned. The worker remains
+held before one complete all-nine validation scrape through publication,
+notifications, registration drain, and normal exit.
+
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
 route to a named generation child. After all live instruments are migrated,

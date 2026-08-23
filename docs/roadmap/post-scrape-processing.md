@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-23
-last_verified_commit: 3f085374
+last_verified_commit: 709a354f
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -43,9 +43,8 @@ update_triggers:
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
 - Continue the one-instrument-at-a-time snapshot-generation conversion as the
-  active storage lane. Eight instruments are accepted; Pro Drums remains
-  authorized in the current worker hold before the final all-nine validation
-  scrape.
+  active storage lane. All nine instruments are migrated; one complete
+  all-nine validation scrape remains before promotion.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -101,7 +100,7 @@ resolved through repository and bounded runtime evidence.
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Improving but incomplete: eight instrument partitions are accepted, the Pro Cymbals drop left about 2.726 TB free, and one legacy partition plus recurring child retention remains | High |
+| Storage sustainability | Improving but incomplete: all nine instrument partitions are migrated, the Pro Drums drop left about 2.729 TB free, and all-nine scrape validation plus recurring child retention remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -241,12 +240,11 @@ evaluation.
 ### Snapshot capacity
 
 **Verified:** snapshot generations share nine fixed instrument partitions.
-Pro Bass, Pro Guitar, Solo Guitar, Solo Bass, Solo Vocals, Solo Drums, Pro
-Vocals, and Pro Cymbals now use snapshot-ID children. Their accepted generation
-migrations returned `2,696,395,427,840` filesystem bytes in total, and measured
-FST free space after the Pro Cymbals final drop is `2,725,916,037,120` bytes.
-Another scrape appends one generation child per migrated instrument rather
-than another cumulative copy.
+All nine instrument roots now use snapshot-ID children. Their accepted
+generation migrations returned `2,699,337,936,896` filesystem bytes in total,
+and measured FST free space after the Pro Drums final drop is
+`2,728,956,956,672` bytes. Another scrape appends one generation child per
+instrument rather than another cumulative copy.
 
 **Verified:** a complete guarded scrape is required between instrument
 migrations. Scrapes `1304`, `1305`, `1306`, and `1307` proved
@@ -274,10 +272,14 @@ across snapshots `1302-1307` and `1309`, returned `4,757,069,824` filesystem
 bytes, left an empty default child, and preserved exact
 publication/reference/API parity.
 
-**Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
-build/WAL demand, and rollback objects for the final legacy partition until
-its read-only `check` and `plan` pass. Recurring
-archive-before-child-drop retention is also unimplemented.
+**Verified:** Pro Drums retained `190,168` of `5,473,658` archived rows across
+snapshots `1302-1307` and `1309`, returned `2,942,509,056` filesystem bytes,
+left an empty default child, and preserved exact publication/reference/API
+parity.
+
+**Unknown:** all-nine generation-write parity until the required complete
+validation scrape finishes. Recurring archive-before-child-drop retention is
+also unimplemented.
 
 ## Exact current dependency map
 
@@ -654,9 +656,9 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. complete Pro Drums in the current worker hold with the full migration state
-   machine, then run one final complete scrape across all nine migrated
-   instruments;
+1. run one final complete scrape across all nine migrated instruments and
+   prove physical-child/published-source parity, publication, notifications,
+   registration drain, cleanup, and worker exit;
 2. review and qualify the freeze-safe publication API cache candidate. The
    repository implementation reuses canonical rows, eagerly adds songs plus
    bounded top-10 song/instrument rows, and lazily admits only overview sizes

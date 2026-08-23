@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-23
-last_verified_commit: 3f085374
+last_verified_commit: 709a354f
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -29,15 +29,15 @@ The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
 and `pro-guitar` targets completed production migration on 2026-08-18,
 `solo-guitar` completed on 2026-08-20, and `solo-vocals` and `solo-drums`
 completed on 2026-08-21. `solo-bass` completed on 2026-08-22, and
-`pro-vocals` and `pro-cymbals` completed on 2026-08-23; only `pro-drums`
-remains unmigrated.
+`pro-vocals`, `pro-cymbals`, and `pro-drums` completed on 2026-08-23. All
+nine instrument roots now use snapshot-generation children.
 Generation-aware validation scrapes `1304`, `1305`, `1306`, `1307`, and
 `1309` completed through publication, notifications, registration drain, and
 normal run-once worker exit. Scrape `1309` accepted the `solo-bass` writer
-path and the global generation-DDL lock. The worker remains held offline while
-`pro-drums` completes the authorized final migration interval. This runbook is
-not authorization to start a scrape, unfreeze reads, select alternate scratch
-storage, delete an archive, or weaken a failed gate.
+path and the global generation-DDL lock. The worker remains held offline before
+the required all-nine validation scrape. This runbook is not authorization to
+unfreeze reads, select alternate scratch storage, delete an archive, or weaken
+a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -53,8 +53,8 @@ Pro Vocals, Pro Cymbals, and Pro Drums may then be migrated sequentially in one
 worker hold without an intervening scrape, but each target must independently
 complete every archive, network-none restore, build, swap, validate, drop,
 API, capacity, and recovery gate. One complete scrape across all nine
-instruments is required immediately afterward. Pro Vocals and Pro Cymbals have
-completed those gates; Pro Drums remains.
+instruments is required immediately afterward. Pro Vocals, Pro Cymbals, and Pro
+Drums have completed those gates; the validation scrape remains.
 
 Production Compose ownership remains:
 
@@ -328,6 +328,40 @@ container and transient PGDATA were removed. The live API monitor recorded
 `12` successful samples and zero failures. The authoritative recovery package
 remains under
 `/home/sfenton/fst-temporary/snapshot-generation-pro-cymbals-20260823T100944Z`
+until a separate deletion decision.
+
+### Accepted production pro-drums generation migration
+
+Run `snapshot-generation-pro-drums-20260823T101944Z` retained physical
+snapshots `1302-1307` and `1309` and removed 133 obsolete generations from hot
+storage:
+
+- exact source/archive rows: `5,473,658`;
+- retained rows: `190,168`;
+- removed rows: `5,283,490`;
+- source bytes: `2,942,705,664`;
+- final live partition tree: `86,032,384` bytes;
+- immediate filesystem return: `2,942,509,056` bytes;
+- swap: `0.091` seconds;
+- finalization: `33.076` seconds;
+- archive: `215,681,438` bytes, SHA-256
+  `be09743bd0a7df75b23749a556e545a35250615471a992173af20494adf11606`;
+- isolated PostgreSQL 17 restore peak: `3,563,223,444` bytes;
+- build WAL: `87,449,520` bytes;
+- build temporary data: `12,574,720` bytes;
+- final report SHA-256:
+  `a989df042f17125c8d817a4f76961a06b50ad18e71dcd3624a1158ade0b96358`.
+
+The final children contain `62,649`, `27,569`, `16,553`, `26,396`, `22,007`,
+`14,485`, and `20,509` rows for snapshots `1302`, `1303`, `1304`, `1305`,
+`1306`, `1307`, and `1309`; the default child is empty. Candidate/original
+retained fingerprints, publication/reference state, and exact public songs and
+rankings-overview bodies matched. All accepted relations and indexes are in
+`pg_default`, no `sgm_pd_*` artifact remains, and the network-none restore
+container and transient PGDATA were removed. The live API monitor recorded
+`8` successful samples and zero failures. The authoritative recovery package
+remains under
+`/home/sfenton/fst-temporary/snapshot-generation-pro-drums-20260823T101944Z`
 until a separate deletion decision.
 
 ### Accepted generation-aware validation scrape 1304
@@ -657,18 +691,18 @@ memory / `20 GiB` total envelope, and FST free space was
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-bass-retry-20260822T180344Z/terminal
 ```
 
-The Solo Bass gate is accepted. Pro Vocals and Pro Cymbals subsequently passed
-their complete migration state machines. Pro Drums remains authorized in the
-same worker hold, subject to independently passing every gate. One complete
-scrape across all nine migrated instruments is required immediately afterward.
+The Solo Bass gate is accepted. Pro Vocals, Pro Cymbals, and Pro Drums
+subsequently passed their complete migration state machines in the same worker
+hold. One complete scrape across all nine migrated instruments is required
+immediately afterward.
 
 ## Current protected-source expectation
 
 Validation scrape `1309` is current and `1307` is previous. Publication
 generations `101` and `98` currently resolve to those scrapes. Observed
 pro-bass, pro-guitar, solo-guitar, solo-bass, solo-vocals, solo-drums,
-pro-vocals, and pro-cymbals source maps reuse physical IDs `1302` through
-`1309`. That is planning evidence, not a hard-coded retention list.
+pro-vocals, pro-cymbals, and pro-drums source maps reuse physical IDs `1302`
+through `1309`. That is planning evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 
