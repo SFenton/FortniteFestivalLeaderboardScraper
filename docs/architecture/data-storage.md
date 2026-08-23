@@ -886,6 +886,14 @@ obsolete rows. The final `15,253,815,296`-byte tree and all indexes are in
 `350,852,210,688` filesystem bytes were returned. Exact retained fingerprints,
 publication/reference state, and public API bodies matched before final drop.
 
+Pro Cymbals followed in the same worker hold. Its exact archive/restore
+contained `8,661,068` rows, retained `400,455` rows from snapshots `1302-1307`
+and `1309`, and removed `8,260,613` obsolete rows. The final live tree occupies
+`185,352,192` bytes in `pg_default`, the default child is empty, no migration
+artifact remains, and `4,757,069,824` filesystem bytes were returned. Exact
+retained fingerprints, publication/reference state, and public API bodies
+matched before final drop.
+
 The first validation attempt, scrape `1308`, completed network collection and
 all `2,121` band manifests but failed closed on one 13-row Solo Bass writer
 batch. Concurrent first-batch generation DDL for different instruments raced
@@ -909,8 +917,8 @@ default children are empty. Their complete live trees occupy `7,319,396,352`,
 Publication `101` is current and unfrozen. The run-once worker exited `0`,
 PostgreSQL returned to the production `16/20 GiB` envelope, and the final
 three-instrument migration interval is in progress. Pro Vocals is accepted;
-Pro Cymbals and Pro Drums remain before the required all-nine validation
-scrape.
+Pro Cymbals is also accepted, and Pro Drums remains before the required
+all-nine validation scrape.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -925,8 +933,8 @@ migration. The only current exception is the operator-authorized final
 interval: after a clean post-Solo Bass retry proves all six migrated writer
 paths, Pro Vocals, Pro Cymbals, and Pro Drums may be migrated sequentially
 under one hold, with every target independently completing the full migration
-state machine. Pro Vocals is accepted; the same gates remain mandatory for Pro
-Cymbals and Pro Drums. One complete scrape across all nine instruments is
+state machine. Pro Vocals and Pro Cymbals are accepted; the same gates remain
+mandatory for Pro Drums. One complete scrape across all nine instruments is
 required immediately afterward.
 
 The existing generic retention service remains the compatibility owner for
@@ -982,7 +990,8 @@ source-of-truth or restore targets.
   `1,994,932,432,896` bytes; after the accepted Solo Bass final drop it is
   `2,426,681,905,152` bytes; after accepted validation scrape `1309` it is
   `2,382,491,947,008` bytes; after the accepted Pro Vocals final drop it is
-  `2,721,327,648,768` bytes. These measured capacities do not reduce any
+  `2,721,327,648,768` bytes; after the accepted Pro Cymbals final drop it is
+  `2,725,916,037,120` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
