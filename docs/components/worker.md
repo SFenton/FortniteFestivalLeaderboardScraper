@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-22
-last_verified_commit: 494f1ef6
+last_verified: 2026-08-23
+last_verified_commit: b3b72e9b
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -602,8 +602,10 @@ children for different instruments, and PostgreSQL selected the same truncated
 inherited-index name, producing SQLSTATE `23505` in one 13-row Solo Bass batch.
 The writer retained that page as a replay artifact, failed the candidate,
 skipped post-scrape/publication work, unfroze reads on publication `98`, and
-exited normally. A clean full retry is required; the failed candidate is not
-publication evidence.
+exited normally. Scrape `1309` then proved the global lock: all six generation
+children were created, all `6,363` solo manifests and `2,121` band manifests
+completed, writer failures remained zero, and publication `101` committed.
+The failed `1308` candidate remains forensic evidence only.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes

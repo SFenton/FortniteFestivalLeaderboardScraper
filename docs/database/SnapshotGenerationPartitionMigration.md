@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-22
-last_verified_commit: 494f1ef6
+last_verified: 2026-08-23
+last_verified_commit: b3b72e9b
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -29,12 +29,11 @@ The package passed its five-lane isolated PostgreSQL 17 drill. The `pro-bass`
 and `pro-guitar` targets completed production migration on 2026-08-18,
 `solo-guitar` completed on 2026-08-20, and `solo-vocals` and `solo-drums`
 completed on 2026-08-21. `solo-bass` completed on 2026-08-22; three targets
-remain unmigrated. Generation-aware
-validation scrapes `1304`, `1305`, `1306`, and `1307` completed through
-publication, notifications, registration drain, and normal run-once worker
-exit. Scrape `1307` accepted the `solo-drums` writer path. The `solo-bass`
-migration is accepted, and the worker is held offline pending its complete
-validation scrape before another instrument is selected. This runbook is not
+remain unmigrated. Generation-aware validation scrapes `1304`, `1305`, `1306`,
+`1307`, and `1309` completed through publication, notifications, registration
+drain, and normal run-once worker exit. Scrape `1309` accepted the `solo-bass`
+writer path and the global generation-DDL lock. The worker is held offline
+before the final three-instrument migration interval. This runbook is not
 authorization to start a scrape, unfreeze reads, select alternate scratch
 storage, delete an archive, or weaken a failed gate.
 
@@ -527,12 +526,77 @@ separate statement before calling the partition helper. Only a complete retry
 with exact physical-child/published-source parity clears the Solo Bass gate
 and authorizes the final three-instrument migration interval.
 
+### Accepted Solo Bass validation retry 1309
+
+Candidate commit `b3b72e9b` completed scrape `1309` from
+`2026-08-22 18:04:41 UTC` through normal worker exit at
+`2026-08-23 06:32:15 UTC` using the exact `800/32/4` network profile and
+Rivals account cap `2`:
+
+- `707` songs, `40,882,964` leaderboard entries, `604,907` requests, and
+  `92,257,894,447` received bytes;
+- all `8,484` manifests complete, all `604,907` persisted page statuses
+  `success`, zero retry-exhausted scopes, and zero writer failures;
+- all `6,363` publication sources complete across all nine instruments;
+- all 13 publication-critical phase outcomes completed; the three retention
+  phases were skipped safely under the database-pressure guard;
+- cgroup OOM/OOM-kill counters remained `9/2`.
+
+Published scrape-1309 source rows match the six generation children exactly:
+
+| Instrument | Published rows | Physical child rows | Default rows |
+|---|---:|---:|---:|
+| Pro Bass | `1,642,317` | `1,642,317` | `0` |
+| Pro Guitar | `3,995,405` | `3,995,405` | `0` |
+| Solo Guitar | `5,460,593` | `5,460,593` | `0` |
+| Solo Bass | `4,489,655` | `4,489,655` | `0` |
+| Solo Vocals | `5,351,184` | `5,351,184` | `0` |
+| Solo Drums | `5,360,563` | `5,360,563` | `0` |
+
+Accepted phase timings were:
+
+| Phase | Duration |
+|---|---:|
+| BandMaintenance | `03:28:43.161` |
+| ComputeRankings | `02:25:55.782` |
+| Rivals | `00:16:13.199` |
+| LeaderboardRivals | `04:21:19.178` |
+| Cleanup.SoloCurrentProjection | `00:19:15.808` |
+| Cleanup.PrecomputeAll | `00:12:56.409` |
+
+Publication `101` became ready at `2026-08-23 06:25:39 UTC` and current at
+`06:30:48 UTC`. Bounded final-swap retries encountered autovacuum relation
+locks; a checksummed 90-second operator window canceled only autovacuums on
+the current/prepared swap relations. The commit then completed with
+`22.764` ms drain, `4,068.376` ms exclusive lock, and zero final lock
+rejections or relation-lock retries.
+
+Notification recovery completed player run `228` with `84` events and band
+run `229` with `71` events. The post-publication drain completed one
+registration backfill with `8` entries, zero history sessions, and `45` API
+calls. No backfill/history worker, worker query, or lock waiter remained, and
+the worker exited `0`.
+
+Public readiness, service-info, songs, features, and rankings-overview routes
+returned HTTP `200`. PostgreSQL was restored to the production `16 GiB`
+memory / `20 GiB` total envelope, and FST free space was
+`2,382,491,947,008` bytes. Terminal evidence is under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-solo-bass-retry-20260822T180344Z/terminal
+```
+
+The Solo Bass gate is accepted. Pro Vocals, Pro Cymbals, and Pro Drums are
+authorized for sequential migration in the same worker hold, subject to every
+target independently passing the complete state machine. One complete scrape
+across all nine migrated instruments is required immediately afterward.
+
 ## Current protected-source expectation
 
-Validation scrape `1307` is current and `1306` is previous. Publication
-generations `98` and `96` currently resolve to those scrapes. Observed
+Validation scrape `1309` is current and `1307` is previous. Publication
+generations `101` and `98` currently resolve to those scrapes. Observed
 pro-bass, pro-guitar, solo-guitar, solo-bass, solo-vocals, and solo-drums
-source maps reuse physical IDs `1302` through `1307`. That is planning
+source maps reuse physical IDs `1302` through `1309`. That is planning
 evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:

@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-22
-last_verified_commit: 494f1ef6
+last_verified: 2026-08-23
+last_verified_commit: b3b72e9b
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -43,10 +43,9 @@ update_triggers:
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
 - Continue the one-instrument-at-a-time snapshot-generation conversion as the
-  active storage lane. Six instruments are generation-partitioned, five are
-  accepted through validation scrape `1307`, three legacy instruments remain,
-  and Solo Bass must complete a clean validation retry before the final three
-  targets may be migrated sequentially in one worker hold.
+  active storage lane. Six instruments are accepted through validation scrape
+  `1309`; three legacy instruments remain and are authorized for sequential
+  migration in one worker hold before the final all-nine validation scrape.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -102,7 +101,7 @@ resolved through repository and bounded runtime evidence.
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Improving but incomplete: six instrument partitions are generation-partitioned, Solo Bass raised measured free space to about 2.427 TB, and three legacy partitions plus recurring child retention remain | High |
+| Storage sustainability | Improving but incomplete: six instrument partitions are accepted, scrape 1309 left about 2.382 TB free, and three legacy partitions plus recurring child retention remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -257,7 +256,13 @@ normal worker exit; the post-Solo Drums gate is accepted. Solo Bass was then
 migrated. Scrape `1308` failed closed on one 13-row Solo Bass writer batch
 when concurrent cross-instrument generation DDL collided on a truncated
 inherited-index name. Publication `98` remained current and unfrozen. The
-global generation-DDL lock fix and a clean full retry are the current gate.
+global generation-DDL lock fix required a clean full retry.
+
+**Verified:** scrape `1309` accepted the retry. All `8,484` manifests and
+`604,907` page statuses completed, all six physical generation children
+matched published-source sums, every default child stayed empty, publication
+`101` became current/unfrozen, notifications and registration drain completed,
+and the worker exited `0`.
 
 **Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
 build/WAL demand, and rollback objects for each of the three remaining legacy
@@ -639,13 +644,10 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. deploy the global generation-DDL lock fix and rerun the complete post-Solo
-   Bass guarded scrape through publication, notifications, drain, and worker
-   exit. After exact six-instrument child/source parity passes, refresh
-   read-only `check` and `plan` evidence for Pro Vocals, Pro Cymbals, and Pro
-   Drums; migrate those three sequentially in the same worker hold, with every
-   target independently passing the full migration state machine, then run one
-   final complete scrape across all nine migrated instruments;
+1. refresh read-only `check` and `plan` evidence for Pro Vocals, Pro Cymbals,
+   and Pro Drums; migrate those three sequentially in the same worker hold,
+   with every target independently passing the full migration state machine,
+   then run one final complete scrape across all nine migrated instruments;
 2. review and qualify the freeze-safe publication API cache candidate. The
    repository implementation reuses canonical rows, eagerly adds songs plus
    bounded top-10 song/instrument rows, and lazily admits only overview sizes

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-22
-last_verified_commit: 494f1ef6
+last_verified: 2026-08-23
+last_verified_commit: b3b72e9b
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -875,8 +875,8 @@ archive/restore contained `895,497,806` rows, retained `28,995,467` rows from
 snapshots `1302-1307`, and removed `866,502,339` obsolete rows. The final
 `11,351,261,184`-byte tree and all indexes are in `pg_default`, the default
 child is empty, no migration artifact remains, and `429,125,984,256`
-filesystem bytes were returned. A complete post-Solo Bass scrape is required
-before selecting or migrating another instrument.
+filesystem bytes were returned. Scrape `1309` subsequently satisfied the
+post-Solo Bass validation gate.
 
 The first validation attempt, scrape `1308`, completed network collection and
 all `2,121` band manifests but failed closed on one 13-row Solo Bass writer
@@ -886,7 +886,21 @@ while PostgreSQL selected truncated inherited-index names, raising SQLSTATE
 current and unfrozen, and no post-scrape phase ran. The writer now acquires one
 global generation-DDL advisory lock in a separate statement before partition
 creation so the post-wait catalog snapshot is current and cross-instrument
-index naming is serialized. A clean full scrape retry remains mandatory.
+index naming is serialized.
+
+Scrape `1309` accepted that retry through publication `101`, notifications,
+registration drain, and normal worker exit. All `8,484` manifests and
+`604,907` page statuses completed successfully, with zero writer failures.
+Published-source sums match the physical `1309` children exactly: Pro Bass
+`1,642,317`, Pro Guitar `3,995,405`, Solo Guitar `5,460,593`, Solo Bass
+`4,489,655`, Solo Vocals `5,351,184`, and Solo Drums `5,360,563`; all six
+default children are empty. Their complete live trees occupy `7,319,396,352`,
+`16,611,909,632`, `20,473,880,576`, `15,551,946,752`, `19,875,627,008`, and
+`18,626,674,688` bytes respectively.
+
+Publication `101` is current and unfrozen. The run-once worker exited `0`,
+PostgreSQL returned to the production `16/20 GiB` envelope, and the final
+three-instrument migration interval is now authorized.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -955,7 +969,8 @@ source-of-truth or restore targets.
   `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
   `2,020,845,260,800` bytes; after accepted validation scrape `1307` it is
   `1,994,932,432,896` bytes; after the accepted Solo Bass final drop it is
-  `2,426,681,905,152` bytes. These measured capacities do not reduce any
+  `2,426,681,905,152` bytes; after accepted validation scrape `1309` it is
+  `2,382,491,947,008` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
