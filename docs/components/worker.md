@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-23
-last_verified_commit: b3b72e9b
+last_verified_commit: f86e3915
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -607,9 +607,14 @@ children were created, all `6,363` solo manifests and `2,121` band manifests
 completed, writer failures remained zero, and publication `101` committed.
 The failed `1308` candidate remains forensic evidence only.
 
-All nine instrument roots are now generation-partitioned. The worker remains
-held before one complete all-nine validation scrape through publication,
-notifications, registration drain, and normal exit.
+All nine instrument roots are now generation-partitioned. Scrape `1310`
+validated all nine writer paths: `8,484/8,484` manifests and
+`605,239/605,239` persisted page statuses completed, writer failures remained
+zero, every `1310` child matched its published-source row sum, and publication
+`103` committed. Player and band notification runs completed, the
+post-publication registration drain found no queued account, and the run-once
+worker exited `0`. The worker remains held before recurring generation
+retention is implemented and accepted.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
@@ -619,6 +624,15 @@ children without rewriting the full instrument partition. That owner is not
 part of the migration candidate: normal scheduling remains held until
 archive-before-child-drop, default-child auditing, rollback, and public parity
 are implemented and accepted.
+
+The accepted retention direction keeps long-running archive/proof/drop work
+out of the normal worker process. After a terminal publication, notifications,
+and registration drain, the worker will record only a bounded durable safe
+point. A separately deployed executor and network-isolated PostgreSQL 17
+restore prover will process one child at a time from durable intent and a
+4 TB-drive evidence mailbox. Whole-child retirement is Phase 1; sparse-child
+compaction remains separately gated because snapshot reuse can keep a large
+generation alive for only a few historical scopes.
 
 ## Service-level retention planning
 

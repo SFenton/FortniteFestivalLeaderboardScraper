@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-23
-last_verified_commit: 709a354f
+last_verified_commit: f86e3915
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -31,13 +31,13 @@ and `pro-guitar` targets completed production migration on 2026-08-18,
 completed on 2026-08-21. `solo-bass` completed on 2026-08-22, and
 `pro-vocals`, `pro-cymbals`, and `pro-drums` completed on 2026-08-23. All
 nine instrument roots now use snapshot-generation children.
-Generation-aware validation scrapes `1304`, `1305`, `1306`, `1307`, and
-`1309` completed through publication, notifications, registration drain, and
-normal run-once worker exit. Scrape `1309` accepted the `solo-bass` writer
-path and the global generation-DDL lock. The worker remains held offline before
-the required all-nine validation scrape. This runbook is not authorization to
-unfreeze reads, select alternate scratch storage, delete an archive, or weaken
-a failed gate.
+Generation-aware validation scrapes `1304`, `1305`, `1306`, `1307`, `1309`,
+and `1310` completed through publication, notifications, registration drain,
+and normal run-once worker exit. Scrape `1310` accepted all nine generation
+writer paths and the global generation-DDL lock. The worker remains held
+offline before recurring generation retention is implemented and accepted.
+This runbook is not authorization to unfreeze reads, select alternate scratch
+storage, delete an archive, or weaken a failed gate.
 
 This package migrates physical layout only. It does not implement recurring
 generation retention. After each instrument migration, run exactly one
@@ -54,7 +54,8 @@ worker hold without an intervening scrape, but each target must independently
 complete every archive, network-none restore, build, swap, validate, drop,
 API, capacity, and recovery gate. One complete scrape across all nine
 instruments is required immediately afterward. Pro Vocals, Pro Cymbals, and Pro
-Drums have completed those gates; the validation scrape remains.
+Drums completed those gates, and validation scrape `1310` accepted the complete
+all-nine layout.
 
 Production Compose ownership remains:
 
@@ -693,16 +694,87 @@ memory / `20 GiB` total envelope, and FST free space was
 
 The Solo Bass gate is accepted. Pro Vocals, Pro Cymbals, and Pro Drums
 subsequently passed their complete migration state machines in the same worker
-hold. One complete scrape across all nine migrated instruments is required
-immediately afterward.
+hold. One complete scrape across all nine migrated instruments was required
+immediately afterward and is recorded below.
+
+### Accepted all-nine validation scrape 1310
+
+Candidate image `fstservice:generation-ddl-lock-b3b72e9b` completed scrape
+`1310` from `2026-08-23 10:31:46 UTC` through normal worker exit at
+`20:58:28 UTC` using the exact `800/32/4` network profile, snapshot reuse, and
+Rivals account cap `2`:
+
+- `707` songs, `40,907,090` leaderboard entries, `605,239` requests, and
+  `92,307,778,607` received bytes;
+- all `8,484` manifests complete, all `605,239` persisted page statuses
+  `success`, zero retry-exhausted scopes, and zero writer failures;
+- all `6,363` publication sources complete across all nine instruments, with
+  `40,839,226` published rows and `45` authoritative empty sources;
+- all publication-critical phase outcomes completed; the three retention
+  phases were skipped safely;
+- the worker exited `0` with zero restarts and no worker OOM;
+- PostgreSQL cgroup OOM/OOM-kill counters remained `9/2`.
+
+Published scrape-1310 source rows match all nine generation children exactly:
+
+| Instrument | Published rows | Physical child rows | Source scopes | Default rows |
+|---|---:|---:|---:|---:|
+| Pro Bass | `1,577,901` | `1,577,901` | `298` | `0` |
+| Pro Guitar | `3,818,765` | `3,818,765` | `510` | `0` |
+| Pro Vocals | `4,988,523` | `4,988,523` | `648` | `0` |
+| Pro Cymbals | `45,323` | `45,323` | `229` | `0` |
+| Pro Drums | `19,725` | `19,725` | `139` | `0` |
+| Solo Guitar | `5,190,179` | `5,190,179` | `531` | `0` |
+| Solo Bass | `4,478,546` | `4,478,546` | `473` | `0` |
+| Solo Vocals | `5,254,600` | `5,254,600` | `535` | `0` |
+| Solo Drums | `5,369,892` | `5,369,892` | `557` | `0` |
+
+Accepted phase timings improved over scrape `1309`:
+
+| Phase | Scrape 1310 | Scrape 1309 |
+|---|---:|---:|
+| BandMaintenance | `03:07:27.912` | `03:28:43.161` |
+| ComputeRankings | `01:23:27.226` | `02:25:55.782` |
+| Rivals | `00:14:01.358` | `00:16:13.199` |
+| LeaderboardRivals | `03:34:30.898` | `04:21:19.178` |
+| Cleanup.SoloCurrentProjection | `00:15:18.546` | `00:19:15.808` |
+| Cleanup.PrecomputeAll | `00:09:37.619` | `00:12:56.409` |
+
+Publication `103` became ready at `2026-08-23 20:55:36 UTC` and current at
+`20:55:52 UTC`. One deferred retry completed automatically with `7.630` ms
+drain, `2,509.567` ms exclusive lock, zero lock rejections, and zero relation
+lock retries. No operator cancellation was required.
+
+Notification recovery completed player run `230` with `101` events and band
+run `231` with `47` events. The post-publication drain found no queued
+registration backfills and completed in `6.888` seconds; no backfill or history
+reconstruction remained active.
+
+The 309-sample correctness monitor recorded zero readiness, web, or
+representative-leaderboard HTTP failures. PostgreSQL memory limits were
+temporarily raised during LeaderboardRivals as cgroup file cache approached
+successive ceilings; anonymous memory and swap remained bounded, OOM counters
+did not change, and the production `16 GiB` memory / `20 GiB` total envelope
+was restored after worker exit. Final FST free space was
+`2,701,792,727,040` bytes.
+
+Checksummed terminal evidence is under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-all-nine-scrape-20260823T102812Z/terminal
+```
+
+The all-nine migration gate is accepted. Normal scheduling remains held until
+recurring generation retention is implemented, restore-tested, documented,
+and accepted.
 
 ## Current protected-source expectation
 
-Validation scrape `1309` is current and `1307` is previous. Publication
-generations `101` and `98` currently resolve to those scrapes. Observed
+Validation scrape `1310` is current and `1309` is previous. Publication
+generations `103` and `101` currently resolve to those scrapes. Observed
 pro-bass, pro-guitar, solo-guitar, solo-bass, solo-vocals, solo-drums,
 pro-vocals, pro-cymbals, and pro-drums source maps reuse physical IDs `1302`
-through `1309`. That is planning evidence, not a hard-coded retention list.
+through `1310`. That is planning evidence, not a hard-coded retention list.
 
 For each instrument, `plan` independently derives and groups IDs from:
 
