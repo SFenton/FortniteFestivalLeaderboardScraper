@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-22
-last_verified_commit: 091d2e10
+last_verified: 2026-08-23
+last_verified_commit: f86e3915
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -42,10 +42,13 @@ update_triggers:
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
-- Continue the one-instrument-at-a-time snapshot-generation conversion as the
-  active storage lane. Five instruments and validation scrape `1307` are
-  accepted, four instruments remain, and fresh read-only `check`/`plan`
-  evidence must select the next single target.
+- The one-instrument-at-a-time snapshot-generation conversion is accepted.
+  Scrape `1310` proved all nine generation writer paths through publication,
+  notifications, registration drain, and worker exit.
+- Make recurring generation retention the active storage lane. Phase 1
+  archives, restore-proves, and retires wholly unreferenced children through
+  durable intent plus separate executor/prover roles. Phase 2 later compacts
+  sparsely pinned children before storage is considered bounded.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -101,7 +104,7 @@ resolved through repository and bounded runtime evidence.
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Improving but incomplete: five instrument partitions are generation-partitioned, scrape 1307 left about 1.995 TB free, and four legacy partitions plus recurring child retention remain | High |
+| Storage sustainability | Improving but incomplete: all nine partitions and writer paths are accepted, scrape 1310 left about 2.702 TB free, and recurring whole-child retirement plus sparse-child compaction remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -241,23 +244,60 @@ evaluation.
 ### Snapshot capacity
 
 **Verified:** snapshot generations share nine fixed instrument partitions.
-Pro Bass, Pro Guitar, Solo Guitar, Solo Vocals, and Solo Drums now use
-snapshot-ID children. Their accepted generation migrations returned
-`1,911,660,163,072` filesystem bytes in total, and measured FST free space
-after accepted validation scrape `1307` is `1,994,932,432,896` bytes. Another
-scrape appends one generation child per migrated instrument rather than
-another cumulative copy.
+All nine instrument roots now use snapshot-ID children. Their accepted
+generation migrations returned `2,699,337,936,896` filesystem bytes in total,
+and measured FST free space after the Pro Drums final drop is
+`2,728,956,956,672` bytes. Another scrape appends one generation child per
+instrument rather than another cumulative copy.
 
 **Verified:** a complete guarded scrape is required between instrument
 migrations. Scrapes `1304`, `1305`, `1306`, and `1307` proved
 generation-aware writes for all five migrated instruments. Scrape `1307`
 completed publication `98`, notification recovery, registration drain, and
-normal worker exit; the post-Solo Drums gate is accepted.
+normal worker exit; the post-Solo Drums gate is accepted. Solo Bass was then
+migrated. Scrape `1308` failed closed on one 13-row Solo Bass writer batch
+when concurrent cross-instrument generation DDL collided on a truncated
+inherited-index name. Publication `98` remained current and unfrozen. The
+global generation-DDL lock fix required a clean full retry.
 
-**Unknown:** exact retained IDs, reclaimable bytes, archive size, restore peak,
-build/WAL demand, and rollback objects for each of the four remaining legacy
-partitions until its read-only `check` and `plan` pass. Recurring
-archive-before-child-drop retention is also unimplemented.
+**Verified:** scrape `1309` accepted the retry. All `8,484` manifests and
+`604,907` page statuses completed, all six physical generation children
+matched published-source sums, every default child stayed empty, publication
+`101` became current/unfrozen, notifications and registration drain completed,
+and the worker exited `0`.
+
+**Verified:** Pro Vocals retained `34,514,935` of `633,981,317` archived rows
+across snapshots `1302-1307` and `1309`, returned `350,852,210,688`
+filesystem bytes, left an empty default child, and preserved exact
+publication/reference/API parity.
+
+**Verified:** Pro Cymbals retained `400,455` of `8,661,068` archived rows
+across snapshots `1302-1307` and `1309`, returned `4,757,069,824` filesystem
+bytes, left an empty default child, and preserved exact
+publication/reference/API parity.
+
+**Verified:** Pro Drums retained `190,168` of `5,473,658` archived rows across
+snapshots `1302-1307` and `1309`, returned `2,942,509,056` filesystem bytes,
+left an empty default child, and preserved exact publication/reference/API
+parity.
+
+**Verified:** scrape `1310` accepted all nine generation-write paths. All
+`8,484` manifests and `605,239` persisted page statuses succeeded, all nine
+physical children exactly matched published-source sums, defaults remained
+empty, publication `103` became current/unfrozen, notification runs emitted
+`101` player and `47` band events, registration drain completed, and the
+worker exited `0`.
+
+**Verified:** the first exact recurring-retention inventory contains six
+unreferenced failed-scrape `1308` children totaling `12,908,355,584` bytes.
+The nine `1310` children total `15,870,648,320` bytes, while older successful
+generations remain sparsely pinned. Whole-child retirement is necessary but
+does not by itself prove bounded steady-state storage.
+
+**Unknown:** single-leaf archive/restore behavior, guarded detach/reattach
+versus direct-drop lock duration, no-socket mailbox/prover crash recovery,
+measured eligible-child arrival rate, archive runway, and sparse-compaction
+cost until the gated drills and canaries pass.
 
 ## Exact current dependency map
 
@@ -634,11 +674,18 @@ Each iteration below is a separate branch/PR.
 
 Order is evidence-driven:
 
-1. refresh read-only `check` and `plan` evidence for the four remaining legacy
-   snapshot partitions, select exactly one target, complete its guarded
-   archive/restore/build/swap/validation/drop workflow, and require another
-   full scrape through publication, notifications, drain, and worker exit
-   before selecting the following target;
+1. implement recurring generation retention in gated tranches:
+   - isolated PostgreSQL 17 leaf archive/restore, lock, pressure, and
+     no-socket mailbox/prover drills;
+   - durable cycles/jobs/evidence, exact per-instrument protection fences,
+     default-child auditing, and explicit generation-leaf exclusion from the
+     legacy rewrite planner;
+   - separate no-Docker-socket executor and network-none restore prover,
+     initially disabled/report-only;
+   - archive-only and manual smallest/large-child canaries before automatic
+     one-active-child execution;
+   - separately gated sparse-child compaction before claiming bounded
+     steady-state storage;
 2. review and qualify the freeze-safe publication API cache candidate. The
    repository implementation reuses canonical rows, eagerly adds songs plus
    bounded top-10 song/instrument rows, and lazily admits only overview sizes

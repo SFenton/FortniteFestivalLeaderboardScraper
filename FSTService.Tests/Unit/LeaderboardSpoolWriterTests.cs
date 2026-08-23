@@ -215,6 +215,8 @@ public class LeaderboardSpoolWriterTests
     [Fact]
     public void SoloFlushSql_UsesConstantInstrumentPredicates_ForPartitionPruning()
     {
+        var generationLockSql =
+            LeaderboardSpoolWriterFactory.BuildAcquireSnapshotGenerationPartitionLockSql();
         var ensureGenerationSql =
             LeaderboardSpoolWriterFactory.BuildEnsureSnapshotGenerationPartitionSql();
         var snapshotSql = LeaderboardSpoolWriterFactory.BuildSnapshotInsertSql();
@@ -222,6 +224,8 @@ public class LeaderboardSpoolWriterTests
         var scoreMergeSql = LeaderboardSpoolWriterFactory.BuildScoreMergeSql();
         var rankUpdateSql = LeaderboardSpoolWriterFactory.BuildRankUpdateSql();
 
+        Assert.Contains("pg_advisory_xact_lock", generationLockSql);
+        Assert.Contains("fst.snapshot-generation-partition-ddl", generationLockSql);
         Assert.Contains(
             "ensure_leaderboard_snapshot_generation_partition",
             ensureGenerationSql);

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-22
-last_verified_commit: 091d2e10
+last_verified: 2026-08-23
+last_verified_commit: f86e3915
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -868,9 +868,92 @@ Their complete live trees occupy `5,628,272,640`, `12,227,526,656`,
 `14,962,409,472`, `14,549,868,544`, and `13,431,971,840` bytes respectively.
 All `6,363` publication sources are complete, publication `98` is current and
 unfrozen, public routes are healthy, and the run-once worker exited `0` and
-remains held offline. The next migration target must be selected by fresh
-read-only `check` and `plan` evidence; migrate only one instrument before the
-next complete guarded scrape.
+remains held offline.
+
+Solo Bass was subsequently converted under that worker hold. Its exact
+archive/restore contained `895,497,806` rows, retained `28,995,467` rows from
+snapshots `1302-1307`, and removed `866,502,339` obsolete rows. The final
+`11,351,261,184`-byte tree and all indexes are in `pg_default`, the default
+child is empty, no migration artifact remains, and `429,125,984,256`
+filesystem bytes were returned. Scrape `1309` subsequently satisfied the
+post-Solo Bass validation gate.
+
+Pro Vocals was then converted during the authorized final migration interval.
+Its exact archive/restore contained `633,981,317` rows, retained `34,514,935`
+rows from snapshots `1302-1307` and `1309`, and removed `599,466,382`
+obsolete rows. The final `15,253,815,296`-byte tree and all indexes are in
+`pg_default`, the default child is empty, no migration artifact remains, and
+`350,852,210,688` filesystem bytes were returned. Exact retained fingerprints,
+publication/reference state, and public API bodies matched before final drop.
+
+Pro Cymbals followed in the same worker hold. Its exact archive/restore
+contained `8,661,068` rows, retained `400,455` rows from snapshots `1302-1307`
+and `1309`, and removed `8,260,613` obsolete rows. The final live tree occupies
+`185,352,192` bytes in `pg_default`, the default child is empty, no migration
+artifact remains, and `4,757,069,824` filesystem bytes were returned. Exact
+retained fingerprints, publication/reference state, and public API bodies
+matched before final drop.
+
+Pro Drums completed the final migration interval. Its exact archive/restore
+contained `5,473,658` rows, retained `190,168` rows from snapshots `1302-1307`
+and `1309`, and removed `5,283,490` obsolete rows. The final live tree occupies
+`86,032,384` bytes in `pg_default`, the default child is empty, no migration
+artifact remains, and `2,942,509,056` filesystem bytes were returned. All nine
+instrument roots are now snapshot-generation partitioned. Validation scrape
+`1310` subsequently accepted all nine generation writer paths.
+
+The first validation attempt, scrape `1308`, completed network collection and
+all `2,121` band manifests but failed closed on one 13-row Solo Bass writer
+batch. Concurrent first-batch generation DDL for different instruments raced
+while PostgreSQL selected truncated inherited-index names, raising SQLSTATE
+`23505`. The failed page is retained for replay, publication `98` remains
+current and unfrozen, and no post-scrape phase ran. The writer now acquires one
+global generation-DDL advisory lock in a separate statement before partition
+creation so the post-wait catalog snapshot is current and cross-instrument
+index naming is serialized.
+
+Scrape `1309` accepted that retry through publication `101`, notifications,
+registration drain, and normal worker exit. All `8,484` manifests and
+`604,907` page statuses completed successfully, with zero writer failures.
+Published-source sums match the physical `1309` children exactly: Pro Bass
+`1,642,317`, Pro Guitar `3,995,405`, Solo Guitar `5,460,593`, Solo Bass
+`4,489,655`, Solo Vocals `5,351,184`, and Solo Drums `5,360,563`; all six
+default children are empty. Their complete live trees occupy `7,319,396,352`,
+`16,611,909,632`, `20,473,880,576`, `15,551,946,752`, `19,875,627,008`, and
+`18,626,674,688` bytes respectively.
+
+Publication `101` is current and unfrozen. The run-once worker exited `0`,
+PostgreSQL returned to the production `16/20 GiB` envelope, and the final
+three-instrument migration interval is accepted. Pro Vocals, Pro Cymbals, and
+Pro Drums completed every independent gate; the required all-nine validation
+scrape was the next gate.
+
+Scrape `1310` accepted the complete all-nine layout through publication `103`,
+notifications, registration drain, and normal worker exit. All `8,484`
+manifests and `605,239` persisted page statuses completed successfully, with
+zero writer failures. Published-source sums match the physical `1310` children
+exactly:
+
+| Instrument | Rows |
+|---|---:|
+| Pro Bass | `1,577,901` |
+| Pro Guitar | `3,818,765` |
+| Pro Vocals | `4,988,523` |
+| Pro Cymbals | `45,323` |
+| Pro Drums | `19,725` |
+| Solo Guitar | `5,190,179` |
+| Solo Bass | `4,478,546` |
+| Solo Vocals | `5,254,600` |
+| Solo Drums | `5,369,892` |
+
+Every default child remains empty. The complete live trees now occupy
+`8,151,441,408`, `18,735,874,048`, `18,053,455,872`, `210,624,512`,
+`96,575,488`, `23,122,640,896`, `17,711,562,752`, `22,520,455,168`, and
+`21,252,939,776` bytes respectively. Publication `103` is current and
+unfrozen; player notification run `230` emitted `101` events, band run `231`
+emitted `47`, the registration drain completed with no queued account, and
+the worker exited `0`. PostgreSQL returned to the production `16/20 GiB`
+envelope with unchanged OOM/OOM-kill counters `9/2`.
 
 After migration, a separately gated retention owner can archive and drop
 obsolete generation children as whole relations. That recurring owner is not
@@ -879,8 +962,25 @@ current/previous/working publication sources, active snapshot state, and
 projection sources; archive/restore-prove nonempty obsolete children; and keep
 the default child empty. Readers continue to query the unchanged parent
 relation. Normal scheduling remains held until this recurring lifecycle is
-accepted. One guarded run-once scrape is required after each instrument
-migration, followed by another worker hold before the next migration.
+accepted. Normally one guarded run-once scrape is required after each
+instrument migration, followed by another worker hold before the next
+migration. The only current exception is the operator-authorized final
+interval: after a clean post-Solo Bass retry proves all six migrated writer
+paths, Pro Vocals, Pro Cymbals, and Pro Drums may be migrated sequentially
+under one hold, with every target independently completing the full migration
+state machine. All three migrations are accepted. One complete scrape across
+all nine instruments was required immediately afterward and is accepted as
+scrape `1310`.
+
+The first exact recurring-retention inventory after publication `103` finds
+only six wholly unreferenced children: the failed-scrape `1308` leaves for Pro
+Bass, Pro Guitar, Solo Guitar, Solo Bass, Solo Vocals, and Solo Drums. They
+occupy `12,908,355,584` bytes, while the nine new `1310` children occupy
+`15,870,648,320` bytes. Older successful generations remain sparsely pinned by
+snapshot reuse; retained publication `101` still uses `621`, `220`, `153`,
+`384`, `406`, and `525` scopes from generations `1302-1307`. Whole-child
+retirement is therefore the first safe owner, but sparse-child compaction is a
+separately gated second phase before storage can be described as bounded.
 
 The existing generic retention service remains the compatibility owner for
 unmigrated regular instrument partitions only. It deliberately produces no
@@ -932,7 +1032,13 @@ source-of-truth or restore targets.
 - FST free space after the accepted Solo Vocals validation scrape was
   `1,590,535,684,096` bytes; after the accepted Solo Drums final drop it is
   `2,020,845,260,800` bytes; after accepted validation scrape `1307` it is
-  `1,994,932,432,896` bytes. These measured capacities do not reduce any
+  `1,994,932,432,896` bytes; after the accepted Solo Bass final drop it is
+  `2,426,681,905,152` bytes; after accepted validation scrape `1309` it is
+  `2,382,491,947,008` bytes; after the accepted Pro Vocals final drop it is
+  `2,721,327,648,768` bytes; after the accepted Pro Cymbals final drop it is
+  `2,725,916,037,120` bytes; after the accepted Pro Drums final drop it is
+  `2,728,956,956,672` bytes; after accepted validation scrape `1310` it is
+  `2,701,792,727,040` bytes. These measured capacities do not reduce any
   migration-specific emergency floor, rollback, archive, or parity gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.

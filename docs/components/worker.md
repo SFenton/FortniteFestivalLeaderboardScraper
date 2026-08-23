@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-23
+last_verified_commit: f86e3915
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -589,10 +589,32 @@ instrument/snapshot generation child exists before inserting.
 
 The PostgreSQL helper is fixed to the nine supported instruments and validates
 the resulting `FOR VALUES IN (snapshot_id)` bound. Concurrent batch writers
-serialize first-child creation with an advisory transaction lock. Before an
-instrument is migrated, the helper detects its regular-table layout and
-returns without mutation, so the same worker image is compatible across the
-rolling migration.
+acquire one global generation-DDL advisory transaction lock in a separate SQL
+statement before invoking the helper. The separate statement gives a waiter a
+fresh `READ COMMITTED` catalog snapshot, while the global key serializes child
+table and inherited-index naming across instruments. Before an instrument is
+migrated, the helper detects its regular-table layout and returns without
+mutation, so the same worker image is compatible across the rolling migration.
+
+The first post-Solo Bass validation attempt, scrape `1308`, exposed the prior
+per-instrument lock boundary: concurrent first batches created generation
+children for different instruments, and PostgreSQL selected the same truncated
+inherited-index name, producing SQLSTATE `23505` in one 13-row Solo Bass batch.
+The writer retained that page as a replay artifact, failed the candidate,
+skipped post-scrape/publication work, unfroze reads on publication `98`, and
+exited normally. Scrape `1309` then proved the global lock: all six generation
+children were created, all `6,363` solo manifests and `2,121` band manifests
+completed, writer failures remained zero, and publication `101` committed.
+The failed `1308` candidate remains forensic evidence only.
+
+All nine instrument roots are now generation-partitioned. Scrape `1310`
+validated all nine writer paths: `8,484/8,484` manifests and
+`605,239/605,239` persisted page statuses completed, writer failures remained
+zero, every `1310` child matched its published-source row sum, and publication
+`103` committed. Player and band notification runs completed, the
+post-publication registration drain found no queued account, and the run-once
+worker exited `0`. The worker remains held before recurring generation
+retention is implemented and accepted.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
@@ -602,6 +624,15 @@ children without rewriting the full instrument partition. That owner is not
 part of the migration candidate: normal scheduling remains held until
 archive-before-child-drop, default-child auditing, rollback, and public parity
 are implemented and accepted.
+
+The accepted retention direction keeps long-running archive/proof/drop work
+out of the normal worker process. After a terminal publication, notifications,
+and registration drain, the worker will record only a bounded durable safe
+point. A separately deployed executor and network-isolated PostgreSQL 17
+restore prover will process one child at a time from durable intent and a
+4 TB-drive evidence mailbox. Whole-child retirement is Phase 1; sparse-child
+compaction remains separately gated because snapshot reuse can keep a large
+generation alive for only a few historical scopes.
 
 ## Service-level retention planning
 
