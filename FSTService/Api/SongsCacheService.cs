@@ -629,6 +629,53 @@ public sealed class SongsCacheService
             jsonOpts);
     }
 
+    /// <summary>
+    /// Builds the /api/songs payload strictly from the bound publication
+    /// catalog and the publication-scoped path snapshot. Unlike
+    /// <see cref="BuildPublishedSongsJson"/> it never overlays mutable live
+    /// catalog fields.
+    /// </summary>
+    public static byte[] BuildBoundPublicationSongsJson(
+        long publicationId,
+        IPathDataStore pathStore,
+        IMetaDatabase metaDb,
+        GlobalLeaderboardPersistence persistence,
+        ScrapeTimePrecomputer precomputer,
+        JsonSerializerOptions jsonOpts)
+    {
+        var catalog = (metaDb as MetaDatabase)?
+            .GetCurrentPublicationSongCatalogFallback(publicationId)
+            ?? throw new InvalidOperationException(
+                $"Publication {publicationId} has no bound song catalog.");
+        if (catalog.PublicationId != publicationId)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog is not bound to the requested publication.");
+        }
+
+        var publishedSongs =
+            SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+                catalog.CatalogJson,
+                catalog.SchemaVersion)
+            .ToArray();
+        if (publishedSongs.Length != catalog.SongCount)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog count does not match its binding.");
+        }
+
+        using var scope = pathStore.BeginPublicationRead(publicationId);
+        var service =
+            FestivalService.CreateFromSongCatalogSnapshot(publishedSongs);
+        return BuildSongsJson(
+            service,
+            pathStore,
+            metaDb,
+            persistence,
+            precomputer,
+            jsonOpts);
+    }
+
     internal static IReadOnlyList<Song> SelectPublishedFallbackSongs(
         IReadOnlyList<Song> publishedSongs,
         IReadOnlyList<Song> liveSongs)

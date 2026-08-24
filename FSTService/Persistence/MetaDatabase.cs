@@ -434,6 +434,26 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
         }
 
+        using (var pathSnapshot = conn.CreateCommand())
+        {
+            pathSnapshot.Transaction = tx;
+            pathSnapshot.CommandText =
+                PublicationPathArtifactSchema.CaptureSnapshotSql;
+            pathSnapshot.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            pathSnapshot.Parameters.AddWithValue("now", now);
+            pathSnapshot.ExecuteNonQuery();
+        }
+
+        BindPublicationPathArtifacts(
+            conn,
+            tx,
+            publicationId,
+            PublicationPathArtifactSchema.CandidateSnapshotSource,
+            now,
+            requireReady: true);
+
         using (var pointer = conn.CreateCommand())
         {
             pointer.Transaction = tx;
@@ -488,8 +508,75 @@ public sealed partial class MetaDatabase : IMetaDatabase
             retainCatalogs.ExecuteNonQuery();
         }
 
+        using (var retainPathArtifacts = conn.CreateCommand())
+        {
+            retainPathArtifacts.Transaction = tx;
+            retainPathArtifacts.CommandText =
+                PublicationPathArtifactSchema.RetainPointerSnapshotsSql;
+            retainPathArtifacts.Parameters.AddWithValue("now", now);
+            retainPathArtifacts.ExecuteNonQuery();
+        }
+
         tx.Commit();
         return scrapeId;
+    }
+
+    /// <summary>
+    /// Emits the <c>path_artifacts</c> surface binding for a publication from
+    /// its <c>publication_path_artifacts</c> snapshot. The binding is only
+    /// marked ready when the snapshot covers the bound catalog exactly.
+    /// </summary>
+    internal static void BindPublicationPathArtifacts(
+        NpgsqlConnection conn,
+        NpgsqlTransaction? tx,
+        long publicationId,
+        string source,
+        DateTime now,
+        bool requireReady)
+    {
+        using (var bind = conn.CreateCommand())
+        {
+            bind.Transaction = tx;
+            bind.CommandText = PublicationPathArtifactSchema.RebindSql;
+            bind.Parameters.AddWithValue("publicationId", publicationId);
+            bind.Parameters.AddWithValue("source", source);
+            bind.Parameters.AddWithValue(
+                "contractVersion",
+                PublicationPathArtifactSchema.ContractVersion);
+            bind.Parameters.AddWithValue("now", now);
+            if (bind.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Publication generation {publicationId} has no path artifact binding.");
+            }
+        }
+
+        if (!requireReady)
+            return;
+
+        using var verify = conn.CreateCommand();
+        verify.Transaction = tx;
+        verify.CommandText = """
+            SELECT binding_kind, status
+            FROM publication_surface_bindings
+            WHERE publication_id = @publicationId
+              AND surface_name = 'path_artifacts'
+            """;
+        verify.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = verify.ExecuteReader();
+        if (!reader.Read()
+            || !string.Equals(
+                reader.GetString(0),
+                PublicationPathArtifactSchema.ManifestBindingKind,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                reader.GetString(1),
+                PublicationGenerationStatus.Ready,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Publication generation {publicationId} has an incomplete path artifact snapshot.");
+        }
     }
 
     public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false)
@@ -1015,8 +1102,56 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 GetPublicationSoloScopeSourceEvidence(publicationId),
             PublicationSurfaceNames.SongCatalog =>
                 GetPublicationSongCatalogEvidence(publicationId),
+            PublicationSurfaceNames.PathArtifacts =>
+                GetPublicationPathArtifactEvidence(publicationId),
             _ => null,
         };
+    }
+
+    private PublicationSurfaceSourceEvidence?
+        GetPublicationPathArtifactEvidence(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                generation.publication_id,
+                generation.scrape_id,
+                (
+                    SELECT COUNT(*)
+                    FROM publication_path_artifacts artifact
+                    WHERE artifact.publication_id =
+                        generation.publication_id
+                ),
+                publication_path_artifact_manifest_sha256(
+                    generation.publication_id),
+                (
+                    SELECT catalog.song_count
+                    FROM publication_song_catalog catalog
+                    WHERE catalog.publication_id =
+                        generation.publication_id
+                      AND catalog.is_exact
+                )
+            FROM publication_generations generation
+            WHERE generation.publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        var rowCount = reader.GetInt64(2);
+        var expectedRowCount =
+            reader.IsDBNull(4) ? (long?)null : reader.GetInt32(4);
+        return new PublicationSurfaceSourceEvidence(
+            PublicationSurfaceNames.PathArtifacts,
+            Exists: expectedRowCount.HasValue
+                    && rowCount == expectedRowCount.Value,
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            rowCount,
+            reader.IsDBNull(3) ? null : reader.GetString(3));
     }
 
     private PublicationSurfaceSourceEvidence?
@@ -13117,6 +13252,74 @@ public sealed partial class MetaDatabase : IMetaDatabase
             MaxScoreMaintenanceFinalMutationStatementTimeoutSeconds,
             "final-bounded-mutations");
 
+        bool exactPathCatalogAvailable;
+        using (var exactCatalog = conn.CreateCommand())
+        {
+            exactCatalog.Transaction = tx;
+            exactCatalog.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM publication_song_catalog catalog
+                    JOIN publication_surface_bindings binding
+                      ON binding.publication_id =
+                            catalog.publication_id
+                     AND binding.surface_name = 'song_catalog'
+                    WHERE catalog.publication_id = @publicationId
+                      AND catalog.is_exact
+                      AND catalog.source_kind = 'provider_exact'
+                      AND catalog.schema_version = @schemaVersion
+                      AND binding.binding_kind =
+                            'generation_catalog_snapshot'
+                      AND binding.status = 'ready'
+                      AND binding.row_count = catalog.song_count
+                      AND binding.content_hash =
+                            catalog.content_hash
+                )
+                """;
+            exactCatalog.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            exactCatalog.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            exactPathCatalogAvailable =
+                exactCatalog.ExecuteScalar() is true;
+        }
+
+        using (var capturePathArtifacts = conn.CreateCommand())
+        {
+            capturePathArtifacts.Transaction = tx;
+            capturePathArtifacts.CommandText =
+                PublicationPathArtifactSchema.CaptureSnapshotSql;
+            capturePathArtifacts.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            capturePathArtifacts.Parameters.AddWithValue(
+                "now",
+                DateTime.UtcNow);
+            capturePathArtifacts.ExecuteNonQuery();
+        }
+
+        using (var refreshPathArtifacts = conn.CreateCommand())
+        {
+            refreshPathArtifacts.Transaction = tx;
+            refreshPathArtifacts.CommandText =
+                PublicationPathArtifactSchema
+                    .RefreshSnapshotFromLiveSongsSql;
+            refreshPathArtifacts.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            refreshPathArtifacts.ExecuteNonQuery();
+        }
+
+        BindPublicationPathArtifacts(
+            conn,
+            tx,
+            publicationId,
+            PublicationPathArtifactSchema.MaxScoreMaintenanceSource,
+            DateTime.UtcNow,
+            requireReady: exactPathCatalogAvailable);
+
         using (var swap = conn.CreateCommand())
         {
             swap.Transaction = tx;
@@ -13163,47 +13366,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         WHERE publication_id = @publicationId
                     ),
                     'ready',
-                    now())
-                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
-                    binding_kind = EXCLUDED.binding_kind,
-                    binding_json = EXCLUDED.binding_json,
-                    row_count = EXCLUDED.row_count,
-                    content_hash = EXCLUDED.content_hash,
-                    status = EXCLUDED.status,
-                    built_at = EXCLUDED.built_at;
-
-                INSERT INTO publication_surface_bindings (
-                    publication_id, surface_name, binding_kind, binding_json,
-                    row_count, content_hash, status, built_at)
-                VALUES (
-                    @publicationId,
-                    'path_artifacts',
-                    'legacy_live_unversioned',
-                    jsonb_build_object(
-                        'table', 'songs',
-                        'maintenanceManifestSha256',
-                            @manifestSha256,
-                        'maintenanceRollback',
-                            @rollback),
-                    (
-                        SELECT COUNT(*)
-                        FROM songs
-                        WHERE paths_generated_at IS NOT NULL
-                    ),
-                    (
-                        SELECT md5(COALESCE(
-                            string_agg(
-                                song_id || ':'
-                                || path_generation_revision || ':'
-                                || COALESCE(
-                                    path_artifact_generation_id,
-                                    ''),
-                                '|' ORDER BY song_id),
-                            ''))
-                        FROM songs
-                        WHERE paths_generated_at IS NOT NULL
-                    ),
-                    'building',
                     now())
                 ON CONFLICT (publication_id, surface_name) DO UPDATE SET
                     binding_kind = EXCLUDED.binding_kind,

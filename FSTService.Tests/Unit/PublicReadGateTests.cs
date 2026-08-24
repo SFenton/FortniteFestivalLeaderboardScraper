@@ -508,7 +508,8 @@ public class PublicReadGateTests
         await middleware.InvokeAsync(
                 context,
                 publicationService,
-                gate)
+                gate,
+                Substitute.For<IPathDataStore>())
             .WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.True(nextCalled);
@@ -1794,7 +1795,8 @@ public class PublicReadGateTests
         await middleware.InvokeAsync(
             context,
             publicationService,
-            apiGate);
+            apiGate,
+            Substitute.For<IPathDataStore>());
 
         Assert.False(nextCalled);
         Assert.Equal(
@@ -1818,6 +1820,84 @@ public class PublicReadGateTests
         }
         _ = metaDb.ReconcileStalePublicationCommitIntent(
             TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task BoundaryReadLeaseReturns503ForIncompletePathSnapshot()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var scrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = metaDb.GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+
+        using (var connection = fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM publication_path_artifacts
+                WHERE publication_id = @publicationId
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            command.ExecuteNonQuery();
+        }
+
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var pathStore = new PathDataStore(
+            fixture.DataSource,
+            options: Options.Create(new ScraperOptions
+            {
+                UsePublicationPathArtifacts = true,
+            }));
+        var nextCalled = false;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                _context =>
+                {
+                    nextCalled = true;
+                    pathStore.GetAllMaxScores();
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/songs";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(context, "/api/songs");
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            gate,
+            pathStore);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "no-store",
+            context.Response.Headers.CacheControl);
     }
 
     [Fact]

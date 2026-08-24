@@ -81,6 +81,24 @@ public class GlobalLeaderboardScraperTests
         return service;
     }
 
+    [Fact]
+    public void RefreshLiveSongInstrumentSupport_UsesLivePathState()
+    {
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetLivePathGenerationStates().Returns(
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase));
+        var (scraper, _) = CreateScraper(
+            pathDataStore: pathStore);
+
+        scraper.RefreshLiveSongInstrumentSupport();
+
+        pathStore.Received(1)
+            .GetLivePathGenerationStates();
+        pathStore.DidNotReceive()
+            .GetPathGenerationStates();
+    }
+
     /// <summary>
     /// Response handler used to measure concurrent in-flight requests while returning
     /// deterministic V1 leaderboard pages.

@@ -90,7 +90,8 @@ public static class PublicationSurfaceContractCatalog
             scrapeIdProperty: "scrapeId",
             requiresRowCount: true,
             contentHashRequirement:
-                PublicationContentHashRequirement.Sha256),
+                PublicationContentHashRequirement.Sha256,
+            requiresSourceEvidence: true),
         Surface(
             PublicationSurfaceNames.SoloScopeSources,
             ["scrape_id"],

@@ -1,14 +1,19 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Scraping/PathDataStorePublicationScope.cs
+  - FSTService/Scraping/IPathDataStore.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/ScraperOptions.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -21,6 +26,7 @@ sources:
   - .github/workflows/publish-image.yml
 update_triggers:
   - CHOpt version, path profile, JSON schema, artifact storage, generation scheduling, path endpoints, text rendering, or regeneration procedure changes.
+  - Path read-source, publication binding, or publication read-scope changes.
 ---
 
 # Path generation
@@ -136,6 +142,31 @@ After deploying a new stable instrument correction, regenerate each affected
 song sequentially with `force=false`. Do not update nullable maximum columns
 directly: the normal path promotes the complete immutable generation and keeps
 the manifest, maxima, expected instruments, and revision coherent.
+
+## Publication-bound path reads
+
+`Scraper:UsePublicationPathArtifacts` (default `false`) selects where effective
+published path state and CHOpt maxima come from:
+
+- **Off** — live `songs` rows, byte-compatible with previous behavior.
+- **On** — the publication-bound `publication_path_artifacts` snapshot for the
+  request's publication. `/api/songs` is then built strictly from the bound
+  publication catalog plus that snapshot, and `/api/paths` compares the
+  requested `generationId` against the bound publication row rather than the
+  mutable live row.
+
+`PathGenerationCoordinator` and max-score maintenance keep reading live rows
+through the explicit `*Live*` store members, so generation and mutation
+semantics are unchanged. A scrape opens the working publication scope after
+allocation; threshold reads, ranking/statistics work, and API precompute then
+consume that immutable candidate snapshot through publication commit.
+
+Publication-safe automatic worker path generation is still not implemented.
+The legacy API-owned automatic generator promotes mutable live rows outside the
+publication pipeline, so startup rejects
+`Scraper:EnableAutomaticPathGeneration=true` in Phase A. A later phase will
+replace it with scrape-pass staging that requires this source flag. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 ## Max-score correction maintenance
 

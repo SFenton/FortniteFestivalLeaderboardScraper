@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -166,6 +166,14 @@ generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
+
+Scrape allocation additionally captures the publication-bound path artifact
+snapshot for the new working publication, and publication preparation re-emits
+that binding. The worker does not stage or generate paths automatically, and
+the legacy API-owned `Scraper:EnableAutomaticPathGeneration=true` mode is now
+rejected at startup until publication-safe scrape-pass staging replaces it.
+Generation and maintenance code paths keep reading live `songs` rows. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Max-score correction is a separate CLI-only one-shot mode. It registers no
 hosted scraper/background services and requires the real `fstworker` offline.

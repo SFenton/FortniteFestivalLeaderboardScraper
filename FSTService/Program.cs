@@ -475,7 +475,8 @@ builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetR
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>
     new FSTService.Scraping.PathDataStore(sp.GetRequiredService<NpgsqlDataSource>(),
-        sp.GetRequiredService<ILogger<FSTService.Scraping.PathDataStore>>()));
+        sp.GetRequiredService<ILogger<FSTService.Scraping.PathDataStore>>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>()));
 builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();

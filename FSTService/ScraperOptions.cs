@@ -387,6 +387,15 @@ public sealed class ScraperOptions
     public bool EnableAutomaticPathGeneration { get; set; }
 
     /// <summary>
+    /// Backend-only source flag. When true, effective published path/max-score
+    /// reads come from the publication-bound <c>publication_path_artifacts</c>
+    /// snapshot instead of the mutable live <c>songs</c> table. Mutation and
+    /// generation paths always keep reading live rows. Default false keeps the
+    /// existing live-read behavior byte-compatible.
+    /// </summary>
+    public bool UsePublicationPathArtifacts { get; set; }
+
+    /// <summary>
     /// Versioned identity for the CHOpt arguments and artifact contract.
     /// Change this value whenever path-generation semantics change.
     /// </summary>
@@ -755,10 +764,10 @@ internal sealed class ScraperOptionsValidator
         ScraperOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return ScraperOptions.IsValidMaxScoreMaintenanceCommandTimeout(
-            options.MaxScoreMaintenanceCommandTimeoutSeconds)
-            ? ValidateOptionsResult.Success
-            : ValidateOptionsResult.Fail(
+        if (!ScraperOptions.IsValidMaxScoreMaintenanceCommandTimeout(
+                options.MaxScoreMaintenanceCommandTimeoutSeconds))
+        {
+            return ValidateOptionsResult.Fail(
                 $"{ScraperOptions.Section}:"
                 + nameof(
                     ScraperOptions
@@ -770,5 +779,18 @@ internal sealed class ScraperOptionsValidator
                 + ScraperOptions
                     .MaximumMaxScoreMaintenanceCommandTimeoutSeconds
                 + " seconds.");
+        }
+
+        if (options.EnableAutomaticPathGeneration)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.EnableAutomaticPathGeneration)
+                + " is not supported while automatic generation still promotes "
+                + "mutable live song rows outside the publication pipeline. "
+                + "Keep it disabled until scrape-pass staging is available.");
+        }
+
+        return ValidateOptionsResult.Success;
     }
 }

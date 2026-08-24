@@ -1,12 +1,14 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
   - FSTService/Scraping/PathGenerationModels.cs
+  - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Program.cs
   - FSTService/FeatureOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -77,7 +79,8 @@ benchmarks, freeze tests, documentation, and a separate promotion decision.
 |---|---|---|
 | `Scraper:CHOptPath` | `tools/CHOpt` | Bundled CHOpt launcher or binary |
 | `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
-| `Scraper:EnableAutomaticPathGeneration` | `false` | Processes only pending songs from background catalog refresh when enabled |
+| `Scraper:EnableAutomaticPathGeneration` | `false` | Legacy API-owned pending-song promotion. Rejected at startup until publication-safe scrape-pass staging replaces it |
+| `Scraper:UsePublicationPathArtifacts` | `false` | Backend-only source flag. Serves effective published path state and CHOpt maxima from the publication-bound `publication_path_artifacts` snapshot instead of live `songs` rows |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
 | `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v4` | Semantic identity for the dedicated plastic-drums MIDI variant, authored activation-window contract, eight-instrument scope, and artifact schema |
 
@@ -85,6 +88,15 @@ The MIDI decryption key is operator-supplied and must not appear in logs,
 documentation, artifacts, or commands. Profile changes invalidate selected
 older generations but do not select the full catalogue; use the guarded
 sequential procedure in [Path generation](../components/path-generation.md).
+
+`Scraper:UsePublicationPathArtifacts` has no browser exposure. It is owned by
+both the `fstservice` (read) and `fstworker` (capture/maintenance) roles and
+takes effect only after a restart. Mutation, generation, and maintenance code
+paths always read live rows regardless of its value. Published API reads and
+scrape-derived computation read the exact current or working publication
+snapshot. Rollback is setting
+`Scraper__UsePublicationPathArtifacts=false` and restarting. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 The option classes are authoritative when a property exists but is omitted from
 `appsettings.json`.

@@ -2818,20 +2818,6 @@ public sealed partial class MetaDatabase
                     NULL,
                     'building',
                     @now
-                ),
-                (
-                    @publicationId,
-                    'path_artifacts',
-                    'legacy_live_unversioned',
-                    jsonb_build_object('table', 'songs'),
-                    (
-                        SELECT COUNT(*)
-                        FROM songs
-                        WHERE paths_generated_at IS NOT NULL
-                    ),
-                    NULL,
-                    'building',
-                    @now
                 )
             ON CONFLICT (publication_id, surface_name) DO UPDATE SET
                 binding_kind = EXCLUDED.binding_kind,
@@ -2863,6 +2849,16 @@ public sealed partial class MetaDatabase
             "bandBinding",
             NpgsqlDbType.Jsonb).Value = bandBindingJson;
         bindings.ExecuteNonQuery();
+
+        // Preserve (re-emit) the candidate path artifact manifest instead of
+        // clobbering it back to the legacy live binding.
+        MetaDatabase.BindPublicationPathArtifacts(
+            conn,
+            tx,
+            publicationId,
+            PublicationPathArtifactSchema.PreparedSnapshotSource,
+            DateTime.UtcNow,
+            requireReady: true);
 
         if (expectedPublishedScopeCount.HasValue)
         {
@@ -3486,7 +3482,9 @@ public sealed partial class MetaDatabase
                   OR publication_id <> @previousPublicationId
               )
               AND status <> 'retired';
-            """;
+            """
+            + PublicationPathArtifactSchema
+                .RetainExplicitSnapshotsSql;
         command.Parameters.AddWithValue(
             "currentPublicationId",
             currentPublicationId);
@@ -3779,6 +3777,8 @@ public sealed partial class MetaDatabase
                 WHERE publication_id = @publicationId;
                 DELETE FROM publication_song_catalog
                 WHERE publication_id = @publicationId;
+                DELETE FROM publication_path_artifacts
+                WHERE publication_id = @publicationId;
 
                 UPDATE publication_surface_bindings
                 SET binding_kind = CASE
@@ -3786,6 +3786,8 @@ public sealed partial class MetaDatabase
                             THEN 'failed_generation_catalog'
                         WHEN surface_name = 'api_response_cache'
                             THEN 'failed_generation_cache'
+                        WHEN surface_name = 'path_artifacts'
+                            THEN 'failed_generation_path_artifacts'
                         ELSE binding_kind
                     END,
                     binding_json = binding_json
@@ -3795,14 +3797,16 @@ public sealed partial class MetaDatabase
                     row_count = CASE
                         WHEN surface_name IN (
                             'song_catalog',
-                            'api_response_cache')
+                            'api_response_cache',
+                            'path_artifacts')
                             THEN 0
                         ELSE row_count
                     END,
                     content_hash = CASE
                         WHEN surface_name IN (
                             'song_catalog',
-                            'api_response_cache')
+                            'api_response_cache',
+                            'path_artifacts')
                             THEN NULL
                         ELSE content_hash
                     END,

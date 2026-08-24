@@ -35,6 +35,14 @@ public static partial class ApiEndpoints
                 publicReadGate.FailedCandidateIsolationActive
                 || publicReadGate.IsFrozen
                    && !publicReadGate.RequiresCachedReads;
+            var usePublicationPathArtifacts =
+                scraperOptions.Value.UsePublicationPathArtifacts;
+            var boundPublicationId =
+                httpContext.GetPublicationReadContext()?.PublicationId
+                ?? (usePublicationPathArtifacts
+                    ? metaDb.GetPublicationPointerState()
+                        .CurrentPublicationId
+                    : null);
             if (canUsePublishedFallback &&
                 !scraperOptions.Value.EnableAutomaticPathGeneration)
             {
@@ -44,12 +52,22 @@ public static partial class ApiEndpoints
                         .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                         .Value.SerializerOptions;
                     var publishedJson =
-                        SongsCacheService.BuildPublishedSongsJson(
-                            pathStore,
-                            metaDb,
-                            persistence,
-                            precomputer,
-                            fallbackJsonOptions);
+                        usePublicationPathArtifacts
+                        && boundPublicationId is long fallbackPublicationId
+                            ? SongsCacheService
+                                .BuildBoundPublicationSongsJson(
+                                    fallbackPublicationId,
+                                    pathStore,
+                                    metaDb,
+                                    persistence,
+                                    precomputer,
+                                    fallbackJsonOptions)
+                            : SongsCacheService.BuildPublishedSongsJson(
+                                pathStore,
+                                metaDb,
+                                persistence,
+                                precomputer,
+                                fallbackJsonOptions);
                     httpContext.Response.Headers.CacheControl = "no-store";
                     httpContext.Response.Headers.ETag =
                         ResponseCacheService.ComputeETag(publishedJson);
@@ -88,13 +106,24 @@ public static partial class ApiEndpoints
                 while (true)
                 {
                     var token = songsCache.CaptureBuildToken();
-                    jsonBytes = SongsCacheService.BuildSongsJson(
-                        service,
-                        pathStore,
-                        metaDb,
-                        persistence,
-                        precomputer,
-                        jsonOpts);
+                    jsonBytes =
+                        usePublicationPathArtifacts
+                        && boundPublicationId is long buildPublicationId
+                            ? SongsCacheService
+                                .BuildBoundPublicationSongsJson(
+                                    buildPublicationId,
+                                    pathStore,
+                                    metaDb,
+                                    persistence,
+                                    precomputer,
+                                    jsonOpts)
+                            : SongsCacheService.BuildSongsJson(
+                                service,
+                                pathStore,
+                                metaDb,
+                                persistence,
+                                precomputer,
+                                jsonOpts);
                     var writeResult = songsCache.TrySetIfBuildTokenUnchanged(
                         jsonBytes,
                         token,
@@ -120,6 +149,13 @@ public static partial class ApiEndpoints
             }
             catch (Exception ex)
             {
+                if (usePublicationPathArtifacts
+                    && ex is
+                        PublicationPathArtifactsUnavailableException)
+                {
+                    throw;
+                }
+
                 var stale = songsCache.GetStale();
                 if (stale is not null)
                 {

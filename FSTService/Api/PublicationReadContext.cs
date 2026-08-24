@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -322,7 +323,8 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
     public async Task InvokeAsync(
         HttpContext context,
         PublicationReadContextService publicationService,
-        PublicReadGateService publicReadGate)
+        PublicReadGateService publicReadGate,
+        FSTService.Scraping.IPathDataStore pathStore)
     {
         if (context.WebSockets.IsWebSocketRequest
             || context.GetPublicationReadContext() is not null
@@ -345,7 +347,9 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
                 context,
                 gateState))
         {
-            await _next(context);
+            await InvokeWithPathArtifactFailureHandlingAsync(
+                context,
+                publicationId: null);
             return;
         }
 
@@ -366,7 +370,9 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
                 return;
             }
 
-            await _next(context);
+            await InvokeWithPathArtifactFailureHandlingAsync(
+                context,
+                publicationId: null);
             return;
         }
 
@@ -383,7 +389,36 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
             lease.Pointers.PublishedScrapeId.Value,
             lease.Pointers.PublishedAtUtc));
 
-        await _next(context);
+        try
+        {
+            using var pathScope =
+                pathStore.BeginPublicationRead(publicationId);
+            await _next(context);
+        }
+        catch (PublicationPathArtifactsUnavailableException)
+            when (!context.Response.HasStarted)
+        {
+            await PublicationPathArtifactHttpResults.Unavailable(
+                context,
+                publicationId);
+        }
+    }
+
+    private async Task InvokeWithPathArtifactFailureHandlingAsync(
+        HttpContext context,
+        long? publicationId)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (PublicationPathArtifactsUnavailableException ex)
+            when (!context.Response.HasStarted)
+        {
+            await PublicationPathArtifactHttpResults.Unavailable(
+                context,
+                publicationId ?? ex.PublicationId);
+        }
     }
 }
 
@@ -402,11 +437,14 @@ public sealed class PublicationReadContextMiddleware
     public async Task InvokeAsync(
         HttpContext context,
         PublicationReadContextService publicationService,
-        PublicReadGateService publicReadGate)
+        PublicReadGateService publicReadGate,
+        FSTService.Scraping.IPathDataStore pathStore)
     {
         if (!publicationService.PinningConfigured)
         {
-            await _next(context);
+            await InvokeWithPathArtifactFailureHandlingAsync(
+                context,
+                publicationId: null);
             return;
         }
 
@@ -428,7 +466,9 @@ public sealed class PublicationReadContextMiddleware
                 context,
                 gateState))
         {
-            await _next(context);
+            await InvokeWithPathArtifactFailureHandlingAsync(
+                context,
+                publicationId: null);
             return;
         }
 
@@ -505,12 +545,42 @@ public sealed class PublicationReadContextMiddleware
                 publicationLease = null;
             }
 
-            await _next(context);
+            try
+            {
+                using var pathScope =
+                    pathStore.BeginPublicationRead(
+                        currentPublicationId);
+                await _next(context);
+            }
+            catch (PublicationPathArtifactsUnavailableException)
+                when (!context.Response.HasStarted)
+            {
+                await PublicationPathArtifactHttpResults.Unavailable(
+                    context,
+                    currentPublicationId);
+            }
         }
         finally
         {
             if (publicationLease is not null)
                 await publicationLease.DisposeAsync();
+        }
+    }
+
+    private async Task InvokeWithPathArtifactFailureHandlingAsync(
+        HttpContext context,
+        long? publicationId)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (PublicationPathArtifactsUnavailableException ex)
+            when (!context.Response.HasStarted)
+        {
+            await PublicationPathArtifactHttpResults.Unavailable(
+                context,
+                publicationId ?? ex.PublicationId);
         }
     }
 
@@ -574,6 +644,23 @@ internal static class PublicationCommitHttpResults
                 title: "Publication commit in progress",
                 detail:
                     "The current publication is being atomically advanced. Retry this uncached request.",
+                statusCode: StatusCodes.Status503ServiceUnavailable)
+            .ExecuteAsync(context);
+    }
+}
+
+internal static class PublicationPathArtifactHttpResults
+{
+    internal static async Task Unavailable(
+        HttpContext context,
+        long publicationId)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers["Retry-After"] = "30";
+        await Results.Problem(
+                title: "Published path data unavailable",
+                detail:
+                    $"Publication {publicationId} does not have a complete, verified path artifact snapshot. Retry after publication recovery completes.",
                 statusCode: StatusCodes.Status503ServiceUnavailable)
             .ExecuteAsync(context);
     }

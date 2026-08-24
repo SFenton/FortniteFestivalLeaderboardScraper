@@ -204,6 +204,12 @@ public sealed class ScrapeTimePrecomputer
                 ? publicationPointers.CurrentPublicationId
                 : publicationPointers.WorkingPublicationId
                     ?? publicationPointers.CurrentPublicationId);
+        using var pathPublicationScope =
+            !useExistingMaintenanceLease
+            && targetPublicationId.HasValue
+                ? _pathStore.BeginPublicationRead(
+                    targetPublicationId.Value)
+                : null;
         var persistenceTargetPublicationId = targetPublicationId ?? 0;
         using var publicationBuildLease = useExistingMaintenanceLease
             ? null
