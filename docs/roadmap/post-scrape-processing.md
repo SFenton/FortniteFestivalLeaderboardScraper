@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -18,10 +18,12 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/HealthEndpoints.cs
+  - tools/postgres-snapshot-generation-retention-drill.py
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
   - docs/components/worker.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/database/SnapshotReuseRunbook.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/decisions/0005-post-scrape-modular-monolith.md
@@ -47,8 +49,10 @@ update_triggers:
   notifications, registration drain, and worker exit.
 - Make recurring generation retention the active storage lane. Phase 1
   archives, restore-proves, and retires wholly unreferenced children through
-  durable intent plus separate executor/prover roles. Phase 2 later compacts
-  sparsely pinned children before storage is considered bounded.
+  durable intent plus separate executor/prover roles. Its isolated
+  archive/restore, mailbox/prover, and catalog-lock mechanics are accepted;
+  production ownership remains open. Phase 2 later compacts sparsely pinned
+  children before storage is considered bounded.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -294,10 +298,28 @@ The nine `1310` children total `15,870,648,320` bytes, while older successful
 generations remain sparsely pinned. Whole-child retirement is necessary but
 does not by itself prove bounded steady-state storage.
 
-**Unknown:** single-leaf archive/restore behavior, guarded detach/reattach
-versus direct-drop lock duration, no-socket mailbox/prover crash recovery,
-measured eligible-child arrival rate, archive runway, and sparse-compaction
-cost until the gated drills and canaries pass.
+**Verified:** the isolated PostgreSQL 17 retention package custom-archives and
+network-none restore-proves one `40,000`-row generation with exact content and
+catalog parity. Its filesystem prover rejects torn/digest-mismatched requests
+and resumes idempotently without network or a Docker socket. Accepted run
+`snapshot-generation-retention-phase1-final-20260824T004250Z` fences exact
+initial/final local context, socket, daemon, and image identity; pins all 176
+Engine operations, including 10 `Popen` calls, to the Unix socket; uses the
+authorized image ID plus `--pull=never` for all nine container creations;
+gives every container a run-owned PGDATA bind; repeats aggregate cleanup to an
+empty inventory; records an unchanged exact Docker volume set; and publishes
+`seal.json` only after fail-closed integrity verification. Direct attached
+drop and ordinary detach both acquired `AccessExclusiveLock` on the synthetic
+instrument root; DDL-ready times were `0.004602` and `0.005151` seconds.
+Four earlier sealed runs are forensic/rejected: two leaked eight anonymous
+volumes total, and two zero-volume repairs retained Docker/image TOCTOU,
+premature success publication, and first-error cleanup. The leaked volumes
+were removed and confirmed absent. The drill intentionally makes no
+production strategy decision.
+
+**Unknown:** live eligible-child arrival rate, archive capacity/runway and
+retention cost, production lock/API/resource behavior, canary recovery, and
+sparse-compaction cost until the remaining report-only and live gates pass.
 
 ## Exact current dependency map
 
@@ -498,9 +520,9 @@ Every replay package and phase output requires:
 - no bearer tokens, cookies, credentials, resolved proxy endpoints, or private
   provider/account configuration.
 
-Artifacts are immutable after sealing. An interrupted attempt receives a new
-attempt directory/row; it never overwrites the prior attempt. Resume requires
-all parent hashes to match.
+Artifacts are nonwritable and integrity-sealed after successful publication.
+An interrupted attempt receives a new attempt directory/row; it never
+overwrites the prior attempt. Resume requires all parent hashes to match.
 
 ### Isolated PostgreSQL
 
@@ -675,8 +697,6 @@ Each iteration below is a separate branch/PR.
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - isolated PostgreSQL 17 leaf archive/restore, lock, pressure, and
-     no-socket mailbox/prover drills;
    - durable cycles/jobs/evidence, exact per-instrument protection fences,
      default-child auditing, and explicit generation-leaf exclusion from the
      legacy rewrite planner;

@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -37,8 +37,10 @@ sources:
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
   - tools/postgres-pro-bass-snapshot-rewrite.py
+  - tools/postgres-snapshot-generation-retention-drill.py
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Schema, persistence ownership, publication storage, retention, restore, or source-of-truth behavior changes.
 ---
@@ -981,6 +983,50 @@ snapshot reuse; retained publication `101` still uses `621`, `220`, `153`,
 `384`, `406`, and `525` scopes from generations `1302-1307`. Whole-child
 retirement is therefore the first safe owner, but sparse-child compaction is a
 separately gated second phase before storage can be described as bounded.
+
+### Verified generation-retention safety mechanics
+
+The reusable isolated PostgreSQL 17 safety drill now proves the mechanics for
+one whole-generation candidate without implementing a production owner. Its
+82,000-row fixture protects previous/current/working generation IDs
+`1402-1404`, identifies only unreferenced nonempty leaf `1401`, and keeps the
+default child empty.
+
+The `1,040,111`-byte custom archive contains exactly the top parent, selected
+instrument root, target leaf, and empty default child. A network-none restore
+proved `40,000` rows plus exact fingerprint, distribution, columns,
+constraints, indexes, partition bounds, tablespaces, and default-empty parity,
+then removed its `78,187,033`-byte PGDATA and container.
+
+The filesystem-only request/proof contract rejects torn and digest-mismatched
+requests, atomically publishes proofs, resumes idempotently, uses asymmetric
+read-only/read-write mounts, and exposes neither network nor the Docker
+socket. Every source, restore, TOC, cleanup, and prover container uses a
+controlled PGDATA bind beneath the 4 TB work root. Accepted run
+`snapshot-generation-retention-phase1-final-20260824T004250Z` pinned all 176
+Docker Engine calls to the validated Unix socket, including 10 direct
+`Popen` measurements; all nine container creations used the authorized
+`sha256:` image ID and `--pull=never`. Initial/final context, socket, daemon,
+and image identities matched. Repeated aggregate cleanup ended with no owned
+container, and the exact 304-volume Docker inventory had empty added/removed
+sets. The nonwritable, integrity-sealed 15-file tree has no symlink, and only
+its integrity-valid terminal seal grants acceptance.
+
+The catalog comparison proves direct attached-child drop under rollback and
+ordinary detach/check/reattach/final detached drop. Both acquired
+`AccessExclusiveLock` on the instrument root in the bounded fixture; their
+DDL-ready times were `0.004602` and `0.005151` seconds respectively.
+
+Four earlier sealed packages are rejected as acceptance evidence. The first
+two each leaked four anonymous prover PGDATA volumes; the operator removed all
+eight exact unreferenced volumes. The `fixed` and `finalcheck` zero-volume
+repairs still retained Docker/image TOCTOU, premature success publication, and
+first-error cleanup semantics. All four remain unchanged forensic evidence.
+
+This evidence is an accepted isolated capability, not production
+authorization. Durable jobs, executor/prover roles, archive ownership,
+report-only operation, canaries, live parity, and promotion remain open. See
+[snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 The existing generic retention service remains the compatibility owner for
 unmigrated regular instrument partitions only. It deliberately produces no

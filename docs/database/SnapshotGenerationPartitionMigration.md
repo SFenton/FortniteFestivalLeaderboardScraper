@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -10,6 +10,7 @@ sources:
   - tools/postgres-snapshot-generation-migration.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.py
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/operations/live-safety.md
 update_triggers:
   - Snapshot instrument bounds, protected-source ownership, archive/restore evidence, migration stages, capacity margins, rollback, or retention rules change.
@@ -46,6 +47,15 @@ publication, notification recovery, registration drain, and exit. Do not
 resume unattended normal worker scheduling after the nine instrument
 migrations until a separate archive-before-child-drop owner is implemented,
 restore-tested, documented, and accepted.
+
+The separate
+[generation-retention safety package](SnapshotGenerationRetentionSafety.md)
+now verifies isolated leaf archive/restore, filesystem prover, measured
+catalog mechanics, endpoint-pinned/ID-only Docker execution, repeated
+all-container cleanup, zero volume delta, and fail-closed terminal sealing.
+Only the final repaired run identified by that runbook is accepted; four
+earlier sealed runs remain forensic/rejected. Production durable intent,
+executor/prover roles, canaries, and child retirement remain unimplemented.
 
 The operator-authorized exception for the final migration interval applies
 only after a clean post-Solo Bass retry proves the six migrated writer paths.

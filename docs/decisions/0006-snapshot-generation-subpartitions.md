@@ -2,13 +2,14 @@
 status: decision
 owner: data
 last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/LeaderboardSpoolWriterFactory.cs
   - docs/architecture/data-storage.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Physical snapshot partitioning, retention, write routing, archive, migration, or rollback changes.
 ---
@@ -44,6 +45,22 @@ current/previous/working publication sources plus active/projection state,
 archive and restore-prove every nonempty obsolete child, then drop only the
 exact archived child. Until that owner is implemented and accepted, the worker
 must remain held after migration rather than accumulate unbounded children.
+
+The isolated PostgreSQL 17 retention drill now verifies that one selected leaf
+can be custom-archived with its parent/root/default shape, restored with exact
+catalog and content parity, handed to a no-socket filesystem prover, and
+removed through either measured attached-drop or ordinary
+detach/check/reattach/detached-drop mechanics. The accepted proof requires the
+exact initial/final local Docker context, socket, daemon, and image identities;
+endpoint-pinned Engine commands; ID-only `--pull=never` creation; run-owned
+PGDATA binds for every transient container; repeated cleanup to an empty owned
+inventory; an unchanged Docker volume inventory; and an integrity-valid
+terminal seal in a nonwritable, symlink-free tree. Four superseded sealed
+packages remain forensic/rejected: two leaked eight anonymous volumes total,
+and two zero-volume repairs retained Docker/image TOCTOU, premature success
+publication, and first-error cleanup semantics. This resolves implementation
+facts only. It does not select the production drop strategy or authorize a
+recurring owner.
 
 ## Context
 
@@ -122,8 +139,9 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
    publication, notification recovery, post-publication registration drain,
    and normal run-once worker exit; then hold the worker again.
 9. Repeat the migration and validation cycle one instrument at a time.
-10. Implement and validate recurring archive-before-child-drop retention,
-   including empty/default-child auditing.
+10. Use the accepted isolated safety package to implement and validate
+    recurring archive-before-child-drop retention, including durable intent,
+    separate executor/prover ownership, and empty/default-child auditing.
 11. Restore unattended normal scraping only after all nine instruments are migrated and
     the recurring retention owner is ready.
 
@@ -134,6 +152,12 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
 - Direct diagnostic/test inserts still route to the default child.
 - A failed ensure cannot silently create an arbitrary table or instrument.
 - Retention becomes child-drop maintenance rather than table rewrite.
+- Direct attached drop and ordinary detach both take
+  `AccessExclusiveLock` on the instrument root in the bounded synthetic
+  fixture; production selection remains canary- and parity-gated.
+- `DETACH PARTITION ... CONCURRENTLY` is not an option because the exact
+  reference fence must share the DDL transaction and every instrument root has
+  a default child.
 - Layout migration does not make child drop automatic; recurring archive/drop
   ownership remains an explicit promotion gate.
 - Each migrated instrument receives one complete run-once scrape validation

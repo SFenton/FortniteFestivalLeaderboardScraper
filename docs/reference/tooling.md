@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -19,6 +19,8 @@ sources:
   - tools/postgres-pro-bass-snapshot-rewrite.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.sh
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
+  - tools/postgres-snapshot-generation-retention-drill.py
+  - tools/postgres-snapshot-generation-retention.test.py
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -214,6 +216,82 @@ merged Compose command review, read-only verification, bounded resource
 monitor, exact JSON result, and checksums on the FST drive. The current
 publication-`1293` observation took `94 ms`, produced nine blocked plans, and
 kept API/web/PostgreSQL healthy.
+
+### Snapshot generation retention safety drill
+
+`tools/postgres-snapshot-generation-retention-drill.py` owns the isolated
+single-leaf archive/restore, filesystem mailbox/prover, and catalog-lock
+comparison package. It imports the accepted migration tool's fixed nine-target
+allowlist, source fence, fingerprint/distribution, catalog, atomic evidence,
+and PostgreSQL helpers without changing the migration tool.
+
+The CLI has no production container, database, relation, or SQL option. It
+requires a new/empty run directory under the fixed 4 TB autonomous artifact
+root and a locally present PostgreSQL 17 image. Before Docker mutation it
+rejects Docker environment overrides and verifies the expected local context,
+Unix-socket endpoint, real socket, daemon ID, exact ext4 mountpoint,
+operator-supplied device ID/UUID, and minimum 3.5 TB capacity. After the
+daemon fence, every Docker Engine operation is pinned with
+`--host unix:///var/run/docker.sock`. The requested local image is then
+resolved to a validated `sha256:` ID; every create/run uses that ID with
+`--pull=never`. All PostgreSQL, TOC, cleanup, and prover containers are
+uniquely labeled and network-none; every container receives an explicit
+run-owned PGDATA bind and none receives the Docker socket.
+
+Run structural tests:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+python3 tools/postgres-snapshot-generation-retention.test.py
+```
+
+The tests create a unique marker-owned child beneath their fixed repository
+testdata directory. No environment variable can redirect recursive cleanup.
+
+Run the isolated lifecycle with:
+
+```bash
+python3 tools/postgres-snapshot-generation-retention-drill.py \
+  --work-root \
+  /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/\
+autonomous-artifacts/<unique-drill-run> \
+  --expected-device-id <maj:min> \
+  --expected-device-uuid <filesystem-uuid> \
+  --expected-docker-context default \
+  --expected-daemon-id <docker-info-id>
+```
+
+Success requires exact leaf and catalog parity, empty-default parity, TOC
+allowlisting, unchanged source fence, atomic mailbox rejection/recovery,
+validated-check reattach parity, measured direct/DETACH locks, no remaining
+containers/PGDATA after repeated aggregate cleanup passes, an unchanged exact
+Docker volume set, endpoint-pinned command evidence, and matching initial/final
+daemon/socket/image evidence. Report and checksums publish before `seal.json`;
+the seal is the only terminal success marker. The complete set is verified
+before and after becoming nonwritable. Any write, chmod, symlink, or final
+verification failure removes the success set and writes integrity-protected
+`seal-failure.json`.
+
+The accepted bounded run is
+`snapshot-generation-retention-phase1-final-20260824T004250Z`. It used 82,000
+rows, restored the 40,000-row candidate from a 1,040,111-byte archive, removed
+78,187,033 bytes of transient restore PGDATA, and preserved the exact
+304-volume inventory with empty added and removed sets. All 176 Docker Engine
+operations were endpoint-pinned, all 10 `Popen` operations were included, and
+all nine create/run operations used `--pull=never` plus image ID
+`sha256:5f050f770b427fbd477edee6c3968a72e5c6be97e050a7e368b2b74a9494a285`.
+Both direct attached drop and ordinary detach took `AccessExclusiveLock` on
+the synthetic instrument root.
+
+Four older sealed runs are forensic/rejected. The `accepted` and `recheck`
+runs leaked eight anonymous volumes total; those exact volumes were removed
+and confirmed absent. The `fixed` and `finalcheck` runs achieved zero volume
+delta but still had Docker/image TOCTOU, premature success publication, and
+first-error cleanup semantics. Their existing files remain unchanged and
+cannot be used as acceptance evidence. This package is isolated capability
+only; production jobs, executor/prover services, and drop authorization
+remain absent. Follow the
+[living safety runbook](../database/SnapshotGenerationRetentionSafety.md).
 
 ### Accepted pro-bass snapshot archive/rewrite
 

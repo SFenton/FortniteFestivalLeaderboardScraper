@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -40,6 +40,8 @@ sources:
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-pro-bass-snapshot-rewrite.py
+  - tools/postgres-snapshot-generation-retention-drill.py
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Worker registration, phase selection, scrape sequencing, background coordination, recovery, or publication changes.
 ---
@@ -633,6 +635,25 @@ restore prover will process one child at a time from durable intent and a
 4 TB-drive evidence mailbox. Whole-child retirement is Phase 1; sparse-child
 compaction remains separately gated because snapshot reuse can keep a large
 generation alive for only a few historical scopes.
+
+The isolated Phase 1 safety package now proves single-leaf archive/restore,
+atomic filesystem request/proof handoff, prover restart/rejection behavior,
+ordinary detach/check/reattach rollback, detached drop, and the comparable
+attached-drop lock path. The corrected drill also fences the exact local
+Docker daemon/socket and 4 TB mount identities, pins every Engine operation
+to the validated Unix socket, resolves the local PostgreSQL image to its
+`sha256:` ID after authorization, and uses that ID with `--pull=never`.
+It bind-mounts every transient PGDATA beneath its work root, repeats
+all-container cleanup to an empty final inventory, requires a zero
+Docker-volume delta, and treats only an integrity-valid terminal seal in a
+nonwritable symlink-free tree as success. The four earlier sealed packages are
+forensic/rejected: two leaked eight anonymous volumes total, while two later
+zero-volume runs retained Docker/image TOCTOU, premature success publication,
+and first-error cleanup. It does not add a worker phase, hosted service,
+Compose role, durable intent table, or production command. The worker remains
+held until those owners pass report-only operation, canaries, live parity,
+resource/lock gates, and explicit promotion. See
+[snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 ## Service-level retention planning
 
