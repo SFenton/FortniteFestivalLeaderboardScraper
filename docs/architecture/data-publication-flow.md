@@ -24,6 +24,8 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/MetaDatabase.PathPromotion.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
@@ -39,7 +41,8 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
-  - Publication-bound path artifact capture, binding, or read-scope changes.
+  - Publication-bound path artifact capture, binding, read-scope, staging, or
+    commit-time promotion changes.
 ---
 
 # Scrape and publication flow
@@ -68,6 +71,10 @@ diagnostic or replay data without becoming the published generation.
      snapshot for the new working publication and emits a ready
      `path_artifacts` binding. See
      [Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+   - With `Scraper:EnableScrapePassPathGeneration` enabled, the pass then
+     stages pending-song path generations into that candidate snapshot, before
+     the publication read scope opens and before instrument support and scrape
+     requests are built. Staging never writes live `songs` rows.
 4. **Freeze public reads**
    - Persist the public-read freeze and freeze response-cache expiry.
    - Existing published cache hits remain usable; candidate state is not public.
@@ -129,7 +136,15 @@ diagnostic or replay data without becoming the published generation.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
      publication pointer and generation-owned state.
+   - Staged path promotions are compare-and-swapped into live `songs` rows in
+     the same transaction, immediately before the pointer advances. The CAS
+     owns the live revision and current generation ID, not the provider
+     timestamp; a song whose provider timestamp changed mid-scrape stays
+     pending. An unexpected CAS mismatch is nonretryable, rolls the commit
+     back, and fails and isolates the candidate instead of deferring it.
    - Contention can defer a prepared publication for retry without exposing it.
+     A deferred or restarted commit reconstructs promotion inputs from
+     `publication_path_artifacts` alone.
 9. **Release and notify**
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.

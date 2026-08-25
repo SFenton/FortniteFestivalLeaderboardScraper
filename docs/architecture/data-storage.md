@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/MetaDatabase.PathPromotion.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -549,9 +550,10 @@ drains readers, and atomically advances the published pointer.
 `publication_path_artifacts` binds one canonical path/max-score row per
 publication catalog song, including authoritative null-generation rows, so
 published path reads do not depend on the mutable `songs` table. Its schema,
-canonical manifest hash, binding contract, retention, read scoping,
-`Scraper:UsePublicationPathArtifacts` source flag, and Phase A limits are owned
-by
+canonical manifest hash, binding contract, retention, read scoping, staged
+promotion metadata, the `Scraper:UsePublicationPathArtifacts` and
+`Scraper:EnableScrapePassPathGeneration` flags, and the commit-time
+compare-and-swap into live `songs` rows are owned by
 [Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Feature flags support staged migration among legacy mutable rows, snapshot and

@@ -39,6 +39,55 @@ public interface IPathDataStore
     IDisposable BeginPublicationRead(long publicationId)
         => PathDataStorePublicationScope.NoOp;
 
+    /// <summary>
+    /// Pending songs that automatic scrape-pass staging may attempt now.
+    /// Excludes songs deferred for review or backoff whose deferral is still
+    /// bound to the current provider catalog identity.
+    /// </summary>
+    IReadOnlyList<PathGenerationCandidate>
+        GetAutomaticPathGenerationCandidates(DateTime nowUtc)
+        => GetPendingPathGenerationSongIds()
+            .OrderBy(static songId => songId, StringComparer.Ordinal)
+            .Select(static songId => new PathGenerationCandidate(songId, 0))
+            .ToArray();
+
+    /// <summary>
+    /// Durably defers a song for explicit review without clearing
+    /// <c>path_generation_pending</c>. The deferral is bound to the provider
+    /// catalog identity it was recorded against, so a later catalog change
+    /// re-arms the song automatically.
+    /// </summary>
+    Task MarkPathGenerationReviewRequiredAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+        => Task.CompletedTask;
+
+    /// <summary>
+    /// Durably schedules the next automatic attempt for a song after a
+    /// deterministic generation failure, using bounded exponential backoff.
+    /// A stale review-required deferral is replaced by this ordinary retry:
+    /// the song was attempted again, so the recorded reason and the gate both
+    /// become the retry outcome instead of the obsolete review decision.
+    /// </summary>
+    Task SchedulePathGenerationRetryAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+        => Task.CompletedTask;
+
+    /// <summary>
+    /// Operator reset: clears review-required and backoff state so automatic
+    /// staging may attempt the song again. Returns false when no song matched.
+    /// </summary>
+    bool RearmPathGeneration(string songId) => false;
+
+    /// <summary>Current deferral state, for operator inspection.</summary>
+    PathGenerationDeferralState? GetPathGenerationDeferralState(string songId)
+        => null;
+
     void InvalidateCachedState()
     {
     }
@@ -63,6 +112,28 @@ public interface IPathDataStore
         PathGenerationError error,
         CancellationToken ct);
 }
+
+/// <summary>
+/// A pending song that automatic staging may attempt, with the number of
+/// consecutive deferred attempts already recorded against it.
+/// </summary>
+public sealed record PathGenerationCandidate(
+    string SongId,
+    int AttemptCount);
+
+/// <summary>
+/// Durable automatic-staging deferral state for one song. <c>Pending</c> is
+/// never cleared by a deferral: it stays true so the work remains auditable.
+/// </summary>
+public sealed record PathGenerationDeferralState(
+    string SongId,
+    bool Pending,
+    bool ReviewRequired,
+    string? ReviewReason,
+    DateTime? ReviewAtUtc,
+    DateTime? NextAttemptAtUtc,
+    int AttemptCount,
+    string? DeferralIdentity);
 
 /// <summary>
 /// Thrown when an explicitly scoped publication read has no bound path

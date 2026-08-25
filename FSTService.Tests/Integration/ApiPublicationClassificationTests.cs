@@ -415,6 +415,7 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Post, "/api/admin/shop/refresh"),
         new(HttpMethods.Post, "/api/firstseen/calculate"),
         new(HttpMethods.Post, "/api/admin/regenerate-paths"),
+        new(HttpMethods.Post, "/api/admin/path-generation/rearm"),
         new(HttpMethods.Get, "/api/backfill/{accountId}/status"),
         new(HttpMethods.Post, "/api/backfill/{accountId}"),
         new(HttpMethods.Get, "/api/admin/dbstats/queries"),

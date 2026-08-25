@@ -1,9 +1,12 @@
+# Post-schema read-only control. Apply compose.recovery.yml first and wait for
+# fstservice readiness so publication-bound manifest releases are current.
 services:
   fstservice:
     image: ${FST_STORED_RANK_SERVICE_IMAGE:?Set immutable service image tag@digest}
     environment:
       Scraper__RolloutReadOnlyStartup: "true"
       Scraper__RolloutPostgresReadOnly: "true"
+      Scraper__UsePublicationPathArtifacts: "true"
       Features__UseStoredSoloProjectionRanksForFilteredReads: "false"
   fstworker:
     environment:

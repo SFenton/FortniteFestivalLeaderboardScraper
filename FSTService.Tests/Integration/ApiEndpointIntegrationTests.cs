@@ -8084,6 +8084,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Admin_RearmPathGeneration_RequiresAuth()
+    {
+        var response = await _client.PostAsync(
+            "/api/admin/path-generation/rearm?songId=song-a",
+            null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // Account Endpoints
     // ═══════════════════════════════════════════════════════════
@@ -9396,6 +9405,20 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _authedClient.PostAsync("/api/admin/regenerate-paths", null);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_RearmPathGeneration_WithAuth_ValidatesSong()
+    {
+        var missingSongId = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm",
+            null);
+        Assert.Equal(HttpStatusCode.BadRequest, missingSongId.StatusCode);
+
+        var unknownSong = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm?songId=not-a-real-song",
+            null);
+        Assert.Equal(HttpStatusCode.NotFound, unknownSong.StatusCode);
     }
 
     [Fact]

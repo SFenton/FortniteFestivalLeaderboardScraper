@@ -21,6 +21,7 @@ public sealed class ScrapeOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly IPathDataStore _pathDataStore;
+    private readonly ScrapePassPathIngestion? _pathIngestion;
     private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
@@ -38,7 +39,8 @@ public sealed class ScrapeOrchestrator
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<ScrapeOrchestrator> log,
-        WorkerStatusPublisher? workerStatus = null)
+        WorkerStatusPublisher? workerStatus = null,
+        ScrapePassPathIngestion? pathIngestion = null)
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
@@ -49,6 +51,7 @@ public sealed class ScrapeOrchestrator
         _options = options;
         _log = log;
         _workerStatus = workerStatus;
+        _pathIngestion = pathIngestion;
     }
 
     /// <summary>
@@ -94,6 +97,29 @@ public sealed class ScrapeOrchestrator
             .PublicationId
             ?? throw new InvalidOperationException(
                 $"Scrape {scrapeId} has no working publication generation.");
+
+        // Publication-safe path ingestion runs against live state, before the
+        // publication read scope opens, and only mutates the candidate
+        // snapshot. Live songs are promoted at publication commit.
+        if (_pathIngestion?.IsEnabled == true)
+        {
+            if (ShouldRunScrapePassPathIngestion(resolvedPhases))
+            {
+                await _pathIngestion.IngestAsync(
+                    scrapeId,
+                    publicationId,
+                    catalogSongs,
+                    passCt);
+                _pathDataStore.InvalidateCachedState();
+            }
+            else
+            {
+                _log.LogWarning(
+                    "Scrape-pass path staging skipped for phase-selective pass {Phases}. Staged maxima require the full pipeline so rankings, statistics, and the canonical songs cache are rebuilt together.",
+                    ScrapePhaseResolver.Format(resolvedPhases));
+            }
+        }
+
         using var pathPublicationScope =
             _pathDataStore.BeginPublicationRead(publicationId);
         _globalScraper.RefreshSongInstrumentSupport();
@@ -695,6 +721,10 @@ public sealed class ScrapeOrchestrator
         // included here to avoid double-scraping through ScrapeManySongsAsync.
         return instruments;
     }
+
+    internal static bool ShouldRunScrapePassPathIngestion(
+        ScrapePhase resolvedPhases) =>
+        resolvedPhases == ScrapePhase.All;
 
     internal static IReadOnlyList<(string SongId, string Instrument)> BuildExpectedSoloLeaderboardPairs(
         IEnumerable<GlobalLeaderboardScraper.SongScrapeRequest> requests)

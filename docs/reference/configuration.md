@@ -9,6 +9,7 @@ sources:
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/Program.cs
   - FSTService/FeatureOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -81,6 +82,10 @@ benchmarks, freeze tests, documentation, and a separate promotion decision.
 | `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
 | `Scraper:EnableAutomaticPathGeneration` | `false` | Legacy API-owned pending-song promotion. Rejected at startup until publication-safe scrape-pass staging replaces it |
 | `Scraper:UsePublicationPathArtifacts` | `false` | Backend-only source flag. Serves effective published path state and CHOpt maxima from the publication-bound `publication_path_artifacts` snapshot instead of live `songs` rows |
+| `Scraper:EnableScrapePassPathGeneration` | `false` | Worker-only publication-safe scrape-pass staging. Stages pending-song generations into the working publication snapshot; live rows change only at publication commit |
+| `Scraper:ScrapePassPathGenerationMaxSongs` | `25` | Maximum pending songs staged per scrape pass (1–500) |
+| `Scraper:ScrapePassPathGenerationTimeout` | `00:20:00` | Whole-batch staging budget (1 minute–6 hours) |
+| `Scraper:ScrapePassPathGenerationAllowChangedMaxima` | `false` | Applies a regenerated song whose existing maxima changed. Off records `max_score_change_requires_review` and leaves the song pending |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
 | `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v4` | Semantic identity for the dedicated plastic-drums MIDI variant, authored activation-window contract, eight-instrument scope, and artifact schema |
 
@@ -88,6 +93,43 @@ The MIDI decryption key is operator-supplied and must not appear in logs,
 documentation, artifacts, or commands. Profile changes invalidate selected
 older generations but do not select the full catalogue; use the guarded
 sequential procedure in [Path generation](../components/path-generation.md).
+
+The scrape-pass staging options have no browser exposure and are owned by the
+`fstworker` role only; the `fstservice` role ignores them apart from the admin
+regeneration gate. `Scraper:EnableScrapePassPathGeneration` requires both
+`Scraper:EnablePathGeneration` and `Scraper:UsePublicationPathArtifacts`,
+because staged generations are only readable through the publication-bound
+snapshot. Out-of-range max-song or timeout values are rejected at startup, and
+`Scraper:EnableAutomaticPathGeneration=true` is still rejected at startup.
+
+Staging failures never abort a scrape pass, and songs deferred for review or
+retry are excluded from automatic selection until an explicit successful
+promotion, a provider catalog identity change, or
+`POST /api/admin/path-generation/rearm` re-arms them.
+
+Automatic staging runs only when the resolved phase set is `ScrapePhase.All`.
+Phase-selective runs leave pending songs untouched because staged maxima may be
+published only with rebuilt rankings, statistics, and the canonical
+`public-api:songs:v1` payload.
+
+When automatic staging is enabled, `Scraper:MidiEncryptionKey` is a startup
+prerequisite and must be a 32- or 64-character hexadecimal AES key. The worker
+fails option validation before readiness when the key is missing or invalid;
+tracked role files never contain the secret.
+
+A role that never runs schema DDL - `Scraper:ApiOnly=true`,
+`Scraper:SkipStartupSchemaInitialization=true`, or
+`Scraper:RolloutReadOnlyStartup=true` - and also sets
+`Scraper:UsePublicationPathArtifacts=true` verifies the current publication's
+path artifact release at startup. The rollout read-only mode performs this
+check before its early return. Start the API/schema-initializing role first,
+then no-DDL roles; see
+[Deployment topology](../operations/deployment.md).
+
+Enabling `Scraper:UsePublicationPathArtifacts` also disables immediate admin
+path regeneration on the service role: `POST /api/admin/regenerate-paths`
+returns `409 Conflict` because live promotion is no longer a supported path
+state change in publication-bound mode.
 
 `Scraper:UsePublicationPathArtifacts` has no browser exposure. It is owned by
 both the `fstservice` (read) and `fstworker` (capture/maintenance) roles and
@@ -160,9 +202,26 @@ unchanged.
 
 `deploy/config/fstservice-role.env` enables published-source reads while
 disabling published-source writes, stored-rank rollout, unchanged-snapshot
-reuse, automatic path generation, and publication read context.
+reuse, legacy automatic path generation, and publication read context. It sets
+`Scraper__UsePublicationPathArtifacts=true`, so the service serves path state
+and CHOpt maxima from the publication snapshot and rejects immediate admin path
+regeneration. It intentionally does not set
+`Scraper__EnableScrapePassPathGeneration`: staging is worker-only.
 
-`deploy/config/fstworker-role.env` skips startup schema initialization, enables
+`deploy/config/fstworker-role.env` sets
+`Scraper__UsePublicationPathArtifacts=true` and
+`Scraper__EnableScrapePassPathGeneration=true` with the bounded
+`ScrapePassPathGenerationMaxSongs=25`,
+`ScrapePassPathGenerationTimeout=00:20:00`, and
+`ScrapePassPathGenerationAllowChangedMaxima=false`. Legacy
+`Scraper__EnableAutomaticPathGeneration` stays `false` on both roles and is
+rejected at startup, so the supported production configuration replaces the
+legacy generator rather than leaving the catalog without one. The shipped
+option defaults remain `false` for generic safety; enabling them is a role
+configuration decision, and either flag can be reverted independently on
+restart.
+
+`deploy/config/fstworker-role.env` also skips startup schema initialization, enables
 the three publication correctness gates, writes published scope sources, keeps
 public-read ownership off the worker, enables scope fingerprints and
 unchanged-snapshot reuse after accepted scrape 1303, leaves publication read
