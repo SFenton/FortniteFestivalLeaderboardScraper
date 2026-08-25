@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -17,6 +17,10 @@ sources:
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Scraping/PathArtifactResolver.cs
+  - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Api/SongsCacheService.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/AdminPathRegenerationGate.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
@@ -29,6 +33,7 @@ sources:
   - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
+  - Publication-bound read-source changes for songs or path routes.
 ---
 
 # API contract
@@ -50,7 +55,7 @@ definitions, but it must remain aligned with the domain endpoint groups.
 
 ## Current surface
 
-The service maps 80 HTTP routes across 14 route-bearing endpoint files plus
+The service maps 81 HTTP routes across 14 route-bearing endpoint files plus
 `/api/ws`.
 
 | Group | Main responsibility |
@@ -92,6 +97,26 @@ immutable generation or reporting an invalid path. Omitting `generationId` or
 supplying the current value may serve only the current artifact when it
 already exists.
 
+With `Scraper:UsePublicationPathArtifacts` enabled, `/api/songs` first
+hydrates from the durable current-publication `public-api:songs:v1` row and
+serves it unchanged; a request-time rebuild is served but never persisted, so
+the publication-owned payload cannot be replaced by process-local state. The
+public response cache middleware uses the canonical key as the only lookup
+candidate for that route and disables write-through, so route-key
+(`public-route:/api/songs...`) rows are neither written nor able to shadow the
+canonical payload. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
+Route and DTO shapes are unchanged by publication-bound path artifacts. When
+`Scraper:UsePublicationPathArtifacts` is enabled, `/api/songs` is built strictly
+from the bound publication catalog plus that publication's path snapshot, and
+`/api/paths` compares `generationId` against the bound publication row instead
+of the mutable live row. The publication read middleware opens the matching
+path read scope for every publication-bound route, so all publication-bound
+consumers observe the same generation. With the flag off, responses are
+byte-compatible with previous behavior. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
 Path JSON schema v2 is represented by `PathDataResponse` in
 `packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
 instruction and exact trigger score/Overdrive metadata. Legacy schema-v1 JSON
@@ -100,6 +125,22 @@ remains readable while catalogue regeneration is in progress.
 Supported path instruments are Lead, Bass, Drums, Tap Vocals, Pro Lead,
 Pro Bass, Pro Drums, and Pro Drums + Cymbals. `/api/songs` exposes distinct
 max-score entries for both plastic-drums modes.
+
+`POST /api/admin/regenerate-paths` returns `409 Conflict` whenever
+`Scraper:UsePublicationPathArtifacts` is enabled, and additionally when
+`Scraper:EnableScrapePassPathGeneration` is enabled or a working publication is
+building. Immediate live generation must not race a staged publication-safe
+promotion, and in publication-bound mode path state changes through worker
+scrape-pass staging, guarded max-score maintenance, or the rearm route instead.
+The route, auth, and payload shape are unchanged.
+
+`POST /api/admin/path-generation/rearm?songId=<id>` is a protected private
+route that clears automatic scrape-pass staging deferral state
+(review-required and retry backoff) for one song and returns the resulting
+`pending`, `reviewRequired`, `nextAttemptAtUtc`, and `attemptCount`. It returns
+`400` without `songId` and `404` for an unknown song. It never generates paths
+and never changes published data, so it has no publication classification
+impact beyond being private.
 
 `POST /api/admin/regenerate-paths?songId=<id>&force=<bool>` is an
 `AdminPrivate` single-song command. It requires `X-API-Key`, returns `202`, and

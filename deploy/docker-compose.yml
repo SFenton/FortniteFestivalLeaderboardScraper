@@ -176,7 +176,7 @@ services:
       - Scraper__RegisteredBandProcessingMaxLookupsPerPass=${REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS:-80}
       # ── Registration sync gets the Epic lane while active; background scrape/band requests wait. ──
       - Scraper__RegistrationBackfillMode=${REGISTRATION_BACKFILL_MODE:-ForegroundEpicExclusive}
-      # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
+      # ── Path generation (required by the worker when scrape-pass staging is enabled) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # ── Persistence/publication feature flags ──
       - Features__AppManual=${FEATURE_APP_MANUAL:-false}

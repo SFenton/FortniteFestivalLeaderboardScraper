@@ -230,14 +230,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.ItemShop);
-        Assert.Contains(
+        // Path artifacts are now bound to publication_path_artifacts, so the
+        // surface is ready while item_shop remains legacy live-bound.
+        Assert.DoesNotContain(
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.PathArtifacts);
+        var pathBinding = Assert.Single(
+            metaDb.GetPublicationSurfaceBindings(publicationId),
+            binding => binding.SurfaceName ==
+                       PublicationSurfaceNames.PathArtifacts);
+        Assert.Equal(
+            "generation_path_artifact_manifest",
+            pathBinding.BindingKind);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            pathBinding.Status);
         foreach (var legacySurfaceName in new[]
                  {
                      PublicationSurfaceNames.ItemShop,
-                     PublicationSurfaceNames.PathArtifacts,
                  })
         {
             var legacySurface = Assert.Single(
@@ -8073,6 +8084,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Admin_RearmPathGeneration_RequiresAuth()
+    {
+        var response = await _client.PostAsync(
+            "/api/admin/path-generation/rearm?songId=song-a",
+            null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // Account Endpoints
     // ═══════════════════════════════════════════════════════════
@@ -9388,6 +9408,20 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Admin_RearmPathGeneration_WithAuth_ValidatesSong()
+    {
+        var missingSongId = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm",
+            null);
+        Assert.Equal(HttpStatusCode.BadRequest, missingSongId.StatusCode);
+
+        var unknownSong = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm?songId=not-a-real-song",
+            null);
+        Assert.Equal(HttpStatusCode.NotFound, unknownSong.StatusCode);
+    }
+
+    [Fact]
     public async Task Admin_ShopRefresh_WithAuth_ReturnsResult()
     {
         var response = await _authedClient.PostAsync("/api/admin/shop/refresh", null);
@@ -9588,6 +9622,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                             binding.RowCount,
                             ContentHash: null),
                     PublicationSurfaceNames.SongCatalog =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            binding.ContentHash),
+                    PublicationSurfaceNames.PathArtifacts =>
                         new PublicationSurfaceSourceEvidence(
                             surfaceName,
                             true,
@@ -9901,7 +9943,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Scraper:DataDirectory"] = _tempDir,
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
-                    ["Scraper:EnableAutomaticPathGeneration"] = "true",
+                    ["Scraper:EnableAutomaticPathGeneration"] = "false",
+                    ["Scraper:UsePublicationPathArtifacts"] = "false",
                     ["Scraper:RolloutReadOnlyStartup"] =
                         _rolloutReadOnly.ToString(),
                     ["Scraper:RolloutPostgresReadOnly"] =

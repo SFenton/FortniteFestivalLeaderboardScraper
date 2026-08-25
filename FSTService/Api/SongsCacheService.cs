@@ -42,20 +42,30 @@ public sealed class SongsCacheService
     private int _contentMutationDepth;
     private Action? _durableRefresh;
     private volatile bool _durableRefreshPending;
+    private readonly bool _publicationBoundReads;
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Bounded attempts for a publication pointer move or a content-revision
+    /// race during hydration. Exhausting them falls back to a local build that
+    /// still never persists.
+    /// </summary>
+    internal const int MaxHydrationAttempts = 8;
 
     public SongsCacheService(
         PublicReadGateService? publicReadGate = null,
         Func<long?>? publicationIdProvider = null,
         PublicationApiResponseCacheService?
-            publicationApiCache = null)
+            publicationApiCache = null,
+        bool publicationBoundReads = false)
         : this(
             publicReadGate is null
                 ? static () => default
                 : publicReadGate.GetCacheSafetySnapshot,
             DefaultCacheTtl,
             publicationIdProvider,
-            publicationApiCache)
+            publicationApiCache,
+            publicationBoundReads)
     {
     }
 
@@ -95,7 +105,8 @@ public sealed class SongsCacheService
         TimeSpan cacheTtl,
         Func<long?>? publicationIdProvider = null,
         PublicationApiResponseCacheService?
-            publicationApiCache = null)
+            publicationApiCache = null,
+        bool publicationBoundReads = false)
     {
         _safetyProvider =
             safetyProvider
@@ -103,7 +114,16 @@ public sealed class SongsCacheService
         _publicationIdProvider = publicationIdProvider;
         _publicationApiCache = publicationApiCache;
         _cacheTtl = cacheTtl;
+        _publicationBoundReads = publicationBoundReads;
     }
+
+    /// <summary>
+    /// True when the publication pipeline owns the durable
+    /// <c>public-api:songs:v1</c> row. In that mode this process hydrates the
+    /// in-process cache from that row and never rewrites it from
+    /// process-local state.
+    /// </summary>
+    public bool PublicationBoundReads => _publicationBoundReads;
 
     /// <summary>
     /// Returns (json, etag) if cached and not expired; otherwise null.
@@ -194,6 +214,16 @@ public sealed class SongsCacheService
     public void InvalidateForContentChange()
     {
         Invalidate();
+        if (_publicationBoundReads)
+        {
+            // The durable row is bound to the published catalog snapshot, not
+            // to this process's live catalog. A local content change must not
+            // mark it stale, or reads would fall back to degraded local
+            // builds. Clearing the in-process cache is enough: the next read
+            // re-hydrates from the durable row.
+            return;
+        }
+
         _durableRefreshPending = true;
         _publicationApiCache?.MarkCurrentKeyStale(
             PublicationApiCacheKeys.Songs);
@@ -219,6 +249,10 @@ public sealed class SongsCacheService
         out string etag,
         bool persistPublicationCache = false)
     {
+        // Fail closed: in publication-bound mode no caller may persist a
+        // process-local build into the publication-owned durable row.
+        if (_publicationBoundReads)
+            persistPublicationCache = false;
         etag = ResponseCacheService.ComputeETag(json);
         var safety = _safetyProvider();
         var publicationId = _publicationIdProvider?.Invoke();
@@ -304,12 +338,16 @@ public sealed class SongsCacheService
             _etag = null;
             _publicationId = null;
             _safetyRevision = 0;
-            _durableRefreshPending = true;
+            _durableRefreshPending = !_publicationBoundReads;
         }
 
         _publicationApiCache?.InvalidateAll();
-        _publicationApiCache?.MarkCurrentKeyStale(
-            PublicationApiCacheKeys.Songs);
+        if (!_publicationBoundReads)
+        {
+            _publicationApiCache?.MarkCurrentKeyStale(
+                PublicationApiCacheKeys.Songs);
+        }
+
         return new ContentMutationLease(this);
     }
 
@@ -390,9 +428,84 @@ public sealed class SongsCacheService
     }
 
     /// <summary>
+    /// Publication-bound hydration. Installs the durable current-publication
+    /// <c>public-api:songs:v1</c> payload into the in-process cache exactly as
+    /// stored, without rebuilding it and without writing the durable row.
+    /// </summary>
+    /// <returns>
+    /// True when the in-process cache now reflects the durable row, or when a
+    /// safety state legitimately blocked the install. False when no usable
+    /// durable row exists and the caller must fall back to a local build.
+    /// </returns>
+    public bool TryHydrateFromDurablePublicationCache()
+    {
+        if (_publicationApiCache is null)
+            return false;
+
+        for (var attempt = 1;
+             attempt <= MaxHydrationAttempts;
+             attempt++)
+        {
+            var token = CaptureBuildToken();
+            if (!token.PublicationId.HasValue)
+                return false;
+
+            var durable = _publicationApiCache
+                .TryGetCurrentDurableRow(PublicationApiCacheKeys.Songs);
+            if (durable is null || durable.Json.Length == 0)
+                return false;
+
+            if (durable.PublicationId != token.PublicationId.Value)
+            {
+                // The publication pointer moved between capturing the token
+                // and reading the row. Retry against the new pointer instead
+                // of falling back to a process-local build.
+                continue;
+            }
+
+            // Byte/ETag identity: never install a payload whose ETag does not
+            // match the durable contract clients may already hold.
+            if (!string.Equals(
+                    ResponseCacheService.ComputeETag(durable.Json),
+                    durable.ETag,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var result = TrySetIfBuildTokenUnchanged(
+                durable.Json,
+                token,
+                out var etag,
+                persistPublicationCache: false);
+            switch (result)
+            {
+                case SongsCacheWriteResult.Stored:
+                    return string.Equals(
+                        etag,
+                        durable.ETag,
+                        StringComparison.Ordinal);
+                case SongsCacheWriteResult.Blocked:
+                    return true;
+                default:
+                    continue;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Builds the songs JSON and primes the cache in one call.
     /// Replaces Invalidate() at all call sites.
     /// </summary>
+    /// <remarks>
+    /// In publication-bound mode the durable publication cache row is owned by
+    /// the publication pipeline. This process hydrates from it and never
+    /// persists a process-local build, because process-local state (for
+    /// example an API role with no precomputed population tiers) would
+    /// otherwise overwrite the canonical payload with a degraded one.
+    /// </remarks>
     public void Prime(
         FestivalService service,
         IPathDataStore pathStore,
@@ -402,16 +515,36 @@ public sealed class SongsCacheService
         JsonSerializerOptions jsonOpts,
         bool persistPublicationCache = false)
     {
+        if (_publicationBoundReads)
+        {
+            if (TryHydrateFromDurablePublicationCache())
+                return;
+
+            // No usable durable row: populate L1 from the bound publication
+            // only. Never poison L2 or expose mutable live catalog state.
+            persistPublicationCache = false;
+        }
+
         while (true)
         {
             var token = CaptureBuildToken();
-            var jsonBytes = BuildSongsJson(
-                service,
-                pathStore,
-                metaDb,
-                persistence,
-                precomputer,
-                jsonOpts);
+            var jsonBytes =
+                _publicationBoundReads
+                && token.PublicationId is long publicationId
+                    ? BuildBoundPublicationSongsJson(
+                        publicationId,
+                        pathStore,
+                        metaDb,
+                        persistence,
+                        precomputer,
+                        jsonOpts)
+                    : BuildSongsJson(
+                        service,
+                        pathStore,
+                        metaDb,
+                        persistence,
+                        precomputer,
+                        jsonOpts);
             var result = TrySetIfBuildTokenUnchanged(
                 jsonBytes,
                 token,
@@ -620,6 +753,53 @@ public sealed class SongsCacheService
         }
 
         var service = FestivalService.CreateFromSongCatalogSnapshot(songs);
+        return BuildSongsJson(
+            service,
+            pathStore,
+            metaDb,
+            persistence,
+            precomputer,
+            jsonOpts);
+    }
+
+    /// <summary>
+    /// Builds the /api/songs payload strictly from the bound publication
+    /// catalog and the publication-scoped path snapshot. Unlike
+    /// <see cref="BuildPublishedSongsJson"/> it never overlays mutable live
+    /// catalog fields.
+    /// </summary>
+    public static byte[] BuildBoundPublicationSongsJson(
+        long publicationId,
+        IPathDataStore pathStore,
+        IMetaDatabase metaDb,
+        GlobalLeaderboardPersistence persistence,
+        ScrapeTimePrecomputer precomputer,
+        JsonSerializerOptions jsonOpts)
+    {
+        var catalog = (metaDb as MetaDatabase)?
+            .GetCurrentPublicationSongCatalogFallback(publicationId)
+            ?? throw new InvalidOperationException(
+                $"Publication {publicationId} has no bound song catalog.");
+        if (catalog.PublicationId != publicationId)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog is not bound to the requested publication.");
+        }
+
+        var publishedSongs =
+            SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+                catalog.CatalogJson,
+                catalog.SchemaVersion)
+            .ToArray();
+        if (publishedSongs.Length != catalog.SongCount)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog count does not match its binding.");
+        }
+
+        using var scope = pathStore.BeginPublicationRead(publicationId);
+        var service =
+            FestivalService.CreateFromSongCatalogSnapshot(publishedSongs);
         return BuildSongsJson(
             service,
             pathStore,

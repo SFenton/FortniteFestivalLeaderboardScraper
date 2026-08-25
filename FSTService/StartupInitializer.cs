@@ -80,6 +80,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
 
             if (_scraperOptions.RolloutReadOnlyStartup)
             {
+                await EnsurePublicationPathArtifactReleaseAsync(ct);
                 _log.LogWarning(
                     "Rollout read-only startup enabled. Loading existing published state without schema, cleanup, provider sync, item-shop refresh, timers, or persistence writes.");
                 _persistence.InitializeReadOnly();
@@ -92,7 +93,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                 return;
             }
 
-            if (_scraperOptions.ApiOnly || _scraperOptions.SkipStartupSchemaInitialization)
+            if (_scraperOptions.SkipsStartupSchemaInitialization)
             {
                 _log.LogInformation(
                     "Skipping startup schema initialization; ApiOnly={ApiOnly}, SkipStartupSchemaInitialization={SkipStartupSchemaInitialization}. Relying on existing database schema.",
@@ -103,6 +104,10 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
             {
                 await EnsureSchemaWithRetryAsync(ct);
             }
+
+            await EnsurePublicationPathArtifactReleaseAsync(ct);
+
+            PurgeSongsRouteCacheRowsIfPublicationBound();
 
             // Clean up any leftover spool files from previous runs
             SpoolWriter<LeaderboardEntry>.CleanupStaleFiles(_log);
@@ -180,6 +185,41 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         }
     }
 
+    /// <summary>
+    /// Retires pre-existing <c>public-route:/api/songs</c> rows so the
+    /// canonical <c>public-api:songs:v1</c> row wins immediately after a
+    /// publication-bound rollout. Best effort: runtime plan filtering already
+    /// prevents route-key rows from being read or written in this mode.
+    /// </summary>
+    private void PurgeSongsRouteCacheRowsIfPublicationBound()
+    {
+        if (!_scraperOptions.UsePublicationPathArtifacts
+            || PostgresDefaultTransactionReadOnly)
+        {
+            return;
+        }
+
+        try
+        {
+            var purged = _persistence.Meta
+                .PurgeApiResponseCacheKeysWithPrefix(
+                    PublicApiResponseCachePolicy
+                        .SongsRouteCacheKeyPrefix);
+            if (purged > 0)
+            {
+                _log.LogInformation(
+                    "Purged {Count} legacy /api/songs route-key response cache row(s); the canonical publication songs key now owns the surface.",
+                    purged);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Could not purge legacy /api/songs route-key response cache rows. Publication-bound reads still ignore them.");
+        }
+    }
+
     private async Task EnsureSchemaWithRetryAsync(CancellationToken ct)
     {
         const int maxRetries = 10;
@@ -201,6 +241,23 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                 await Task.Delay(delay, ct);
             }
         }
+    }
+
+    private async Task EnsurePublicationPathArtifactReleaseAsync(
+        CancellationToken ct)
+    {
+        // A startup mode that never runs DDL must not read publication-bound
+        // path artifacts before the schema-initializing role applies the
+        // current manifest release.
+        if (!_scraperOptions.RequiresPublicationPathArtifactReleaseGate)
+            return;
+
+        await PublicationPathArtifactReleaseGate
+            .EnsureReleasedAsync(_dataSource, ct);
+        _log.LogInformation(
+            "Publication path artifact release verified: contractVersion={ContractVersion}, manifestVersion={ManifestVersion}.",
+            PublicationPathArtifactSchema.ContractVersion,
+            PublicationPathArtifactSchema.ManifestVersion);
     }
 
     private async Task VerifyPostgresTransactionModeAsync(CancellationToken ct)

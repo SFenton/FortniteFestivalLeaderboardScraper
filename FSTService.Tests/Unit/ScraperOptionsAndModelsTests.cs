@@ -262,6 +262,55 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
+    public void ScraperOptions_DefaultsKeepPublicationPathArtifactsOff()
+    {
+        var options = new ScraperOptions();
+
+        Assert.False(options.UsePublicationPathArtifacts);
+        Assert.False(options.EnableAutomaticPathGeneration);
+        Assert.False(
+            new ScraperOptionsValidator()
+                .Validate(null, options)
+                .Failed);
+    }
+
+    [Fact]
+    public void ScraperOptionsValidator_RejectsLegacyAutomaticGeneration()
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableAutomaticPathGeneration = true,
+                UsePublicationPathArtifacts = false,
+            });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "not supported",
+            result.FailureMessage,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScraperOptionsValidator_RejectsLegacyAutomaticGenerationWithPublicationArtifacts()
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableAutomaticPathGeneration = true,
+                UsePublicationPathArtifacts = true,
+            });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "scrape-pass staging",
+            result.FailureMessage,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BandRankHistoryOptions_DefaultsKeepV2ShadowWritesDisabled()
     {
         var opts = new BandRankHistoryOptions();

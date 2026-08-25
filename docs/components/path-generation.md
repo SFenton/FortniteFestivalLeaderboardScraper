@@ -1,14 +1,22 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Scraping/PathDataStorePublicationScope.cs
+  - FSTService/Scraping/IPathDataStore.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/MetaDatabase.PathPromotion.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/Api/AdminPathRegenerationGate.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/ScraperOptions.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -21,6 +29,8 @@ sources:
   - .github/workflows/publish-image.yml
 update_triggers:
   - CHOpt version, path profile, JSON schema, artifact storage, generation scheduling, path endpoints, text rendering, or regeneration procedure changes.
+  - Path read-source, publication binding, publication read-scope, or
+    scrape-pass staging changes.
 ---
 
 # Path generation
@@ -136,6 +146,71 @@ After deploying a new stable instrument correction, regenerate each affected
 song sequentially with `force=false`. Do not update nullable maximum columns
 directly: the normal path promotes the complete immutable generation and keeps
 the manifest, maxima, expected instruments, and revision coherent.
+
+## Publication-bound path reads
+
+`Scraper:UsePublicationPathArtifacts` (default `false`) selects where effective
+published path state and CHOpt maxima come from:
+
+- **Off** — live `songs` rows, byte-compatible with previous behavior.
+- **On** — the publication-bound `publication_path_artifacts` snapshot for the
+  request's publication. `/api/songs` is then built strictly from the bound
+  publication catalog plus that snapshot, and `/api/paths` compares the
+  requested `generationId` against the bound publication row rather than the
+  mutable live row.
+
+`PathGenerationCoordinator` and max-score maintenance keep reading live rows
+through the explicit `*Live*` store members, so generation and mutation
+semantics are unchanged. A scrape opens the working publication scope after
+allocation; threshold reads, ranking/statistics work, and API precompute then
+consume that immutable candidate snapshot through publication commit.
+
+## Publication-safe scrape-pass staging
+
+`Scraper:EnableScrapePassPathGeneration` (worker-only, default `false`) is the
+only automatic generation path. A full resolved scrape pipeline stages
+generations for pending catalog songs into the working publication snapshot
+after scrape allocation and before the publication read scope opens, so the
+same pass immediately uses the staged maxima and instrument support.
+Phase-selective passes skip staging because they do not rebuild every
+maximum-dependent ranking/statistics surface and canonical songs cache. Live
+`songs` rows are updated only inside the publication commit transaction, by a
+compare-and-swap on the live revision and current generation ID, in the same
+transaction that advances the publication pointer.
+
+Enabling scrape-pass staging requires a valid 32- or 64-character hexadecimal
+MIDI AES key at startup (`Scraper:MidiEncryptionKey`, with
+`FESTIVAL_MIDI_KEY` retained as the direct-process fallback). A missing or
+invalid key fails readiness instead of starting a worker that would abort every
+staging batch.
+
+Bootstraps and identical-maxima refreshes are applied. A regenerated song whose
+existing maxima change is blocked by default, recorded as
+`max_score_change_requires_review`, durably marked review-required, and left
+pending for max-score maintenance review;
+`Scraper:ScrapePassPathGenerationAllowChangedMaxima` opts in. Per-song failures
+are warnings: the song stays pending, gets a bounded retry-after, and the batch
+continues. Staging subsystem failures never abort the scrape pass. Deferred
+songs are re-armed by a successful promotion, a provider catalog identity
+change, or `POST /api/admin/path-generation/rearm`.
+
+When a complete immutable generation is rejected before candidate attachment
+(validation, changed-maxima review, repository failure, or explicit conflict),
+the worker checks live and retained publication references before deleting the
+unreachable directory. A failed reference check or delete retains the
+generation and records `orphan_cleanup` evidence instead of risking a
+referenced artifact.
+
+The legacy API-owned automatic generator promotes mutable live rows outside the
+publication pipeline, so startup still rejects
+`Scraper:EnableAutomaticPathGeneration=true`, and the song catalog refresher no
+longer generates paths at all. `POST /api/admin/regenerate-paths` returns
+`409 Conflict` whenever publication path artifacts are the read source, and
+also when scrape-pass staging is enabled or a working publication exists. In
+publication-bound mode path state changes through worker scrape-pass staging,
+guarded max-score maintenance, or
+`POST /api/admin/path-generation/rearm`. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 ## Max-score correction maintenance
 

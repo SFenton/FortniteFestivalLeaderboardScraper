@@ -14,6 +14,8 @@ namespace FSTService.Scraping;
 public interface ISongInstrumentSupportCache
 {
     void RefreshSongInstrumentSupport();
+    void RefreshLiveSongInstrumentSupport()
+        => RefreshSongInstrumentSupport();
     void InvalidateSongInstrumentSupport();
 }
 
@@ -339,14 +341,23 @@ public class GlobalLeaderboardScraper
     public void ResetCdnState() => _executor.ResetCdnState();
 
     public void RefreshSongInstrumentSupport()
+        => RefreshSongInstrumentSupport(
+            useLiveState: false);
+
+    public void RefreshLiveSongInstrumentSupport()
+        => RefreshSongInstrumentSupport(
+            useLiveState: true);
+
+    private void RefreshSongInstrumentSupport(bool useLiveState)
     {
         if (_pathDataStore is null)
             return;
 
         lock (_pathGenerationStatesLock)
         {
-            _pathGenerationStates =
-                _pathDataStore.GetPathGenerationStates();
+            _pathGenerationStates = useLiveState
+                ? _pathDataStore.GetLivePathGenerationStates()
+                : _pathDataStore.GetPathGenerationStates();
         }
     }
 

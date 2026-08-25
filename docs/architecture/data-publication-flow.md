@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -23,6 +23,11 @@ sources:
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/MetaDatabase.PathPromotion.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Scraping/PathDataStore.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/RankingsCalculator.cs
@@ -38,6 +43,8 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
+  - Publication-bound path artifact capture, binding, read-scope, staging, or
+    commit-time promotion changes.
 ---
 
 # Scrape and publication flow
@@ -62,6 +69,14 @@ diagnostic or replay data without becoming the published generation.
    - A new pass requires a successful, fully parsed provider catalog capture.
    - An inexact/safety-merged capture aborts before scrape allocation.
    - Resume mode reloads the immutable catalog bound to the resumed scrape.
+   - Allocation also captures the complete publication-bound path artifact
+     snapshot for the new working publication and emits a ready
+     `path_artifacts` binding. See
+     [Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+   - With `Scraper:EnableScrapePassPathGeneration` enabled, the pass then
+     stages pending-song path generations into that candidate snapshot, before
+     the publication read scope opens and before instrument support and scrape
+     requests are built. Staging never writes live `songs` rows.
 4. **Freeze public reads**
    - Persist the public-read freeze and freeze response-cache expiry.
    - Existing published cache hits remain usable; candidate state is not public.
@@ -110,6 +125,9 @@ diagnostic or replay data without becoming the published generation.
      their classification.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
+   - Re-emit the `path_artifacts` binding from the candidate snapshot instead of
+     overwriting it with the legacy live binding. An incomplete snapshot leaves
+     the surface closed rather than falsely ready.
    - Build required published scope-source mappings and notification plans.
    - Physical snapshot IDs in those mappings are retention pins only while
      their generation is named as current, previous, or working. Publication
@@ -120,7 +138,15 @@ diagnostic or replay data without becoming the published generation.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
      publication pointer and generation-owned state.
+   - Staged path promotions are compare-and-swapped into live `songs` rows in
+     the same transaction, immediately before the pointer advances. The CAS
+     owns the live revision and current generation ID, not the provider
+     timestamp; a song whose provider timestamp changed mid-scrape stays
+     pending. An unexpected CAS mismatch is nonretryable, rolls the commit
+     back, and fails and isolates the candidate instead of deferring it.
    - Contention can defer a prepared publication for retry without exposing it.
+     A deferred or restarted commit reconstructs promotion inputs from
+     `publication_path_artifacts` alone.
 9. **Release and notify**
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.
@@ -295,7 +321,11 @@ derived rows while retaining the same published scrape/publication ID.
    exact immutable-entry comparison run before the swap. The transaction keeps
    `lock_timeout=5s`, uses the configured maintenance `statement_timeout` only
    around that final comparison, and restores `statement_timeout=120s` before
-   the bounded swap/checkpoint/verification/unfreeze mutations. Failure to
+   the bounded swap/checkpoint/verification/unfreeze mutations. Before the
+   cache swap the same transaction refreshes the current publication's
+   `publication_path_artifacts` rows from the restored or promoted `songs`
+   rows and recomputes the `path_artifacts` binding row count and SHA-256.
+   Failure to
    validate or restore the bounded timeout rolls back without releasing the
    freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
@@ -418,6 +448,13 @@ The browser bootstraps through `/api/publication`. When publication changes it
 clears React Query and song caches, reconnects the application WebSocket, and
 remounts the application against the new publication. Request pinning remains
 effective only when configured and every required surface reports ready.
+
+When `Scraper:UsePublicationPathArtifacts` is enabled, the publication read
+middleware also opens a `PathDataStore` publication read scope for the exact
+request publication before downstream execution, so every publication-bound
+consumer resolves path state and CHOpt maxima from that generation's snapshot.
+See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Covered service reads first resolve an L1 entry bound to publication and the
 current safety revision, then the authoritative current/previous L2 row.

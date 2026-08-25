@@ -28,7 +28,6 @@ public sealed class SongCatalogRefreshWorkerTests
             null!,
             null!,
             null!,
-            null!,
             Options.Create(new ScraperOptions
             {
                 EnablePathGeneration = false,

@@ -226,9 +226,13 @@ public sealed class RankingsCalculator
     {
         _activeScrapeId = includeRankHistory ? scrapeId : 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var allMaxScores = _pathStore.GetAllMaxScores();
+        var allMaxScores = maintenanceLease is null
+            ? _pathStore.GetAllMaxScores()
+            : _pathStore.GetLiveAllMaxScores();
         var pathGenerationStates =
-            _pathStore.GetPathGenerationStates();
+            maintenanceLease is null
+                ? _pathStore.GetPathGenerationStates()
+                : _pathStore.GetLivePathGenerationStates();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         instrumentsToRebuild ??= instruments;
         var bandTypes = BandInstrumentMapping.AllBandTypes;

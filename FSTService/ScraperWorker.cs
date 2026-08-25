@@ -1078,6 +1078,21 @@ public sealed class ScraperWorker : BackgroundService
                     ScrapePhaseResolver.Format(resolvedPhases));
             }
 
+            long? pathPublicationId = null;
+            if (ctx.ScrapeId > 0)
+            {
+                pathPublicationId = _persistence.Meta
+                    .GetPublicationGenerationForScrape(ctx.ScrapeId)?
+                    .PublicationId
+                    ?? throw new InvalidOperationException(
+                        $"Scrape {ctx.ScrapeId} has no publication-bound path snapshot.");
+            }
+            using var pathPublicationScope =
+                pathPublicationId.HasValue
+                    ? _pathDataStore.BeginPublicationRead(
+                        pathPublicationId.Value)
+                    : null;
+
             var postScrapePhases = resolvedPhases;
             var skipPostScrapeForIncompleteScrape = anyScrapePhase && result is null;
             if (skipPostScrapeForIncompleteScrape)
