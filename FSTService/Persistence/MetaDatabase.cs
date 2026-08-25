@@ -543,6 +543,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
             bind.Parameters.AddWithValue(
                 "contractVersion",
                 PublicationPathArtifactSchema.ContractVersion);
+            bind.Parameters.AddWithValue(
+                "manifestVersion",
+                PublicationPathArtifactSchema.ManifestVersion);
             bind.Parameters.AddWithValue("now", now);
             if (bind.ExecuteNonQuery() != 1)
             {
@@ -11933,6 +11936,42 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 ContentSha256: ComputeSha256Hex((byte[])reader[3]),
                 CacheKey: cacheKey);
         return new PublicationCacheLookup(true, cachedResponse);
+    }
+
+    /// <summary>
+    /// Deletes durable API response cache rows whose key starts with
+    /// <paramref name="cacheKeyPrefix"/>. Publication-bound songs reads use
+    /// this to retire pre-existing route-key rows so the canonical
+    /// publication key wins immediately.
+    /// </summary>
+    public int PurgeApiResponseCacheKeysWithPrefix(string cacheKeyPrefix)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cacheKeyPrefix);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH purged AS (
+                DELETE FROM publication_api_response_cache
+                WHERE cache_key LIKE @prefix || '%'
+                RETURNING 1
+            ),
+            purged_staging AS (
+                DELETE FROM publication_api_response_cache_staging
+                WHERE cache_key LIKE @prefix || '%'
+                RETURNING 1
+            ),
+            purged_legacy AS (
+                DELETE FROM api_response_cache
+                WHERE cache_key LIKE @prefix || '%'
+                RETURNING 1
+            )
+            SELECT
+                (SELECT COUNT(*) FROM purged)
+                + (SELECT COUNT(*) FROM purged_staging)
+                + (SELECT COUNT(*) FROM purged_legacy)
+            """;
+        cmd.Parameters.AddWithValue("prefix", cacheKeyPrefix);
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
     public PublicationCachedResponse? GetCurrentCachedResponse(

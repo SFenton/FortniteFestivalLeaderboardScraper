@@ -151,6 +151,178 @@ public sealed class PathDataStore : IPathDataStore
         return result;
     }
 
+    // ── Automatic staging deferral state ──
+    // A deferral never clears path_generation_pending. Pending remains the
+    // durable record that work is owed; these columns only decide whether an
+    // automatic attempt may run now.
+
+    private static readonly TimeSpan RetryBackoffBase = TimeSpan.FromHours(1);
+    private static readonly TimeSpan RetryBackoffCap = TimeSpan.FromHours(24);
+
+    internal static DateTime ComputeNextAttemptAtUtc(
+        DateTime nowUtc,
+        int attemptCount)
+    {
+        var exponent = Math.Clamp(attemptCount - 1, 0, 8);
+        var delayTicks = RetryBackoffBase.Ticks * (1L << exponent);
+        var delay = delayTicks >= RetryBackoffCap.Ticks || delayTicks <= 0
+            ? RetryBackoffCap
+            : TimeSpan.FromTicks(delayTicks);
+        return nowUtc + delay;
+    }
+
+    public IReadOnlyList<PathGenerationCandidate>
+        GetAutomaticPathGenerationCandidates(DateTime nowUtc)
+    {
+        var result = new List<PathGenerationCandidate>();
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, path_generation_attempt_count
+            FROM songs
+            WHERE path_generation_pending
+              AND (
+                  path_generation_deferral_identity
+                      IS DISTINCT FROM NULLIF(last_modified, '')
+                  OR (
+                      NOT path_generation_review_required
+                      AND (
+                          path_generation_next_attempt_at IS NULL
+                          OR path_generation_next_attempt_at <= @now
+                      )
+                  )
+              )
+            ORDER BY song_id
+            """;
+        cmd.Parameters.AddWithValue("now", nowUtc);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new PathGenerationCandidate(
+                reader.GetString(0),
+                reader.GetInt32(1)));
+        }
+
+        return result;
+    }
+
+    public async Task MarkPathGenerationReviewRequiredAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+    {
+        await using var conn = await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_review_required = TRUE,
+                path_generation_review_reason = @reason,
+                path_generation_review_at = @now,
+                path_generation_next_attempt_at = NULL,
+                path_generation_attempt_count =
+                    path_generation_attempt_count + 1,
+                path_generation_deferral_identity =
+                    NULLIF(@catalogIdentity, '')
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("reason", BoundDetail(reason));
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.Add(
+            "catalogIdentity",
+            NpgsqlDbType.Text).Value =
+            (object?)catalogIdentity ?? DBNull.Value;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SchedulePathGenerationRetryAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+    {
+        await using var conn = await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_attempt_count =
+                    path_generation_attempt_count + 1,
+                path_generation_review_required = FALSE,
+                path_generation_review_at = NULL,
+                path_generation_review_reason = @reason,
+                path_generation_next_attempt_at = @now + LEAST(
+                    make_interval(
+                        hours =>
+                            (1 << LEAST(
+                                GREATEST(
+                                    path_generation_attempt_count, 0),
+                                8))),
+                    INTERVAL '24 hours'),
+                path_generation_deferral_identity =
+                    NULLIF(@catalogIdentity, '')
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("reason", BoundDetail(reason));
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.Add(
+            "catalogIdentity",
+            NpgsqlDbType.Text).Value =
+            (object?)catalogIdentity ?? DBNull.Value;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public bool RearmPathGeneration(string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_review_required = FALSE,
+                path_generation_review_reason = NULL,
+                path_generation_review_at = NULL,
+                path_generation_next_attempt_at = NULL,
+                path_generation_attempt_count = 0,
+                path_generation_deferral_identity = NULL
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    public PathGenerationDeferralState? GetPathGenerationDeferralState(
+        string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT path_generation_pending,
+                   path_generation_review_required,
+                   path_generation_review_reason,
+                   path_generation_review_at,
+                   path_generation_next_attempt_at,
+                   path_generation_attempt_count,
+                   path_generation_deferral_identity
+            FROM songs
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PathGenerationDeferralState(
+            songId,
+            reader.GetBoolean(0),
+            reader.GetBoolean(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetDateTime(3),
+            reader.IsDBNull(4) ? null : reader.GetDateTime(4),
+            reader.GetInt32(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6));
+    }
+
     public Dictionary<string, SongMaxScores> GetAllMaxScores()
     {
         if (TryResolvePublicationScope(out var publicationId, out var explicitScope))
@@ -463,6 +635,8 @@ public sealed class PathDataStore : IPathDataStore
                         generation.scrape_id::text
                     AND binding.binding_json ->> 'contractVersion' =
                         CAST(@contractVersion AS text)
+                    AND binding.binding_json ->> 'manifestVersion' =
+                        CAST(@manifestVersion AS text)
               )
             ORDER BY artifact.song_id
             """;
@@ -470,6 +644,9 @@ public sealed class PathDataStore : IPathDataStore
         cmd.Parameters.AddWithValue(
             "contractVersion",
             PublicationPathArtifactSchema.ContractVersion);
+        cmd.Parameters.AddWithValue(
+            "manifestVersion",
+            PublicationPathArtifactSchema.ManifestVersion);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
@@ -612,7 +789,13 @@ public sealed class PathDataStore : IPathDataStore
                     path_artifact_generation_id = @generationId,
                     path_expected_instruments = @expectedInstruments,
                     path_generation_revision = path_generation_revision + 1,
-                    path_generation_pending = FALSE
+                    path_generation_pending = FALSE,
+                    path_generation_review_required = FALSE,
+                    path_generation_review_reason = NULL,
+                    path_generation_review_at = NULL,
+                    path_generation_next_attempt_at = NULL,
+                    path_generation_attempt_count = 0,
+                    path_generation_deferral_identity = NULL
                 WHERE song_id = @songId
                 """;
             update.Parameters.AddWithValue("songId", promotion.SongId);
@@ -871,7 +1054,13 @@ public sealed class PathDataStore : IPathDataStore
                     path_expected_instruments = @expectedInstruments,
                     path_generation_revision =
                         path_generation_revision + 1,
-                    path_generation_pending = FALSE
+                    path_generation_pending = FALSE,
+                    path_generation_review_required = FALSE,
+                    path_generation_review_reason = NULL,
+                    path_generation_review_at = NULL,
+                    path_generation_next_attempt_at = NULL,
+                    path_generation_attempt_count = 0,
+                    path_generation_deferral_identity = NULL
                 WHERE song_id = @songId
                   AND path_generation_revision = @expectedRevision
                 """;

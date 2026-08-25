@@ -542,7 +542,13 @@ builder.Services.AddSingleton(sp =>
             .GetPointers()
             .CurrentPublicationId,
         sp.GetRequiredService<
-            FSTService.Api.PublicationApiResponseCacheService>()));
+            FSTService.Api.PublicationApiResponseCacheService>(),
+        // Publication-bound mode: the publication pipeline owns the durable
+        // songs cache row. This process hydrates from it instead of ever
+        // rewriting it from process-local state.
+        publicationBoundReads: sp
+            .GetRequiredService<IOptions<ScraperOptions>>()
+            .Value.UsePublicationPathArtifacts));
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<
     FSTService.Api.PublicationRecoveryCoordinator>();
@@ -757,6 +763,7 @@ builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
         sp.GetRequiredService<ILogger<PathGenerationCoordinator>>(),
         sp.GetRequiredService<IPathGenerationAdmissionLeaseProvider>()));
 builder.Services.AddSingleton<PathArtifactResolver>();
+builder.Services.AddSingleton<ScrapePassPathIngestion>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>
@@ -1246,6 +1253,8 @@ if (hostedWorkerMode is HostedWorkerMode.ApiOnly
     {
         try
         {
+            // In publication-bound mode Prime hydrates from the durable
+            // current-publication row and never persists a local build.
             songsCacheService.Prime(
                 festivalService,
                 pathDataStore,

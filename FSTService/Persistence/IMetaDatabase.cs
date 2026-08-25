@@ -80,6 +80,14 @@ public interface IMetaDatabase : IDisposable
     PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
         long publicationId,
         string surfaceName);
+    PublicationPathPromotionOutcome
+        ApplyWorkingPublicationPathPromotion(
+            PublicationPathPromotionRequest request);
+    IReadOnlyList<PublicationPathPromotionRow>
+        GetPublicationPathPromotions(long publicationId);
+    bool IsPathArtifactGenerationReferenced(
+        string songId,
+        string generationId);
     bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
@@ -428,6 +436,7 @@ public interface IMetaDatabase : IDisposable
 
     // ── API response cache ───────────────────────────────────────────
     PublicationCacheLookup GetCurrentCacheLookup(string cacheKey);
+    int PurgeApiResponseCacheKeysWithPrefix(string cacheKeyPrefix);
     PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);

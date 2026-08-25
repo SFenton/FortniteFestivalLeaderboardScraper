@@ -537,6 +537,124 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_RolloutReadOnlyStartup_RejectsUnreleasedPublicationPathArtifacts()
+    {
+        var song = new Song
+        {
+            track = new Track
+            {
+                su = "rollout-path-release-song",
+                tt = "Persisted Song",
+                an = "Artist",
+            },
+        };
+        var writableFestivalPersistence = new FestivalPersistence(
+            _metaFixture.DataSource);
+        await writableFestivalPersistence.SaveSongsAsync([song]);
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaFixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE publication_surface_bindings
+                SET binding_json =
+                        jsonb_set(
+                            binding_json,
+                            '{manifestVersion}',
+                            '1'::jsonb),
+                    content_hash = repeat('0', 64)
+                WHERE publication_id = (
+                        SELECT current_publication_id
+                        FROM scrape_publication_state
+                        WHERE id = TRUE)
+                  AND surface_name = 'path_artifacts'
+                """;
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        string databaseName;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        {
+            databaseName = connection.Database;
+        }
+        var readOnlyBuilder = new NpgsqlConnectionStringBuilder(
+            SharedPostgresContainer.ConnectionString)
+        {
+            Database = databaseName,
+            Options = "-c default_transaction_read_only=on",
+            MinPoolSize = 0,
+            MaxPoolSize = 5,
+        };
+        await using var readOnlyDataSource =
+            NpgsqlDataSource.Create(
+                readOnlyBuilder.ConnectionString);
+        using var readOnlyMeta = new MetaDatabase(
+            readOnlyDataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        var readOnlyLoggerFactory =
+            Substitute.For<ILoggerFactory>();
+        readOnlyLoggerFactory
+            .CreateLogger(Arg.Any<string>())
+            .Returns(Substitute.For<ILogger>());
+        using var readOnlyPersistence =
+            new GlobalLeaderboardPersistence(
+                readOnlyMeta,
+                readOnlyLoggerFactory,
+                Substitute.For<
+                    ILogger<GlobalLeaderboardPersistence>>(),
+                readOnlyDataSource,
+                Options.Create(new FeatureOptions()));
+        var festivalService = new FestivalService(
+            new FestivalPersistence(readOnlyDataSource),
+            new HttpClient(new NoOpHandler()));
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            readOnlyMeta,
+            Substitute.For<ILogger<ItemShopService>>());
+        var lifetime =
+            Substitute.For<IHostApplicationLifetime>();
+        var initializer = new StartupInitializer(
+            readOnlyPersistence,
+            readOnlyDataSource,
+            festivalService,
+            shopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                RolloutReadOnlyStartup = true,
+                RolloutPostgresReadOnly = true,
+                UsePublicationPathArtifacts = true,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await Assert.ThrowsAsync<
+            PublicationPathArtifactReleaseException>(
+            () => initializer.WaitForReadyAsync(cts.Token));
+
+        Assert.False(initializer.IsReady);
+        Assert.True(
+            initializer.PostgresDefaultTransactionReadOnly);
+        lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
     public async Task StartAsync_RolloutReadOnlyStartup_RejectsServerWritablePostgresSession()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);

@@ -220,6 +220,22 @@ public static class DatabaseInitializer
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS path_generation_pending BOOLEAN NOT NULL DEFAULT FALSE;
 
+        -- Publication-safe scrape-pass staging deferral state. These columns
+        -- never clear path_generation_pending: a deferred song stays pending
+        -- and auditable, it is only excluded from automatic selection.
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_required BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_reason TEXT;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_at TIMESTAMPTZ;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_next_attempt_at TIMESTAMPTZ;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_deferral_identity TEXT;
+
         CREATE OR REPLACE FUNCTION reject_incoherent_legacy_path_write()
         RETURNS trigger
         LANGUAGE plpgsql

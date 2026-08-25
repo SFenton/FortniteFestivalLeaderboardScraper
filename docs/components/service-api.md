@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-24
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -85,7 +85,7 @@ See [Path generation](path-generation.md).
 The path route validates the eight generated solo instruments, including the
 two plastic-drums scoring modes backed by Epic's shared `pd` chart.
 
-The current source contains 80 HTTP mappings across 14 route-bearing endpoint
+The current source contains 81 HTTP mappings across 14 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:
 
 - `PublicationBound`

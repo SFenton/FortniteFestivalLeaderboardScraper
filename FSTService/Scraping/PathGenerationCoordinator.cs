@@ -233,12 +233,35 @@ public sealed partial class PathGenerationCoordinator
         }
     }
 
-    internal async Task<IReadOnlyList<PathGenerationAttemptResult>>
+    internal Task<IReadOnlyList<PathGenerationAttemptResult>>
         StagePathsSerialAsync(
             IReadOnlyList<(
                 SongPathRequest Request,
                 PathGenerationState State)> songs,
             CancellationToken ct)
+        => StagePathsSerialAsync(songs, stopOnFailure: true, ct);
+
+    /// <summary>
+    /// Stages generations serially without promoting them to live rows.
+    /// Max-score maintenance keeps the strict stop-on-failure contract;
+    /// publication-safe scrape-pass ingestion passes
+    /// <paramref name="stopOnFailure"/> <c>false</c> so one bad song cannot
+    /// wedge the remaining pending catalog.
+    /// </summary>
+    /// <param name="completed">
+    /// Optional collector appended to as each song finishes. It lets a caller
+    /// keep partial progress when a later song is cancelled, for example by a
+    /// scrape-pass batch timeout. Maintenance passes null and keeps the
+    /// existing all-or-nothing return contract.
+    /// </param>
+    internal async Task<IReadOnlyList<PathGenerationAttemptResult>>
+        StagePathsSerialAsync(
+            IReadOnlyList<(
+                SongPathRequest Request,
+                PathGenerationState State)> songs,
+            bool stopOnFailure,
+            CancellationToken ct,
+            IList<PathGenerationAttemptResult>? completed = null)
     {
         ArgumentNullException.ThrowIfNull(songs);
         if (!_options.Value.EnablePathGeneration)
@@ -288,12 +311,7 @@ public sealed partial class PathGenerationCoordinator
                 ex.Stage,
                 ex.Message,
                 ownsProgress: false);
-            return songs
-                .Select(_ => new PathGenerationAttemptResult(
-                    PathGenerationAttemptOutcome.Failed,
-                    ex.Stage,
-                    ex.Message))
-                .ToArray();
+            throw;
         }
         catch (Exception ex)
         {
@@ -303,12 +321,10 @@ public sealed partial class PathGenerationCoordinator
                 "runtime_identity",
                 ex.Message,
                 ownsProgress: false);
-            return songs
-                .Select(_ => new PathGenerationAttemptResult(
-                    PathGenerationAttemptOutcome.Failed,
-                    "runtime_identity",
-                    ex.Message))
-                .ToArray();
+            throw new PathGenerationException(
+                "runtime_identity",
+                ex.Message,
+                innerException: ex);
         }
 
         var results = new List<PathGenerationAttemptResult>(songs.Count);
@@ -323,8 +339,12 @@ public sealed partial class PathGenerationCoordinator
                 ownsProgress: false,
                 ct);
             results.Add(result);
-            if (result.Outcome != PathGenerationAttemptOutcome.Staged)
+            completed?.Add(result);
+            if (stopOnFailure
+                && result.Outcome != PathGenerationAttemptOutcome.Staged)
+            {
                 break;
+            }
         }
 
         return results;

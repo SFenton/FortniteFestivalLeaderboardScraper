@@ -27,7 +27,8 @@ public sealed class PublicApiResponseCacheMiddleware
         PublicReadGateService gate,
         PublicApiCacheTelemetry telemetry,
         PublicationReadContextService? publicationService = null,
-        PublicationApiResponseCacheService? cacheService = null)
+        PublicationApiResponseCacheService? cacheService = null,
+        SongsCacheService? songsCache = null)
     {
         if (context.WebSockets.IsWebSocketRequest)
         {
@@ -42,6 +43,15 @@ public sealed class PublicApiResponseCacheMiddleware
             PublicApiResponseCachePolicy.TryCreateRequestPlan(
                 context,
                 out var plan);
+        if (cacheable
+            && plan.SongsRoute
+            && songsCache?.PublicationBoundReads == true)
+        {
+            // The publication pipeline owns public-api:songs:v1. Never read or
+            // write a route-key row for /api/songs in this mode.
+            plan = PublicApiResponseCachePolicy
+                .ToPublicationBoundSongsPlan(plan);
+        }
 
         if (!cacheable)
         {

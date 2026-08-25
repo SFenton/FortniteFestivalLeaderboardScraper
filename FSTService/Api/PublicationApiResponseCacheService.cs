@@ -123,6 +123,29 @@ public sealed class PublicationApiResponseCacheService
         return null;
     }
 
+    /// <summary>
+    /// Reads the durable row bound to the database's current publication for
+    /// one exact cache key. Returns null when there is no such row or when the
+    /// key is marked stale by an in-flight content mutation. It performs no
+    /// transformation and never writes.
+    /// </summary>
+    /// <remarks>
+    /// The returned <c>PublicationId</c> is the database pointer at read time.
+    /// Callers compare it against their own captured pointer so a publication
+    /// pointer move is distinguishable from a missing row.
+    /// </remarks>
+    public PublicationCachedResponse? TryGetCurrentDurableRow(
+        string cacheKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cacheKey);
+        if (_staleCurrentKeys.ContainsKey(cacheKey))
+            return null;
+
+        return _metaDb
+            .GetCurrentCacheLookup(cacheKey)
+            ?.CachedResponse;
+    }
+
     public PublicationApiCacheHit? TryGet(
         long publicationId,
         PublicApiCacheRequestPlan plan) =>

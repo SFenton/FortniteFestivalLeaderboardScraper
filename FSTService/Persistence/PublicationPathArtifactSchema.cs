@@ -13,8 +13,19 @@ public static class PublicationPathArtifactSchema
     /// <summary>
     /// Binding contract version. Must match
     /// <c>PublicationRouteSurfaceContractCatalog.ContractVersion</c>.
+    /// This is the global route surface contract and does not move when only
+    /// the path manifest hash changes.
     /// </summary>
     public const int ContractVersion = 1;
+
+    /// <summary>
+    /// Version of the canonical path manifest projection and its SHA-256
+    /// function. Version 2 adds Phase B staged-promotion metadata to the
+    /// hashed candidate identity, so a version-1 <c>content_hash</c> can never
+    /// match a version-2 function result. Bindings carry this value and reads
+    /// require it, so a live upgrade can never serve a stale hash.
+    /// </summary>
+    public const int ManifestVersion = 2;
 
     /// <summary>Binding kind emitted when the snapshot is complete.</summary>
     public const string ManifestBindingKind =
@@ -40,9 +51,26 @@ public static class PublicationPathArtifactSchema
     public const string PreparedSnapshotSource =
         "generation_prepared_snapshot";
 
+    /// <summary>
+    /// Existing active-pointer snapshot rebound by the startup migration when
+    /// the manifest hash version changed.
+    /// </summary>
+    public const string SchemaUpgradeSource = "schema_manifest_upgrade";
+
     /// <summary>Snapshot refreshed by max-score maintenance apply/rollback.</summary>
     public const string MaxScoreMaintenanceSource =
         "max_score_maintenance_apply";
+
+    /// <summary>Scrape-pass publication-safe staged generation.</summary>
+    public const string ScrapePassStagingSource =
+        "scrape_pass_path_staging";
+
+    /// <summary>
+    /// Failure stage recorded when a regenerated song changes an existing
+    /// maximum and <c>ScrapePassPathGenerationAllowChangedMaxima</c> is off.
+    /// </summary>
+    public const string ChangedMaximaFailureStage =
+        "max_score_change_requires_review";
 
     /// <summary>
     /// Columns projected for <see cref="Scraping.PathGenerationState"/> and
@@ -81,6 +109,10 @@ public static class PublicationPathArtifactSchema
         + Environment.NewLine
         + Environment.NewLine
         + BuildBootstrapRebindSql()
+        + ";"
+        + Environment.NewLine
+        + Environment.NewLine
+        + BuildActivePointerUpgradeSql()
         + ";";
 
     private static string BuildBootstrapRebindSql() =>
@@ -102,6 +134,35 @@ public static class PublicationPathArtifactSchema
             .Replace(
                 "@contractVersion",
                 ContractVersion.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal)
+            .Replace(
+                "@manifestVersion",
+                ManifestVersion.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal)
+            .Replace("@now", "now()", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Rebinds every retained active pointer snapshot whose binding predates
+    /// the current manifest version. It runs in the same short migration
+    /// transaction as the ALTERs and the hash function replacement, so the new
+    /// function can never be committed without matching bindings.
+    /// </summary>
+    private static string BuildActivePointerUpgradeSql() =>
+        ActivePointerUpgradeSql
+            .Replace(
+                "@source",
+                $"'{SchemaUpgradeSource}'",
+                StringComparison.Ordinal)
+            .Replace(
+                "@contractVersion",
+                ContractVersion.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal)
+            .Replace(
+                "@manifestVersion",
+                ManifestVersion.ToString(
                     System.Globalization.CultureInfo.InvariantCulture),
                 StringComparison.Ordinal)
             .Replace("@now", "now()", StringComparison.Ordinal);
@@ -135,6 +196,24 @@ public static class PublicationPathArtifactSchema
             captured_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
             PRIMARY KEY (publication_id, song_id)
         );
+
+        -- Phase B: durable staged-promotion metadata. Additive and idempotent;
+        -- rows with no staged promotion keep Phase A semantics exactly.
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS promotion_pending BOOLEAN NOT NULL
+                DEFAULT FALSE;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS promotion_attempt_id TEXT;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS promotion_generation_id TEXT;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS promotion_source TEXT;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS promotion_staged_at TIMESTAMPTZ;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS expected_live_revision BIGINT;
+        ALTER TABLE publication_path_artifacts
+            ADD COLUMN IF NOT EXISTS expected_live_generation_id TEXT;
 
         CREATE OR REPLACE FUNCTION publication_path_artifact_manifest_sha256(
             target_publication_id BIGINT)
@@ -183,6 +262,20 @@ public static class PublicationPathArtifactSchema
                     || chr(31) || COALESCE(max_pro_bass_score::text, '')
                     || chr(31) || COALESCE(max_pro_cymbals_score::text, '')
                     || chr(31) || COALESCE(max_pro_drums_score::text, '')
+                    || chr(31) || CASE
+                        WHEN promotion_pending THEN '1' ELSE '0'
+                    END
+                    || chr(31) || COALESCE(promotion_attempt_id, '')
+                    || chr(31) || COALESCE(promotion_generation_id, '')
+                    || chr(31) || COALESCE(promotion_source, '')
+                    || chr(31) || COALESCE(
+                        to_char(
+                            promotion_staged_at AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                        '')
+                    || chr(31) || COALESCE(expected_live_revision::text, '')
+                    || chr(31) || COALESCE(
+                        expected_live_generation_id, '')
                         AS line
                 FROM publication_path_artifacts
                 WHERE publication_id = target_publication_id
@@ -422,6 +515,7 @@ public static class PublicationPathArtifactSchema
                         'source', @source,
                         'authoritative', true,
                         'contractVersion', @contractVersion,
+                        'manifestVersion', @manifestVersion,
                         'expectedRowCount', classified.expected_row_count)
                 ELSE jsonb_build_object(
                     'table', 'songs',
@@ -430,6 +524,122 @@ public static class PublicationPathArtifactSchema
                     'source', @source,
                     'authoritative', false,
                     'contractVersion', @contractVersion,
+                    'manifestVersion', @manifestVersion,
+                    'expectedRowCount', classified.expected_row_count,
+                    'snapshotRowCount', classified.row_count,
+                    'incomplete', true)
+            END,
+            CASE
+                WHEN classified.complete THEN classified.row_count
+                ELSE NULL
+            END,
+            CASE
+                WHEN classified.complete THEN classified.content_hash
+                ELSE NULL
+            END,
+            CASE
+                WHEN classified.complete THEN 'ready'
+                ELSE 'building'
+            END,
+            @now
+        FROM classified
+        ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+            binding_kind = EXCLUDED.binding_kind,
+            binding_json = EXCLUDED.binding_json,
+            row_count = EXCLUDED.row_count,
+            content_hash = EXCLUDED.content_hash,
+            status = EXCLUDED.status,
+            built_at = EXCLUDED.built_at
+        """;
+
+    /// <summary>
+    /// Rebinds the <c>path_artifacts</c> surface for every retained active
+    /// pointer publication (current, previous, and working when non-null)
+    /// whose binding predates <see cref="ManifestVersion"/>. Snapshot rows are
+    /// never mutated: only the binding kind, JSON, row count, hash, and status
+    /// are recomputed from the current canonical hash function.
+    /// Requires <c>@source</c>, <c>@contractVersion</c>,
+    /// <c>@manifestVersion</c> and <c>@now</c>.
+    /// </summary>
+    public const string ActivePointerUpgradeSql = """
+        WITH pointers AS (
+            SELECT DISTINCT publication_id
+            FROM (
+                SELECT unnest(ARRAY[
+                    publication.current_publication_id,
+                    publication.previous_publication_id,
+                    publication.working_publication_id]) AS publication_id
+                FROM scrape_publication_state publication
+                WHERE publication.id = TRUE
+            ) pointer
+            WHERE publication_id IS NOT NULL
+        ),
+        target AS (
+            SELECT
+                generation.publication_id,
+                generation.scrape_id,
+                (
+                    SELECT COUNT(*)
+                    FROM publication_path_artifacts artifact
+                    WHERE artifact.publication_id =
+                        generation.publication_id
+                ) AS row_count,
+                (
+                    SELECT catalog.song_count
+                    FROM publication_song_catalog catalog
+                    WHERE catalog.publication_id =
+                        generation.publication_id
+                      AND catalog.is_exact
+                ) AS expected_row_count,
+                publication_path_artifact_manifest_sha256(
+                    generation.publication_id) AS content_hash
+            FROM publication_generations generation
+            JOIN pointers
+              ON pointers.publication_id = generation.publication_id
+            LEFT JOIN publication_surface_bindings binding
+              ON binding.publication_id = generation.publication_id
+             AND binding.surface_name = 'path_artifacts'
+            WHERE (binding.binding_json ->> 'manifestVersion')
+                  IS DISTINCT FROM CAST(@manifestVersion AS text)
+        ),
+        classified AS (
+            SELECT
+                target.*,
+                target.expected_row_count IS NOT NULL
+                    AND target.row_count = target.expected_row_count
+                        AS complete
+            FROM target
+        )
+        INSERT INTO publication_surface_bindings (
+            publication_id, surface_name, binding_kind, binding_json,
+            row_count, content_hash, status, built_at)
+        SELECT
+            classified.publication_id,
+            'path_artifacts',
+            CASE
+                WHEN classified.complete
+                    THEN 'generation_path_artifact_manifest'
+                ELSE 'legacy_live_unversioned'
+            END,
+            CASE
+                WHEN classified.complete
+                    THEN jsonb_build_object(
+                        'table', 'publication_path_artifacts',
+                        'publicationId', classified.publication_id,
+                        'scrapeId', classified.scrape_id,
+                        'source', @source,
+                        'authoritative', true,
+                        'contractVersion', @contractVersion,
+                        'manifestVersion', @manifestVersion,
+                        'expectedRowCount', classified.expected_row_count)
+                ELSE jsonb_build_object(
+                    'table', 'songs',
+                    'publicationId', classified.publication_id,
+                    'scrapeId', classified.scrape_id,
+                    'source', @source,
+                    'authoritative', false,
+                    'contractVersion', @contractVersion,
+                    'manifestVersion', @manifestVersion,
                     'expectedRowCount', classified.expected_row_count,
                     'snapshotRowCount', classified.row_count,
                     'incomplete', true)
@@ -530,5 +740,158 @@ public static class PublicationPathArtifactSchema
     public const string CleanupFailedSnapshotSql = """
         DELETE FROM publication_path_artifacts
         WHERE publication_id = @publicationId
+        """;
+
+    /// <summary>
+    /// Applies one validated staged generation to a working publication
+    /// snapshot row. Every guard is expressed in the statement, so a zero
+    /// row count is an explicit conflict rather than a silent no-op.
+    /// Requires <c>@publicationId</c>, <c>@scrapeId</c>, <c>@songId</c>,
+    /// <c>@expectedRevision</c>, <c>@expectedGenerationId</c>,
+    /// <c>@expectedCatalogLastModified</c>, the staged generation parameters,
+    /// <c>@source</c> and <c>@now</c>.
+    /// </summary>
+    public const string ApplyStagedPromotionSql = """
+        UPDATE publication_path_artifacts artifact
+        SET path_generation_revision =
+                artifact.path_generation_revision + 1,
+            path_artifact_generation_id = @generationId,
+            dat_file_hash = @datFileHash,
+            song_last_modified = @songLastModified,
+            paths_generated_at = @generatedAt,
+            chopt_version = @choptVersion,
+            chopt_binary_sha256 = @choptBinarySha256,
+            path_generation_profile = @profile,
+            path_expected_instruments = @expectedInstruments,
+            path_generation_pending = FALSE,
+            max_lead_score = @maxLead,
+            max_bass_score = @maxBass,
+            max_drums_score = @maxDrums,
+            max_vocals_score = @maxVocals,
+            max_pro_lead_score = @maxProLead,
+            max_pro_bass_score = @maxProBass,
+            max_pro_cymbals_score = @maxProCymbals,
+            max_pro_drums_score = @maxProDrums,
+            promotion_pending = TRUE,
+            promotion_attempt_id = @attemptId,
+            promotion_generation_id = @generationId,
+            promotion_source = @source,
+            promotion_staged_at = @now,
+            expected_live_revision = @expectedRevision,
+            expected_live_generation_id = @expectedGenerationId,
+            captured_at = @now
+        FROM scrape_publication_state publication,
+             publication_generations generation
+        WHERE artifact.publication_id = @publicationId
+          AND artifact.song_id = @songId
+          AND publication.id = TRUE
+          AND publication.working_publication_id = @publicationId
+          AND generation.publication_id = @publicationId
+          AND generation.scrape_id = @scrapeId
+          AND generation.status = 'building'
+          AND artifact.promotion_pending = FALSE
+          AND artifact.path_generation_revision = @expectedRevision
+          AND artifact.path_artifact_generation_id
+              IS NOT DISTINCT FROM @expectedGenerationId
+          AND artifact.catalog_last_modified
+              IS NOT DISTINCT FROM @expectedCatalogLastModified
+        """;
+
+    /// <summary>
+    /// Classifies why <see cref="ApplyStagedPromotionSql"/> matched no row.
+    /// Requires <c>@publicationId</c>, <c>@scrapeId</c> and <c>@songId</c>.
+    /// </summary>
+    public const string ClassifyStagedPromotionSql = """
+        SELECT
+            EXISTS (
+                SELECT 1
+                FROM scrape_publication_state publication
+                JOIN publication_generations generation
+                  ON generation.publication_id =
+                        publication.working_publication_id
+                WHERE publication.id = TRUE
+                  AND publication.working_publication_id = @publicationId
+                  AND generation.scrape_id = @scrapeId
+                  AND generation.status = 'building'
+            ) AS publication_building,
+            EXISTS (
+                SELECT 1
+                FROM publication_path_artifacts artifact
+                WHERE artifact.publication_id = @publicationId
+                  AND artifact.song_id = @songId
+            ) AS row_present
+        """;
+
+    /// <summary>
+    /// Selects and locks the staged promotion rows of a publication in
+    /// deterministic song order. Requires <c>@publicationId</c>.
+    /// </summary>
+    public const string LockStagedPromotionsSql = """
+        SELECT song_id
+        FROM publication_path_artifacts
+        WHERE publication_id = @publicationId
+          AND promotion_pending
+        ORDER BY song_id
+        FOR UPDATE
+        """;
+
+    /// <summary>
+    /// Locks the live <c>songs</c> rows targeted by staged promotions in the
+    /// same deterministic order. Requires <c>@songIds</c>.
+    /// </summary>
+    public const string LockPromotionTargetSongsSql = """
+        SELECT song_id
+        FROM songs
+        WHERE song_id = ANY(@songIds)
+        ORDER BY song_id
+        FOR UPDATE
+        """;
+
+    /// <summary>
+    /// Compare-and-swap promotion of staged candidate rows into live
+    /// <c>songs</c> during the publication commit transaction. The CAS owns
+    /// the live revision and current generation identity only; an ordinary
+    /// catalog refresh that changed <c>songs.last_modified</c> mid-scrape must
+    /// not fail the commit, it only keeps the song pending.
+    /// Requires <c>@publicationId</c>.
+    /// </summary>
+    public const string PromoteStagedArtifactsToLiveSongsSql = """
+        UPDATE songs live
+        SET path_generation_revision = artifact.path_generation_revision,
+            path_artifact_generation_id =
+                artifact.path_artifact_generation_id,
+            dat_file_hash = artifact.dat_file_hash,
+            song_last_modified = artifact.song_last_modified,
+            paths_generated_at = artifact.paths_generated_at,
+            chopt_version = artifact.chopt_version,
+            chopt_binary_sha256 = artifact.chopt_binary_sha256,
+            path_generation_profile = artifact.path_generation_profile,
+            path_expected_instruments = artifact.path_expected_instruments,
+            max_lead_score = artifact.max_lead_score,
+            max_bass_score = artifact.max_bass_score,
+            max_drums_score = artifact.max_drums_score,
+            max_vocals_score = artifact.max_vocals_score,
+            max_pro_lead_score = artifact.max_pro_lead_score,
+            max_pro_bass_score = artifact.max_pro_bass_score,
+            max_pro_cymbals_score = artifact.max_pro_cymbals_score,
+            max_pro_drums_score = artifact.max_pro_drums_score,
+            path_generation_pending = NOT (
+                NULLIF(live.last_modified, '')
+                IS NOT DISTINCT FROM artifact.catalog_last_modified
+            ),
+            path_generation_review_required = FALSE,
+            path_generation_review_reason = NULL,
+            path_generation_review_at = NULL,
+            path_generation_next_attempt_at = NULL,
+            path_generation_attempt_count = 0,
+            path_generation_deferral_identity = NULL
+        FROM publication_path_artifacts artifact
+        WHERE artifact.publication_id = @publicationId
+          AND artifact.promotion_pending
+          AND live.song_id = artifact.song_id
+          AND live.path_generation_revision =
+                artifact.expected_live_revision
+          AND live.path_artifact_generation_id
+              IS NOT DISTINCT FROM artifact.expected_live_generation_id
         """;
 }

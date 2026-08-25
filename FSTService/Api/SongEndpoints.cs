@@ -103,6 +103,23 @@ public static partial class ApiEndpoints
             string etag;
             try
             {
+                // Publication-bound mode: the durable row is owned by the
+                // publication pipeline. Hydrate from it instead of rebuilding
+                // and persisting process-local state.
+                var hydrated =
+                    songsCache.PublicationBoundReads
+                    && songsCache.TryHydrateFromDurablePublicationCache()
+                        ? songsCache.Get()
+                        : null;
+                if (hydrated is not null)
+                {
+                    httpContext.Response.ContentType =
+                        "application/json; charset=utf-8";
+                    return CacheHelper.ServeIfCached(
+                        httpContext,
+                        hydrated)!;
+                }
+
                 while (true)
                 {
                     var token = songsCache.CaptureBuildToken();
@@ -128,7 +145,8 @@ public static partial class ApiEndpoints
                         jsonBytes,
                         token,
                         out etag,
-                        persistPublicationCache: true);
+                        persistPublicationCache:
+                            !songsCache.PublicationBoundReads);
                     if (writeResult == SongsCacheWriteResult.Stored)
                     {
                         break;

@@ -163,6 +163,7 @@ public static class ApiPublicationRouteCatalog
         Private(HttpMethods.Post, "/api/admin/shop/refresh", "Protected shop refresh command."),
         Private(HttpMethods.Post, "/api/firstseen/calculate", "Protected derived-data maintenance command."),
         Private(HttpMethods.Post, "/api/admin/regenerate-paths", "Protected path maintenance command."),
+        Private(HttpMethods.Post, "/api/admin/path-generation/rearm", "Protected path staging deferral reset command."),
         Private(HttpMethods.Get, "/api/backfill/{accountId}/status", "Protected account maintenance status."),
         Private(HttpMethods.Post, "/api/backfill/{accountId}", "Protected account maintenance command."),
         Private(HttpMethods.Get, "/api/admin/dbstats/queries", "Protected database diagnostics."),

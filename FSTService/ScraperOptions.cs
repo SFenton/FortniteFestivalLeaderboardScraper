@@ -24,6 +24,18 @@ public sealed class ScraperOptions
     public const int DefaultMaxScoreMaintenanceCommandTimeoutSeconds = 600;
     public const int MinimumMaxScoreMaintenanceCommandTimeoutSeconds = 1;
     public const int MaximumMaxScoreMaintenanceCommandTimeoutSeconds = 86_400;
+    public const int DefaultScrapePassPathGenerationMaxSongs = 25;
+    public const int MinimumScrapePassPathGenerationMaxSongs = 1;
+    public const int MaximumScrapePassPathGenerationMaxSongs = 500;
+    public static readonly TimeSpan
+        DefaultScrapePassPathGenerationTimeout =
+            TimeSpan.FromMinutes(20);
+    public static readonly TimeSpan
+        MinimumScrapePassPathGenerationTimeout =
+            TimeSpan.FromMinutes(1);
+    public static readonly TimeSpan
+        MaximumScrapePassPathGenerationTimeout =
+            TimeSpan.FromHours(6);
 
     /// <summary>
     /// How often to run a full score scrape (default: 4 hours).
@@ -231,6 +243,24 @@ public sealed class ScraperOptions
     public bool SkipStartupSchemaInitialization { get; set; }
 
     /// <summary>
+    /// True when this role never runs schema DDL at startup. Single source of
+    /// truth for every no-DDL decision so the schema-initialization branch and
+    /// the release readiness gate cannot drift apart.
+    /// </summary>
+    public bool SkipsStartupSchemaInitialization
+        => RolloutReadOnlyStartup
+            || ApiOnly
+            || SkipStartupSchemaInitialization;
+
+    /// <summary>
+    /// True when this role reads publication-bound path artifacts without
+    /// applying schema releases, so startup must verify the current
+    /// publication's path artifact release before signalling ready.
+    /// </summary>
+    public bool RequiresPublicationPathArtifactReleaseGate
+        => SkipsStartupSchemaInitialization && UsePublicationPathArtifacts;
+
+    /// <summary>
     /// Rollout-only API startup mode. Loads existing persisted state while
     /// suppressing startup schema, cleanup, provider sync, item-shop refresh,
     /// timers, and mutation-capable hosted services.
@@ -364,7 +394,8 @@ public sealed class ScraperOptions
     public string CHOptPath { get; set; } = "tools/CHOpt";
 
     /// <summary>
-    /// Hex-encoded 128-bit AES key for decrypting Fortnite Festival MIDI .dat files.
+    /// Hex-encoded 128- or 256-bit AES key for decrypting Fortnite Festival
+    /// MIDI .dat files.
     /// Can also be set via the FESTIVAL_MIDI_KEY environment variable.
     /// </summary>
     public string? MidiEncryptionKey { get; set; }
@@ -394,6 +425,40 @@ public sealed class ScraperOptions
     /// existing live-read behavior byte-compatible.
     /// </summary>
     public bool UsePublicationPathArtifacts { get; set; }
+
+    /// <summary>
+    /// Worker-only (full-worker role) publication-safe path ingestion. When
+    /// true, the scrape pass stages CHOpt generations for pending catalog
+    /// songs into the working publication snapshot before the scrape opens its
+    /// publication read scope. Live <c>songs</c> rows are only updated inside
+    /// the publication commit transaction. Default false keeps the scrape pass
+    /// byte-compatible with Phase A.
+    /// </summary>
+    public bool EnableScrapePassPathGeneration { get; set; }
+
+    /// <summary>
+    /// Maximum number of pending songs staged by one scrape pass. Bounded to
+    /// [<see cref="MinimumScrapePassPathGenerationMaxSongs"/>,
+    /// <see cref="MaximumScrapePassPathGenerationMaxSongs"/>].
+    /// </summary>
+    public int ScrapePassPathGenerationMaxSongs { get; set; } =
+        DefaultScrapePassPathGenerationMaxSongs;
+
+    /// <summary>
+    /// Total wall-clock budget for one scrape-pass staging batch. Bounded to
+    /// [<see cref="MinimumScrapePassPathGenerationTimeout"/>,
+    /// <see cref="MaximumScrapePassPathGenerationTimeout"/>].
+    /// </summary>
+    public TimeSpan ScrapePassPathGenerationTimeout { get; set; } =
+        DefaultScrapePassPathGenerationTimeout;
+
+    /// <summary>
+    /// Allows scrape-pass staging to apply a regenerated song whose existing
+    /// maxima change. Default false records
+    /// <c>max_score_change_requires_review</c> and leaves the candidate, the
+    /// live row, and the pending flag untouched.
+    /// </summary>
+    public bool ScrapePassPathGenerationAllowChangedMaxima { get; set; }
 
     /// <summary>
     /// Versioned identity for the CHOpt arguments and artifact contract.
@@ -754,6 +819,15 @@ public sealed class ScraperOptions
         int value)
         => value is >= MinimumMaxScoreMaintenanceCommandTimeoutSeconds
             and <= MaximumMaxScoreMaintenanceCommandTimeoutSeconds;
+
+    internal static bool IsValidScrapePassPathGenerationMaxSongs(int value)
+        => value is >= MinimumScrapePassPathGenerationMaxSongs
+            and <= MaximumScrapePassPathGenerationMaxSongs;
+
+    internal static bool IsValidScrapePassPathGenerationTimeout(
+        TimeSpan value)
+        => value >= MinimumScrapePassPathGenerationTimeout
+            && value <= MaximumScrapePassPathGenerationTimeout;
 }
 
 internal sealed class ScraperOptionsValidator
@@ -786,9 +860,100 @@ internal sealed class ScraperOptionsValidator
             return ValidateOptionsResult.Fail(
                 $"{ScraperOptions.Section}:"
                 + nameof(ScraperOptions.EnableAutomaticPathGeneration)
-                + " is not supported while automatic generation still promotes "
-                + "mutable live song rows outside the publication pipeline. "
-                + "Keep it disabled until scrape-pass staging is available.");
+                + " is not supported because it promotes mutable live song "
+                + "rows outside the publication pipeline. Use publication-safe "
+                + "scrape-pass staging ("
+                + nameof(ScraperOptions.EnableScrapePassPathGeneration)
+                + ") instead.");
+        }
+
+        if (!ScraperOptions.IsValidScrapePassPathGenerationMaxSongs(
+                options.ScrapePassPathGenerationMaxSongs))
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.ScrapePassPathGenerationMaxSongs)
+                + " must be between "
+                + ScraperOptions.MinimumScrapePassPathGenerationMaxSongs
+                + " and "
+                + ScraperOptions.MaximumScrapePassPathGenerationMaxSongs
+                + " songs.");
+        }
+
+        if (!ScraperOptions.IsValidScrapePassPathGenerationTimeout(
+                options.ScrapePassPathGenerationTimeout))
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.ScrapePassPathGenerationTimeout)
+                + " must be between "
+                + ScraperOptions.MinimumScrapePassPathGenerationTimeout
+                + " and "
+                + ScraperOptions.MaximumScrapePassPathGenerationTimeout
+                + ".");
+        }
+
+        if (options.EnableScrapePassPathGeneration
+            && !options.EnablePathGeneration)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.EnableScrapePassPathGeneration)
+                + " requires "
+                + nameof(ScraperOptions.EnablePathGeneration)
+                + " to be enabled.");
+        }
+
+        if (options.EnableScrapePassPathGeneration
+            && !options.UsePublicationPathArtifacts)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.EnableScrapePassPathGeneration)
+                + " requires "
+                + nameof(ScraperOptions.UsePublicationPathArtifacts)
+                + " to be enabled. Staged generations are only readable "
+                + "through the publication-bound snapshot.");
+        }
+
+        if (options.EnableScrapePassPathGeneration)
+        {
+            var midiKey = options.MidiEncryptionKey;
+            if (string.IsNullOrWhiteSpace(midiKey))
+            {
+                midiKey = Environment.GetEnvironmentVariable(
+                    "FESTIVAL_MIDI_KEY");
+            }
+
+            if (string.IsNullOrWhiteSpace(midiKey))
+            {
+                return ValidateOptionsResult.Fail(
+                    $"{ScraperOptions.Section}:"
+                    + nameof(ScraperOptions.MidiEncryptionKey)
+                    + " is required when "
+                    + nameof(
+                        ScraperOptions
+                            .EnableScrapePassPathGeneration)
+                    + " is enabled.");
+            }
+
+            try
+            {
+                _ = MidiCryptor.ParseHexKey(midiKey);
+            }
+            catch (Exception ex)
+                when (ex is ArgumentException
+                    or FormatException)
+            {
+                return ValidateOptionsResult.Fail(
+                    $"{ScraperOptions.Section}:"
+                    + nameof(ScraperOptions.MidiEncryptionKey)
+                    + " must be a valid 32- or 64-character hexadecimal AES key when "
+                    + nameof(
+                        ScraperOptions
+                            .EnableScrapePassPathGeneration)
+                    + " is enabled.");
+            }
         }
 
         return ValidateOptionsResult.Success;

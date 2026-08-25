@@ -5,6 +5,8 @@ last_verified: 2026-08-23
 last_verified_commit: 4c36926a
 sources:
   - FSTService/ScraperWorker.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -169,10 +171,23 @@ remain sequential and resumable. See [Path generation](path-generation.md).
 
 Scrape allocation additionally captures the publication-bound path artifact
 snapshot for the new working publication, and publication preparation re-emits
-that binding. The worker does not stage or generate paths automatically, and
-the legacy API-owned `Scraper:EnableAutomaticPathGeneration=true` mode is now
-rejected at startup until publication-safe scrape-pass staging replaces it.
-Generation and maintenance code paths keep reading live `songs` rows. See
+that binding. With `Scraper:EnableScrapePassPathGeneration` enabled, the scrape
+pass then stages generations for pending catalog songs into that candidate
+snapshot, between allocation and the publication read scope, bounded by
+`Scraper:ScrapePassPathGenerationMaxSongs` and
+`Scraper:ScrapePassPathGenerationTimeout`. Staging never writes live `songs`
+rows: staged rows are promoted by a compare-and-swap inside the publication
+commit transaction. `deploy/config/fstworker-role.env` enables staging and the
+publication-bound read source for the worker role, so the deployed
+configuration always has exactly one generator. Because the worker keeps
+`SkipStartupSchemaInitialization=true` and never runs DDL, startup verifies the
+current publication's path artifact release and fails fast when the
+schema-initializing role has not applied it yet. Staging is best-effort: subsystem failures are contained
+and logged, partial progress from a timed-out batch is kept, and blocked or
+repeatedly failing songs are durably deferred so they cannot monopolize later
+passes. The legacy API-owned
+`Scraper:EnableAutomaticPathGeneration=true` mode stays rejected at startup, and
+generation and maintenance code paths keep reading live `songs` rows. See
 [Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Max-score correction is a separate CLI-only one-shot mode. It registers no

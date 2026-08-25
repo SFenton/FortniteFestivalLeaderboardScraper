@@ -2622,6 +2622,28 @@ public sealed partial class MetaDatabase
         long? currentPublicationId,
         bool promoteCachedResponses)
     {
+        if (!promoteCachedResponses)
+        {
+            using var validatePathPromotions = conn.CreateCommand();
+            validatePathPromotions.Transaction = tx;
+            validatePathPromotions.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM publication_path_artifacts
+                    WHERE publication_id = @publicationId
+                      AND promotion_pending
+                )
+                """;
+            validatePathPromotions.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            if (validatePathPromotions.ExecuteScalar() is true)
+            {
+                throw new InvalidOperationException(
+                    $"Publication {publicationId} contains staged path promotions, so its canonical songs cache must be rebuilt instead of inherited.");
+            }
+        }
+
         using var command = conn.CreateCommand();
         command.Transaction = tx;
         command.CommandText = promoteCachedResponses
@@ -2919,6 +2941,7 @@ public sealed partial class MetaDatabase
             tx,
             preparation.PublicationId);
         VerifyPreparedGeneration(conn, tx, preparation);
+        VerifyPreparedPathArtifacts(conn, tx, preparation);
         if (preparation.ExpectedPublishedScopeCount.HasValue)
         {
             ValidatePublishedScopeSources(
@@ -3028,6 +3051,13 @@ public sealed partial class MetaDatabase
                     $"Publication generation {preparation.PublicationId} could not be promoted.");
             }
         }
+
+        // Phase B: staged path generations become live rows in the same
+        // transaction that advances the publication pointer.
+        PromoteStagedPathArtifacts(
+            conn,
+            tx,
+            preparation.PublicationId);
 
         using var publish = conn.CreateCommand();
         publish.Transaction = tx;
@@ -3217,6 +3247,84 @@ public sealed partial class MetaDatabase
         {
             throw new InvalidOperationException(
                 $"Publication generation {preparation.PublicationId} is not a complete prepared candidate.");
+        }
+    }
+
+    private static void VerifyPreparedPathArtifacts(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        PublicationPreparationResult preparation)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM publication_surface_bindings path
+                    WHERE path.publication_id = @publicationId
+                      AND path.surface_name = 'path_artifacts'
+                      AND path.binding_kind = @pathBindingKind
+                      AND path.status = 'ready'
+                      AND path.binding_json ->> 'contractVersion' =
+                            @contractVersion
+                      AND path.binding_json ->> 'manifestVersion' =
+                            @manifestVersion
+                      AND path.row_count = (
+                            SELECT COUNT(*)
+                            FROM publication_path_artifacts artifact
+                            WHERE artifact.publication_id =
+                                @publicationId)
+                      AND path.row_count = (
+                            SELECT catalog.song_count
+                            FROM publication_song_catalog catalog
+                            WHERE catalog.publication_id =
+                                @publicationId
+                              AND catalog.is_exact)
+                      AND path.content_hash =
+                            publication_path_artifact_manifest_sha256(
+                                @publicationId)
+                )
+                AND (
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM publication_path_artifacts artifact
+                        WHERE artifact.publication_id = @publicationId
+                          AND artifact.promotion_pending)
+                    OR EXISTS (
+                        SELECT 1
+                        FROM publication_surface_bindings cache
+                        WHERE cache.publication_id = @publicationId
+                          AND cache.surface_name =
+                                'api_response_cache'
+                          AND cache.binding_kind =
+                                'generation_cache_table'
+                          AND cache.status = 'ready'
+                          AND cache.binding_json
+                                ? 'inheritedFromPublicationId'
+                          AND cache.binding_json
+                                -> 'inheritedFromPublicationId'
+                                = 'null'::jsonb)
+                )
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            preparation.PublicationId);
+        command.Parameters.AddWithValue(
+            "pathBindingKind",
+            PublicationPathArtifactSchema.ManifestBindingKind);
+        command.Parameters.AddWithValue(
+            "contractVersion",
+            PublicationPathArtifactSchema.ContractVersion.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue(
+            "manifestVersion",
+            PublicationPathArtifactSchema.ManifestVersion.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        if (command.ExecuteScalar() is not bool isReady || !isReady)
+        {
+            throw new InvalidOperationException(
+                $"Publication generation {preparation.PublicationId} does not have a current, hash-valid path artifact manifest and promotion-compatible canonical songs cache.");
         }
     }
 

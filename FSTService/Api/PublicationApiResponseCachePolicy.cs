@@ -25,7 +25,8 @@ public sealed record PublicApiCacheRequestPlan(
     bool AllowWriteThrough,
     TimeSpan MaxBuildDuration,
     int MaxPayloadBytes,
-    string? ResponseCacheControl = null);
+    string? ResponseCacheControl = null,
+    bool SongsRoute = false);
 
 public static class PublicationApiCacheKeys
 {
@@ -109,10 +110,11 @@ internal static class PublicApiResponseCachePolicy
             '/',
             StringSplitOptions.RemoveEmptyEntries);
 
-        if (string.Equals(
-                path,
-                "/api/songs",
-                StringComparison.OrdinalIgnoreCase))
+        var songsRoute = string.Equals(
+            path,
+            "/api/songs",
+            StringComparison.OrdinalIgnoreCase);
+        if (songsRoute)
         {
             candidates.Add(new(PublicationApiCacheKeys.Songs));
             freezeCritical = true;
@@ -182,7 +184,8 @@ internal static class PublicApiResponseCachePolicy
             allowWriteThrough,
             TimeSpan.FromSeconds(1),
             2 * 1024 * 1024,
-            responseCacheControl);
+            responseCacheControl,
+            songsRoute);
         return true;
     }
 
@@ -249,6 +252,39 @@ internal static class PublicApiResponseCachePolicy
         cacheKey = BuildCacheKey(request);
         return true;
     }
+
+    /// <summary>
+    /// Rewrites the <c>/api/songs</c> plan for publication-bound songs reads.
+    /// The canonical <c>public-api:songs:v1</c> row is the only readable and
+    /// writable key: route-key rows are neither consulted nor written, so a
+    /// process-local endpoint build can never create or shadow the canonical
+    /// payload.
+    /// </summary>
+    public static PublicApiCacheRequestPlan ToPublicationBoundSongsPlan(
+        PublicApiCacheRequestPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        if (!plan.SongsRoute)
+            return plan;
+
+        return plan with
+        {
+            RequestCacheKey = PublicationApiCacheKeys.Songs,
+            LookupCandidates =
+            [
+                new PublicApiCacheLookupCandidate(
+                    PublicationApiCacheKeys.Songs),
+            ],
+            AllowWriteThrough = false,
+        };
+    }
+
+    /// <summary>
+    /// Durable route-key rows for <c>/api/songs</c>. Publication-bound mode
+    /// purges these so the canonical key wins immediately after rollout.
+    /// </summary>
+    public const string SongsRouteCacheKeyPrefix =
+        "public-route:/api/songs";
 
     internal static string BuildCacheKey(
         HttpRequest request)

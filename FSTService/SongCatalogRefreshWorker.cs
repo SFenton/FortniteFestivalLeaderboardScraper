@@ -9,16 +9,17 @@ using Microsoft.Extensions.Options;
 namespace FSTService;
 
 /// <summary>
-/// API-service-owned song catalog refresher. Keeps /api/songs fresh, broadcasts
-/// catalog changes to connected clients, and generates CHOpt/path metadata for
-/// newly discovered or changed songs without involving the scrape worker.
+/// API-service-owned song catalog refresher. Keeps /api/songs fresh and
+/// broadcasts catalog changes to connected clients.
+/// It never generates paths: path generation is owned by the worker
+/// publication-safe scrape pass and by explicit admin requests, so a catalog
+/// refresh can never promote mutable live song rows out of band.
 /// </summary>
 public sealed class SongCatalogRefreshWorker : BackgroundService
 {
     private readonly FestivalService _festivalService;
     private readonly StartupInitializer _startup;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
     private readonly ScrapeTimePrecomputer _precomputer;
@@ -31,7 +32,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         FestivalService festivalService,
         StartupInitializer startup,
         GlobalLeaderboardPersistence persistence,
-        PathGenerationCoordinator pathGeneration,
         IPathDataStore pathDataStore,
         SongsCacheService songsCache,
         ScrapeTimePrecomputer precomputer,
@@ -43,7 +43,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         _festivalService = festivalService;
         _startup = startup;
         _persistence = persistence;
-        _pathGeneration = pathGeneration;
         _pathDataStore = pathDataStore;
         _songsCache = songsCache;
         _precomputer = precomputer;
@@ -59,15 +58,11 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         {
             await _startup.WaitForReadyAsync(stoppingToken);
             _log.LogInformation(
-                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}, AutomaticPathGeneration={AutomaticPathGenerationEnabled}",
+                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}. Catalog refresh never generates paths.",
                 _options.Value.SongSyncInterval,
-                _options.Value.EnablePathGeneration,
-                _options.Value.EnableAutomaticPathGeneration);
+                _options.Value.EnablePathGeneration);
 
             PrimeSongsCache();
-            _ = Task.Run(
-                () => TryGeneratePathsAsync(stoppingToken),
-                CancellationToken.None);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -120,8 +115,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
                     "Song catalog refresh: {Total} songs in catalog (no exact changes).",
                     after);
             }
-
-            await TryGeneratePathsAsync(ct);
         }
         catch (SongCatalogPersistenceBusyException ex)
         {
@@ -144,33 +137,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
             beforeContentHash,
             syncResult.PersistenceToken.ContentHash,
             StringComparison.Ordinal);
-
-    private async Task<bool> TryGeneratePathsAsync(CancellationToken ct)
-    {
-        var opts = _options.Value;
-        if (!opts.EnablePathGeneration ||
-            !opts.EnableAutomaticPathGeneration)
-            return false;
-
-        try
-        {
-            var songs = _festivalService.Songs
-                .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
-                .ToList();
-            if (songs.Count == 0)
-                return false;
-
-            var result = await _pathGeneration.GenerateAutomaticPathsAsync(
-                songs,
-                ct);
-            return result.Changed;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Path generation failed. Song catalog refresh continues unaffected.");
-            return false;
-        }
-    }
 
     private void PrimeSongsCache()
     {
