@@ -1,11 +1,12 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
+  - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
@@ -73,6 +74,24 @@ weakening fail-closed behavior.
 
 Changing these bounds is an API/publication behavior change requiring matched
 benchmarks, freeze tests, documentation, and a separate promotion decision.
+
+## Song catalog refresh
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `Scraper:SongSyncInterval` | `00:05:00` | Boundary-aligned interval for fetching and persisting the exact Spark Tracks catalog |
+
+The public service role owns this refresh. A successful exact change updates
+`live_song_catalog` and live song metadata, invalidates process-local song
+state, emits aggregate `songs_changed` telemetry, and retries later when the
+publication lock is busy. It does not generate paths and, with publication
+path artifacts enabled, does not mutate the canonical published
+`/api/songs` row, maxima, rankings, or publication pointer. Those surfaces
+remain tied to the catalog captured when the worker allocated its publication.
+
+The repository Compose files contain only a commented 15-minute example.
+Production keeps the code default unless the production-owned Compose project
+explicitly overrides `Scraper__SongSyncInterval`.
 
 ## Path generation
 

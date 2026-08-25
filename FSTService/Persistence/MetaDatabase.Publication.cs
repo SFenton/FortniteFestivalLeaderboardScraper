@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FSTService.Api;
 using FSTService.Scraping;
 using Npgsql;
 using NpgsqlTypes;
@@ -2429,23 +2430,86 @@ public sealed partial class MetaDatabase
         long scrapeId,
         long publicationId)
     {
+        using (var staging = conn.CreateCommand())
+        {
+            staging.Transaction = tx;
+            staging.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM api_response_cache_staging)
+                """;
+            if (staging.ExecuteScalar() is not bool hasStagedResponses
+                || !hasStagedResponses)
+            {
+                throw new InvalidOperationException(
+                    $"Scrape run {scrapeId} cannot be published because the cache staging table is empty.");
+            }
+        }
+
         using var command = conn.CreateCommand();
         command.Transaction = tx;
         command.CommandText = """
-            SELECT
-                EXISTS (SELECT 1 FROM api_response_cache_staging)
-                AND EXISTS (
-                    SELECT 1
-                    FROM publication_api_response_cache_staging
-                    WHERE publication_id = @publicationId
-                )
+            WITH catalog AS (
+                SELECT song_count,
+                       catalog_json
+                FROM publication_song_catalog
+                WHERE publication_id = @publicationId
+                  AND is_exact
+            ),
+            staged AS (
+                SELECT convert_from(
+                            json_data,
+                            'UTF8')::jsonb AS payload
+                FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId
+                  AND cache_key = @songsCacheKey
+            ),
+            catalog_ids AS (
+                SELECT song #>> '{track,su}' AS song_id
+                FROM catalog
+                CROSS JOIN LATERAL
+                    jsonb_array_elements(
+                        catalog.catalog_json -> 'songs') song
+            ),
+            staged_ids AS (
+                SELECT song ->> 'songId' AS song_id
+                FROM staged
+                CROSS JOIN LATERAL
+                    jsonb_array_elements(
+                        staged.payload -> 'songs') song
+            )
+            SELECT COALESCE((
+                    SELECT
+                        (staged.payload ->> 'count')::INTEGER =
+                            catalog.song_count
+                        AND jsonb_array_length(
+                                staged.payload -> 'songs') =
+                            catalog.song_count
+                        AND NOT EXISTS (
+                            SELECT song_id
+                            FROM catalog_ids
+                            EXCEPT
+                            SELECT song_id
+                            FROM staged_ids)
+                        AND NOT EXISTS (
+                            SELECT song_id
+                            FROM staged_ids
+                            EXCEPT
+                            SELECT song_id
+                            FROM catalog_ids)
+                    FROM catalog
+                    CROSS JOIN staged
+                ), FALSE)
             """;
         command.Parameters.AddWithValue("publicationId", publicationId);
-        if (command.ExecuteScalar() is not bool hasStagedResponses
-            || !hasStagedResponses)
+        command.Parameters.AddWithValue(
+            "songsCacheKey",
+            PublicationApiCacheKeys.Songs);
+        if (command.ExecuteScalar() is not bool hasMatchingSongs
+            || !hasMatchingSongs)
         {
             throw new InvalidOperationException(
-                $"Scrape run {scrapeId} cannot be published because its API response cache staging table is empty.");
+                $"Scrape run {scrapeId} cannot be published because its canonical songs payload does not match publication {publicationId}.");
         }
     }
 
@@ -2641,6 +2705,44 @@ public sealed partial class MetaDatabase
             {
                 throw new InvalidOperationException(
                     $"Publication {publicationId} contains staged path promotions, so its canonical songs cache must be rebuilt instead of inherited.");
+            }
+
+            if (currentPublicationId.HasValue)
+            {
+                using var validateCatalogIdentity =
+                    conn.CreateCommand();
+                validateCatalogIdentity.Transaction = tx;
+                validateCatalogIdentity.CommandText = """
+                    SELECT COALESCE((
+                        SELECT
+                            candidate.content_hash =
+                                published_catalog.content_hash
+                        FROM publication_song_catalog candidate
+                        JOIN publication_song_catalog published_catalog
+                          ON published_catalog.publication_id =
+                                @currentPublicationId
+                         AND published_catalog.is_exact
+                         AND published_catalog.source_kind =
+                                'provider_exact'
+                        WHERE candidate.publication_id =
+                                @publicationId
+                          AND candidate.is_exact
+                          AND candidate.source_kind =
+                                'provider_exact'
+                    ), FALSE)
+                    """;
+                validateCatalogIdentity.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                validateCatalogIdentity.Parameters.AddWithValue(
+                    "currentPublicationId",
+                    currentPublicationId.Value);
+                if (validateCatalogIdentity.ExecuteScalar()
+                    is not true)
+                {
+                    throw new InvalidOperationException(
+                        $"Publication {publicationId} has a different exact song catalog than current publication {currentPublicationId.Value}, so its canonical songs cache must be rebuilt instead of inherited.");
+                }
             }
         }
 
@@ -2942,6 +3044,13 @@ public sealed partial class MetaDatabase
             preparation.PublicationId);
         VerifyPreparedGeneration(conn, tx, preparation);
         VerifyPreparedPathArtifacts(conn, tx, preparation);
+        if (preparation.PromoteCachedResponses)
+        {
+            VerifyPreparedPublicationSongsCache(
+                conn,
+                tx,
+                preparation);
+        }
         if (preparation.ExpectedPublishedScopeCount.HasValue)
         {
             ValidatePublishedScopeSources(
@@ -3325,6 +3434,80 @@ public sealed partial class MetaDatabase
         {
             throw new InvalidOperationException(
                 $"Publication generation {preparation.PublicationId} does not have a current, hash-valid path artifact manifest and promotion-compatible canonical songs cache.");
+        }
+    }
+
+    private static void VerifyPreparedPublicationSongsCache(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        PublicationPreparationResult preparation)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            WITH catalog AS (
+                SELECT song_count,
+                       catalog_json
+                FROM publication_song_catalog
+                WHERE publication_id = @publicationId
+                  AND is_exact
+            ),
+            cached AS (
+                SELECT convert_from(
+                            json_data,
+                            'UTF8')::jsonb AS payload
+                FROM publication_api_response_cache
+                WHERE publication_id = @publicationId
+                  AND cache_key = @songsCacheKey
+            ),
+            catalog_ids AS (
+                SELECT song #>> '{track,su}' AS song_id
+                FROM catalog
+                CROSS JOIN LATERAL
+                    jsonb_array_elements(
+                        catalog.catalog_json -> 'songs') song
+            ),
+            cached_ids AS (
+                SELECT song ->> 'songId' AS song_id
+                FROM cached
+                CROSS JOIN LATERAL
+                    jsonb_array_elements(
+                        cached.payload -> 'songs') song
+            )
+            SELECT COALESCE((
+                SELECT
+                    (cached.payload ->> 'count')::INTEGER =
+                        catalog.song_count
+                    AND jsonb_array_length(
+                            cached.payload -> 'songs') =
+                        catalog.song_count
+                    AND NOT EXISTS (
+                        SELECT song_id
+                        FROM catalog_ids
+                        EXCEPT
+                        SELECT song_id
+                        FROM cached_ids)
+                    AND NOT EXISTS (
+                        SELECT song_id
+                        FROM cached_ids
+                        EXCEPT
+                        SELECT song_id
+                        FROM catalog_ids)
+                FROM catalog
+                CROSS JOIN cached
+            ), FALSE)
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            preparation.PublicationId);
+        command.Parameters.AddWithValue(
+            "songsCacheKey",
+            PublicationApiCacheKeys.Songs);
+        if (command.ExecuteScalar() is not bool matches
+            || !matches)
+        {
+            throw new InvalidOperationException(
+                $"Publication generation {preparation.PublicationId} canonical songs cache does not match its exact publication catalog.");
         }
     }
 

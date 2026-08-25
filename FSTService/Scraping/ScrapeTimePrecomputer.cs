@@ -124,17 +124,34 @@ public sealed class ScrapeTimePrecomputer
     public async Task PrecomputeAllAsync(
         bool showLeaderboardEntryTotals,
         CancellationToken ct,
-        bool publishImmediately = true)
-        => _ = await PrecomputeAllCoreAsync(
+        bool publishImmediately = true,
+        IReadOnlyCollection<Song>?
+            publicationCatalogSongs = null)
+    {
+        if (publicationCatalogSongs is { Count: 0 })
+        {
+            throw new InvalidOperationException(
+                "Precompute cannot stage a supplied empty publication catalog.");
+        }
+        if (!publishImmediately
+            && publicationCatalogSongs is null)
+        {
+            throw new InvalidOperationException(
+                "Candidate precompute requires the exact publication catalog.");
+        }
+
+        _ = await PrecomputeAllCoreAsync(
             showLeaderboardEntryTotals,
             ct,
             publishImmediately,
             useExistingMaintenanceLease: false,
             expectedPublicationId: null,
             maintenanceLease: null,
-            maintenanceCatalogSongs: null,
+            maintenanceCatalogSongs:
+                publicationCatalogSongs,
             maintenanceMaxScores: null,
             populationOverride: null);
+    }
 
     internal Task<long> StageCurrentPublicationCachesForMaintenanceAsync(
         long publicationId,

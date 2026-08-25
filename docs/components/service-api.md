@@ -1,14 +1,15 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-24
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/HealthEndpoints.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Api/PublicReadGateService.cs
@@ -22,6 +23,8 @@ sources:
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
@@ -126,10 +129,13 @@ middleware tests make future classification drift fail closed.
 L2 rows retain deterministic JSON bytes, ETag, and `cached_at`; the service
 derives the full SHA-256 and fixed JSON content type on lookup. A service
 restart recovers directly from L2. Same-publication maintenance swaps the
-complete L2 generation before unfreeze, while catalog/path mutation explicitly
-invalidates L1 and durably rewrites the canonical songs row. Catalog refresh
-compares the exact provider snapshot hash, not only song count, so metadata
-changes and removals invalidate the same-publication row as well as additions.
+complete L2 generation before unfreeze. Guarded path/max-score mutation
+explicitly invalidates L1 and durably rewrites the canonical songs row.
+Periodic catalog refresh instead updates the exact live provider catalog and
+invalidates process-local live state without replacing the publication-owned
+canonical row. It compares the exact provider snapshot hash, not only song
+count, so additions, removals, and same-count metadata changes all produce
+truthful lag telemetry while public songs remain stable.
 HTTP JSON serialization, precompute serialization, and alias projection share
 an explicit relaxed Unicode encoder. This keeps non-ASCII display-name bytes
 and therefore ETags identical between a direct endpoint and its cached alias.
@@ -233,6 +239,14 @@ separate heartbeat/last-progress fields. It preserves the version-1 labels and
 summary fields for rolling worker and browser compatibility. The normalized
 PostgreSQL ledger is authoritative when a running attempt exists; the worker
 operation JSON remains the fallback summary.
+
+Its additive `catalog` object reports the configured refresh interval, exact
+live/published/working catalog identities, nullable live-versus-published
+change counts, and path-generation pending/review totals. The count comparison
+is memoized by catalog version/hash and is unknown when either exact baseline
+is absent. `songs_changed` broadcasts additions, removals, and metadata
+changes, but clients refresh service-info rather than treating the message as
+permission to expose unpublished songs.
 
 The phase plan also identifies subphase catalog version
 `fst.subphase-plan.v1`. `currentUpdate.subphaseProgress` is optional and

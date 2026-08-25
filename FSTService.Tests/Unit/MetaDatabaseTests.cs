@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FSTService.Api;
@@ -91,6 +92,149 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("ready", publishedBinding.Status);
         Assert.Equal(captured.ContentHash, publishedBinding.ContentHash);
         Assert.Equal(captured, ReadPublicationSongCatalog(publicationId));
+    }
+
+    [Fact]
+    public async Task Service_runtime_reports_exact_live_publication_catalog_lag()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        Db.CompleteScrapeRun(scrapeId, 2, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha changed"),
+            CreateCatalogSong("song-c", "Gamma"),
+        ]);
+
+        var lag = Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey)
+            .CatalogLag;
+
+        Assert.Equal(2, lag.LiveSongCount);
+        Assert.Equal(2, lag.PublishedSongCount);
+        Assert.Equal(1, lag.AddedAwaitingPublication);
+        Assert.Equal(1, lag.ChangedAwaitingPublication);
+        Assert.Equal(1, lag.RemovedAwaitingPublication);
+        Assert.Equal(3, lag.AwaitingPublication);
+        Assert.NotEqual(
+            lag.LiveCatalogVersion,
+            lag.PublishedCatalogVersion);
+    }
+
+    [Fact]
+    public async Task Catalog_lag_is_unknown_without_an_exact_published_baseline()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+
+        var lag = Db.GetCatalogPublicationLagState();
+
+        Assert.Equal(1, lag.LiveSongCount);
+        Assert.Null(lag.PublishedPublicationId);
+        Assert.Null(lag.PublishedSongCount);
+        Assert.Null(lag.AddedAwaitingPublication);
+        Assert.Null(lag.ChangedAwaitingPublication);
+        Assert.Null(lag.RemovedAwaitingPublication);
+        Assert.Null(lag.AwaitingPublication);
+    }
+
+    [Fact]
+    public async Task Catalog_lag_comparison_is_cached_by_exact_catalog_identity()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha changed"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+
+        var comparisons = 0;
+        Db.CatalogPublicationLagComparisonTestHook =
+            _ => comparisons++;
+
+        Assert.Equal(
+            2,
+            Db.GetCatalogPublicationLagState()
+                .AwaitingPublication);
+        Assert.Equal(
+            2,
+            Db.GetCatalogPublicationLagState()
+                .AwaitingPublication);
+        Assert.Equal(1, comparisons);
+
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha changed again"),
+            CreateCatalogSong("song-c", "Gamma"),
+        ]);
+
+        Assert.Equal(
+            2,
+            Db.GetCatalogPublicationLagState()
+                .AwaitingPublication);
+        Assert.Equal(2, comparisons);
+    }
+
+    [Fact]
+    public async Task Publication_cache_inheritance_rejects_catalog_drift()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var firstToken = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var firstScrapeId = Db.StartScrapeRun(firstToken);
+        Db.CompleteScrapeRun(
+            firstScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+
+        var nextToken = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var candidateScrapeId = Db.StartScrapeRun(nextToken);
+        Db.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            20,
+            2,
+            200);
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Db.PublishScrapeRun(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+        Assert.Contains(
+            "canonical songs cache must be rebuilt",
+            failure.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1357,7 +1501,8 @@ public sealed class MetaDatabaseTests : IDisposable
             Db.GetPublicationGenerationForScrape(oldId)!.PublicationId;
 
         var nextId = Db.StartScrapeRun();
-        Db.BulkSetCachedResponsesStaging([(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
+        StagePublicationCache(
+            [(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
 
         var cachedBeforePublish = Db.GetCachedResponse("player:acct_1:::");
         Assert.NotNull(cachedBeforePublish);
@@ -1392,7 +1537,7 @@ public sealed class MetaDatabaseTests : IDisposable
             .Single(binding =>
                 binding.SurfaceName == "api_response_cache");
         Assert.Equal("generation_cache_table", cacheBinding.BindingKind);
-        Assert.Equal(1, cacheBinding.RowCount);
+        Assert.Equal(2, cacheBinding.RowCount);
         Assert.False(string.IsNullOrWhiteSpace(cacheBinding.ContentHash));
     }
 
@@ -2007,7 +2152,7 @@ public sealed class MetaDatabaseTests : IDisposable
     public async Task SchemaUpgrade_reconciles_legacy_cache_after_rollback_writer()
     {
         var scrapeId = Db.StartScrapeRun();
-        Db.BulkSetCachedResponsesStaging(
+        StagePublicationCache(
             [(Key: "old-key", Json: new byte[] { 1 }, ETag: "\"old\"")]);
         Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
         Db.PublishScrapeRun(scrapeId);
@@ -2055,7 +2200,7 @@ public sealed class MetaDatabaseTests : IDisposable
                 promoteCachedResponses: false);
 
         var candidateScrapeId = Db.StartScrapeRun();
-        Db.BulkSetCachedResponsesStaging(
+        StagePublicationCache(
         [
                 (Key: "cutover-key", Json: new byte[] { 2 }, ETag: "\"new\""),
         ]);
@@ -2411,7 +2556,8 @@ public sealed class MetaDatabaseTests : IDisposable
 
         var nextId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(nextId, 2, 20, 2, 200);
-        Db.BulkSetCachedResponsesStaging([(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
+        StagePublicationCache(
+            [(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
 
         var bandRankingTable =
             BandRankingStorageNames.GetCurrentRankingTable("Band_Duets");
@@ -2475,7 +2621,7 @@ public sealed class MetaDatabaseTests : IDisposable
 
         var candidateScrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(candidateScrapeId, 2, 20, 2, 200);
-        Db.BulkSetCachedResponsesStaging(
+        StagePublicationCache(
         [
             (Key: "publication-split", Json: new byte[] { 2 }, ETag: "\"new\""),
         ]);
@@ -7687,6 +7833,40 @@ public sealed class MetaDatabaseTests : IDisposable
             """;
         cmd.Parameters.AddWithValue("publicationId", publicationId);
         return (bool)cmd.ExecuteScalar()!;
+    }
+
+    private void StagePublicationCache(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries)
+    {
+        var publicationId = Db.GetPublicationPointerState()
+            .WorkingPublicationId
+            ?? throw new InvalidOperationException(
+                "A working publication is required to stage its cache.");
+        var catalog = ReadPublicationSongCatalog(publicationId);
+        using var document = JsonDocument.Parse(catalog.CatalogJson);
+        var songIds = document.RootElement
+            .GetProperty("songs")
+            .EnumerateArray()
+            .Select(static song =>
+                song.GetProperty("track").GetProperty("su").GetString()
+                ?? throw new InvalidOperationException(
+                    "A publication catalog song has no provider song ID."))
+            .ToArray();
+        var songsJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            count = songIds.Length,
+            currentSeason = 0,
+            songs = songIds.Select(
+                static songId => new { songId }),
+        });
+        Db.BulkSetCachedResponsesStaging(
+            entries.Append(
+                (
+                    Key: PublicationApiCacheKeys.Songs,
+                    Json: songsJson,
+                    ETag: ResponseCacheService.ComputeETag(
+                        songsJson))),
+            publicationId);
     }
 
     private long CountScrapeRuns()

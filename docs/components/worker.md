@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
@@ -30,6 +30,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
@@ -115,6 +116,12 @@ scrape ID. A gracefully stopped
 interrupted worker normally reports `stalled`; both states are
 resume-eligible only for the same exact candidate.
 
+Resume and ordinary scrape contexts both carry the immutable song catalog
+selected for their publication. Cleanup precompute must serialize canonical
+`/api/songs` from that explicit collection; it cannot fall back to the
+service's newer singleton live catalog. A supplied empty catalog fails before
+cache staging.
+
 ## Continuous loop
 
 After startup the worker:
@@ -128,6 +135,15 @@ After startup the worker:
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+The public service independently polls the Spark Tracks catalog on the
+boundary-aligned `Scraper:SongSyncInterval` (five minutes by default). It
+persists only successful exact provider snapshots and shares the publication
+advisory lock, so refresh defers rather than racing allocation or commit. This
+poller does not publish leaderboard data or generate paths. New/changed catalog
+entries become canonical only after a worker allocates a later publication and
+that pass completes its normal derived-state, cache, notification, and cleanup
+contract.
 
 The pre-scrape notification gate treats an exact published-scrape marker with
 all required notification surfaces already complete as terminal during a

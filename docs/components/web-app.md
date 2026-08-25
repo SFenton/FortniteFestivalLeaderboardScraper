@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-14
-last_verified_commit: afc475f6
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -22,6 +22,9 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
   - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/src/hooks/data/useCatalogPublicationLag.ts
+  - FortniteFestivalWeb/src/components/page/CatalogUpdateBanner.tsx
+  - FortniteFestivalWeb/src/pages/songs/SongsPage.tsx
   - FortniteFestivalWeb/src/hooks/ui/useScrollUpdateScheduler.ts
   - FortniteFestivalWeb/src/hooks/ui/useVirtualListScrollMargin.ts
   - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
@@ -233,6 +236,25 @@ Settings keeps `useServiceInfo('settings')` as its sole request owner on the
 shared React Query key. Visible Settings polling is five seconds; hidden-page
 polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
 is added, and publication-boundary cache/reset ownership is unchanged.
+
+### Catalog publication lag
+
+The Songs page reuses the same `serviceInfo` React Query key through
+`useServiceInfo('availability')`, so healthy background polling remains 30
+seconds and concurrent Settings/Songs consumers deduplicate to one request.
+`useCatalogPublicationLag` subscribes to the shared application WebSocket and
+invalidates only that operational query after `songs_changed`.
+
+When exact live and published baselines differ, the page shows one passive
+aggregate status banner. It reports only the number of catalog entries added,
+removed, or changed and explains that a leaderboard publication is still
+required. It never injects unpublished songs into `FestivalContext`, creates
+dead-end song routes, previews unapproved maxima, or changes the canonical
+song count. Missing/inexact baselines and zero lag render no banner.
+
+Unit-test setup replaces Node's native WebSocket with an inert implementation,
+so page tests cannot make real `/api/ws` connections. Dedicated WebSocket
+tests continue to install their own behavioral mocks.
 
 The service area uses one flat `FrostedCard` with no tinted or bordered
 subcards. Inside it, three ToggleRow-style entries reuse the same title,

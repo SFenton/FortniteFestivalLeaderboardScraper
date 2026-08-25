@@ -664,6 +664,7 @@ public sealed class ScrapeOrchestrator
             RegisteredIds = registeredIds,
             Aggregates = aggregates,
             ScrapeRequests = scrapeRequests,
+            PublicationCatalogSongs = catalogSongs,
             DegreeOfParallelism = opts.DegreeOfParallelism,
             EpicReportedOver100Pages = epicReportedOver100Pages,
             LeaderboardScrapeCompleted = true,

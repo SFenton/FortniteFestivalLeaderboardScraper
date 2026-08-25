@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -14,6 +14,8 @@ sources:
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Api/AdminPathRegenerationGate.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/ScraperOptions.cs
@@ -177,6 +179,14 @@ maximum-dependent ranking/statistics surface and canonical songs cache. Live
 `songs` rows are updated only inside the publication commit transaction, by a
 compare-and-swap on the live revision and current generation ID, in the same
 transaction that advances the publication pointer.
+
+The cache is part of the same identity boundary. Preparation compares its
+canonical song count and exact ID set with the captured
+`publication_song_catalog`; deferred/restarted commit repeats that comparison
+against the prepared generation. A candidate with a different catalog cannot
+inherit the prior publication's songs cache. These gates prevent staged path
+maxima from being paired with a live-catalog response captured after scrape
+allocation.
 
 Enabling scrape-pass staging requires a valid 32- or 64-character hexadecimal
 MIDI AES key at startup (`Scraper:MidiEncryptionKey`, with

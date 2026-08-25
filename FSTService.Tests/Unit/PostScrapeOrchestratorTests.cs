@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Diagnostics;
+using FortniteFestival.Core;
 using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
@@ -235,6 +236,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         HashSet<string>? registeredIds = null,
         GlobalLeaderboardPersistence.PipelineAggregates? aggregates = null,
         IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>? scrapeRequests = null,
+        IReadOnlyCollection<Song>? publicationCatalogSongs = null,
         bool leaderboardScrapeCompleted = true)
     {
         return new ScrapePassContext
@@ -245,6 +247,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             RegisteredIds = registeredIds ?? new HashSet<string>(),
             Aggregates = aggregates ?? new GlobalLeaderboardPersistence.PipelineAggregates(),
             ScrapeRequests = scrapeRequests ?? Array.Empty<GlobalLeaderboardScraper.SongScrapeRequest>(),
+            PublicationCatalogSongs =
+                publicationCatalogSongs ?? [],
             DegreeOfParallelism = 4,
             LeaderboardScrapeCompleted = leaderboardScrapeCompleted,
         };
@@ -2691,7 +2695,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         InsertSnapshotEntry(84, songId, "Solo_Vocals", accountId, 93_189, isFullCombo: true);
         InsertProjectionScope(songId, "Solo_Vocals", sourceSnapshotId: 83);
 
-        var ctx = CreateContext(scrapeId: 84, registeredIds: new HashSet<string> { accountId });
+        var ctx = CreateContext(
+            scrapeId: 84,
+            registeredIds: new HashSet<string> { accountId },
+            publicationCatalogSongs:
+            [
+                new Song
+                {
+                    track = new Track
+                    {
+                        su = songId,
+                        tt = "Cache Projection",
+                        an = "Artist",
+                        @in = new In { vl = 1 },
+                    },
+                },
+            ]);
 
         await _sut.RunPublicationCleanupAsync(
             ctx,

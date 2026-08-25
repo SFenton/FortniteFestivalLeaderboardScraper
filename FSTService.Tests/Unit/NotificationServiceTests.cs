@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -613,6 +614,96 @@ public sealed class NotificationServiceTests
                 Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("newSongs")),
             WebSocketMessageType.Text, true,
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NotifySongsChangedAsync_PreservesTotalAndAddsPublicationLag()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.NotifySongsChangedAsync(
+            total: 710,
+            added: 3,
+            removed: 1,
+            changed: 2,
+            publishedTotal: 707,
+            awaitingPublication: 6);
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(
+                segment =>
+                    ContainsCatalogLagMessage(segment)),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NotifySongsChangedAsync_OmitsUnavailableLagFields()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.NotifySongsChangedAsync(
+            total: 710,
+            added: 3,
+            removed: 0,
+            changed: 0,
+            publishedTotal: null,
+            awaitingPublication: null);
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                ContainsSongsChangedWithoutLag(segment)),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+    }
+
+    private static bool ContainsSongsChangedWithoutLag(
+        ArraySegment<byte> segment)
+    {
+        using var document = JsonDocument.Parse(
+            Encoding.UTF8.GetString(
+                segment.Array!,
+                segment.Offset,
+                segment.Count));
+        var root = document.RootElement;
+        return root.GetProperty("type").GetString()
+                == "songs_changed"
+            && root.GetProperty("total").GetInt32() == 710
+            && !root.TryGetProperty(
+                "publishedTotal",
+                out _)
+            && !root.TryGetProperty(
+                "awaitingPublication",
+                out _);
+    }
+
+    private static bool ContainsCatalogLagMessage(
+        ArraySegment<byte> segment)
+    {
+        using var document = JsonDocument.Parse(
+            Encoding.UTF8.GetString(
+                segment.Array!,
+                segment.Offset,
+                segment.Count));
+        var root = document.RootElement;
+        return root.GetProperty("type").GetString()
+                == "songs_changed"
+            && root.GetProperty("total").GetInt32() == 710
+            && root.GetProperty("added").GetInt32() == 3
+            && root.GetProperty("removed").GetInt32() == 1
+            && root.GetProperty("changed").GetInt32() == 2
+            && root.GetProperty("publishedTotal").GetInt32()
+                == 707
+            && root.GetProperty("awaitingPublication")
+                .GetInt32() == 6;
     }
 
     // ─── HandleConnectionAsync with ShopProvider ────────────

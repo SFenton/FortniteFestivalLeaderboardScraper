@@ -21,6 +21,17 @@ internal sealed record MaxScoreMaintenanceServerTimeoutTestContext(
     int LockTimeoutSeconds,
     string TransactionIsolation);
 
+internal sealed record CatalogPublicationLagCacheKey(
+    long LiveCatalogVersion,
+    string LiveContentHash,
+    long PublishedPublicationId,
+    long PublishedCatalogVersion,
+    string PublishedContentHash);
+
+internal sealed record CatalogPublicationLagCacheEntry(
+    CatalogPublicationLagCacheKey Key,
+    SongCatalogChangeSet ChangeSet);
+
 /// <summary>
 /// Central metadata database (<see cref="IMetaDatabase"/> implementation).
 /// Uses NpgsqlDataSource (connection pooling) — MVCC handles concurrent reads/writes natively.
@@ -45,6 +56,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private readonly int
         _maxScoreMaintenanceCommandTimeoutSeconds;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
+    private readonly object _catalogPublicationLagCacheLock = new();
+    private CatalogPublicationLagCacheEntry?
+        _catalogPublicationLagCache;
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
     private int _bandRankHistoryCompactV3TriosReady;
@@ -61,6 +75,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
     { get; set; }
     internal Action<MaxScoreMaintenanceServerTimeoutTestContext>?
         MaxScoreMaintenanceServerTimeoutTestHook
+    { get; set; }
+    internal Action<CatalogPublicationLagCacheKey>?
+        CatalogPublicationLagComparisonTestHook
     { get; set; }
 
     internal const int DataCollectionVersion = 3;
@@ -2085,10 +2102,258 @@ public sealed partial class MetaDatabase : IMetaDatabase
         };
     }
 
+    public CatalogPublicationLagState GetCatalogPublicationLagState(
+        int commandTimeoutSeconds = 0)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        if (commandTimeoutSeconds > 0)
+            cmd.CommandTimeout = commandTimeoutSeconds;
+        cmd.CommandText = """
+            WITH publication AS (
+                SELECT current_publication_id,
+                       working_publication_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ),
+            live_catalog AS (
+                SELECT catalog_version,
+                       song_count,
+                       captured_at,
+                       content_hash
+                FROM live_song_catalog
+                WHERE id = TRUE
+                  AND is_exact
+                  AND source_kind = 'provider_exact'
+                  AND schema_version = @schemaVersion
+            ),
+            published_catalog AS (
+                SELECT catalog.publication_id,
+                       catalog.catalog_version,
+                       catalog.song_count,
+                       catalog.source_captured_at,
+                       catalog.content_hash
+                FROM publication
+                JOIN publication_song_catalog catalog
+                  ON catalog.publication_id =
+                        publication.current_publication_id
+                 AND catalog.is_exact
+                 AND catalog.source_kind = 'provider_exact'
+                 AND catalog.schema_version = @schemaVersion
+            ),
+            working_catalog AS (
+                SELECT catalog.publication_id,
+                       catalog.catalog_version,
+                       catalog.song_count
+                FROM publication
+                JOIN publication_song_catalog catalog
+                  ON catalog.publication_id =
+                        publication.working_publication_id
+                 AND catalog.is_exact
+                 AND catalog.source_kind = 'provider_exact'
+                 AND catalog.schema_version = @schemaVersion
+            ),
+            path_generation_state AS (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE path_generation_pending
+                    )::INTEGER AS pending_count,
+                    COUNT(*) FILTER (
+                        WHERE path_generation_review_required
+                    )::INTEGER AS review_count
+                FROM songs
+            )
+            SELECT
+                live.catalog_version,
+                live.song_count,
+                live.captured_at,
+                live.content_hash,
+                published.publication_id,
+                published.catalog_version,
+                published.song_count,
+                published.source_captured_at,
+                published.content_hash,
+                working.publication_id,
+                working.catalog_version,
+                working.song_count,
+                path.pending_count,
+                path.review_count
+            FROM (SELECT TRUE) singleton
+            LEFT JOIN live_catalog live ON TRUE
+            LEFT JOIN published_catalog published ON TRUE
+            LEFT JOIN working_catalog working ON TRUE
+            LEFT JOIN path_generation_state path ON TRUE
+            """;
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return new CatalogPublicationLagState();
+
+        long? liveCatalogVersion =
+            reader.IsDBNull(0) ? null : reader.GetInt64(0);
+        int? liveSongCount =
+            reader.IsDBNull(1) ? null : reader.GetInt32(1);
+        var liveCapturedAtUtc = GetNullableUtc(reader, 2);
+        var liveContentHash =
+            reader.IsDBNull(3) ? null : reader.GetString(3);
+        long? publishedPublicationId =
+            reader.IsDBNull(4) ? null : reader.GetInt64(4);
+        long? publishedCatalogVersion =
+            reader.IsDBNull(5) ? null : reader.GetInt64(5);
+        int? publishedSongCount =
+            reader.IsDBNull(6) ? null : reader.GetInt32(6);
+        var publishedCatalogCapturedAtUtc =
+            GetNullableUtc(reader, 7);
+        var publishedContentHash =
+            reader.IsDBNull(8) ? null : reader.GetString(8);
+        long? workingPublicationId =
+            reader.IsDBNull(9) ? null : reader.GetInt64(9);
+        long? workingCatalogVersion =
+            reader.IsDBNull(10) ? null : reader.GetInt64(10);
+        int? workingSongCount =
+            reader.IsDBNull(11) ? null : reader.GetInt32(11);
+        var pathGenerationPending = reader.GetInt32(12);
+        var pathGenerationReviewRequired =
+            reader.GetInt32(13);
+        reader.Close();
+
+        SongCatalogChangeSet? changeSet = null;
+        if (liveCatalogVersion.HasValue
+            && liveContentHash is not null
+            && publishedPublicationId.HasValue
+            && publishedCatalogVersion.HasValue
+            && publishedContentHash is not null)
+        {
+            changeSet = string.Equals(
+                    liveContentHash,
+                    publishedContentHash,
+                    StringComparison.Ordinal)
+                ? new SongCatalogChangeSet(0, 0, 0)
+                : GetCatalogPublicationLagChangeSet(
+                    conn,
+                    new CatalogPublicationLagCacheKey(
+                        liveCatalogVersion.Value,
+                        liveContentHash,
+                        publishedPublicationId.Value,
+                        publishedCatalogVersion.Value,
+                        publishedContentHash),
+                    commandTimeoutSeconds);
+        }
+
+        return new CatalogPublicationLagState
+        {
+            LiveCatalogVersion = liveCatalogVersion,
+            LiveSongCount = liveSongCount,
+            LiveCapturedAtUtc = liveCapturedAtUtc,
+            PublishedPublicationId = publishedPublicationId,
+            PublishedCatalogVersion = publishedCatalogVersion,
+            PublishedSongCount = publishedSongCount,
+            PublishedCatalogCapturedAtUtc =
+                publishedCatalogCapturedAtUtc,
+            WorkingPublicationId = workingPublicationId,
+            WorkingCatalogVersion = workingCatalogVersion,
+            WorkingSongCount = workingSongCount,
+            AddedAwaitingPublication = changeSet?.Added,
+            ChangedAwaitingPublication = changeSet?.Changed,
+            RemovedAwaitingPublication = changeSet?.Removed,
+            AwaitingPublication = changeSet is null
+                ? null
+                : changeSet.Added
+                    + changeSet.Changed
+                    + changeSet.Removed,
+            PathGenerationPending = pathGenerationPending,
+            PathGenerationReviewRequired =
+                pathGenerationReviewRequired,
+        };
+    }
+
+    private SongCatalogChangeSet?
+        GetCatalogPublicationLagChangeSet(
+            NpgsqlConnection conn,
+            CatalogPublicationLagCacheKey key,
+            int commandTimeoutSeconds)
+    {
+        lock (_catalogPublicationLagCacheLock)
+        {
+            if (_catalogPublicationLagCache?.Key == key)
+                return _catalogPublicationLagCache.ChangeSet;
+
+            using var cmd = conn.CreateCommand();
+            if (commandTimeoutSeconds > 0)
+                cmd.CommandTimeout = commandTimeoutSeconds;
+            cmd.CommandText = """
+                SELECT live.catalog_json::text,
+                       published.catalog_json::text
+                FROM live_song_catalog live
+                JOIN publication_song_catalog published
+                  ON published.publication_id =
+                        @publishedPublicationId
+                WHERE live.id = TRUE
+                  AND live.catalog_version =
+                        @liveCatalogVersion
+                  AND live.content_hash =
+                        @liveContentHash
+                  AND live.is_exact
+                  AND live.source_kind = 'provider_exact'
+                  AND live.schema_version = @schemaVersion
+                  AND published.catalog_version =
+                        @publishedCatalogVersion
+                  AND published.content_hash =
+                        @publishedContentHash
+                  AND published.is_exact
+                  AND published.source_kind =
+                        'provider_exact'
+                  AND published.schema_version =
+                        @schemaVersion
+                """;
+            cmd.Parameters.AddWithValue(
+                "publishedPublicationId",
+                key.PublishedPublicationId);
+            cmd.Parameters.AddWithValue(
+                "liveCatalogVersion",
+                key.LiveCatalogVersion);
+            cmd.Parameters.AddWithValue(
+                "liveContentHash",
+                key.LiveContentHash);
+            cmd.Parameters.AddWithValue(
+                "publishedCatalogVersion",
+                key.PublishedCatalogVersion);
+            cmd.Parameters.AddWithValue(
+                "publishedContentHash",
+                key.PublishedContentHash);
+            cmd.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+            {
+                _log.LogDebug(
+                    "Catalog-lag inputs changed during version-keyed comparison; a later read will retry.");
+                return null;
+            }
+
+            CatalogPublicationLagComparisonTestHook?.Invoke(key);
+            var changeSet =
+                SongCatalogSnapshotBuilder.ComputeChangeSet(
+                    reader.GetString(1),
+                    reader.GetString(0));
+            _catalogPublicationLagCache =
+                new CatalogPublicationLagCacheEntry(
+                    key,
+                    changeSet);
+            return changeSet;
+        }
+    }
+
     public ServiceRuntimeState GetServiceRuntimeState(
         string workerKey,
         int commandTimeoutSeconds = 0)
     {
+        var catalogLag = GetCatalogPublicationLagState(
+            commandTimeoutSeconds);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         if (commandTimeoutSeconds > 0)
@@ -2235,6 +2500,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 : PublicReadFreezeState.NotFrozen,
             WorkerStatus = workerStatus,
             CurrentPhaseAttempt = ReadScrapePhaseAttempt(reader, 43),
+            CatalogLag = catalogLag,
         };
     }
 

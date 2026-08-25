@@ -103,6 +103,8 @@ public interface IMetaDatabase : IDisposable
     ServiceRuntimeState GetServiceRuntimeState(
         string workerKey,
         int commandTimeoutSeconds = 0);
+    CatalogPublicationLagState GetCatalogPublicationLagState(
+        int commandTimeoutSeconds = 0);
     int InterruptOrphanedScrapePhaseAttempts(
         string workerInstanceId,
         DateTime interruptedAtUtc,

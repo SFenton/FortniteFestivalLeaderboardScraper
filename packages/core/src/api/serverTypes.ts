@@ -291,6 +291,10 @@ export type SongsChangedMessage = {
   type: 'songs_changed';
   total: number;
   added?: number;
+  removed?: number;
+  changed?: number;
+  publishedTotal?: number | null;
+  awaitingPublication?: number | null;
   at: string;
 };
 
@@ -656,6 +660,31 @@ export type ServiceInfoResponse = {
     version: string;
     subphaseCatalogVersion?: string;
     phases: ServiceInfoPhaseDescriptor[];
+  };
+  catalog?: {
+    syncIntervalSeconds: number;
+    live: {
+      version?: number | null;
+      songCount?: number | null;
+      capturedAt?: string | null;
+    };
+    published: {
+      publicationId?: number | null;
+      version?: number | null;
+      songCount?: number | null;
+      capturedAt?: string | null;
+    };
+    working?: {
+      publicationId?: number | null;
+      version?: number | null;
+      songCount?: number | null;
+    } | null;
+    awaitingPublication: number | null;
+    addedAwaitingPublication: number | null;
+    changedAwaitingPublication: number | null;
+    removedAwaitingPublication: number | null;
+    pathGenerationPending: number;
+    pathGenerationReviewRequired: number;
   };
   lastCompletedUpdate: {
     scrapeId?: number;

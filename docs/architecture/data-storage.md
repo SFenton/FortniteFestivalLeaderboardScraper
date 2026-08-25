@@ -1,11 +1,12 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
@@ -27,6 +28,7 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/SongCatalogRefreshWorker.cs
   - tools/postgres-retire-ix-le-song-rank.py
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
@@ -92,12 +94,22 @@ clears current L1 entries.
 
 Publication cleanup retains only current and previous generations. Full
 precompute uses staging and atomic swap. Same-publication max-score maintenance
-rebuilds and swaps the same surface before unfreeze. Stable song catalog/path
-changes write the canonical songs row only after a content-mutation token
-remains current; service L1 is invalidated before mutation and after the
-durable update. API catalog refresh compares the canonical provider snapshot
-hash before and after sync, preventing same-count metadata changes from
-retaining an old songs row.
+rebuilds and swaps the same surface before unfreeze. Guarded same-publication
+path/max-score changes write the canonical songs row only after a
+content-mutation token remains current; service L1 is invalidated before
+mutation and after the durable update. Periodic API catalog refresh instead
+updates `live_song_catalog` and live song metadata without rewriting the
+publication-owned canonical row. It compares canonical provider hashes, so
+same-count metadata changes still advance live catalog identity and lag
+telemetry.
+
+Publication preparation validates the staged canonical songs count and exact
+ID set against `publication_song_catalog`; deferred commit validates the
+prepared generation again. Cache inheritance requires equal exact catalog
+hashes. Service-info reads only scalar versions, hashes, counts, and path
+pending totals on each poll. A full per-song catalog comparison runs only when
+the live/published hashes differ and is cached in-process by both exact
+version/hash identities.
 
 Bounded lazy writes use the shared publication advisory lock, require the
 expected current publication, no working publication, and unfrozen reads, then

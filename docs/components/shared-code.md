@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: 86379374
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -79,6 +79,13 @@ last-progress contract. Fields stay optional so an older service response
 remains consumable during rolling deployment. Phase descriptors include the
 optional mirrored `reserved` boolean; consumers treat only `reserved === true`
 as retired so older payloads remain active-compatible.
+
+The mirrored service-info contract also includes optional catalog publication
+lag telemetry. Live/published/working identities are nullable, and change
+counts are nullable when no exact comparison baseline exists. The additive
+`SongsChangedMessage` fields `removed`, `changed`, `publishedTotal`, and
+`awaitingPublication` remain optional for older service and external-client
+compatibility.
 
 The mirrored response also includes optional
 `ServiceInfoSubphaseProgress` and `phasePlan.subphaseCatalogVersion`.

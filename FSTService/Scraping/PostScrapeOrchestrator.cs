@@ -482,7 +482,10 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync(
                 ctx,
                 "Cleanup.PrecomputeAll",
-                () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct),
+                () => PrecomputeAllForCleanupAsync(
+                    ctx,
+                    ctx.EpicReportedOver100Pages,
+                    ct),
                 alwaysPropagateFailure: true);
         }
     }
@@ -903,12 +906,20 @@ public sealed class PostScrapeOrchestrator
     private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
         resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
 
-    private async Task PrecomputeAllForCleanupAsync(bool showLeaderboardEntryTotals, CancellationToken ct)
+    private async Task PrecomputeAllForCleanupAsync(
+        ScrapePassContext ctx,
+        bool showLeaderboardEntryTotals,
+        CancellationToken ct)
     {
         _progress.SetSubOperation("cleanup_api_precompute");
         try
         {
-            await _precomputer.PrecomputeAllAsync(showLeaderboardEntryTotals, ct, publishImmediately: false);
+            await _precomputer.PrecomputeAllAsync(
+                showLeaderboardEntryTotals,
+                ct,
+                publishImmediately: false,
+                publicationCatalogSongs:
+                    ctx.PublicationCatalogSongs);
         }
         finally
         {
