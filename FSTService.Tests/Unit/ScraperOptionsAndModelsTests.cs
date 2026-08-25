@@ -58,6 +58,78 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
+    public void DatabaseMaintenanceOptions_DefaultRetentionPlannerIsOffAndReportOnly()
+    {
+        var options = new DatabaseMaintenanceOptions();
+
+        Assert.False(
+            options.SnapshotGenerationRetentionPlannerEnabled);
+        Assert.True(
+            options.SnapshotGenerationRetentionReportOnly);
+        Assert.Equal(
+            2,
+            options
+                .SnapshotGenerationRetentionNewestGenerationsToKeep);
+        Assert.Equal(
+            2,
+            options
+                .SnapshotGenerationRetentionMinimumLaterSuccessfulPublications);
+        Assert.Equal(
+            1,
+            options
+                .SnapshotGenerationRetentionMaxPlannedChildrenPerCycle);
+        Assert.True(
+            options
+                .SnapshotGenerationRetentionBlockUnreplayedWriterFailures);
+    }
+
+    [Fact]
+    public void TrackedAppsettingsKeepsRetentionPlannerOffAndReportOnly()
+    {
+        using var document = JsonDocument.Parse(
+            File.ReadAllText(
+                Path.Combine(
+                    AppContext.BaseDirectory,
+                    "appsettings.json")));
+        var maintenance = document.RootElement
+            .GetProperty(DatabaseMaintenanceOptions.Section);
+
+        Assert.False(
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionPlannerEnabled")
+                .GetBoolean());
+        Assert.True(
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionReportOnly")
+                .GetBoolean());
+        Assert.Equal(
+            2,
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionNewestGenerationsToKeep")
+                .GetInt32());
+        Assert.Equal(
+            2,
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionMinimumLaterSuccessfulPublications")
+                .GetInt32());
+        Assert.Equal(
+            1,
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionMaxPlannedChildrenPerCycle")
+                .GetInt32());
+        Assert.True(
+            maintenance
+                .GetProperty(
+                    "SnapshotGenerationRetentionBlockUnreplayedWriterFailures")
+                .GetBoolean());
+    }
+
+    [Fact]
     public void TrackedAppsettingsKeepsCurrentProjectionCandidateDisabled()
     {
         using var document = JsonDocument.Parse(

@@ -152,6 +152,9 @@ retention package.
 Snapshot-generation retention safety:
 
 ```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetention|FullyQualifiedName~SnapshotPartitionStats_SelectOnlyDirectRegularInstrumentRoots|FullyQualifiedName~RetentionSafePoint_'
+
 PYTHONDONTWRITEBYTECODE=1 \
 python3 tools/postgres-snapshot-generation-retention.test.py
 
@@ -167,6 +170,25 @@ autonomous-artifacts/<unique-drill-run> \
   --expected-docker-context default \
   --expected-daemon-id <docker-info-id>
 ```
+
+The .NET slice validates fresh/idempotent control-plane schema, typed
+report-only/`observed` fencing, executor-index exclusion, append-only evidence,
+publication-then-planner nonblocking lock order, concurrent same-safe-point
+idempotency, canonical hash chaining, exact `LIST (instrument)`/
+`LIST (snapshot_id)` partition keys, all-nine discovery, and the
+direct-regular-root-only legacy rewrite selection.
+
+It also covers exact current/previous/working catalog and
+`solo_scope_sources` authority, binding count/status/JSON identity, complete
+catalog-song × nine-instrument × alltime key sets, malformed and duplicate
+rejection, same-count source/projection digest changes, current fingerprint
+readiness, authoritative-empty projection counterparts, lifecycle versus
+physical leaf pins, and all-unchanged generations without leaves. Terminal
+safe-point cases cover current-generation mismatch, frozen reads, working
+pointer, commit intent, incomplete/mismatched notifications, pending
+backfill/history work, running scrape, startup/restart retry, transient drain
+query isolation, and cancellation propagation. The slice performs no archive,
+restore, detach, drop, Docker, or production database action.
 
 The focused unit suite uses only marker-owned unique children beneath the
 repository's fixed testdata directory. Cleanup rejects broad, outside,

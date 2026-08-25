@@ -975,7 +975,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         return scrapes;
     }
 
-    private static async Task<IReadOnlyList<SnapshotPartitionStats>> LoadSnapshotPartitionStatsAsync(NpgsqlConnection conn, CancellationToken ct)
+    internal static async Task<IReadOnlyList<SnapshotPartitionStats>> LoadSnapshotPartitionStatsAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -991,15 +991,26 @@ public sealed class DatabaseMaintenanceDryRunReporter
                 COALESCE(stats.most_common_freqs::TEXT, '') AS most_common_freqs
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = c.oid
+            JOIN pg_class parent
+              ON parent.oid = inheritance.inhparent
+            JOIN pg_namespace parent_namespace
+              ON parent_namespace.oid = parent.relnamespace
             LEFT JOIN pg_stat_all_tables st ON st.relid = c.oid
             LEFT JOIN pg_stats stats ON stats.schemaname = n.nspname
                 AND stats.tablename = c.relname
                 AND stats.attname = 'snapshot_id'
             WHERE n.nspname = 'public'
+              AND parent_namespace.nspname = 'public'
+              AND parent.relname = 'leaderboard_entries_snapshot'
               AND c.relkind = 'r'
-              AND c.relname LIKE 'leaderboard_entries_snapshot_%'
+              AND c.relname = ANY(@partitionNames)
             ORDER BY pg_total_relation_size(c.oid) DESC
             """;
+        cmd.Parameters.AddWithValue(
+            "partitionNames",
+            SnapshotPartitionInstruments.Keys.ToArray());
 
         var partitions = new List<SnapshotPartitionStats>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -1798,8 +1809,15 @@ public sealed class DatabaseMaintenanceDryRunReporter
         else if (!latestScrape.IsCompleted)
             refusalReasons.Add($"blocked: latest scrape {latestScrape.Id:N0} is still incomplete");
 
-        if (!await IsSnapshotChildPartitionAsync(conn, plan.PartitionName, ct))
-            refusalReasons.Add("blocked: requested table is not currently attached to leaderboard_entries_snapshot");
+        if (!await IsExactLegacySnapshotLeafAsync(
+                conn,
+                plan.PartitionName,
+                plan.Instrument,
+                ct))
+        {
+            refusalReasons.Add(
+                "blocked: requested table is not an exact regular legacy leaf attached directly to leaderboard_entries_snapshot with the expected instrument bound and no descendants");
+        }
 
         var totalRows = await CountRowsIfTableExistsAsync(conn, plan.PartitionName, ct);
         var retainedRows = plan.KeepSnapshotIds.Count == 0 ? 0 : await CountSnapshotRowsAsync(conn, plan.PartitionName, plan.KeepSnapshotIds, ct);
@@ -1857,6 +1875,16 @@ public sealed class DatabaseMaintenanceDryRunReporter
         try
         {
             await ExecuteNonQueryAsync(conn, $"LOCK TABLE {QualifiedIdentifier(SnapshotParentTable)} IN ACCESS EXCLUSIVE MODE", ct, tx);
+            if (!await IsExactLegacySnapshotLeafAsync(
+                    conn,
+                    plan.PartitionName,
+                    plan.Instrument,
+                    ct,
+                    tx))
+            {
+                throw new InvalidOperationException(
+                    $"Snapshot rewrite target {plan.PartitionName} changed shape before the swap transaction.");
+            }
             await ExecuteNonQueryAsync(conn, $"ALTER TABLE {QualifiedIdentifier(SnapshotParentTable)} DETACH PARTITION {QualifiedIdentifier(plan.PartitionName)}", ct, tx);
             await ExecuteNonQueryAsync(conn, $"ALTER TABLE {QualifiedIdentifier(plan.PartitionName)} RENAME TO {QuoteIdentifier(retiredName)}", ct, tx);
             await ExecuteNonQueryAsync(conn, $"ALTER TABLE {QualifiedIdentifier(replacementName)} RENAME TO {QuoteIdentifier(plan.PartitionName)}", ct, tx);
@@ -1936,22 +1964,44 @@ public sealed class DatabaseMaintenanceDryRunReporter
             reader.IsDBNull(2) ? null : reader.GetDateTime(2));
     }
 
-    private static async Task<bool> IsSnapshotChildPartitionAsync(NpgsqlConnection conn, string tableName, CancellationToken ct)
+    internal static async Task<bool> IsExactLegacySnapshotLeafAsync(
+        NpgsqlConnection conn,
+        string tableName,
+        string instrument,
+        CancellationToken ct,
+        NpgsqlTransaction? transaction = null)
     {
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = """
             SELECT EXISTS (
                 SELECT 1
                 FROM pg_inherits inh
                 JOIN pg_class parent ON parent.oid = inh.inhparent
+                JOIN pg_namespace parent_namespace
+                  ON parent_namespace.oid =
+                        parent.relnamespace
                 JOIN pg_class child ON child.oid = inh.inhrelid
                 JOIN pg_namespace n ON n.oid = child.relnamespace
                 WHERE n.nspname = 'public'
+                  AND parent_namespace.nspname = 'public'
                   AND parent.relname = 'leaderboard_entries_snapshot'
                   AND child.relname = @tableName
+                  AND child.relkind = 'r'
+                  AND pg_get_expr(
+                        child.relpartbound,
+                        child.oid) =
+                        format(
+                            'FOR VALUES IN (%L)',
+                            @instrument)
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_inherits descendant
+                        WHERE descendant.inhparent = child.oid)
             )
             """;
         cmd.Parameters.AddWithValue("tableName", tableName);
+        cmd.Parameters.AddWithValue("instrument", instrument);
         return Convert.ToBoolean(await cmd.ExecuteScalarAsync(ct));
     }
 

@@ -17,6 +17,7 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Api/HealthEndpoints.cs
   - tools/postgres-snapshot-generation-retention-drill.py
   - packages/core/src/api/serverTypes.ts
@@ -48,11 +49,13 @@ update_triggers:
   Scrape `1310` proved all nine generation writer paths through publication,
   notifications, registration drain, and worker exit.
 - Make recurring generation retention the active storage lane. Phase 1
-  archives, restore-proves, and retires wholly unreferenced children through
-  durable intent plus separate executor/prover roles. Its isolated
-  archive/restore, mailbox/prover, and catalog-lock mechanics are accepted;
-  production ownership remains open. Phase 2 later compacts sparsely pinned
-  children before storage is considered bounded.
+  now has default-off durable report-only intent, exact fences, and a bounded
+  post-publication safe point. The next tranche archives, restore-proves, and
+  retires wholly unreferenced children through separate executor/prover roles.
+  Its isolated archive/restore, mailbox/prover, and catalog-lock mechanics are
+  accepted; production execution ownership remains open. Sparse-child
+  compaction remains a later, separately gated phase before storage is
+  considered bounded.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -359,7 +362,8 @@ Exact catalog selection
   -> reader drain and atomic commit
   -> unfreeze
   -> improvement notifications and client broadcast
-  -> deferred retention admission
+  -> post-publication registration drain
+  -> optional durable generation-retention safe-point plan
 ```
 
 ### Phase ownership and criticality
@@ -697,11 +701,16 @@ Each iteration below is a separate branch/PR.
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - durable cycles/jobs/evidence, exact per-instrument protection fences,
-     default-child auditing, and explicit generation-leaf exclusion from the
-     legacy rewrite planner;
-   - separate no-Docker-socket executor and network-none restore prover,
-     initially disabled/report-only;
+   - **implemented, default off:** durable cycles/jobs/evidence, exact
+     partition/catalog/source-map/fingerprint authority, per-instrument
+     protection and policy fences, typed non-executable report-only
+     observations, publication-locked terminal checks, restart-safe worker
+     retries, lifecycle-versus-physical pin semantics, and explicit
+     generation-leaf exclusion from the legacy rewrite planner;
+   - next, pass independent report-only production parity across at least two
+     accepted publications;
+   - then implement the separate no-Docker-socket executor and network-none
+     restore prover;
    - archive-only and manual smallest/large-child canaries before automatic
      one-active-child execution;
    - separately gated sparse-child compaction before claiming bounded

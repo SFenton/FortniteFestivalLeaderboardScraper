@@ -280,6 +280,50 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
         }
 
+        var hasSnapshotGenerationRetentionJobs = false;
+        using (var retentionSchema = conn.CreateCommand())
+        {
+            retentionSchema.Transaction = tx;
+            retentionSchema.CommandText = """
+                SELECT to_regclass(
+                    'public.snapshot_generation_retention_jobs')
+                    IS NOT NULL
+                """;
+            hasSnapshotGenerationRetentionJobs =
+                retentionSchema.ExecuteScalar() is true;
+        }
+
+        if (hasSnapshotGenerationRetentionJobs)
+        {
+            using var snapshotGenerationRetention =
+                conn.CreateCommand();
+            snapshotGenerationRetention.Transaction = tx;
+            snapshotGenerationRetention.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM snapshot_generation_retention_jobs
+                    WHERE NOT report_only
+                      AND status IN (
+                          'leased',
+                          'executing',
+                          'safety_failed')
+                    UNION ALL
+                    SELECT 1
+                    FROM snapshot_generation_retention_cycles
+                    WHERE NOT report_only
+                      AND status = 'safety_failed'
+                )
+                """;
+            if (snapshotGenerationRetention.ExecuteScalar() is true)
+            {
+                throw new PublicationCommitBusyException(
+                    "Active destructive snapshot-generation retention state must finish or reconcile before allocating another scrape.",
+                    TimeSpan.Zero,
+                    lockRejections: 1,
+                    relationLockRetries: 0);
+            }
+        }
+
         SongCatalogPersistenceToken persistedCatalog;
         using (var catalogToken = conn.CreateCommand())
         {
@@ -781,6 +825,44 @@ public sealed partial class MetaDatabase : IMetaDatabase
         using var reader = cmd.ExecuteReader();
         if (!reader.Read())
             return new PublicationPointerState(null, null, null, null, null);
+
+        return new PublicationPointerState(
+            reader.IsDBNull(0) ? null : reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2),
+            reader.IsDBNull(3) ? null : reader.GetInt32(3),
+            reader.IsDBNull(4) ? null : reader.GetDateTime(4));
+    }
+
+    public async Task<PublicationPointerState>
+        GetPublicationPointerStateAsync(
+            int commandTimeoutSeconds,
+            CancellationToken ct)
+    {
+        await using var conn =
+            await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = commandTimeoutSeconds;
+        cmd.CommandText = """
+            SELECT current_publication_id,
+                   previous_publication_id,
+                   working_publication_id,
+                   published_scrape_id,
+                   published_at
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        await using var reader =
+            await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return new PublicationPointerState(
+                null,
+                null,
+                null,
+                null,
+                null);
+        }
 
         return new PublicationPointerState(
             reader.IsDBNull(0) ? null : reader.GetInt64(0),
@@ -4021,6 +4103,24 @@ public sealed partial class MetaDatabase : IMetaDatabase
     public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = 'deferred', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = backfill_status.rankings_pending, deferred_reason = CASE WHEN backfill_status.deferred_reason = @catalogRefreshReason THEN backfill_status.deferred_reason ELSE EXCLUDED.deferred_reason END WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.Parameters.AddWithValue("catalogRefreshReason", BackfillDeferredReasons.CatalogRefreshQueue); cmd.ExecuteNonQuery(); }
     public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('deferred', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
+    public RegistrationDrainState GetRegistrationDrainState()
+    {
+        using var connection = _ds.OpenConnection();
+        return RegistrationDrainStateReader.Load(connection);
+    }
+    public async Task<RegistrationDrainState>
+        GetRegistrationDrainStateAsync(
+            int commandTimeoutSeconds,
+            CancellationToken ct)
+    {
+        await using var connection =
+            await _ds.OpenConnectionAsync(ct);
+        return await RegistrationDrainStateReader.LoadAsync(
+            connection,
+            transaction: null,
+            commandTimeoutSeconds,
+            ct);
+    }
     public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
     public void StartBackfill(string accountId)
     {

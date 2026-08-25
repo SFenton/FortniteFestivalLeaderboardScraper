@@ -2,6 +2,7 @@ using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using FSTService.Api;
 using FSTService.Tests.Helpers;
@@ -748,6 +749,7 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "snapshot-generation-retention-control-plane",
                 "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
@@ -766,7 +768,15 @@ public class DatabaseInitializerTests : IDisposable
             ScoreHistoryDedupMaintenanceSchema.Sql,
             scoreHistoryAudit.Sql);
         Assert.False(plan[2].UseShortTransaction);
-        var maxScoreMaintenance = plan[3];
+        var retention = plan[3];
+        Assert.True(retention.UseShortTransaction);
+        Assert.Equal(20, retention.CommandTimeoutSeconds);
+        Assert.Equal("2s", retention.LockTimeout);
+        Assert.Equal("15s", retention.StatementTimeout);
+        Assert.Equal(
+            SnapshotGenerationRetentionSchema.Sql,
+            retention.Sql);
+        var maxScoreMaintenance = plan[4];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

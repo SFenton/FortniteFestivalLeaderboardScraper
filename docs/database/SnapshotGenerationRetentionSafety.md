@@ -4,6 +4,17 @@ owner: data
 last_verified: 2026-08-23
 last_verified_commit: 4c36926a
 sources:
+  - FSTService/DatabaseMaintenanceOptions.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionModels.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/RegistrationDrainState.cs
+  - FSTService/ScraperWorker.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionAdmissionTests.cs
   - tools/postgres-snapshot-generation-retention-drill.py
   - tools/postgres-snapshot-generation-retention.test.py
   - tools/postgres-snapshot-generation-migration.py
@@ -20,10 +31,22 @@ update_triggers:
 
 ## Status and boundary
 
+The repository now contains a durable, default-off, report-only
+snapshot-generation retention control plane. Normal database initialization
+owns its additive schema, and the full worker may invoke its bounded planner at
+a post-publication safe point only when the feature is enabled.
+
+This phase does **not** implement archive creation, restore execution, child
+detach/drop, sparse-child compaction, an executor container, a restore-prover
+container, or any production Compose role. Report-only cycles and eligible
+jobs are durably typed `report_only=true` and use the non-executable
+`observed` status. `planned` is reserved for explicitly non-report-only cycles,
+but no executor consumes it in this phase.
+
 `tools/postgres-snapshot-generation-retention-drill.py` is a reusable,
 isolated PostgreSQL 17 proof package for recurring whole-generation retention.
-It proves the safety mechanisms needed before production implementation, but
-it is not a production retention executor.
+It proves the later executor/prover safety mechanisms, but it is not a
+production retention executor.
 
 The accepted drill:
 
@@ -62,9 +85,226 @@ The accepted drill:
 - does not touch production Compose, production PostgreSQL, live containers,
   GitHub, or the temporary 8 TB device.
 
-Recurring production automation, Compose roles, durable retention jobs,
-archive lifecycle ownership, canaries, and promotion remain unimplemented and
-unauthorized.
+Recurring execution, Compose roles, archive lifecycle ownership, canaries, and
+promotion remain unimplemented and unauthorized.
+
+## Implemented durable control plane
+
+### Schema ownership and state
+
+`DatabaseInitializer` applies
+`SnapshotGenerationRetentionSchema.Sql` after the main publication schema in a
+short transaction with the existing `2s` lock timeout, `15s` statement
+timeout, and `20s` command bound. It creates no backfill and rewrites no
+existing table.
+
+The schema owns:
+
+- `snapshot_generation_retention_cycles`: one idempotent row per
+  `(post_publication, trigger_publication_id)`, with trigger scrape/publication,
+  safe-point time, planner/config versions, typed `report_only` mode, plan
+  digest, status, candidate and blocked counts/bytes, completion, and bounded
+  error text;
+- `snapshot_generation_retention_jobs`: fixed operation, instrument,
+  root/child, snapshot ID, OID, relfilenode, partition bound, tablespace,
+  typed cycle-matching `report_only` mode, catalog row estimate/bytes,
+  protected/reference evidence, blocker codes/details, status, attempt fields,
+  and future lease fields;
+- `snapshot_generation_retention_evidence`: an append-only per-cycle sequence
+  containing canonical JSONB plus previous/current SHA-256 hashes. A trigger
+  rejects update, delete, and truncate.
+
+Kinds, statuses, mode/status combinations, cycle/job mode identity, and all
+nine instruments are constrained. The job schema reserves
+`compact_sparse_child`, but this phase writes only `drop_whole_child`.
+Report-only rows cannot be `planned`, leased, executing, or safety-failed, and
+their future-executor fields remain empty. The executor index excludes
+`observed` and all report-only rows. A partial unique index permits at most one
+future non-report-only `leased`/`executing` destructive child globally. Only
+future non-report-only `leased`, `executing`, or `safety_failed` state blocks
+scrape allocation. A job-level or cycle-level `safety_failed` state also owns
+the global destructive placeholder, so later non-report-only cycles can record
+evidence but cannot plan another child until the failure is reconciled.
+A second partial unique index permits only one nonterminal
+`planned`/`leased`/`executing`/`safety_failed` intent for an exact
+instrument/OID/relfilenode identity across all cycles. Later cycles record that
+leaf as `deferred` with `existing_job_intent` and may plan another eligible
+child instead of duplicating executor work.
+
+### Exact planner
+
+`SnapshotGenerationRetentionPlanner` first takes the exclusive registration
+mutation session lock, then the global publication **shared** session lock,
+then its exclusive planner session lock, all nonblocking. Only after all three
+are held does it
+begin the repeatable-read transaction and apply bounded PostgreSQL
+lock/statement/idle-transaction timeouts. The registration-first order matches
+exclusive max-score maintenance and fences registration/backfill creation;
+publication allocation/commit cannot race or become invisible to the snapshot,
+while ordinary API publication readers remain compatible and cannot starve
+planning. Repeating the same publication safe point returns the existing cycle
+instead of adding jobs or evidence.
+
+Current, previous, and working pointers must be distinct. A non-null previous
+slot must resolve to a `retained` generation, and the current generation's own
+`previous_publication_id` must equal the singleton previous pointer. Any
+duplicate or inconsistent predecessor state is durable blocked evidence, so an
+older retained generation cannot be omitted from the protected set.
+
+Discovery is limited to direct numeric generation leaves beneath the compiled
+nine instrument roots. The planner verifies:
+
+- the top parent is exactly `LIST (instrument)` and every compiled instrument
+  root is exactly `LIST (snapshot_id)`, using `pg_partitioned_table` and
+  `pg_get_partkeydef`;
+- exact instrument roots, root bounds, one exact default child per root,
+  direct leaf names/bounds, regular/partitioned relation kinds, and positive
+  leaf OID/relfilenode identity;
+- exactly the expected parent primary-key and `score DESC` index definitions,
+  including uniqueness, key order/options, access method, expressions,
+  predicates, INCLUDE shape, operator classes, and collations; every root/leaf
+  index must be attached to and definition-equivalent to its parent;
+- `pg_default` for the parent, roots, defaults, leaves, and indexes;
+- an exact zero-row count in every default child before any leaf can be
+  eligible.
+
+Malformed or unexpected children are never candidates. Catalog/query failure
+creates a failed cycle/evidence record when persistence remains available; it
+is never translated into an eligible plan.
+
+Before an executable plan can exist, the same transaction independently
+revalidates that the requested scrape/publication is still exactly current,
+the generation's `scrape_id` equals `published_scrape_id`, public reads are
+unfrozen, the working pointer and publication commit-intent fields are null,
+improvement notifications are either completed for that scrape or structurally
+disabled, registration backfill/history queues are durably drained, and no
+scrape is running. Any failed gate is persisted as blocked evidence and yields
+no `planned` or `observed` job.
+
+Protection is derived independently per instrument from:
+
+- every active snapshot-state source;
+- ready/building projection source IDs and any still-recorded source ID;
+- physical `source_snapshot_id` rows belonging only to the publication
+  generations named by current, previous, and working slots.
+
+Named generations must resolve to a positive scrape identity and an allowed
+slot status. Each resolved current/previous/working publication must have an
+exact ready `solo_scope_sources` binding, an exact canonical
+`publication_song_catalog`, and exactly the catalog song IDs multiplied by the
+nine supported instruments at `alltime`. Missing, extra, duplicate,
+wrong-scope, incomplete, or malformed rows and binding count/status/JSON
+identity mismatches fail closed. Current rows must also match their complete
+current `leaderboard_scope_fingerprints` evidence and published scrape
+identity; retained previous maps are validated from their own catalog,
+binding, key set, and stored content/coverage evidence rather than compared to
+the mutable current fingerprint table.
+
+Snapshot source rows require a positive matching physical source ID and
+nonzero complete evidence. Authoritative empty rows are allowed only for
+`alltime`, with null physical ID and exact zero row/reported-entry/page
+evidence, plus a ready zero-row `snapshot` projection whose source ID equals
+the finalized active-state ID. The planner fingerprints each named source map,
+the active-state rows, the projection rows, and current fingerprint rows with
+canonical SHA-256; those hashes are included in cycle evidence, every job's
+reference evidence, and the plan digest.
+
+Lifecycle generation pins and physical-required pins are distinct. Named
+current/previous/working scrape IDs protect a leaf only when that leaf exists.
+An all-unchanged or authoritative-empty generation may therefore have no leaf
+without producing `protected_leaf_missing`. Nonempty publication sources and
+other references with positive row evidence still require their exact
+per-instrument physical leaf.
+
+Each discovered leaf additionally remains blocked when it is:
+
+- a current, previous, or working generation/source;
+- active or a projection source;
+- owned by a running scrape or configured `Scraper:ResumeScrapeId`;
+- among the newest configured generation IDs for its instrument;
+- missing a terminal `scrape_log` identity;
+- younger than the configured minimum count of later successful
+  publications;
+- associated with an unreplayed `scrape_writer_failures` row when that default
+  fence is enabled;
+- under a root with a nonempty/unresolved default or any catalog/index/
+  tablespace/topology blocker.
+
+Eligible ordering is oldest snapshot first. Ties rotate deterministically by
+instrument using the trigger publication ID, avoiding a permanent
+same-instrument preference. Every discovered numeric leaf receives one
+cycle-local job row. In report-only mode every eligible row is `observed`;
+none is `planned`. In non-report-only mode only the bounded selected set is
+`planned` and additional eligible rows are `deferred`. Every ineligible row
+retains its blocker evidence.
+
+### Safe-point timing and failure semantics
+
+The normal worker does not use `DeferredRetentionMaintenanceRunner` for this
+control plane.
+
+- After notification recovery, the worker derives the safe point from the
+  current publication rather than from an in-memory publication transition.
+- On startup and before every scrape allocation, an enabled planner pauses
+  background work, waits for quiescence, checks the shared durable
+  registration-drain query, and makes one idempotent best-effort attempt for
+  the current publication when it lacks a cycle.
+- Run-once mode drains queued registration backfill/history work and invokes
+  the same current-publication retry only when that drain is complete,
+  immediately before exit.
+- Continuous mode allows the normal inter-scrape registration interval, then
+  attempts again at the next pre-allocation boundary while that publication
+  remains current. Retention planning never delays normal scrape cadence; if a
+  newer publication supersedes it first, the newer safe point rediscovers the
+  same physical leaves while the old publication remains protected as
+  `previous`.
+- The shared drain counts every registered account with no backfill row or any
+  non-complete backfill as outstanding. History is eligible for completion only
+  after that account's backfill is complete. The planner repeats this check
+  inside the repeatable-read snapshot while holding the exclusive registration
+  mutation session lock.
+
+Safe-point preparation, quiescence, drain reads, and planner invocation share
+one exception-isolation boundary. Requested cancellation propagates; other
+database/transient failures are logged and deferred so they cannot terminate
+continuous service. Disabled planning returns before a drain query or database
+write. A planner error is logged and, where PostgreSQL remains available,
+persisted as a failed cycle with append-only evidence. It never rolls back the
+already accepted publication, refreezes reads, or triggers an immediate scrape
+retry.
+
+Retryable terminal gates do not consume the safe point's unique cycle:
+frozen reads, a working publication, commit intent, incomplete notifications,
+incomplete registration drain, or a running scrape return `Deferred` with no
+cycle/job rows. A later boundary re-evaluates it only while it remains current;
+the planner does not promise a durable audit receipt for every superseded
+publication. Only non-retryable structural/publication-identity failures become
+durable blocked cycle/job evidence.
+
+The worker's final registration-drain and publication-pointer reads use
+cancellation-aware async commands with a 30-second command timeout. A blocked
+metadata read therefore defers planning or responds to shutdown instead of
+holding the next scrape boundary indefinitely.
+
+### Configuration and rollback
+
+All controls are backend `DatabaseMaintenance` options owned by the full
+worker:
+
+| Key | Default |
+|---|---:|
+| `SnapshotGenerationRetentionPlannerEnabled` | `false` |
+| `SnapshotGenerationRetentionReportOnly` | `true` |
+| `SnapshotGenerationRetentionNewestGenerationsToKeep` | `2` |
+| `SnapshotGenerationRetentionMinimumLaterSuccessfulPublications` | `2` |
+| `SnapshotGenerationRetentionMaxPlannedChildrenPerCycle` | `1` |
+| `SnapshotGenerationRetentionBlockUnreplayedWriterFailures` | `true` |
+
+Counts are clamped to bounded nonnegative values; the per-cycle planned limit
+is at least one and applies only when `ReportOnly=false`. Rollback is
+configuration-only: set
+`SnapshotGenerationRetentionPlannerEnabled=false`. Existing cycle/job/evidence
+rows remain immutable audit evidence and have no executor in this phase.
 
 ## Rejected forensic runs
 
@@ -317,25 +557,23 @@ fsyncs the directory, and emits integrity-protected `seal-failure.json`.
 
 ## Production gates still open
 
-The drill resolves the isolated mechanics only. Production Phase 1 still
-requires:
+The isolated drill and durable report-only planner now cover evidence capture
+and intent, not execution. Production Phase 1 still requires:
 
-1. durable cycle/job/attempt/evidence schema and idempotent state transitions;
-2. a bounded worker safe-point intent after terminal publication,
-   notifications, registration drain, and normal worker exit;
-3. exact per-instrument protected-set and candidate fences against the live
-   catalog, current/previous/working publication sources, active state, and
-   projection state;
-4. a separate no-Docker-socket executor and network-none restore prover,
-   initially disabled and report-only;
-5. archive capacity/runway, retention, nonwritable/integrity-sealed storage,
+1. independent report-only parity against bounded SQL across at least two
+   accepted publications, including the known six `1308` leaves without
+   treating that measurement as authorization;
+2. a separate no-Docker-socket executor and network-none PostgreSQL 17 restore
+   prover using the durable jobs/evidence contract;
+3. archive capacity/runway, retention, nonwritable/integrity-sealed storage,
    expiry, and restore ownership on the 4 TB drive;
-6. archive-only, smallest-child, and large-child canaries with public API,
+4. executor lease/retry/abandon transitions, hard-safety state, operator stop
+   controls, and crash/torn-state recovery while preserving one active child
+   globally;
+5. archive-only, smallest-child, and large-child canaries with public API,
    lock, CPU, memory, disk, WAL, and recovery monitoring;
-7. one-active-child scheduling, crash recovery, operator stop controls, and
-   safe retry/abandon semantics;
-8. a live-scrape A/B parity gate and explicit production promotion;
-9. separately gated sparse-child compaction before claiming bounded
+6. a live-scrape A/B parity gate and explicit production promotion;
+7. separately gated sparse-child compaction before claiming bounded
    steady-state storage.
 
 ## Current production evidence is not authorization
@@ -347,5 +585,6 @@ wholly unreferenced failed-scrape `1308` leaves totaling
 growth only. They do not authorize archive, detach, drop, scheduling, or a
 retention policy.
 
-The worker remains held until recurring retention is implemented, tested,
-canaried, parity-gated, and explicitly accepted.
+The worker remains held until report-only parity is accepted and the separate
+executor/prover lifecycle is implemented, tested, canaried, parity-gated, and
+explicitly promoted.

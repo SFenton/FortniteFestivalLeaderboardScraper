@@ -3,6 +3,7 @@ using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -1041,6 +1042,280 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var status = notifications.GetPublicationStatus();
         Assert.Equal("completed", status.MarkerStatus);
         Assert.Equal(scrapeId, status.MarkerScrapeId);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_DisabledPlannerIsNotInvoked()
+    {
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(false);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        var result =
+            await InvokePrivateAsync<
+                SnapshotGenerationRetentionPlanResult?>(
+                worker,
+                "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+                CancellationToken.None);
+
+        Assert.Null(result);
+        _ = planner.DidNotReceiveWithAnyArgs()
+            .PlanAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_FailureDoesNotRollbackAcceptedPublication()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException(
+                "injected planner failure"));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        var result =
+            await InvokePrivateAsync<
+                SnapshotGenerationRetentionPlanResult?>(
+                worker,
+                "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+                CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(
+            SnapshotGenerationRetentionPlanDisposition.Failed,
+            result!.Disposition);
+        Assert.Equal(
+            scrapeId,
+            _metaDb.GetPublishedScrapeRun()!.Id);
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_UsesExactCurrentPublicationAfterDrainBoundary()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var pointers = _metaDb.GetPublicationPointerState();
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.ArgAt<
+                    SnapshotGenerationRetentionPlanRequest>(0);
+                return Task.FromResult(
+                    new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition.Observed,
+                        1,
+                        "planned",
+                        new string('a', 64),
+                        1,
+                        1,
+                        0,
+                        1,
+                        0));
+            });
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        var drainComplete = await InvokePrivateAsync<bool>(
+            worker,
+            "DrainRegistrationWorkAfterRunOnceAsync",
+            new ScraperOptions
+            {
+                RegistrationBackfillBatchSize = 1,
+            },
+            CancellationToken.None);
+        Assert.True(drainComplete);
+
+        var result =
+            await InvokePrivateAsync<
+                SnapshotGenerationRetentionPlanResult?>(
+                worker,
+                "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+                CancellationToken.None);
+
+        Assert.NotNull(result);
+        await planner.Received(1).PlanAsync(
+            Arg.Is<SnapshotGenerationRetentionPlanRequest>(
+                request =>
+                    request.TriggerScrapeId == scrapeId
+                    && request.TriggerPublicationId ==
+                        pointers.CurrentPublicationId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_RetriesCurrentPublicationWithoutTransitionEdge()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition.Busy,
+                    null,
+                    "busy",
+                    null,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0),
+                new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition.Observed,
+                    1,
+                    "observed",
+                    new string('a', 64),
+                    1,
+                    0,
+                    0,
+                    1,
+                    0));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        _ = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+        var retry = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+
+        Assert.NotNull(retry);
+        Assert.Equal(
+            SnapshotGenerationRetentionPlanDisposition.Observed,
+            retry!.Disposition);
+        await planner.Received(2).PlanAsync(
+            Arg.Is<SnapshotGenerationRetentionPlanRequest>(
+                request =>
+                    request.TriggerScrapeId == scrapeId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_DrainQueryFailureIsIsolated()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        await using (var connection =
+                     await _metaFixture.DataSource.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "DROP TABLE backfill_status;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var result = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(
+            SnapshotGenerationRetentionPlanDisposition.Failed,
+            result!.Disposition);
+        _ = planner.DidNotReceiveWithAnyArgs()
+            .PlanAsync(default!, default);
+        Assert.Equal(scrapeId, _metaDb.GetPublishedScrapeRun()!.Id);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_PropagatesRequestedCancellation()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var planner =
+            Substitute.For<ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromCanceled<
+                SnapshotGenerationRetentionPlanResult>(
+                call.ArgAt<CancellationToken>(1)));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => InvokePrivateAsync<
+                SnapshotGenerationRetentionPlanResult?>(
+                worker,
+                "TryRunCurrentSnapshotGenerationRetentionSafePointAsync",
+                cancellation.Token));
     }
 
     // ═══════════════════════════════════════════════════════════════

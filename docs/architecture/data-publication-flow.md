@@ -33,7 +33,9 @@ sources:
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Persistence/RegistrationDrainState.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -123,6 +125,24 @@ diagnostic or replay data without becoming the published generation.
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+10. **Optional retention safe point**
+    - Default-off generation-retention planning derives from the durable
+      current publication, so startup/restart and incomplete-drain retries do
+      not depend on the in-memory publication-transition edge.
+    - Run-once retries immediately after its registration drain and before
+      exit. Continuous mode retries after notification recovery and background
+      quiescence at every pre-allocation boundary.
+    - Under the publication lock followed by the planner lock, the planner
+      independently requires the exact current generation/scrape identity,
+      unfrozen reads, no working publication or commit intent, terminal
+      notification state, empty durable registration queues, and no running
+      scrape.
+    - Exact current/previous/working catalogs, source bindings, alltime key
+      sets, current fingerprints, authoritative-empty counterparts, and
+      canonical source/active/projection hashes become durable evidence.
+    - The bounded report-only planner writes `observed`, never executable
+      `planned`, jobs. Failure is logged/durable when possible and cannot roll
+      back the publication, refreeze reads, or execute archive/DDL work.
 
 Matched control scrape `1299` and candidate scrape `1300` accepted the retired
 post-scrape path cleanup. Their manifest and published-source key sets were
@@ -143,7 +163,8 @@ nonblocking and reasoned in durable progress.
   fail-closed rather than unfreezing optimistically.
 - Publication lookup/read-gate failures fail closed.
 - Run-once exits only after its publication decision and any permitted
-  registration drain.
+  registration drain. An enabled retention planner runs only after that drain;
+  planner failure leaves the publication accepted.
 
 Scrape `1305` exercised the interrupted-candidate resume contract after a
 PostgreSQL backend OOM. Public reads stayed frozen on scrape `1304`; the guard
