@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Scraping/PathDataStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
@@ -69,7 +71,7 @@ surface is not the production service persistence model.
 | Band state | Membership/context, rankings, histories, extraction state, tracked bands |
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
-| Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
+| Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
@@ -543,6 +545,14 @@ the post-commit release.
 Candidate writes do not become public merely because they were committed to a
 table. Publication validates the candidate, prepares generation-bound state,
 drains readers, and atomically advances the published pointer.
+
+`publication_path_artifacts` binds one canonical path/max-score row per
+publication catalog song, including authoritative null-generation rows, so
+published path reads do not depend on the mutable `songs` table. Its schema,
+canonical manifest hash, binding contract, retention, read scoping,
+`Scraper:UsePublicationPathArtifacts` source flag, and Phase A limits are owned
+by
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Feature flags support staged migration among legacy mutable rows, snapshot and
 overlay readers, per-scope published sources, and generation-aware reads. Role

@@ -748,6 +748,7 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "publication-path-artifacts",
                 "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
@@ -766,7 +767,15 @@ public class DatabaseInitializerTests : IDisposable
             ScoreHistoryDedupMaintenanceSchema.Sql,
             scoreHistoryAudit.Sql);
         Assert.False(plan[2].UseShortTransaction);
-        var maxScoreMaintenance = plan[3];
+        var pathArtifacts = plan[3];
+        Assert.True(pathArtifacts.UseShortTransaction);
+        Assert.Equal(20, pathArtifacts.CommandTimeoutSeconds);
+        Assert.Equal("2s", pathArtifacts.LockTimeout);
+        Assert.Equal("15s", pathArtifacts.StatementTimeout);
+        Assert.Equal(
+            PublicationPathArtifactSchema.Sql,
+            pathArtifacts.Sql);
+        var maxScoreMaintenance = plan[4];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

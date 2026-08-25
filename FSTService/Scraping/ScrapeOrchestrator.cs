@@ -72,7 +72,6 @@ public sealed class ScrapeOrchestrator
             : null;
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
-        _globalScraper.RefreshSongInstrumentSupport();
         _globalScraper.ResetCdnState();
 
         // Reset DOP to initial configured value so a CDN slash from a previous
@@ -90,6 +89,14 @@ public sealed class ScrapeOrchestrator
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun(catalogToken);
+        var publicationId = _persistence.Meta
+            .GetPublicationGenerationForScrape(scrapeId)?
+            .PublicationId
+            ?? throw new InvalidOperationException(
+                $"Scrape {scrapeId} has no working publication generation.");
+        using var pathPublicationScope =
+            _pathDataStore.BeginPublicationRead(publicationId);
+        _globalScraper.RefreshSongInstrumentSupport();
         _workerStatus?.AttachScrape(scrapeId);
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
         _persistence.CleanupAbandonedStaging(scrapeId);

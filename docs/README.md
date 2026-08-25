@@ -11,6 +11,7 @@ sources:
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -55,6 +56,7 @@ again. Verify their preconditions and current code before execution.
 - [Improvement notification recovery](database/ImprovementNotificationRecoveryRunbook.md)
 - [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
 - [Pro-bass snapshot archive/rewrite pilot](database/ProBassSnapshotRewritePilot.md)
+- [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)

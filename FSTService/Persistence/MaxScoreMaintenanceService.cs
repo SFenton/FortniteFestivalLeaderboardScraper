@@ -835,7 +835,7 @@ public sealed class MaxScoreMaintenanceService
                         requireSourceLocks: true,
                         ct);
                     _instrumentSupportCache
-                        .RefreshSongInstrumentSupport();
+                        .RefreshLiveSongInstrumentSupport();
                     var admittedPairs =
                         GetNewlyAdmittedPathPairs(manifest);
                     var registrationReset =
@@ -1514,7 +1514,7 @@ public sealed class MaxScoreMaintenanceService
                             ct);
                         _pathStore.InvalidateCachedState();
                         _instrumentSupportCache
-                            .RefreshSongInstrumentSupport();
+                            .RefreshLiveSongInstrumentSupport();
                         run = await LoadRequiredRunAsync(
                             manifestDigest,
                             ct);
@@ -2206,7 +2206,7 @@ public sealed class MaxScoreMaintenanceService
         string expectedSongId,
         string expectedCatalogLastModified)
     {
-        var state = _pathStore.GetPathGenerationState(songId)
+        var state = _pathStore.GetLivePathGenerationState(songId)
             ?? throw new InvalidOperationException(
                 $"Path state is missing for {songId}.");
         if (!string.Equals(
@@ -5045,7 +5045,7 @@ public sealed class MaxScoreMaintenanceService
         var scopedSongIds = publishedScopes
             .Select(scope => scope.SongId)
             .ToHashSet(StringComparer.Ordinal);
-        var result = _pathStore.GetAllMaxScores()
+        var result = _pathStore.GetLiveAllMaxScores()
             .Where(pair =>
                 catalogSongIds.Contains(pair.Key)
                 && scopedSongIds.Contains(pair.Key))
@@ -5313,7 +5313,7 @@ public sealed class MaxScoreMaintenanceService
         var scopedSongIds = publishedScopes
             .Select(scope => scope.SongId)
             .ToHashSet(StringComparer.Ordinal);
-        var result = _pathStore.GetAllMaxScores()
+        var result = _pathStore.GetLiveAllMaxScores()
             .Where(pair =>
                 catalogSongIds.Contains(pair.Key)
                 && scopedSongIds.Contains(pair.Key))

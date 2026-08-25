@@ -230,14 +230,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.ItemShop);
-        Assert.Contains(
+        // Path artifacts are now bound to publication_path_artifacts, so the
+        // surface is ready while item_shop remains legacy live-bound.
+        Assert.DoesNotContain(
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.PathArtifacts);
+        var pathBinding = Assert.Single(
+            metaDb.GetPublicationSurfaceBindings(publicationId),
+            binding => binding.SurfaceName ==
+                       PublicationSurfaceNames.PathArtifacts);
+        Assert.Equal(
+            "generation_path_artifact_manifest",
+            pathBinding.BindingKind);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            pathBinding.Status);
         foreach (var legacySurfaceName in new[]
                  {
                      PublicationSurfaceNames.ItemShop,
-                     PublicationSurfaceNames.PathArtifacts,
                  })
         {
             var legacySurface = Assert.Single(
@@ -9595,6 +9606,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                             scrapeId,
                             binding.RowCount,
                             binding.ContentHash),
+                    PublicationSurfaceNames.PathArtifacts =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            binding.ContentHash),
                     _ => null,
                 };
             });
@@ -9901,7 +9920,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Scraper:DataDirectory"] = _tempDir,
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
-                    ["Scraper:EnableAutomaticPathGeneration"] = "true",
+                    ["Scraper:EnableAutomaticPathGeneration"] = "false",
+                    ["Scraper:UsePublicationPathArtifacts"] = "false",
                     ["Scraper:RolloutReadOnlyStartup"] =
                         _rolloutReadOnly.ToString(),
                     ["Scraper:RolloutPostgresReadOnly"] =

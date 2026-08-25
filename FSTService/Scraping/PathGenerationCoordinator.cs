@@ -173,7 +173,7 @@ public sealed partial class PathGenerationCoordinator
             Dictionary<string, PathGenerationState> initialStates;
             try
             {
-                initialStates = _store.GetPathGenerationStates();
+                initialStates = _store.GetLivePathGenerationStates();
             }
             catch (Exception ex)
             {
@@ -398,7 +398,7 @@ public sealed partial class PathGenerationCoordinator
         try
         {
             if (!acquiredImmediately)
-                state = _store.GetPathGenerationState(request.SongId);
+                state = _store.GetLivePathGenerationState(request.SongId);
 
             if (ownsProgress)
                 _progress.PathGenProcessing(request.Title);
@@ -1240,7 +1240,7 @@ public sealed partial class PathGenerationCoordinator
         PathGenerationState? current;
         try
         {
-            current = _store.GetPathGenerationState(promotion.SongId);
+            current = _store.GetLivePathGenerationState(promotion.SongId);
         }
         catch (Exception ex)
         {

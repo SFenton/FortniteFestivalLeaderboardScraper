@@ -131,6 +131,14 @@ public static class DatabaseInitializer
                 LockTimeout: null,
                 StatementTimeout: null),
             new(
+                Name: "publication-path-artifacts",
+                Sql: PublicationPathArtifactSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout: NotificationSchemaStatementTimeout),
+            new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,
                 CommandTimeoutSeconds:

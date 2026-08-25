@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -17,6 +17,9 @@ sources:
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Scraping/PathArtifactResolver.cs
+  - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Api/SongsCacheService.cs
+  - FSTService/Api/PublicationReadiness.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
@@ -29,6 +32,7 @@ sources:
   - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
+  - Publication-bound read-source changes for songs or path routes.
 ---
 
 # API contract
@@ -91,6 +95,16 @@ generation ID after path promotion. Both the PNG and JSON routes return
 immutable generation or reporting an invalid path. Omitting `generationId` or
 supplying the current value may serve only the current artifact when it
 already exists.
+
+Route and DTO shapes are unchanged by publication-bound path artifacts. When
+`Scraper:UsePublicationPathArtifacts` is enabled, `/api/songs` is built strictly
+from the bound publication catalog plus that publication's path snapshot, and
+`/api/paths` compares `generationId` against the bound publication row instead
+of the mutable live row. The publication read middleware opens the matching
+path read scope for every publication-bound route, so all publication-bound
+consumers observe the same generation. With the flag off, responses are
+byte-compatible with previous behavior. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Path JSON schema v2 is represented by `PathDataResponse` in
 `packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
