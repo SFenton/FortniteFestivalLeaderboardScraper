@@ -55,6 +55,7 @@ Options:
                              registered-refresh-repair
                              catalog-path-notification-source-cut
                              snapshot-reuse
+                             leaderboard-rivals-batch
                              legacy-reader-migration
                              scrape-resume
                            Every run-once config requires a data profile.
@@ -141,7 +142,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration|scrape-resume)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -652,6 +653,42 @@ if data_profile == "snapshot-reuse":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile snapshot-reuse requires {name}=false")
+if data_profile == "leaderboard-rivals-batch":
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    if integer("Scraper__LeaderboardRivalsMaxDegreeOfParallelism") != 4:
+        raise SystemExit(
+            "ERROR: data profile leaderboard-rivals-batch requires "
+            "Scraper__LeaderboardRivalsMaxDegreeOfParallelism=4")
+    for name in (
+        "Scraper__UsePublicationPathArtifacts",
+        "Scraper__EnableScrapePassPathGeneration",
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
+        "Features__WritePublishedScopeSources",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+        "ImprovementNotifications__Enabled",
+        "ImprovementNotifications__IncludePlayers",
+        "ImprovementNotifications__IncludeBands",
+        "ImprovementNotifications__IncludeSongEvents",
+        "ImprovementNotifications__IncludeRankings",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                "ERROR: data profile leaderboard-rivals-batch "
+                f"requires {name}=true")
+    for name in (
+        "Scraper__EnableAutomaticPathGeneration",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                "ERROR: data profile leaderboard-rivals-batch "
+                f"requires {name}=false")
 if data_profile == "scrape-resume":
     exact_value("Scraper__EnabledPhases", "SoloRankings")
     exact_value("Scraper__RegistrationSyncWorkerOnly", "false")

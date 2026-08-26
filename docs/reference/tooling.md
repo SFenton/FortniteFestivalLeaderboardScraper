@@ -354,6 +354,13 @@ rejects a profile that disables them instead of allowing a candidate to fail
 after network collection. The dual-lane wrapper sets this invariant
 explicitly, while snapshot reuse remains a separate opt-in.
 
+The `leaderboard-rivals-batch` data profile is a one-scrape canary contract. It
+requires the exact account batch size of four, publication-safe scrape-pass
+path staging, the accepted snapshot-reuse write path, complete notification
+lanes, and all publication-critical manifests. Pair it with
+`candidate-800-32-4` to retain the proven production network rates while making
+their enforcement exact.
+
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains idle and public reads remain unfrozen. Otherwise it
 leaves the worker running and directs the operator to
