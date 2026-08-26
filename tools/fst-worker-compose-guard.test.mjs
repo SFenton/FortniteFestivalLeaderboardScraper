@@ -234,7 +234,8 @@ function buildComposeConfig({
   pinnedEffectiveIp = null,
   runOnce = false,
   restartPolicy = null,
-  workerProfiles = ["worker"]
+  workerProfiles = ["worker"],
+  workerImage = "example.invalid/fstworker:test"
 } = {}) {
   const workerEnvironment = {
     Scraper__ExpectedProxyEndpointCount: String(effectiveCount),
@@ -266,7 +267,7 @@ function buildComposeConfig({
     },
     fstworker: {
       container_name: "fstworker",
-      image: "example.invalid/fstworker:test",
+      image: workerImage,
       restart: restartPolicy ?? (runOnce ? "no" : "on-failure:5"),
       profiles: workerProfiles,
       environment: workerEnvironment,
@@ -340,6 +341,36 @@ function buildPublicationCacheRunonceConfig({
     Features__WritePublishedScopeSources: "true",
     Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
     Features__SkipUnchangedPhysicalLeaderboardSnapshots: "false"
+  });
+  return config;
+}
+
+function buildLeaderboardRivalsBatchRunonceConfig({
+  accountBatchSize = "4"
+} = {}) {
+  const config = buildComposeConfig({ runOnce: true });
+  Object.assign(config.services.fstworker.environment, {
+    Scraper__EnabledPhases: "All",
+    Scraper__RegisteredUserRefreshTimeout: "00:00:00",
+    Scraper__LeaderboardRivalsMaxDegreeOfParallelism:
+      accountBatchSize,
+    Scraper__UsePublicationPathArtifacts: "true",
+    Scraper__EnableScrapePassPathGeneration: "true",
+    Scraper__EnableAutomaticPathGeneration: "false",
+    Features__EnforcePublicationCriticalPhases: "true",
+    Features__EnforceScopeCompletenessManifests: "true",
+    Features__RequireSuccessfulScrapeWriters: "true",
+    Features__UseLeaderboardScopeFingerprints: "true",
+    Features__WritePublishedScopeSources: "true",
+    Features__SkipUnchangedPhysicalLeaderboardSnapshots: "true",
+    Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
+    Features__WriteLogicalLeaderboardVersions: "false",
+    DatabaseMaintenance__SnapshotRetentionRewriteEnabled: "false",
+    ImprovementNotifications__Enabled: "true",
+    ImprovementNotifications__IncludePlayers: "true",
+    ImprovementNotifications__IncludeBands: "true",
+    ImprovementNotifications__IncludeSongEvents: "true",
+    ImprovementNotifications__IncludeRankings: "true"
   });
   return config;
 }
@@ -899,6 +930,46 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
+  it("enforces an expected image for a continuous worker", async () => {
+    const harness = await createHarness();
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a mismatched expected image without a data profile", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({
+        workerImage: "example.invalid/fstworker:unexpected"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /resolved fstworker image must match .* found .*unexpected/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("shares one lock across every mutating worker action", async () => {
     const harness = await createHarness();
     const holder = spawn(
@@ -1077,6 +1148,57 @@ describe("fstworker Compose startup recovery", () => {
       assert.match(
         result.stderr,
         /requires Features__UseLeaderboardScopeFingerprints=true/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts the leaderboard-rivals batch run-once profile", async () => {
+    const harness = await createHarness({
+      config: buildLeaderboardRivalsBatchRunonceConfig()
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "leaderboard-rivals-batch",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stdout, /throughput_profile=candidate-800-32-4/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects an unapproved leaderboard-rivals account batch size", async () => {
+    const harness = await createHarness({
+      config: buildLeaderboardRivalsBatchRunonceConfig({
+        accountBatchSize: "5"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "leaderboard-rivals-batch",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /LeaderboardRivalsMaxDegreeOfParallelism=4/
       );
     } finally {
       await harness.cleanup();

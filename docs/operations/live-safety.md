@@ -67,6 +67,8 @@ It must not be used as a general Compose reconciler.
 Before proxy mutation it verifies:
 
 - the merged continuous configuration and exact effective arrays;
+- the final merged worker image whenever `--expected-worker-image` is supplied,
+  including continuous actions without a data profile;
 - the guard-only `worker` profile and continuous `on-failure:5` policy;
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;
@@ -80,6 +82,11 @@ probes pass. A 1,800-second total deadline also caps core readiness, proxy
 convergence, runtime DNS/control/egress qualification, and worker readiness.
 It never clears a freeze, rewrites publication state, restarts core services,
 changes provider selectors, promotes spares, or installs static endpoint IPs.
+
+Use the dual-lane run-once wrapper for a full-scrape candidate. The
+`leaderboard-rivals-batch` profile pairs exact `800/32/4` network enforcement
+with a four-account Rivals batch and retains publication-safe path staging,
+snapshot reuse, notifications, and publication-critical manifests.
 
 Size the production unit timeout above the total deadline plus cleanup margin.
 The shared lock defaults to `.fst-worker-compose-guard.lock` under the resolved

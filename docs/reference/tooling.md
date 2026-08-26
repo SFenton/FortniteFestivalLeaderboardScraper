@@ -332,6 +332,11 @@ not take it. By default the lock is derived as
 override remains available. All invokers must share the resolved directory or
 override and Unix owner.
 
+Pass `--expected-worker-image` for every candidate check or recreate. The guard
+compares it with the final merged `fstworker.image` even when no data profile is
+selected, so a later Compose overlay cannot silently replace the requested
+candidate. Named data profiles continue to require the option.
+
 Recovery is effective-set-only, capped by stage windows and a 1,800-second
 default total deadline, and fail-closed. It does not accept `--config-only`,
 run-once/data profiles, or any `candidate-*` throughput profile. It does not
@@ -348,6 +353,15 @@ their current-scrape coverage identity from those fingerprints; the guard
 rejects a profile that disables them instead of allowing a candidate to fail
 after network collection. The dual-lane wrapper sets this invariant
 explicitly, while snapshot reuse remains a separate opt-in.
+
+The `leaderboard-rivals-batch` data profile is a one-scrape canary contract. It
+requires the exact account batch size of four, publication-safe scrape-pass
+path staging, the accepted snapshot-reuse write path, complete notification
+lanes, and all publication-critical manifests. Pair it with
+`candidate-800-32-4` to retain the proven production network rates while making
+their enforcement exact. The dual-lane wrapper also assigns the supplied
+expected image to the final run-once overlay before the guard resolves Compose;
+the option is therefore both the selected image and the fail-closed assertion.
 
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains idle and public reads remain unfrozen. Otherwise it

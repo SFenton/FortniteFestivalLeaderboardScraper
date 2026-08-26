@@ -21,7 +21,8 @@ Options:
                         or candidate-2880-128-16
   --data-profile P      publication-cache-generation,
                         catalog-path-notification-source-cut, or
-                        snapshot-reuse, or legacy-reader-migration
+                        snapshot-reuse, leaderboard-rivals-batch, or
+                        legacy-reader-migration
   --expected-worker-image I
                         Exact fstworker image required by the data lane
   --check               Validate only (default)
@@ -52,7 +53,7 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     exit 64
 fi
 case "$DATA_PROFILE" in
-    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration)
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration)
         ;;
     *)
         printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2
@@ -128,7 +129,9 @@ SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=false
 # Every supported full-scrape profile requires current fingerprints so strict
 # published-source coverage can account for non-empty scopes.
 USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
-if [[ "$DATA_PROFILE" == "snapshot-reuse" ]]; then
+if [[ "$DATA_PROFILE" == "snapshot-reuse" \
+    || "$DATA_PROFILE" == "leaderboard-rivals-batch" ]]
+then
     SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=true
 fi
 USE_SNAPSHOT_OVERLAY_WORKER_READERS=false
@@ -137,6 +140,7 @@ if [[ "$DATA_PROFILE" == "legacy-reader-migration" ]]; then
 fi
 
 RUN_ONCE=true \
+FST_WORKER_IMAGE="$EXPECTED_WORKER_IMAGE" \
 ENABLED_PHASES=All \
 PIA_MAX_REQUESTS_PER_SECOND="$MAX_RPS" \
 PIA_PROXY_MAX_REQUESTS_PER_SECOND_PER_ENDPOINT="$PER_ENDPOINT_RPS" \
@@ -145,6 +149,7 @@ PIA_INITIAL_DOP="$INITIAL_DOP" \
 PIA_DEGREE_OF_PARALLELISM=200 \
 PIA_PAGE_CONCURRENCY=50 \
 ENABLE_AUTOMATIC_PATH_GENERATION=false \
+LEADERBOARD_RIVALS_BATCH_SIZE=4 \
 REGISTERED_USER_REFRESH_TIMEOUT=00:00:00 \
 REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT=00:06:00 \
 REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT=00:05:00 \
