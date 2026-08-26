@@ -14,6 +14,11 @@ internal sealed record SongCatalogSnapshot(
     string ContentHash,
     int SongCount);
 
+internal sealed record SongCatalogChangeSet(
+    int Added,
+    int Removed,
+    int Changed);
+
 internal static class SongCatalogSnapshotBuilder
 {
     internal const int SchemaVersion = 2;
@@ -190,6 +195,57 @@ internal static class SongCatalogSnapshotBuilder
             throw new InvalidOperationException(
                 "The persisted song catalog token does not match the exact catalog selected for the scrape.");
         }
+    }
+
+    internal static SongCatalogChangeSet ComputeChangeSet(
+        string beforeCatalogJson,
+        string afterCatalogJson)
+    {
+        var before = ReadCatalogEntries(beforeCatalogJson);
+        var after = ReadCatalogEntries(afterCatalogJson);
+        var added = after.Keys.Count(
+            songId => !before.ContainsKey(songId));
+        var removed = before.Keys.Count(
+            songId => !after.ContainsKey(songId));
+        var changed = after.Count(item =>
+            before.TryGetValue(
+                item.Key,
+                out var previous)
+            && !string.Equals(
+                previous,
+                item.Value,
+                StringComparison.Ordinal));
+        return new SongCatalogChangeSet(
+            added,
+            removed,
+            changed);
+    }
+
+    private static Dictionary<string, string>
+        ReadCatalogEntries(string catalogJson)
+    {
+        using var document = JsonDocument.Parse(catalogJson);
+        var entries = new Dictionary<string, string>(
+            StringComparer.Ordinal);
+        foreach (var song in document.RootElement
+                     .GetProperty("songs")
+                     .EnumerateArray())
+        {
+            var songId = song
+                .GetProperty("track")
+                .GetProperty("su")
+                .GetString();
+            if (string.IsNullOrWhiteSpace(songId)
+                || !entries.TryAdd(
+                    songId,
+                    song.GetRawText()))
+            {
+                throw new InvalidOperationException(
+                    "Catalog change comparison requires unique nonempty song IDs.");
+            }
+        }
+
+        return entries;
     }
 
     private static JsonObject BuildProviderSongNode(Song song)

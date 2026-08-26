@@ -938,6 +938,8 @@ public sealed class ScraperWorker : BackgroundService
                 ScrapeRequests = BuildCatalogScrapeRequests(
                     passService,
                     opts),
+                PublicationCatalogSongs =
+                    passService.Songs.ToArray(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
                 EpicReportedOver100Pages = resumeState is not null && opts.ResumeEpicReportedOver100Pages,
                 LeaderboardScrapeCompleted = !anyScrapePhase,

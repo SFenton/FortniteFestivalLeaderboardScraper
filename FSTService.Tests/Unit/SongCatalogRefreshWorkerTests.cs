@@ -3,6 +3,7 @@ using System.Text;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
+using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Logging;
@@ -131,6 +132,44 @@ public sealed class SongCatalogRefreshWorkerTests
                     "old-hash",
                     inexact));
     }
+
+    [Fact]
+    public void Catalog_change_set_counts_added_removed_and_changed_ids()
+    {
+        var before = SongCatalogSnapshotBuilder.Create(
+        [
+            CreateSong("song-a", "Alpha"),
+            CreateSong("song-b", "Beta"),
+        ]);
+        var after = SongCatalogSnapshotBuilder.Create(
+        [
+            CreateSong("song-a", "Alpha changed"),
+            CreateSong("song-c", "Gamma"),
+        ]);
+
+        var changes =
+            SongCatalogSnapshotBuilder.ComputeChangeSet(
+                before.CatalogJson,
+                after.CatalogJson);
+
+        Assert.Equal(1, changes.Added);
+        Assert.Equal(1, changes.Removed);
+        Assert.Equal(1, changes.Changed);
+    }
+
+    private static Song CreateSong(
+        string songId,
+        string title) =>
+        new()
+        {
+            _title = title,
+            track = new Track
+            {
+                su = songId,
+                tt = title,
+                an = "Artist",
+            },
+        };
 
     private static HttpClient CreateProviderClient() =>
         new(new ProviderHandler())

@@ -1,12 +1,13 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/HealthEndpoints.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -19,6 +20,8 @@ sources:
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Api/SongsCacheService.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Api/PublicationReadiness.cs
   - FSTService/Api/AdminPathRegenerationGate.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
@@ -26,6 +29,8 @@ sources:
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/src/hooks/data/useCatalogPublicationLag.ts
+  - FortniteFestivalWeb/src/components/page/CatalogUpdateBanner.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -217,11 +222,20 @@ Aggregate player scopes intentionally use different formulas:
   exclusions remain a second guard. Rate limiting, authentication, and
   authorization execute before the cache middleware.
 - `/api/songs` uses its existing canonical serializer and stable song ordering.
-  The canonical L2 key is eagerly staged with publication caches and rewritten
-  after same-publication catalog/path/max-score changes. Unknown query
+  The canonical L2 key is eagerly staged with publication caches. A normal
+  five-minute catalog refresh persists the exact live provider snapshot but
+  does not rewrite this publication-owned row; guarded same-publication
+  path/max-score maintenance may rebuild it before unfreeze. Unknown query
   parameters remain nonsemantic exactly as in the endpoint implementation;
   `publicationId` affects generation selection but not the cache key. L1/L2
   hits retain the endpoint's public 30-minute `Cache-Control` policy.
+- Publication preparation requires the staged canonical `/api/songs` count and
+  exact song-ID set to match `publication_song_catalog`. Deferred/restarted
+  commit repeats the check against the prepared generation. Cache inheritance
+  is allowed only when the candidate and current exact catalog hashes match;
+  catalog drift requires a rebuilt cache. These checks prevent a resumed
+  worker from mixing a newer service catalog into an older captured
+  publication.
 - Page-1 per-instrument, composite, and generic band rankings plus overview
   sizes up to 10 resolve existing canonical rows and deterministically project
   the requested contained window. Registered-player default profiles,
@@ -287,6 +301,28 @@ version-1 field. Contract version 2 adds:
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+The same operational-live response now includes additive `catalog` telemetry:
+
+- `syncIntervalSeconds`;
+- exact `live`, `published`, and optional `working` catalog
+  version/count/publication metadata;
+- nullable added/changed/removed and aggregate `awaitingPublication` counts;
+- current path-generation pending and review-required totals.
+
+Lag counts are available only when both live and published catalogs are exact
+current-schema provider snapshots. A missing baseline is reported as unknown,
+not as the whole live catalog being newly added. The service compares full
+canonical provider entries, caches the result by live/published
+version-and-hash identity, and avoids reparsing catalog JSON on normal
+service-info polls.
+
+The anonymous `songs_changed` WebSocket message preserves `type`, `total`,
+`added`, and `at`, and additively exposes `removed`, `changed`,
+`publishedTotal`, and `awaitingPublication` when known. It signals clients to
+refresh operational lag state; it does not mean publication-bound
+`/api/songs`, paths, maxima, or rankings changed. Those public surfaces still
+advance only through publication or guarded same-publication maintenance.
 
 `currentUpdate.subphaseProgress` is an optional additive object with
 `schemaVersion=1`. It carries `id`, reset `epoch`, monotonic `sequence`,

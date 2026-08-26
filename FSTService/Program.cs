@@ -1174,8 +1174,25 @@ if (maxScoreMaintenanceCommand is not null)
         }
 
         precompLog.LogInformation("--precompute: running precomputation...");
+        var publishedScrape = precompPersistence.Meta
+            .GetPublishedScrapeRun()
+            ?? throw new InvalidOperationException(
+                "--precompute requires a current published scrape.");
+        var publicationCatalog = precompPersistence.Meta
+            .GetPublicationSongCatalogForScrape(
+                publishedScrape.Id)
+            ?? throw new InvalidOperationException(
+                "--precompute requires the exact catalog bound to the current published scrape.");
+        var publicationSongs =
+            SongCatalogSnapshotBuilder.DeserializeCatalog(
+                publicationCatalog.CatalogJson)
+            .ToArray();
         var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();
-        await precomputer.PrecomputeAllAsync(CancellationToken.None);
+        await precomputer.PrecomputeAllAsync(
+            precompPersistence.Meta
+                .ShouldShowLeaderboardEntryTotals(),
+            CancellationToken.None,
+            publicationCatalogSongs: publicationSongs);
 
         precompLog.LogInformation("--precompute: precomputed responses persisted to PostgreSQL. Exiting.");
         return;

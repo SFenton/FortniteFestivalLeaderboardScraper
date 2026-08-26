@@ -270,17 +270,34 @@ public sealed class NotificationService
 
     /// <summary>
     /// Broadcast that the song catalog has changed.
-    /// Clients use this to invalidate /api/songs-driven views.
+    /// Clients use this to refresh operational catalog-lag state. Canonical
+    /// song data remains publication-bound.
     /// </summary>
-    public Task NotifySongsChangedAsync(int total, int added)
+    public Task NotifySongsChangedAsync(
+        int total,
+        int added,
+        int removed,
+        int changed,
+        int? publishedTotal,
+        int? awaitingPublication)
     {
-        return BroadcastAllAsync(new
+        var message = new Dictionary<string, object?>
         {
-            type = "songs_changed",
-            total,
-            added,
-            at = DateTime.UtcNow.ToString("o"),
-        });
+            ["type"] = "songs_changed",
+            ["total"] = total,
+            ["added"] = added,
+            ["removed"] = removed,
+            ["changed"] = changed,
+            ["at"] = DateTime.UtcNow.ToString("o"),
+        };
+        if (publishedTotal.HasValue)
+            message["publishedTotal"] = publishedTotal.Value;
+        if (awaitingPublication.HasValue)
+        {
+            message["awaitingPublication"] =
+                awaitingPublication.Value;
+        }
+        return BroadcastAllAsync(message);
     }
 
     /// <summary>

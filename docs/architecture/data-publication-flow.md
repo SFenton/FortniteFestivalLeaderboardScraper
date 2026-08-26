@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-08-25
+last_verified_commit: 8c056d1d
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -34,6 +34,8 @@ sources:
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
@@ -67,6 +69,9 @@ diagnostic or replay data without becoming the published generation.
    - A new pass requires a successful, fully parsed provider catalog capture.
    - An inexact/safety-merged capture aborts before scrape allocation.
    - Resume mode reloads the immutable catalog bound to the resumed scrape.
+   - The selected catalog is carried through `ScrapePassContext` into cleanup
+     precompute. Neither an ordinary pass nor resume may rebuild canonical
+     `/api/songs` from the service singleton after allocation.
    - Allocation also captures the complete publication-bound path artifact
      snapshot for the new working publication and emits a ready
      `path_artifacts` binding. See
@@ -99,6 +104,9 @@ diagnostic or replay data without becoming the published generation.
      page-1 rankings, registered-player defaults, leaderboard bootstrap rows,
      and existing derived cache families. Request aliases project contained
      ranking windows from canonical rows instead of duplicating payloads.
+   - Canonical songs serialization uses the exact publication catalog passed
+     by the scrape context. An absent or supplied-empty candidate catalog
+     fails instead of silently staging an empty or newer live payload.
    - Dedicated registration workers and the run-once drain own durable
      registration backlog/history work; the retired deferred post-scrape sync
      is not a publication phase.
@@ -133,6 +141,10 @@ diagnostic or replay data without becoming the published generation.
      source maps remain historical evidence but do not pin hot partitions
      forever.
    - Prepare the next publication generation outside the final commit.
+   - When caches are promoted, require the canonical songs payload count and
+     exact song-ID set to match the candidate catalog. When caches are
+     inherited, require the candidate and current exact catalog hashes to be
+     identical.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
      publication pointer and generation-owned state.
@@ -145,10 +157,28 @@ diagnostic or replay data without becoming the published generation.
    - Contention can defer a prepared publication for retry without exposing it.
      A deferred or restarted commit reconstructs promotion inputs from
      `publication_path_artifacts` alone.
+   - A deferred/restarted commit revalidates the prepared canonical songs
+     payload against the exact publication catalog before pointer movement.
 9. **Release and notify**
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+
+## Live catalog refresh versus publication
+
+The service polls Spark Tracks every five minutes by default and persists a
+successful exact provider snapshot into `live_song_catalog` plus live song
+metadata. Allocation and refresh share the publication advisory lock. This
+keeps catalog ingestion current without letting a refresh amend an already
+captured candidate or current publication.
+
+`publication_song_catalog` remains the immutable song source for canonical
+songs, path maxima, ranking denominators, and publication caches. Service-info
+reports aggregate live-versus-published additions, removals, and changed
+provider entries; `songs_changed` asks clients to refresh that operational
+telemetry. No unpublished song list or maximum preview is exposed. Missing
+exact baselines produce unknown lag, and full JSON comparison is memoized by
+catalog version/hash so health polling stays bounded.
 
 Matched control scrape `1299` and candidate scrape `1300` accepted the retired
 post-scrape path cleanup. Their manifest and published-source key sets were

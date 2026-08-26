@@ -546,7 +546,9 @@ public sealed class PublicationPathArtifactTests : IDisposable
         await precomputer.PrecomputeAllAsync(
             showLeaderboardEntryTotals: false,
             CancellationToken.None,
-            publishImmediately: false);
+            publishImmediately: false,
+            publicationCatalogSongs:
+                [CreateCatalogSong("song-a")]);
 
         using var connection = DataSource.OpenConnection();
         using var command = connection.CreateCommand();

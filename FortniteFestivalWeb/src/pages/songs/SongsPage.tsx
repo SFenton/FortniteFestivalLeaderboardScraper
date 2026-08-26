@@ -36,6 +36,7 @@ import { SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../constants/keyboard
 import { safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
+import CatalogUpdateBanner from '../../components/page/CatalogUpdateBanner';
 import CollapseOnExit from '../../components/page/CollapseOnExit';
 import EmptyState from '../../components/common/EmptyState';
 import { ActionPill } from '../../components/common/ActionPill';
@@ -86,6 +87,7 @@ import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQui
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
+import { useCatalogPublicationLag } from '../../hooks/data/useCatalogPublicationLag';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -356,6 +358,7 @@ function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number
 
 export default function SongsPage() {
   const { t } = useTranslation();
+  const catalogLag = useCatalogPublicationLag();
   const {
     state: { songs, isLoading, error },
   } = useFestival();
@@ -1238,6 +1241,12 @@ export default function SongsPage() {
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>
+        {typeof catalogLag?.awaitingPublication === 'number'
+          && catalogLag.awaitingPublication > 0 && (
+          <CatalogUpdateBanner
+            count={catalogLag.awaitingPublication}
+          />
+        )}
         {(bannerVisible || !bannerCollapsed) && (
           <CollapseOnExit show={bannerVisible} onCollapsed={() => setBannerCollapsed(true)}>
             {isSyncing ? (

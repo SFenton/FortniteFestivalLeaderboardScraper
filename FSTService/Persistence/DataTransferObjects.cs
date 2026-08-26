@@ -1170,6 +1170,27 @@ public sealed class ServiceRuntimeState
     public PublicReadFreezeState PublicReadFreeze { get; init; } = PublicReadFreezeState.NotFrozen;
     public WorkerStatusInfo? WorkerStatus { get; init; }
     public ScrapePhaseAttemptInfo? CurrentPhaseAttempt { get; init; }
+    public CatalogPublicationLagState CatalogLag { get; init; } = new();
+}
+
+public sealed class CatalogPublicationLagState
+{
+    public long? LiveCatalogVersion { get; init; }
+    public int? LiveSongCount { get; init; }
+    public DateTime? LiveCapturedAtUtc { get; init; }
+    public long? PublishedPublicationId { get; init; }
+    public long? PublishedCatalogVersion { get; init; }
+    public int? PublishedSongCount { get; init; }
+    public DateTime? PublishedCatalogCapturedAtUtc { get; init; }
+    public long? WorkingPublicationId { get; init; }
+    public long? WorkingCatalogVersion { get; init; }
+    public int? WorkingSongCount { get; init; }
+    public int? AddedAwaitingPublication { get; init; }
+    public int? ChangedAwaitingPublication { get; init; }
+    public int? RemovedAwaitingPublication { get; init; }
+    public int? AwaitingPublication { get; init; }
+    public int PathGenerationPending { get; init; }
+    public int PathGenerationReviewRequired { get; init; }
 }
 
 /// <summary>

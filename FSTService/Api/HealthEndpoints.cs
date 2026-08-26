@@ -177,6 +177,75 @@ public static partial class ApiEndpoints
                         reserved = descriptor.Reserved,
                     }),
                 },
+                catalog = new
+                {
+                    syncIntervalSeconds =
+                        scraperOptions.Value
+                            .SongSyncInterval.TotalSeconds,
+                    live = new
+                    {
+                        version =
+                            runtime.CatalogLag
+                                .LiveCatalogVersion,
+                        songCount =
+                            runtime.CatalogLag
+                                .LiveSongCount,
+                        capturedAt =
+                            FormatUtc(
+                                runtime.CatalogLag
+                                    .LiveCapturedAtUtc),
+                    },
+                    published = new
+                    {
+                        publicationId =
+                            runtime.CatalogLag
+                                .PublishedPublicationId,
+                        version =
+                            runtime.CatalogLag
+                                .PublishedCatalogVersion,
+                        songCount =
+                            runtime.CatalogLag
+                                .PublishedSongCount,
+                        capturedAt =
+                            FormatUtc(
+                                runtime.CatalogLag
+                                    .PublishedCatalogCapturedAtUtc),
+                    },
+                    working =
+                        runtime.CatalogLag.WorkingPublicationId
+                            .HasValue
+                        ? new
+                        {
+                            publicationId =
+                                runtime.CatalogLag
+                                    .WorkingPublicationId,
+                            version =
+                                runtime.CatalogLag
+                                    .WorkingCatalogVersion,
+                            songCount =
+                                runtime.CatalogLag
+                                    .WorkingSongCount,
+                        }
+                        : null,
+                    awaitingPublication =
+                        runtime.CatalogLag
+                            .AwaitingPublication,
+                    addedAwaitingPublication =
+                        runtime.CatalogLag
+                            .AddedAwaitingPublication,
+                    changedAwaitingPublication =
+                        runtime.CatalogLag
+                            .ChangedAwaitingPublication,
+                    removedAwaitingPublication =
+                        runtime.CatalogLag
+                            .RemovedAwaitingPublication,
+                    pathGenerationPending =
+                        runtime.CatalogLag
+                            .PathGenerationPending,
+                    pathGenerationReviewRequired =
+                        runtime.CatalogLag
+                            .PathGenerationReviewRequired,
+                },
                 lastCompletedUpdate = publishedScrape is null ? null : new
                 {
                     scrapeId = publishedScrape.Id,

@@ -84,36 +84,67 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
     {
         try
         {
-            var before = _festivalService.Songs.Count;
-            var beforeHash = SongCatalogSnapshotBuilder
-                .Create(_festivalService.Songs)
-                .ContentHash;
+            var beforeSnapshot = SongCatalogSnapshotBuilder
+                .Create(_festivalService.Songs);
             var syncResult =
                 await _festivalService.SyncSongsWithResultAsync();
-            var after = _festivalService.Songs.Count;
-            var added = Math.Max(0, after - before);
-            var removed = Math.Max(0, before - after);
+            var afterSnapshot = SongCatalogSnapshotBuilder
+                .Create(_festivalService.Songs);
+            if (syncResult.PersistenceToken is not null)
+            {
+                SongCatalogSnapshotBuilder.ValidateToken(
+                    afterSnapshot,
+                    syncResult.PersistenceToken);
+            }
 
             if (HasExactCatalogChanged(
-                    beforeHash,
+                    beforeSnapshot.ContentHash,
                     syncResult))
             {
+                var changeSet = SongCatalogSnapshotBuilder
+                    .ComputeChangeSet(
+                    beforeSnapshot.CatalogJson,
+                    afterSnapshot.CatalogJson);
                 _log.LogInformation(
-                    "Song catalog refresh changed the exact provider catalog: {AddedCount} added, {RemovedCount} removed ({Total} total).",
-                    added,
-                    removed,
-                    after);
-                if (before != after)
+                    "Song catalog refresh changed the exact provider catalog: {AddedCount} added, {ChangedCount} changed, {RemovedCount} removed ({Total} total).",
+                    changeSet.Added,
+                    changeSet.Changed,
+                    changeSet.Removed,
+                    afterSnapshot.SongCount);
+                if (beforeSnapshot.SongCount
+                    != afterSnapshot.SongCount)
+                {
                     _persistence.InvalidateTotalSongCount();
+                }
                 _songsCache.InvalidateForContentChange();
                 PrimeSongsCache();
-                await _notifications.NotifySongsChangedAsync(after, added);
+                CatalogPublicationLagState? lag = null;
+                try
+                {
+                    lag = _persistence.Meta
+                        .GetCatalogPublicationLagState(
+                            commandTimeoutSeconds: 5);
+                }
+                catch (Exception ex)
+                    when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Song catalog refresh persisted, but catalog-lag telemetry could not be read before notification.");
+                }
+                await _notifications.NotifySongsChangedAsync(
+                    afterSnapshot.SongCount,
+                    changeSet.Added,
+                    changeSet.Removed,
+                    changeSet.Changed,
+                    lag?.PublishedSongCount,
+                    lag?.AwaitingPublication);
             }
             else
             {
                 _log.LogDebug(
                     "Song catalog refresh: {Total} songs in catalog (no exact changes).",
-                    after);
+                    afterSnapshot.SongCount);
             }
         }
         catch (SongCatalogPersistenceBusyException ex)

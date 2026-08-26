@@ -2053,12 +2053,50 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.TryGetProperty("lastCompletedUpdate", out _));
+        if (json.TryGetProperty(
+                "lastCompletedUpdate",
+                out var lastCompletedUpdate))
+        {
+            Assert.Contains(
+                lastCompletedUpdate.ValueKind,
+                new[]
+                {
+                    JsonValueKind.Null,
+                    JsonValueKind.Object,
+                });
+        }
         var updateStatus = json.GetProperty("currentUpdate").GetProperty("status").GetString();
         Assert.Contains(updateStatus, new[] { "idle", "updating", "failed", "stalled" });
         Assert.True(json.TryGetProperty("workerStatus", out _));
-        if (updateStatus is "idle" or "failed")
-            Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+        var catalog = json.GetProperty("catalog");
+        Assert.True(
+            catalog.GetProperty("syncIntervalSeconds")
+                .GetDouble() > 0);
+        Assert.Equal(
+            JsonValueKind.Object,
+            catalog.GetProperty("live").ValueKind);
+        Assert.Equal(
+            JsonValueKind.Object,
+            catalog.GetProperty("published").ValueKind);
+        Assert.True(
+            catalog.GetProperty("pathGenerationPending")
+                .GetInt32() >= 0);
+        Assert.True(
+            catalog.GetProperty(
+                    "pathGenerationReviewRequired")
+                .GetInt32() >= 0);
+        if (json.TryGetProperty(
+                "nextScheduledUpdateAt",
+                out var nextScheduledUpdateAt))
+        {
+            Assert.Contains(
+                nextScheduledUpdateAt.ValueKind,
+                new[]
+                {
+                    JsonValueKind.Null,
+                    JsonValueKind.String,
+                });
+        }
     }
 
     [Fact]

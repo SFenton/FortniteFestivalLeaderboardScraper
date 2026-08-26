@@ -363,6 +363,85 @@ public sealed class PublicationPathPromotionTests : IDisposable
     }
 
     [Fact]
+    public async Task Preparation_rejects_a_songs_cache_with_different_song_ids()
+    {
+        await SeedCatalogAsync("song-a");
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        StageSongsCache(publicationId, "song-b");
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Db.PrepareScrapePublication(
+                scrapeId,
+                promoteCachedResponses: true));
+        Assert.Contains(
+            "canonical songs payload does not match",
+            failure.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Deferred_commit_rejects_a_tampered_songs_cache_catalog_identity()
+    {
+        await SeedCatalogAsync("song-a");
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+        var currentPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        var preparation =
+            PrepareWithStagedCache(scrapeId, publicationId);
+        var tampered = Encoding.UTF8.GetBytes(
+            """{"count":1,"currentSeason":14,"songs":[{"songId":"song-b"}]}""");
+        ExecuteNonQuery(
+            """
+            UPDATE publication_api_response_cache
+            SET json_data = @json,
+                etag = @etag
+            WHERE publication_id = @publicationId
+              AND cache_key = @cacheKey
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                command.Parameters.AddWithValue(
+                    "cacheKey",
+                    PublicationApiCacheKeys.Songs);
+                command.Parameters.AddWithValue(
+                    "json",
+                    tampered);
+                command.Parameters.AddWithValue(
+                    "etag",
+                    ResponseCacheService.ComputeETag(
+                        tampered));
+            });
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Db.CommitPreparedScrapePublication(preparation));
+        Assert.Contains(
+            "canonical songs cache does not match",
+            failure.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            currentPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.Equal(
+            publicationId,
+            Db.GetPublicationPointerState().WorkingPublicationId);
+    }
+
+    [Fact]
     public async Task Deferred_commit_rejects_a_stale_path_manifest()
     {
         await SeedCatalogAsync("song-a");
@@ -984,8 +1063,49 @@ public sealed class PublicationPathPromotionTests : IDisposable
         long scrapeId,
         long publicationId)
     {
-        var json = Encoding.UTF8.GetBytes(
-            """{"count":1,"currentSeason":14,"songs":[{"songId":"song-a"}]}""");
+        StageSongsCache(
+            publicationId,
+            ReadPublicationCatalogSongIds(publicationId));
+        return Db.PrepareScrapePublication(
+            scrapeId,
+            promoteCachedResponses: true);
+    }
+
+    private string[] ReadPublicationCatalogSongIds(
+        long publicationId)
+    {
+        var songIds = new List<string>();
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT song -> 'track' ->> 'su'
+            FROM publication_song_catalog catalog
+            CROSS JOIN LATERAL
+                jsonb_array_elements(
+                    catalog.catalog_json -> 'songs') song
+            WHERE catalog.publication_id = @publicationId
+            ORDER BY song -> 'track' ->> 'su'
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            songIds.Add(reader.GetString(0));
+        return songIds.ToArray();
+    }
+
+    private void StageSongsCache(
+        long publicationId,
+        params string[] songIds)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            count = songIds.Length,
+            currentSeason = 14,
+            songs = songIds.Select(
+                static songId => new { songId }),
+        });
         Db.BulkSetCachedResponsesStaging(
             [
                 (
@@ -994,9 +1114,6 @@ public sealed class PublicationPathPromotionTests : IDisposable
                     ETag: ResponseCacheService.ComputeETag(json))
             ],
             publicationId);
-        return Db.PrepareScrapePublication(
-            scrapeId,
-            promoteCachedResponses: true);
     }
 
     private void PublishWithStagedCache(
