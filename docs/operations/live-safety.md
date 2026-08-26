@@ -85,7 +85,8 @@ changes provider selectors, promotes spares, or installs static endpoint IPs.
 
 Use the dual-lane run-once wrapper for a full-scrape candidate. The
 `leaderboard-rivals-batch` profile pairs exact `800/32/4` network enforcement
-with a four-account Rivals batch and retains publication-safe path staging,
+with a four-account Leaderboard Rivals batch, retains the existing Song Rivals
+account concurrency of two, and preserves publication-safe path staging,
 snapshot reuse, notifications, and publication-critical manifests.
 
 Size the production unit timeout above the total deadline plus cleanup margin.

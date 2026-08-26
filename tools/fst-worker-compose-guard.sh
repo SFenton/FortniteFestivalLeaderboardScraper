@@ -656,6 +656,10 @@ if data_profile == "snapshot-reuse":
 if data_profile == "leaderboard-rivals-batch":
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    if integer("Scraper__RivalsMaxDegreeOfParallelism") != 2:
+        raise SystemExit(
+            "ERROR: data profile leaderboard-rivals-batch requires "
+            "Scraper__RivalsMaxDegreeOfParallelism=2")
     if integer("Scraper__LeaderboardRivalsMaxDegreeOfParallelism") != 4:
         raise SystemExit(
             "ERROR: data profile leaderboard-rivals-batch requires "
