@@ -359,7 +359,9 @@ requires the exact account batch size of four, publication-safe scrape-pass
 path staging, the accepted snapshot-reuse write path, complete notification
 lanes, and all publication-critical manifests. Pair it with
 `candidate-800-32-4` to retain the proven production network rates while making
-their enforcement exact.
+their enforcement exact. The dual-lane wrapper also assigns the supplied
+expected image to the final run-once overlay before the guard resolves Compose;
+the option is therefore both the selected image and the fail-closed assertion.
 
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains idle and public reads remain unfrozen. Otherwise it
