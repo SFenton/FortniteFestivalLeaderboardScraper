@@ -346,12 +346,18 @@ function buildPublicationCacheRunonceConfig({
 }
 
 function buildLeaderboardRivalsBatchRunonceConfig({
-  accountBatchSize = "4"
+  accountBatchSize = "4",
+  rivalsMaxDegreeOfParallelism = "2",
+  initialCdnLearnedMaxDop = "360"
 } = {}) {
   const config = buildComposeConfig({ runOnce: true });
   Object.assign(config.services.fstworker.environment, {
     Scraper__EnabledPhases: "All",
     Scraper__RegisteredUserRefreshTimeout: "00:00:00",
+    Scraper__InitialCdnLearnedMaxDop:
+      initialCdnLearnedMaxDop,
+    Scraper__RivalsMaxDegreeOfParallelism:
+      rivalsMaxDegreeOfParallelism,
     Scraper__LeaderboardRivalsMaxDegreeOfParallelism:
       accountBatchSize,
     Scraper__UsePublicationPathArtifacts: "true",
@@ -1199,6 +1205,62 @@ describe("fstworker Compose startup recovery", () => {
       assert.match(
         result.stderr,
         /LeaderboardRivalsMaxDegreeOfParallelism=4/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a changed song-rivals account concurrency", async () => {
+    const harness = await createHarness({
+      config: buildLeaderboardRivalsBatchRunonceConfig({
+        rivalsMaxDegreeOfParallelism: "4"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "leaderboard-rivals-batch",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /Scraper__RivalsMaxDegreeOfParallelism=2/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a changed learned CDN concurrency ceiling", async () => {
+    const harness = await createHarness({
+      config: buildLeaderboardRivalsBatchRunonceConfig({
+        initialCdnLearnedMaxDop: "200"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "leaderboard-rivals-batch",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /Scraper__InitialCdnLearnedMaxDop=360/
       );
     } finally {
       await harness.cleanup();
