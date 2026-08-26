@@ -360,8 +360,8 @@ path staging, the accepted snapshot-reuse write path, complete notification
 lanes, and all publication-critical manifests. Pair it with
 `candidate-800-32-4` to retain the proven production network rates while making
 their enforcement exact. It also retains the accepted Song Rivals account
-concurrency of two so that phase is not an unrelated candidate. The dual-lane
-wrapper assigns the supplied
+concurrency of two and learned CDN concurrency ceiling of `360`, so neither is
+an unrelated candidate. The dual-lane wrapper assigns the supplied
 expected image to the final run-once overlay before the guard resolves Compose;
 the option is therefore both the selected image and the fail-closed assertion.
 
