@@ -234,7 +234,8 @@ function buildComposeConfig({
   pinnedEffectiveIp = null,
   runOnce = false,
   restartPolicy = null,
-  workerProfiles = ["worker"]
+  workerProfiles = ["worker"],
+  workerImage = "example.invalid/fstworker:test"
 } = {}) {
   const workerEnvironment = {
     Scraper__ExpectedProxyEndpointCount: String(effectiveCount),
@@ -266,7 +267,7 @@ function buildComposeConfig({
     },
     fstworker: {
       container_name: "fstworker",
-      image: "example.invalid/fstworker:test",
+      image: workerImage,
       restart: restartPolicy ?? (runOnce ? "no" : "on-failure:5"),
       profiles: workerProfiles,
       environment: workerEnvironment,
@@ -894,6 +895,46 @@ describe("fstworker Compose startup recovery", () => {
       assert.notEqual(result.code, 0);
       assert.deepEqual(await harness.events(), []);
       assert.match(result.stderr, /must include the worker Compose profile/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("enforces an expected image for a continuous worker", async () => {
+    const harness = await createHarness();
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a mismatched expected image without a data profile", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({
+        workerImage: "example.invalid/fstworker:unexpected"
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /resolved fstworker image must match .* found .*unexpected/
+      );
     } finally {
       await harness.cleanup();
     }

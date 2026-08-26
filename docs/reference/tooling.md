@@ -332,6 +332,11 @@ not take it. By default the lock is derived as
 override remains available. All invokers must share the resolved directory or
 override and Unix owner.
 
+Pass `--expected-worker-image` for every candidate check or recreate. The guard
+compares it with the final merged `fstworker.image` even when no data profile is
+selected, so a later Compose overlay cannot silently replace the requested
+candidate. Named data profiles continue to require the option.
+
 Recovery is effective-set-only, capped by stage windows and a 1,800-second
 default total deadline, and fail-closed. It does not accept `--config-only`,
 run-once/data profiles, or any `candidate-*` throughput profile. It does not

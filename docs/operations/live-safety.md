@@ -67,6 +67,8 @@ It must not be used as a general Compose reconciler.
 Before proxy mutation it verifies:
 
 - the merged continuous configuration and exact effective arrays;
+- the final merged worker image whenever `--expected-worker-image` is supplied,
+  including continuous actions without a data profile;
 - the guard-only `worker` profile and continuous `on-failure:5` policy;
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;

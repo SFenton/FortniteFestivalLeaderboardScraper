@@ -60,7 +60,8 @@ Options:
                            Every run-once config requires a data profile.
   --expected-worker-image I
                            Require the resolved fstworker image to match I.
-                           Required whenever --data-profile is not none.
+                           Enforced whenever supplied and required whenever
+                           --data-profile is not none.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
 EOF
@@ -554,12 +555,12 @@ if data_profile == "notification-db-only":
         if nonnegative_integer(name) != 80:
             raise SystemExit(
                 f"ERROR: data profile notification-db-only requires {name}=80")
-if data_profile != "none":
+if expected_worker_image:
     actual_worker_image = str(worker.get("image") or "").strip()
     if actual_worker_image != expected_worker_image:
         display_actual = actual_worker_image if actual_worker_image else "<empty>"
         raise SystemExit(
-            f"ERROR: data profile {data_profile} requires worker image "
+            "ERROR: resolved fstworker image must match "
             f"{expected_worker_image}, found {display_actual}")
 
 if data_profile == "publication-cache-generation":
