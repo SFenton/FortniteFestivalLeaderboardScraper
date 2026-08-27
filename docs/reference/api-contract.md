@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-27
+last_verified_commit: e32e9d49
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -339,6 +339,12 @@ reinterpret or inherit the parent phase percentage. The object may be absent
 during a rolling upgrade; consumers must retain the existing version-2 fields
 and treat a named legacy subphase as indeterminate rather than fabricating an
 exact value.
+
+For `post.leaderboard_rivals`, plan-v2 parent units remain `accounts`.
+Scheduled batched processing exposes the additive
+`leaderboard_rivals_account_instruments` subphase with exact
+`account_instruments` units. Consumers should use that subphase for intra-phase
+progress while retaining the parent account fields for compatibility.
 
 Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
 historical compatibility. `post.checkpoint` and

@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified: 2026-08-27
+last_verified_commit: e32e9d49
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -15,7 +15,10 @@ sources:
   - FSTService/Scraping/Replay/
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
+  - FSTService.Tests/Unit/InstrumentDatabaseTests.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
@@ -174,8 +177,8 @@ long-run distribution.
 | `RefreshRegisteredUsers` | 10+ | About 24 minutes | Scrape `1306` completed in 4.1 minutes; retain the historical 44-minute tail until more bounded samples exist |
 | `Cleanup.PrecomputeAll` | 10+ | About 13 minutes | Scrape `1306` took 13.3 minutes; stable |
 | `Cleanup.SoloCurrentProjection` | 10+ | About 12 minutes | Scrape `1306` took 16.0 minutes for 6,053 scopes |
-| `LeaderboardRivals` | 7 | About 5 minutes | Scrape `1306` took 5h21m43s for 18 users at the production 16 GiB limit; bulk neighborhood/profile reuse remains required |
-| `Rivals` | 12 | About 50 seconds | Scrape `1306` preloaded 1,960 rows for nine accounts in 4m56s, capped accounts at 2, and completed in 11m30s without OOM |
+| `LeaderboardRivals` | 9 | 8m28s current | Accepted scrape `1318` reduced the matched `1317` control from 4h26m44s to 8m28s; remaining work is selective recomputation through input fingerprints |
+| `Rivals` | 13 | About 50 seconds | Scrape `1315` took 40m21s for eight accounts: preload took 4m36s, the full account then took 35m44s and produced 53,665 samples |
 | Each shadow activation | 10 | About 2.3–2.5 minutes | Broad snapshot-state query |
 | `BandExtraction` | 10 | About 1.5 minutes | Already bounded-parallel |
 | First-seen, names, stats, checkpoint, legacy prune | 10 | Usually seconds or no-op | Not optimization priorities |
@@ -415,8 +418,8 @@ required before performance acceptance.
 | Rank-history snapshots | First optimize latest-state scan; then test existing overlap flag or DOP change separately | Largest ranking subphase; do not combine concurrency hypotheses | Isolated current-history query plan and one-variable A/B | Exact histories; meaningful wall reduction; no >10% resource regression | Overlap/DOP off | `full-scrape-ab` |
 | Band rankings | Split from solo ranking stage and retain dependency on completed BandMaintenance | Can run only after prune/current band input is terminal | Phase contract tests and isolated ranking parity | Exact band rank/stat/history rows | Existing monolithic `ComputeAllAsync` | `full-scrape-ab` |
 | Solo projection prepare | Keep dormant until snapshot-overlay reader migration is promoted | No current optimization work | Existing reader migration parity gate | Full public/worker parity | Flag off | `full-scrape-ab` |
-| Song rivals | Accepted: bulk-load target scores once per instrument, reuse them, and cap accounts at 2. Next: batch per-score selection-state fingerprints | Potential overlap with player stats later; not before query/resource evidence | Registered-account slice replay | Exact rivals/samples/fingerprints; lower query count and p95 | Existing task fan-out / per-score fingerprints | `full-scrape-ab` |
-| Leaderboard rivals | Bulk-load neighborhoods and selected neighbor scores; add input fingerprints | Recompute only users whose ranking neighborhood changed | One-account, then full registered-slice replay | Exact rows/samples; ≥25% query/wall reduction | Existing per-user algorithm | `full-scrape-ab` |
+| Song rivals | Accepted: bulk-load target scores once per instrument, reuse them, and cap accounts at 2. Next batch selected-rival account/song profile reads per instrument and batch selection-state fingerprints | Potential overlap with player stats later; do not raise account concurrency before query/resource evidence | Production-shaped account/song-pair fixture, then one full registered-account slice | Exact rivals/samples/fingerprints; at least 25% query or phase-wall reduction; bounded profile rows/RSS; no greater than 10% protected resource regression | Retain the current per-rival reads and accepted preload/account cap | `full-scrape-ab` |
+| Leaderboard rivals | Add input fingerprints and selectively recompute only accounts whose ranking neighborhood or relevant scores changed | Accepted instrument-first default-4 batching is the baseline; fingerprints must preserve atomic user/instrument replacement and publication semantics | Same-input full registered slice with unchanged, one-account, one-instrument, and broad-change cases | Exact rows/samples/state; unchanged inputs skip safely; changed inputs match forced recomputation; no greater than 10% protected resource regression | Force all accepted batches to recompute | `full-scrape-ab` |
 | Player stats | Add per-chunk timing | Usually seconds; leave serial unless recurring tail appears | Three comparable scrapes | No output difference; optimize only if material | Remove counters | `continuous-safe` |
 | Checkpoint/cache warm | Candidate removes verified PostgreSQL no-ops | Stable checkpoint ID remains reserved; no persistence contract remains | PostgreSQL API-absence and worker-flow tests plus full scrape parity | Zero output/cache difference | Revert deletion | `full-scrape-ab` |
 | Final snapshot activation | Prove whether wave-two marker has a current consumer; collapse only after parity | Candidate removal, not assumed redundancy | Source/reference tests and full current-state/public checksums | Exact resume, projection, publication, and API behavior | Restore second activation | `full-scrape-ab` |
@@ -708,12 +711,13 @@ Order is evidence-driven:
    publication/data parity and the protected `>10%` regression rule;
 4. solo current-projection write reduction;
 5. rank-history query path and one-variable concurrency/overlap experiment;
-6. leaderboard-rivals batching/fingerprints;
-7. precompute input reuse/selective concurrency;
-8. best-effort cleanup reorder;
-9. snapshot activation consolidation;
-10. storage-retention execution after parity/capacity gates;
-11. capture-only overlap research after architecture/storage redesign.
+6. song-rivals selected-profile batching and fingerprint batching;
+7. leaderboard-rivals input fingerprints/selective recomputation;
+8. precompute input reuse/selective concurrency;
+9. best-effort cleanup reorder;
+10. snapshot activation consolidation;
+11. storage-retention execution after parity/capacity gates;
+12. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 

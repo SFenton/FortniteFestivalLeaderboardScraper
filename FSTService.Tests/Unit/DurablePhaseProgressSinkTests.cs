@@ -287,6 +287,59 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void Leaderboard_rivals_batches_publish_account_parent_and_exact_pair_subphase()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var leaderboard =
+            PhaseProgressCatalog.FindPostScrape(
+                "LeaderboardRivals")!;
+        sink.StartPhase(
+            leaderboard,
+            "leaderboard_rivals_account_instruments");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(
+            sink.ObserveTracker(
+                new OperationSnapshot
+                {
+                    Operation = "ComputingRivals",
+                    SubOperation =
+                        "leaderboard_rivals_account_instruments",
+                    Accounts = new ProgressCounter
+                    {
+                        Completed = 2,
+                        Total = 11,
+                    },
+                    WorkItems = new ProgressCounter
+                    {
+                        Completed = 18,
+                        Total = 99,
+                    },
+                    WorkItemsTotalFinal = true,
+                }));
+
+        Assert.Equal("accounts", view.UnitsKind);
+        Assert.Equal(2, view.UnitsCompleted);
+        Assert.Equal(11, view.UnitsTotal);
+        Assert.Equal(
+            "exact",
+            view.SubphaseProgress?.Kind);
+        Assert.Equal(
+            "account_instruments",
+            view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(
+            18,
+            view.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(
+            99,
+            view.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(
+            18.2,
+            view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
     public void Deep_scrape_jobs_publish_exact_subphase_progress()
     {
         var (sink, _, clock) = CreateSink();

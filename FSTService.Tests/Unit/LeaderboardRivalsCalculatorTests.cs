@@ -282,7 +282,7 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
 
         var profileReads = 0;
         var requestedProfileAccounts = 0;
-        _sut.MaintenanceProfileBatchReadTestHook =
+        _sut.ProfileBatchReadTestHook =
             (instrument, accountCount) =>
             {
                 Assert.Equal("Solo_Guitar", instrument);
@@ -313,6 +313,124 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
                 LeaderboardRivalsCalculator
                     .MaxSamplesPerRival,
                 samples.Count()));
+    }
+
+    [Fact]
+    public void ScheduledBatch_PersistsEquivalentResults_AndReadsProfilesOncePerAccountBatch()
+    {
+        var db = _persistence.GetOrCreateInstrumentDb(
+            "Solo_Guitar");
+        var songs = Enumerable.Range(1, 20)
+            .Select(index =>
+                (
+                    SongId: $"song-{index:D3}",
+                    Entries: new[]
+                    {
+                        (AccountId: "above", Score: 1_500 + index),
+                        (AccountId: "user-a", Score: 1_400 + index),
+                        (AccountId: "user-b", Score: 1_300 + index),
+                        (AccountId: "user-c", Score: 1_200 + index),
+                        (AccountId: "below", Score: 1_100 + index),
+                    }))
+            .ToArray();
+        SeedScoresAndRankings(db, songs);
+        var users = new[]
+        {
+            "user-a",
+            "user-b",
+            "user-c",
+        };
+        var expected = users.ToDictionary(
+            userId => userId,
+            userId => _sut.ComputeInstrument(
+                userId,
+                "Solo_Guitar",
+                LeaderboardRivalsCalculator.RankMethods),
+            StringComparer.OrdinalIgnoreCase);
+        var profileReads = 0;
+        _sut.ProfileBatchReadTestHook =
+            (_, _) => profileReads++;
+        var completedPairs = 0;
+
+        var result = _sut.ComputeForUsersBatched(
+            users,
+            accountBatchSize: 2,
+            rankingsAuthoritative: true,
+            onPairComplete:
+                (_, completed) =>
+                    completedPairs = completed);
+
+        var instrumentCount =
+            _persistence.GetInstrumentKeys().Count;
+        Assert.Equal(
+            instrumentCount * 2,
+            profileReads);
+        Assert.Equal(
+            instrumentCount * users.Length,
+            completedPairs);
+        Assert.Equal(
+            expected.Values.Sum(item => item.Rivals.Count),
+            result.RivalCount);
+        Assert.Equal(
+            expected.Values.Sum(item => item.Samples.Count),
+            result.SampleCount);
+
+        foreach (var (userId, expectedResult) in expected)
+        {
+            var persistedRivals = _metaFixture.Db
+                .GetLeaderboardRivals(
+                    userId,
+                    "Solo_Guitar");
+            Assert.Equal(
+                expectedResult.Rivals
+                    .Select(rival => (
+                        rival.RivalAccountId,
+                        rival.RankMethod,
+                        rival.Direction,
+                        rival.UserRank,
+                        rival.RivalRank,
+                        rival.SharedSongCount,
+                        rival.AheadCount,
+                        rival.BehindCount,
+                        rival.AvgSignedDelta))
+                    .OrderBy(row => row.RankMethod)
+                    .ThenBy(row => row.Direction)
+                    .ThenBy(row => row.RivalAccountId)
+                    .ToArray(),
+                persistedRivals
+                    .Select(rival => (
+                        rival.RivalAccountId,
+                        rival.RankMethod,
+                        rival.Direction,
+                        rival.UserRank,
+                        rival.RivalRank,
+                        rival.SharedSongCount,
+                        rival.AheadCount,
+                        rival.BehindCount,
+                        rival.AvgSignedDelta))
+                    .OrderBy(row => row.RankMethod)
+                    .ThenBy(row => row.Direction)
+                    .ThenBy(row => row.RivalAccountId)
+                    .ToArray());
+
+            using var connection =
+                _metaFixture.DataSource.OpenConnection();
+            using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM leaderboard_rival_song_samples
+                WHERE user_id = @userId
+                  AND instrument = 'Solo_Guitar'
+                """;
+            command.Parameters.AddWithValue(
+                "userId",
+                userId);
+            Assert.Equal(
+                expectedResult.Samples.Count,
+                Convert.ToInt32(
+                    command.ExecuteScalar()));
+        }
     }
 
     [Fact]

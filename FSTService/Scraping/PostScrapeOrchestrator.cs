@@ -2562,45 +2562,68 @@ public sealed class PostScrapeOrchestrator
     internal async Task ComputeLeaderboardRivalsAsync(ScrapePassContext ctx, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
-        if (ctx.RegisteredIds.Count == 0)
+        var accountIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(ctx.RegisteredIds);
+        if (accountIds.Length == 0)
             return;
 
-        var maxDegreeOfParallelism = Math.Max(
+        var instrumentCount =
+            _persistence.GetInstrumentKeys().Count;
+        var accountBatchSize = Math.Clamp(
+            _options.Value
+                .LeaderboardRivalsMaxDegreeOfParallelism,
             1,
-            _options.Value.LeaderboardRivalsMaxDegreeOfParallelism);
+            accountIds.Length);
+        var totalPairs =
+            accountIds.Length * instrumentCount;
         _log.LogInformation(
-            "Computing leaderboard rivals for {Count} registered user(s) with maxDegree={MaxDegree}.",
-            ctx.RegisteredIds.Count,
-            maxDegreeOfParallelism);
-        _progress.BeginPhaseProgress(ctx.RegisteredIds.Count);
+            "Computing leaderboard rivals for {AccountCount:N0} registered user(s) across {InstrumentCount:N0} instrument(s) with accountBatchSize={AccountBatchSize:N0}.",
+            accountIds.Length,
+            instrumentCount,
+            accountBatchSize);
+        _progress.BeginPhaseProgress(
+            totalPairs,
+            totalAccounts: accountIds.Length);
+        _progress.SetSubOperation(
+            "leaderboard_rivals_account_instruments");
+        var completedInstrumentsByAccount =
+            accountIds.ToDictionary(
+                static accountId => accountId,
+                static _ => 0,
+                StringComparer.OrdinalIgnoreCase);
 
-        await Parallel.ForEachAsync(
-            ctx.RegisteredIds,
-            new ParallelOptions
-            {
-                CancellationToken = ct,
-                MaxDegreeOfParallelism = maxDegreeOfParallelism,
-            },
-            (accountId, _) =>
-            {
-                try
-                {
-                    var result = _leaderboardRivalsCalculator.ComputeForUser(
-                        accountId,
+        var result = await Task.Run(
+            () =>
+                _leaderboardRivalsCalculator
+                    .ComputeForUsersBatched(
+                        accountIds,
+                        accountBatchSize,
                         rankingsAuthoritative:
-                            ctx.RankingsComputedSuccessfully);
-                    _log.LogDebug(
-                        "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
-                        accountId,
-                        result.RivalCount,
-                        result.SampleCount);
-                    return ValueTask.CompletedTask;
-                }
-                finally
-                {
-                    _progress.ReportPhaseItemComplete();
-                }
-            });
+                            ctx.RankingsComputedSuccessfully,
+                        onPairComplete:
+                            (accountId, _) =>
+                        {
+                            _progress
+                                .ReportPhaseItemComplete();
+                            completedInstrumentsByAccount[
+                                accountId]++;
+                            if (completedInstrumentsByAccount[
+                                    accountId]
+                                == instrumentCount)
+                            {
+                                _progress
+                                    .ReportPhaseAccountComplete();
+                            }
+                        },
+                        ct: ct),
+            ct);
+        _log.LogInformation(
+            "Computed scheduled leaderboard rivals: accounts={AccountCount:N0}, instruments={InstrumentCount:N0}, rivalRows={RivalCount:N0}, sampleRows={SampleCount:N0}.",
+            accountIds.Length,
+            instrumentCount,
+            result.RivalCount,
+            result.SampleCount);
     }
 
     internal Task RunLeaderboardRivalsPhaseAsync(

@@ -22,7 +22,7 @@ public sealed class LeaderboardRivalsCalculator
     private readonly ILogger<LeaderboardRivalsCalculator> _log;
 
     internal Action<string, int>?
-        MaintenanceProfileBatchReadTestHook { get; set; }
+        ProfileBatchReadTestHook { get; set; }
 
     public LeaderboardRivalsCalculator(
         GlobalLeaderboardPersistence persistence,
@@ -60,26 +60,107 @@ public sealed class LeaderboardRivalsCalculator
         {
             var instrumentResult = ComputeInstrument(userId, instrument, RankMethods);
 
-            if (instrumentResult.UserFound
-                || !instrumentResult.HasUserScores
-                || rankingsAuthoritative)
-            {
-                _meta.ReplaceLeaderboardRivalsData(
+            if (PersistInstrumentResult(
                     userId,
                     instrument,
-                    instrumentResult.Rivals,
-                    instrumentResult.Samples,
-                    instrumentResult.CompletedRankMethods,
-                    instrumentResult.UserRanks);
+                    instrumentResult,
+                    rankingsAuthoritative))
+            {
                 totalRivals += instrumentResult.Rivals.Count;
                 totalSamples += instrumentResult.Samples.Count;
             }
-            else
+        }
+
+        return new LeaderboardRivalsResult
+        {
+            RivalCount = totalRivals,
+            SampleCount = totalSamples,
+        };
+    }
+
+    internal LeaderboardRivalsResult ComputeForUsersBatched(
+        IReadOnlyCollection<string> userIds,
+        int accountBatchSize,
+        bool rankingsAuthoritative = false,
+        Action<string, int>? onPairComplete = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(userIds);
+        var normalizedUserIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(userIds);
+        if (normalizedUserIds.Length == 0)
+            return new LeaderboardRivalsResult();
+
+        var instrumentKeys = _persistence
+            .GetInstrumentKeys()
+            .OrderBy(
+                static instrument => instrument,
+                StringComparer.Ordinal)
+            .ToArray();
+        var effectiveBatchSize = Math.Clamp(
+            accountBatchSize,
+            1,
+            normalizedUserIds.Length);
+        var totalPairs =
+            normalizedUserIds.Length * instrumentKeys.Length;
+        var completedPairs = 0;
+        var totalRivals = 0;
+        var totalSamples = 0;
+
+        foreach (var instrument in instrumentKeys)
+        {
+            foreach (var accountBatch in
+                     normalizedUserIds.Chunk(
+                         effectiveBatchSize))
             {
-                _log.LogWarning(
-                    "Preserving leaderboard rivals for {User}/{Instrument}: scores exist but AccountRankings has no user row.",
-                    userId,
+                ct.ThrowIfCancellationRequested();
+                var stopwatch =
+                    System.Diagnostics.Stopwatch.StartNew();
+                var batch = ComputeInstrumentBatch(
+                    accountBatch,
                     instrument);
+                _log.LogInformation(
+                    "Scheduled leaderboard-rivals batch loaded {RankingCount:N0} rankings and {ProfileAccountCount:N0} user/neighbor profiles ({ScoreCount:N0} scores) for {Instrument}; accounts={AccountCount:N0}.",
+                    batch.RankingCount,
+                    batch.ProfileAccountCount,
+                    batch.ScoreCount,
+                    instrument,
+                    accountBatch.Length);
+
+                foreach (var userId in accountBatch)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var instrumentResult =
+                        batch.Results[userId];
+                    if (PersistInstrumentResult(
+                            userId,
+                            instrument,
+                            instrumentResult,
+                            rankingsAuthoritative))
+                    {
+                        totalRivals +=
+                            instrumentResult.Rivals.Count;
+                        totalSamples +=
+                            instrumentResult.Samples.Count;
+                    }
+
+                    completedPairs++;
+                    onPairComplete?.Invoke(
+                        userId,
+                        completedPairs);
+                }
+
+                stopwatch.Stop();
+                _log.LogInformation(
+                    "Scheduled leaderboard-rivals batch completed for {Instrument}: accounts={AccountCount:N0}, profiles={ProfileAccountCount:N0}, scores={ScoreCount:N0}, completedPairs={CompletedPairs:N0}/{TotalPairs:N0}, elapsedSeconds={ElapsedSeconds:F1}.",
+                    instrument,
+                    accountBatch.Length,
+                    batch.ProfileAccountCount,
+                    batch.ScoreCount,
+                    completedPairs,
+                    totalPairs,
+                    stopwatch.Elapsed.TotalSeconds);
             }
         }
 
@@ -311,7 +392,7 @@ public sealed class LeaderboardRivalsCalculator
             db.GetCurrentStatePlayerScoresForAccounts(
                 profileAccountIds,
                 includeBlankAccountIds: true);
-        MaintenanceProfileBatchReadTestHook?.Invoke(
+        ProfileBatchReadTestHook?.Invoke(
             instrument,
             profileAccountIds.Count);
         var results =
@@ -339,6 +420,33 @@ public sealed class LeaderboardRivalsCalculator
             profiles.Count,
             profiles.Values.Sum(scores => scores.Count),
             results);
+    }
+
+    private bool PersistInstrumentResult(
+        string userId,
+        string instrument,
+        LeaderboardInstrumentRivalsResult instrumentResult,
+        bool rankingsAuthoritative)
+    {
+        if (instrumentResult.UserFound
+            || !instrumentResult.HasUserScores
+            || rankingsAuthoritative)
+        {
+            _meta.ReplaceLeaderboardRivalsData(
+                userId,
+                instrument,
+                instrumentResult.Rivals,
+                instrumentResult.Samples,
+                instrumentResult.CompletedRankMethods,
+                instrumentResult.UserRanks);
+            return true;
+        }
+
+        _log.LogWarning(
+            "Preserving leaderboard rivals for {User}/{Instrument}: scores exist but AccountRankings has no user row.",
+            userId,
+            instrument);
+        return false;
     }
 
     internal LeaderboardInstrumentRivalsResult ComputeInstrument(

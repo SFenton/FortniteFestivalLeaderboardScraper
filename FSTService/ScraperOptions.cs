@@ -750,8 +750,8 @@ public sealed class ScraperOptions
     public int RivalsMaxDegreeOfParallelism { get; set; } = 2;
 
     /// <summary>
-    /// Maximum registered accounts processed concurrently while rebuilding
-    /// leaderboard-rival rows after rankings.
+    /// Maximum registered accounts included in each per-instrument profile
+    /// batch while rebuilding leaderboard-rival rows after rankings.
     /// </summary>
     public int LeaderboardRivalsMaxDegreeOfParallelism { get; set; } = 4;
 
