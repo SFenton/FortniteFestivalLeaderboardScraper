@@ -822,6 +822,18 @@ public sealed class DurablePhaseProgressSink
                 snapshot.Leaderboards.Total,
                 UnitsTotalFinal: true);
         }
+        if (descriptor.Id == "post.leaderboard_rivals"
+            && snapshot.SubOperation
+                == "leaderboard_rivals_account_instruments"
+            && snapshot.Accounts is not null)
+        {
+            return new PhaseProgressObservation(
+                snapshot.SubOperation,
+                "accounts",
+                snapshot.Accounts.Completed,
+                snapshot.Accounts.Total,
+                UnitsTotalFinal: true);
+        }
         if (snapshot.WorkItems is not null)
         {
             return new PhaseProgressObservation(
@@ -915,6 +927,21 @@ public sealed class DurablePhaseProgressSink
             return new SubphaseProgressObservation(
                 id,
                 "not_applicable");
+        }
+
+        if (id
+                == "leaderboard_rivals_account_instruments"
+            && descriptor.Id
+                == "post.leaderboard_rivals"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                "account_instruments",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal
+                    == true);
         }
 
         if (id == "fetching_leaderboards"

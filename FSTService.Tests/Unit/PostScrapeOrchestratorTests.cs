@@ -3251,10 +3251,14 @@ public class PostScrapeOrchestratorTests : IDisposable
         var current = _progress.GetProgressResponse().Current;
         Assert.NotNull(current);
         Assert.Equal("ComputingRivals", current!.Operation);
-        Assert.Null(current.SubOperation);
-        Assert.Equal(2, current.WorkItems?.Completed);
-        Assert.Equal(2, current.WorkItems?.Total);
+        Assert.Equal(
+            "leaderboard_rivals_account_instruments",
+            current.SubOperation);
+        Assert.Equal(18, current.WorkItems?.Completed);
+        Assert.Equal(18, current.WorkItems?.Total);
         Assert.True(current.WorkItemsTotalFinal);
+        Assert.Equal(2, current.Accounts?.Completed);
+        Assert.Equal(2, current.Accounts?.Total);
     }
 
     [Fact]

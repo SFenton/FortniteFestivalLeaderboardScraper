@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-27
+last_verified_commit: e32e9d49
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
@@ -21,8 +21,12 @@ sources:
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/RivalsCalculator.cs
   - FSTService/Scraping/RivalsOrchestrator.cs
+  - FSTService.Tests/Unit/LeaderboardRivalsCalculatorTests.cs
+  - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
+  - FSTService.Tests/Unit/DurablePhaseProgressSinkTests.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/LeaderboardRivalsCalculator.cs
+  - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -358,6 +362,37 @@ account completion against the final target-account denominator. Direct
 single-user and backfill recomputation remain on-demand and do not allocate a
 global preload.
 
+A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
+array predicate to the compatibility current-state query. Exact row/hash
+parity passed, but dense 50-, 379-, and 707-song cases regressed by
+`1.1%`, `3.8%`, and `1.4%`; PostgreSQL already pushed the final predicate into
+equivalent snapshot work.
+
+Scheduled leaderboard rivals instead process one instrument at a time and
+split registered users into bounded account batches. Each batch loads the
+instrument rankings plus deduplicated registered-user and neighbor profiles
+once, computes all five ranking methods in memory, and persists each
+user/instrument through the existing atomic replacement policy.
+`Scraper:LeaderboardRivalsMaxDegreeOfParallelism` retains its public name but
+now controls account batch size and defaults to `4`. Direct single-user
+computation and max-score maintenance retain their existing paths.
+
+The plan-v2 parent remains account-based for compatibility. The named
+`leaderboard_rivals_account_instruments` subphase exposes exact
+`account_instruments` progress; 11 users across nine instruments therefore
+advance through `0..99/99`.
+
+An isolated 7.1-million-row replay returned the same 2,840 rows and full-row
+hash while reducing four profile reads from `30.04s` to `7.79s` (`-74.1%`).
+Matched live scrapes `1317` and `1318` then reduced Leaderboard Rivals from
+`16,004.146s` to `508.248s` (`-96.824%`, `31.49x`) and completed exact
+`99/99` progress. Candidate temp I/O was `19.86GB`, reads were `7.66M`, and
+WAL was `621.8MB`, all below even the late-captured control lower bounds.
+Worker/PostgreSQL memory, PostgreSQL CPU, and host load also remained below
+control. Scrape `1318` published generation `124`, completed 48 player and 60
+band notification events, preserved all 46 users and nine instruments with
+zero rival-table invariant violations, unfroze reads, and exited cleanly.
+
 Matched production scrapes `1299` (control) and `1300` (candidate) accepted
 this cleanup. Both covered 702 songs, 8,424 complete scope manifests, and 6,318
 complete published solo-source mappings; both published, unfroze, completed
@@ -485,7 +520,7 @@ fetching, bounded online-writer drain, solo/band spool-page flushing,
 coordinated deep-scrape jobs, active solo/band index work, band extraction and
 membership rebuild, registered-player band discovery, registered-band
 processing, player rivals, player-stat account chunks, early snapshot
-activation, and state-level leaderboard-rival accounts. Empty band-index
+activation, and leaderboard-rival account/instrument pairs. Empty band-index
 creation is `not_applicable`. Operations without a final denominator,
 including monolithic SQL, publication gates, retries, and retention work,
 remain explicitly indeterminate. Timeout/cancel transition states are also

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-27
+last_verified_commit: e32e9d49
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -216,6 +216,26 @@ account can execute many neighborhood reads and fingerprint queries. The
 setting changes scheduling only; rival eligibility, methods, directions,
 samples, persistence, publication criticality, and result ordering are
 unchanged.
+
+## Leaderboard rivals
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:LeaderboardRivalsMaxDegreeOfParallelism` | `4` | positive integer | Registered accounts included in each per-instrument ranking/profile batch |
+
+The Compose form is
+`Scraper__LeaderboardRivalsMaxDegreeOfParallelism`. Despite the retained key
+name, scheduled processing no longer fans out that many accounts concurrently.
+It processes one instrument at a time and chunks registered accounts by this
+value. Each chunk loads rankings and its deduplicated user/neighbor profiles
+once, then persists every user/instrument independently.
+
+Lower values reduce peak profile memory but repeat the full-instrument profile
+query more often. Higher values reduce query count while retaining more
+profiles and score DTOs in memory. The setting does not change rank methods,
+neighbor radius, sample caps, persistence shape, or publication behavior.
+Direct single-user calls and max-score maintenance keep their separate
+on-demand and maintenance-lease paths.
 
 ## Role differences
 
