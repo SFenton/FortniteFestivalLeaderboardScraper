@@ -100,6 +100,8 @@ internal sealed record DeferredPublicationResumeOutcome(
 /// </summary>
 public sealed class ScraperWorker : BackgroundService
 {
+    private const int
+        RetentionSafePointCommandTimeoutSeconds = 30;
     private readonly TokenManager _tokenManager;
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -121,6 +123,8 @@ public sealed class ScraperWorker : BackgroundService
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly NotificationService _notifications;
     private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
+    private readonly ISnapshotGenerationRetentionPlanner?
+        _snapshotGenerationRetentionPlanner;
     private readonly WorkerStatusPublisher? _workerStatus;
     private readonly RegistrationMutationCoordinator
         _registrationMutations;
@@ -167,6 +171,8 @@ public sealed class ScraperWorker : BackgroundService
         RegistrationMutationCoordinator
             registrationMutations,
         DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null,
+        ISnapshotGenerationRetentionPlanner?
+            snapshotGenerationRetentionPlanner = null,
         WorkerStatusPublisher? workerStatus = null,
         IOptions<PublicationCommitOptions>?
             publicationCommitOptions = null)
@@ -192,6 +198,8 @@ public sealed class ScraperWorker : BackgroundService
         _syncTracker = syncTracker;
         _notifications = notifications;
         _deferredRetentionMaintenance = deferredRetentionMaintenance;
+        _snapshotGenerationRetentionPlanner =
+            snapshotGenerationRetentionPlanner;
         _workerStatus = workerStatus;
         _registrationMutations = registrationMutations;
         _options = options;
@@ -353,8 +361,12 @@ public sealed class ScraperWorker : BackgroundService
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
-            var publishedBeforePass =
-                _persistence.Meta.GetPublishedScrapeRun()?.Id;
+            await TryRunCurrentSnapshotGenerationRetentionSafePointAsync(
+                stoppingToken);
+
+            var publishedBeforePass = opts.RunOnce
+                ? _persistence.Meta.GetPublishedScrapeRun()?.Id
+                : null;
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
             await ResumeDeferredPublicationBeforeGatesAsync(
                 stoppingToken);
@@ -374,10 +386,15 @@ public sealed class ScraperWorker : BackgroundService
             {
                 var publishedAfterPass =
                     _persistence.Meta.GetPublishedScrapeRun()?.Id;
-                if (publishedAfterPass.HasValue
-                    && publishedAfterPass != publishedBeforePass)
+                var publishedNewState =
+                    publishedAfterPass.HasValue
+                    && publishedAfterPass
+                        != publishedBeforePass;
+                var registrationDrainComplete = !publishedNewState;
+                if (publishedNewState)
                 {
-                    await DrainRegistrationWorkAfterRunOnceAsync(
+                    registrationDrainComplete =
+                        await DrainRegistrationWorkAfterRunOnceAsync(
                         opts,
                         stoppingToken);
                 }
@@ -385,6 +402,16 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _log.LogWarning(
                         "Skipping post-run registration drain because the run-once pass did not publish a new scrape.");
+                }
+                if (registrationDrainComplete)
+                {
+                    await TryRunCurrentSnapshotGenerationRetentionSafePointAsync(
+                        stoppingToken);
+                }
+                else
+                {
+                    _log.LogWarning(
+                        "Deferring the run-once snapshot-generation retention safe point because the registration drain did not complete; a later worker boundary will retry the current publication.");
                 }
                 _log.LogInformation("--once: scrape + resolve pass complete. Exiting.");
                 break;
@@ -406,7 +433,7 @@ public sealed class ScraperWorker : BackgroundService
 
     }
 
-    private async Task DrainRegistrationWorkAfterRunOnceAsync(
+    private async Task<bool> DrainRegistrationWorkAfterRunOnceAsync(
         ScraperOptions opts,
         CancellationToken ct)
     {
@@ -435,33 +462,24 @@ public sealed class ScraperWorker : BackgroundService
                         claimedInBatch),
                     ct);
 
-            var remainingBackfills =
-                _persistence.Meta.GetPendingBackfills()
-                    .Concat(_persistence.Meta.GetDeferredBackfills())
-                    .Select(static backfill => backfill.AccountId)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count();
-            var remainingHistory = _persistence.Meta
-                .GetRegisteredAccountIds()
-                .Count(accountId =>
-                    _persistence.Meta.GetBackfillStatus(accountId)?.Status
-                        == "complete"
-                    && _persistence.Meta.GetHistoryReconStatus(accountId)?.Status
-                        != "complete");
-            if (remainingBackfills > 0 || remainingHistory > 0)
+            var drain = await _persistence.Meta
+                .GetRegistrationDrainStateAsync(
+                    RetentionSafePointCommandTimeoutSeconds,
+                    ct);
+            if (!drain.IsComplete)
             {
                 var detail =
-                    $"deferred with {remainingBackfills} backfill and " +
-                    $"{remainingHistory} history item(s) remaining";
+                    $"deferred with {drain.RemainingBackfills} backfill and " +
+                    $"{drain.RemainingHistory} history item(s) remaining";
                 _workerStatus?.CompleteOperation(
                     "registration.post_run_once",
                     "deferred",
                     detail);
                 _log.LogWarning(
                     "Post-publication registration drain remains incomplete: {Backfills} backfill and {History} history item(s).",
-                    remainingBackfills,
-                    remainingHistory);
-                return;
+                    drain.RemainingBackfills,
+                    drain.RemainingHistory);
+                return false;
             }
 
             _workerStatus?.CompleteOperation(
@@ -469,6 +487,7 @@ public sealed class ScraperWorker : BackgroundService
                 detail: claimed > 0
                     ? $"claimed {claimed} backfill account(s)"
                     : "no queued backfill accounts");
+            return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -485,6 +504,97 @@ public sealed class ScraperWorker : BackgroundService
             _log.LogError(
                 ex,
                 "Post-publication registration work failed; durable queues remain for the next worker.");
+            return false;
+        }
+    }
+
+    private async Task<SnapshotGenerationRetentionPlanResult?>
+        TryRunCurrentSnapshotGenerationRetentionSafePointAsync(
+            CancellationToken ct)
+    {
+        var planner = _snapshotGenerationRetentionPlanner;
+        if (planner?.IsEnabled != true)
+            return null;
+
+        try
+        {
+            _backgroundWork.RequestPauseForScrape();
+            await _backgroundWork
+                .WaitForBackgroundQuiescenceAsync(ct);
+
+            var drain = await _persistence.Meta
+                .GetRegistrationDrainStateAsync(
+                    RetentionSafePointCommandTimeoutSeconds,
+                    ct);
+            if (!drain.IsComplete)
+            {
+                _log.LogWarning(
+                    "Deferring snapshot-generation retention safe point because registration drain remains incomplete: {Backfills} backfill and {History} history item(s).",
+                    drain.RemainingBackfills,
+                    drain.RemainingHistory);
+                return null;
+            }
+
+            var publication = await _persistence.Meta
+                .GetPublicationPointerStateAsync(
+                    RetentionSafePointCommandTimeoutSeconds,
+                    ct);
+            if (!publication.PublishedScrapeId.HasValue
+                || !publication.CurrentPublicationId.HasValue)
+            {
+                _log.LogWarning(
+                    "Snapshot-generation retention safe point skipped because there is no exact current publication.");
+                return null;
+            }
+
+            var result = await planner.PlanAsync(
+                new SnapshotGenerationRetentionPlanRequest(
+                    publication.PublishedScrapeId.Value,
+                    publication.CurrentPublicationId.Value,
+                    DateTime.UtcNow),
+                ct);
+            if (result.Disposition is
+                SnapshotGenerationRetentionPlanDisposition.Failed)
+            {
+                _log.LogError(
+                    "Snapshot-generation retention planner recorded a failed cycle after publication {PublicationId}: {Reason}",
+                    publication.CurrentPublicationId.Value,
+                    result.Reason);
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Snapshot-generation retention safe point disposition={Disposition}, cycle={CycleId}, candidates={CandidateCount}, planned={PlannedCount}, blocked={BlockedCount}.",
+                    result.Disposition,
+                    result.CycleId,
+                    result.CandidateCount,
+                    result.PlannedCount,
+                    result.BlockedCount);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Snapshot-generation retention safe-point preparation was cancelled; the current publication remains accepted.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(
+                ex,
+                "Snapshot-generation retention safe-point preparation, drain verification, or planning failed; the current publication remains accepted and continuous scraping will retry at a later pre-allocation boundary.");
+            return new SnapshotGenerationRetentionPlanResult(
+                SnapshotGenerationRetentionPlanDisposition.Failed,
+                null,
+                "planner invocation failed after publication",
+                null,
+                0,
+                0,
+                0,
+                0,
+                0);
         }
     }
 

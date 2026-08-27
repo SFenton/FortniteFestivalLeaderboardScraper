@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -27,6 +27,8 @@ sources:
   - tools/postgres-retire-ix-le-song-rank.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.py
+  - tools/postgres-snapshot-generation-retention-drill.py
+  - tools/postgres-snapshot-generation-retention.test.py
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -146,6 +148,80 @@ generation-child drop removes only that snapshot while another generation,
 its two index attachments, and the empty default child remain intact. This
 does not substitute for the separately required recurring archive-before-drop
 retention package.
+
+Snapshot-generation retention safety:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetention|FullyQualifiedName~SnapshotPartitionStats_SelectOnlyDirectRegularInstrumentRoots|FullyQualifiedName~RetentionSafePoint_'
+
+PYTHONDONTWRITEBYTECODE=1 \
+python3 tools/postgres-snapshot-generation-retention.test.py
+
+PYTHONDONTWRITEBYTECODE=1 \
+python3 tools/postgres-snapshot-generation-migration.test.py
+
+python3 tools/postgres-snapshot-generation-retention-drill.py \
+  --work-root \
+  /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/\
+autonomous-artifacts/<unique-drill-run> \
+  --expected-device-id <maj:min> \
+  --expected-device-uuid <filesystem-uuid> \
+  --expected-docker-context default \
+  --expected-daemon-id <docker-info-id>
+```
+
+The .NET slice validates fresh/idempotent control-plane schema, typed
+report-only/`observed` fencing, executor-index exclusion, append-only evidence,
+publication-then-planner nonblocking lock order, concurrent same-safe-point
+idempotency, canonical hash chaining, exact `LIST (instrument)`/
+`LIST (snapshot_id)` partition keys, all-nine discovery, and the
+direct-regular-root-only legacy rewrite selection.
+
+It also covers exact current/previous/working catalog and
+`solo_scope_sources` authority, binding count/status/JSON identity, complete
+catalog-song × nine-instrument × alltime key sets, malformed and duplicate
+rejection, same-count source/projection digest changes, current fingerprint
+readiness, authoritative-empty projection counterparts, lifecycle versus
+physical leaf pins, and all-unchanged generations without leaves. Terminal
+safe-point cases cover current-generation mismatch, frozen reads, working
+pointer, commit intent, incomplete/mismatched notifications, pending
+backfill/history work, running scrape, startup/restart retry, transient drain
+query isolation, and cancellation propagation. The slice performs no archive,
+restore, detach, drop, Docker, or production database action.
+
+The focused unit suite uses only marker-owned unique children beneath the
+repository's fixed testdata directory. Cleanup rejects broad, outside,
+unexpected, unmarked, mismatched, or symlinked paths. The suite covers the
+fixed nine-target adapter; exact 4 TB mount/device/UUID/source/capacity and
+symlink fences; local Docker environment/context/endpoint/socket/daemon
+identity; protected/candidate/default exclusion; exact dump selection and TOC
+contamination; source-fence drift; atomic request publication; torn
+requests/proofs; digest mismatch; no-`CASCADE` SQL; exact reference-recheck
+placement; bounded detach/reattach SQL; controlled PGDATA binds; failure-path
+container cleanup with `docker rm -f -v`; repeated all-container cleanup with
+per-container error aggregation and final empty-inventory enforcement; zero
+Docker-volume delta; and report/proof integrity. It also proves every Docker
+Engine transport, including measured-transaction `Popen`, is pinned to
+`unix:///var/run/docker.sock`; image resolution cannot occur before daemon
+authorization; create/run uses only the authorized `sha256:` ID with
+`--pull=never`; tag, context, daemon, socket, or final image drift fails
+closed; and report/checksum/seal/chmod/final-verification fault injection
+removes the entire success set and leaves integrity-protected failure
+evidence. No environment variable may redirect recursive test cleanup.
+The final Phase 1 repair baseline is `39/39`; the adjacent migration
+regression remains `32/32`.
+
+The isolated lifecycle must restore PostgreSQL 17 with network mode `none`,
+no Docker socket, no credentials or network dependency, exact row/content and
+catalog parity, explicit run-owned PGDATA binds for every container, an
+unchanged exact Docker volume set, complete transient cleanup, exact
+initial/final daemon/socket/image evidence, zero unpinned Engine operations,
+and a present, integrity-valid terminal `seal.json` in a symlink-free,
+nonwritable tree. It must also report both direct attached-drop and ordinary
+detach/check/reattach/detached-drop timing and lock modes without selecting a
+production design. This evidence does not implement or authorize recurring
+production retention.
 
 Focused dead/no-op phase cleanup validation:
 

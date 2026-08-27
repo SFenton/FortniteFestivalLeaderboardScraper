@@ -73,6 +73,9 @@ public interface IMetaDatabase : IDisposable
     PublicReadCacheDatabaseState?
         GetPublicReadCacheDatabaseState();
     PublicationPointerState GetPublicationPointerState();
+    Task<PublicationPointerState> GetPublicationPointerStateAsync(
+        int commandTimeoutSeconds,
+        CancellationToken ct);
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
     PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(long scrapeId);
@@ -225,6 +228,10 @@ public interface IMetaDatabase : IDisposable
     void DeferBackfill(string accountId, int totalSongsToCheck, string reason);
     List<BackfillStatusInfo> GetPendingBackfills();
     List<BackfillStatusInfo> GetDeferredBackfills();
+    RegistrationDrainState GetRegistrationDrainState();
+    Task<RegistrationDrainState> GetRegistrationDrainStateAsync(
+        int commandTimeoutSeconds,
+        CancellationToken ct);
     BackfillStatusInfo? GetBackfillStatus(string accountId);
     void StartBackfill(string accountId);
     void CompleteBackfill(string accountId, bool rankingsPending = false);

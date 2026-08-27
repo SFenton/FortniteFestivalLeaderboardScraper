@@ -2,11 +2,100 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
+using FSTService.Tests.Helpers;
 
 namespace FSTService.Tests.Unit;
 
 public sealed class DatabaseMaintenanceDryRunReporterTests
 {
+    [Fact]
+    public async Task SnapshotPartitionStats_SelectOnlyDirectRegularInstrumentRoots()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = """
+                SELECT ensure_leaderboard_snapshot_generation_partition(
+                    'Solo_Guitar',
+                    501);
+
+                CREATE TABLE
+                    leaderboard_entries_snapshot_unattached_probe (
+                        snapshot_id BIGINT);
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        var generationLayout =
+            await DatabaseMaintenanceDryRunReporter
+                .LoadSnapshotPartitionStatsAsync(
+                    connection,
+                    CancellationToken.None);
+
+        Assert.Empty(generationLayout);
+
+        await using (var legacy = connection.CreateCommand())
+        {
+            legacy.CommandText = """
+                ALTER TABLE leaderboard_entries_snapshot
+                    DETACH PARTITION
+                        leaderboard_entries_snapshot_solo_bass;
+                DROP TABLE
+                    leaderboard_entries_snapshot_solo_bass CASCADE;
+                CREATE TABLE
+                    leaderboard_entries_snapshot_solo_bass
+                    PARTITION OF leaderboard_entries_snapshot
+                    FOR VALUES IN ('Solo_Bass');
+                """;
+            await legacy.ExecuteNonQueryAsync();
+        }
+
+        var mixedLayout =
+            await DatabaseMaintenanceDryRunReporter
+                .LoadSnapshotPartitionStatsAsync(
+                    connection,
+                    CancellationToken.None);
+
+        var partition = Assert.Single(mixedLayout);
+        Assert.Equal(
+            "leaderboard_entries_snapshot_solo_bass",
+            partition.PartitionName);
+        Assert.DoesNotContain(
+            mixedLayout,
+            item => item.PartitionName.Contains(
+                "_s501",
+                StringComparison.Ordinal)
+                || item.PartitionName.EndsWith(
+                    "_default",
+                    StringComparison.Ordinal)
+                || item.PartitionName.Contains(
+                    "unattached",
+                    StringComparison.Ordinal));
+        Assert.False(
+            await DatabaseMaintenanceDryRunReporter
+                .IsExactLegacySnapshotLeafAsync(
+                    connection,
+                    "leaderboard_entries_snapshot_solo_guitar",
+                    "Solo_Guitar",
+                    CancellationToken.None));
+        Assert.True(
+            await DatabaseMaintenanceDryRunReporter
+                .IsExactLegacySnapshotLeafAsync(
+                    connection,
+                    "leaderboard_entries_snapshot_solo_bass",
+                    "Solo_Bass",
+                    CancellationToken.None));
+        Assert.False(
+            await DatabaseMaintenanceDryRunReporter
+                .IsExactLegacySnapshotLeafAsync(
+                    connection,
+                    "leaderboard_entries_snapshot_solo_bass",
+                    "Solo_Guitar",
+                    CancellationToken.None));
+    }
+
     [Fact]
     public void SnapshotPolicy_KeepsActiveProjectionAndOneRollbackCompleted()
     {

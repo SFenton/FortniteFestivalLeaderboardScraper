@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-18
-last_verified_commit: 3c467408
+last_verified: 2026-08-23
+last_verified_commit: 4c36926a
 sources:
   - README.md
   - AGENTS.md
@@ -11,6 +11,7 @@ sources:
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
@@ -35,6 +36,7 @@ evidence remain the behavioral sources of truth.
 | Work on scheduled scraping and derived data | [Worker](components/worker.md) |
 | Understand optimal path generation and regeneration | [Path generation](components/path-generation.md) |
 | Work on shared .NET or TypeScript code | [Shared code](components/shared-code.md) |
+| Validate generation-retention safety | [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md) |
 | Review API synchronization requirements | [API contract](reference/api-contract.md) |
 | Configure a role or deployment | [Configuration](reference/configuration.md) |
 | Review backend and public feature flags | [Feature flags](reference/feature-flags.md) |
@@ -59,6 +61,7 @@ again. Verify their preconditions and current code before execution.
 - [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
+- [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
 - [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)

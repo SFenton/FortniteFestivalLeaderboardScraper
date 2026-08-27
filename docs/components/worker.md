@@ -4,6 +4,7 @@ owner: worker
 last_verified: 2026-08-25
 last_verified_commit: 8c056d1d
 sources:
+  - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/SongCatalogRefreshWorker.cs
@@ -39,10 +40,16 @@ sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
+  - FSTService/Persistence/RegistrationDrainState.cs
   - deploy/config/fstworker-role.env
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-pro-bass-snapshot-rewrite.py
+  - tools/postgres-snapshot-generation-retention-drill.py
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Worker registration, phase selection, scrape sequencing, background coordination, recovery, or publication changes.
 ---
@@ -129,9 +136,14 @@ After startup the worker:
 1. resumes deferred publication;
 2. ensures notification recovery is complete;
 3. authenticates with Epic;
-4. runs a scrape pass;
-5. retries deferred publication/recovery;
-6. exits in run-once mode or sleeps for `ScrapeInterval`.
+4. at each pre-allocation boundary, retries the enabled current-publication
+   retention safe point after background quiescence and durable drain checks;
+5. runs a scrape pass;
+6. retries deferred publication/recovery;
+7. completes notification recovery;
+8. in run-once mode, drains registration work and retries the current
+   publication safe point immediately before exit; otherwise sleeps for
+   `ScrapeInterval`.
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
@@ -653,25 +665,86 @@ zero, every `1310` child matched its published-source row sum, and publication
 `103` committed. Player and band notification runs completed, the
 post-publication registration drain found no queued account, and the run-once
 worker exited `0`. The worker remains held before recurring generation
-retention is implemented and accepted.
+retention execution is implemented and accepted.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
-route to a named generation child. After all live instruments are migrated,
-a future guarded retention owner can archive and drop obsolete generation
-children without rewriting the full instrument partition. That owner is not
-part of the migration candidate: normal scheduling remains held until
-archive-before-child-drop, default-child auditing, rollback, and public parity
-are implemented and accepted.
+route to a named generation child. The durable planner now audits those
+defaults and records whole-child intent without rewriting the full instrument
+partition. It is not an archive/drop owner: normal scheduling remains held
+until report-only parity, archive-before-child-drop, rollback, and public
+parity are accepted.
 
 The accepted retention direction keeps long-running archive/proof/drop work
-out of the normal worker process. After a terminal publication, notifications,
-and registration drain, the worker will record only a bounded durable safe
-point. A separately deployed executor and network-isolated PostgreSQL 17
-restore prover will process one child at a time from durable intent and a
-4 TB-drive evidence mailbox. Whole-child retirement is Phase 1; sparse-child
-compaction remains separately gated because snapshot reuse can keep a large
-generation alive for only a few historical scopes.
+out of the normal worker process. The implemented safe point is synchronous
+and bounded:
+
+- the worker derives an attempt from the durable current publication, not only
+  from the in-memory `publishedNewState` edge, so startup/restart and later
+  boundaries can retry a publication while it remains current;
+- before the first allocation and each later allocation, continuous mode
+  pauses background work, waits for quiescence, and uses the shared durable
+  registration/backfill/history drain query before invoking the planner;
+- run-once performs its bounded post-publication registration drain and then
+  retries the current publication immediately before exit;
+- safe-point preparation, drain reads, and planner invocation are isolated
+  together: requested cancellation propagates, while other transient database
+  failures log/defer and cannot stop continuous service;
+- retryable planner gates return deferred without creating a cycle, so the
+  current publication remains eligible for the next pre-allocation/run-once
+  retry after freeze, notification, registration, or scrape activity clears;
+  normal scrape cadence is never delayed, and a newer publication supersedes
+  the missing audit attempt while replanning the same leaves with the older
+  publication protected as previous;
+- disabled planning returns before drain queries or any cycle/job/evidence
+  write;
+- planner failure is logged and represented by durable failed evidence when
+  possible, but never rolls back the accepted publication or starts an
+  immediate replacement scrape.
+
+The planner itself takes the exclusive registration mutation session lock,
+then the shared publication session lock, then the exclusive planner session
+lock before opening its repeatable-read snapshot. It remains compatible with
+ordinary API publication readers while excluding allocation/commit writers. It
+rechecks current publication and generation
+scrape identity, unfrozen reads, null working pointer and commit intent,
+completed same-scrape or correctly disabled notifications, drained
+registration work (including registered accounts missing a backfill row), and
+no running scrape. It then validates exact source/catalog authority and writes
+only cycles/jobs/evidence. Report-only eligible jobs are `observed`, never
+`planned`, and cannot block scrape admission. The control plane is independent
+of `DeferredRetentionMaintenanceRunner`, which remains the owner of the older
+generic service-level cleanup path. A separately deployed executor and
+network-isolated PostgreSQL 17 restore prover will eventually process one
+child at a time from durable intent and a 4 TB-drive evidence mailbox.
+Whole-child retirement is the next execution phase; sparse-child compaction
+remains separately gated because snapshot reuse can keep a large generation
+alive for only a few historical scopes.
+
+The worker's final drain and current-publication reads are cancellation-aware
+and use a 30-second PostgreSQL command timeout. A blocked metadata read cannot
+indefinitely prevent graceful shutdown or the next scrape boundary; transient
+failures remain inside the safe-point isolation boundary and retry later.
+
+The isolated Phase 1 safety package now proves single-leaf archive/restore,
+atomic filesystem request/proof handoff, prover restart/rejection behavior,
+ordinary detach/check/reattach rollback, detached drop, and the comparable
+attached-drop lock path. The corrected drill also fences the exact local
+Docker daemon/socket and 4 TB mount identities, pins every Engine operation
+to the validated Unix socket, resolves the local PostgreSQL image to its
+`sha256:` ID after authorization, and uses that ID with `--pull=never`.
+It bind-mounts every transient PGDATA beneath its work root, repeats
+all-container cleanup to an empty final inventory, requires a zero
+Docker-volume delta, and treats only an integrity-valid terminal seal in a
+nonwritable symlink-free tree as success. The four earlier sealed packages are
+forensic/rejected: two leaked eight anonymous volumes total, while two later
+zero-volume runs retained Docker/image TOCTOU, premature success publication,
+and first-error cleanup. The durable intent table and planner are now
+implemented default-off, but the drill adds no executor/prover hosted service,
+Compose role, archive command, or deletion command. The worker remains held
+until report-only parity and those execution owners pass canaries, live parity,
+resource/lock gates, and explicit promotion. See
+[snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 ## Service-level retention planning
 

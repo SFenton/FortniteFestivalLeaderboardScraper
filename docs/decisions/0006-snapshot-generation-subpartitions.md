@@ -2,13 +2,16 @@
 status: decision
 owner: data
 last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified_commit: 4c36926a
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Scraping/LeaderboardSpoolWriterFactory.cs
   - docs/architecture/data-storage.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Physical snapshot partitioning, retention, write routing, archive, migration, or rollback changes.
 ---
@@ -38,12 +41,32 @@ IDs remain hot. Obsolete generations are reclaimed by dropping whole child
 relations instead of rewriting a cumulative instrument table.
 
 This decision establishes the physical layout and migration path; it does not
-by itself authorize or schedule recurring child deletion. A separately gated
-generation-retention owner must derive the protected set from
+authorize recurring child deletion. The implemented default-off durable
+planner derives exact per-instrument protection from
 current/previous/working publication sources plus active/projection state,
-archive and restore-prove every nonempty obsolete child, then drop only the
-exact archived child. Until that owner is implemented and accepted, the worker
-must remain held after migration rather than accumulate unbounded children.
+audits exact partition keys, catalog/default/index shape, publication bindings,
+catalog-derived source key sets, current fingerprints, and authoritative-empty
+counterparts, and persists typed report-only `observed` jobs plus append-only
+hash-chained evidence. Lifecycle generation IDs do not imply a missing
+physical leaf for all-unchanged generations. The planner cannot archive,
+restore-prove, detach, or drop. A separately gated executor/prover must perform
+those actions before any automatic retirement is accepted.
+
+The isolated PostgreSQL 17 retention drill now verifies that one selected leaf
+can be custom-archived with its parent/root/default shape, restored with exact
+catalog and content parity, handed to a no-socket filesystem prover, and
+removed through either measured attached-drop or ordinary
+detach/check/reattach/detached-drop mechanics. The accepted proof requires the
+exact initial/final local Docker context, socket, daemon, and image identities;
+endpoint-pinned Engine commands; ID-only `--pull=never` creation; run-owned
+PGDATA binds for every transient container; repeated cleanup to an empty owned
+inventory; an unchanged Docker volume inventory; and an integrity-valid
+terminal seal in a nonwritable, symlink-free tree. Four superseded sealed
+packages remain forensic/rejected: two leaked eight anonymous volumes total,
+and two zero-volume repairs retained Docker/image TOCTOU, premature success
+publication, and first-error cleanup semantics. This resolves implementation
+facts only. It does not select the production drop strategy or authorize a
+recurring owner.
 
 ## Context
 
@@ -122,10 +145,15 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
    publication, notification recovery, post-publication registration drain,
    and normal run-once worker exit; then hold the worker again.
 9. Repeat the migration and validation cycle one instrument at a time.
-10. Implement and validate recurring archive-before-child-drop retention,
-   including empty/default-child auditing.
-11. Restore unattended normal scraping only after all nine instruments are migrated and
-    the recurring retention owner is ready.
+10. Record default-off durable whole-child plans after publication,
+    notifications, and registration drain; retry current publications across
+    restart/incomplete-drain boundaries, and validate exact per-instrument
+    fences, source authority, empty defaults, and non-executable `observed`
+    report-only state.
+11. Use the accepted isolated safety package to implement and validate the
+    separate archive-before-child-drop executor and network-none prover.
+12. Restore unattended normal scraping only after all nine instruments are
+    migrated and the recurring execution owner is ready.
 
 ## Consequences
 
@@ -134,8 +162,18 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
 - Direct diagnostic/test inserts still route to the default child.
 - A failed ensure cannot silently create an arbitrary table or instrument.
 - Retention becomes child-drop maintenance rather than table rewrite.
+- Direct attached drop and ordinary detach both take
+  `AccessExclusiveLock` on the instrument root in the bounded synthetic
+  fixture; production selection remains canary- and parity-gated.
+- `DETACH PARTITION ... CONCURRENTLY` is not an option because the exact
+  reference fence must share the DDL transaction and every instrument root has
+  a default child.
 - Layout migration does not make child drop automatic; recurring archive/drop
   ownership remains an explicit promotion gate.
+- Report-only eligible jobs are typed `observed`, cannot enter executor
+  states, and do not block scrape allocation. Only future non-report-only
+  `leased`/`executing` destructive state or a hard safety failure may do so.
+- Disabling the planner stops new intent while preserving immutable evidence.
 - Each migrated instrument receives one complete run-once scrape validation
   before another instrument is migrated.
 - Archives remain required before destructive migration or removal.

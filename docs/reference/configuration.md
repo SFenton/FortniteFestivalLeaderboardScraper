@@ -5,6 +5,8 @@ last_verified: 2026-08-25
 last_verified_commit: 8c056d1d
 sources:
   - FSTService/appsettings.json
+  - FSTService/DatabaseMaintenanceOptions.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/ScraperOptions.cs
   - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Scraping/PathGenerationModels.cs
@@ -51,11 +53,56 @@ overrides intentionally diverge between the public service and mutation worker.
 | `PublicationCommit` | read drain, locks, retries, leases, deferred recovery |
 | `BandRankHistory` | mode, storage/read source, compaction/retention behavior |
 | `BandTeamRankings` | ranking writer strategy |
-| `DatabaseMaintenance` | retention, pressure guards, cleanup and snapshot rewrite |
+| `DatabaseMaintenance` | retention, pressure guards, cleanup, legacy snapshot rewrite, and durable generation planning |
 | `BackgroundJobs` | background scheduling |
 | `Api` | API key and allowed origins |
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
+
+## Snapshot-generation retention planner
+
+These `DatabaseMaintenance` keys are backend-only and owned by the full worker.
+They are not `FeatureOptions`, are not returned by `/api/features`, and do not
+require a browser flag.
+
+| Key | Default | Effective bound | Purpose |
+|---|---:|---:|---|
+| `SnapshotGenerationRetentionPlannerEnabled` | `false` | boolean | Permit the post-publication worker safe point to write a durable plan |
+| `SnapshotGenerationRetentionReportOnly` | `true` | boolean | Persist eligible rows as typed non-executable `observed` evidence; only `false` may create `planned` rows |
+| `SnapshotGenerationRetentionNewestGenerationsToKeep` | `2` | `0`-`100` | Block the newest generation IDs independently for each instrument |
+| `SnapshotGenerationRetentionMinimumLaterSuccessfulPublications` | `2` | `0`-`100` | Require this many later completed, published generations before eligibility |
+| `SnapshotGenerationRetentionMaxPlannedChildrenPerCycle` | `1` | `1`-`100` | Bound `planned` jobs when report-only is false; report-only records every eligible leaf as `observed` |
+| `SnapshotGenerationRetentionBlockUnreplayedWriterFailures` | `true` | boolean | Block a scrape generation while any writer-failure artifact remains unreplayed |
+
+The planner always remains non-destructive. It takes a nonblocking exclusive
+registration lock, shared publication lock, and exclusive planner lock in that
+order before opening one repeatable-read transaction. API shared publication
+readers remain compatible; allocation/commit writers are excluded. It
+revalidates the complete terminal safe point and exact publication/source
+authority and applies bounded statement/lock timeouts. A disabled planner
+returns before drain queries or database writes.
+
+Worker-side drain and publication-pointer reads that precede planning are
+async, cancellable, and use a 30-second command timeout. Pointer validation
+requires distinct current/previous/working IDs, a retained previous
+generation, and an exact match between the current generation's predecessor
+and the singleton previous pointer.
+
+Frozen/working/commit, notification, registration-drain, and running-scrape
+gates are retryable: they return deferred without inserting a unique
+publication cycle. Structural and publication-identity failures remain durable
+blocked evidence.
+
+Rollback is:
+
+```text
+DatabaseMaintenance__SnapshotGenerationRetentionPlannerEnabled=false
+```
+
+Disabling leaves existing cycle/job/evidence rows intact for audit. An
+`observed` report-only row is schema-ineligible for executor states and never
+blocks scrape admission. A non-report-only `planned` row is still only future
+intent: no executor, prover, archive, or drop role exists in this phase.
 
 ## Publication API cache safety bounds
 

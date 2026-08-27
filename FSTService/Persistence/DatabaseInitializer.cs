@@ -1,4 +1,5 @@
 using Npgsql;
+using FSTService.Persistence.Maintenance;
 
 namespace FSTService.Persistence;
 
@@ -138,6 +139,15 @@ public static class DatabaseInitializer
                 UseShortTransaction: true,
                 LockTimeout: NotificationSchemaLockTimeout,
                 StatementTimeout: NotificationSchemaStatementTimeout),
+            new(
+                Name: "snapshot-generation-retention-control-plane",
+                Sql: SnapshotGenerationRetentionSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
             new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,

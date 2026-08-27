@@ -487,6 +487,8 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressu
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.SnapshotGenerationRetentionRepository>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.ISnapshotGenerationRetentionPlanner, FSTService.Persistence.Maintenance.SnapshotGenerationRetentionPlanner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();

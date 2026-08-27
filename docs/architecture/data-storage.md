@@ -4,6 +4,7 @@ owner: data
 last_verified: 2026-08-25
 last_verified_commit: 8c056d1d
 sources:
+  - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/SongCatalogSnapshot.cs
@@ -26,6 +27,10 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/RegistrationDrainState.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/SongCatalogRefreshWorker.cs
@@ -42,8 +47,10 @@ sources:
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
   - tools/postgres-pro-bass-snapshot-rewrite.py
+  - tools/postgres-snapshot-generation-retention-drill.py
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Schema, persistence ownership, publication storage, retention, restore, or source-of-truth behavior changes.
 ---
@@ -75,7 +82,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, default-off snapshot-generation retention cycles/jobs/hash-chained evidence, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
 ### Freeze-safe publication API cache
@@ -677,6 +684,85 @@ was `0.0696%`; summed terminal phase outcomes differed by `0.736%`.
 
 ## Snapshot retention planning evidence
 
+### Durable generation-retention control plane
+
+Normal schema initialization owns three additive relations:
+`snapshot_generation_retention_cycles`,
+`snapshot_generation_retention_jobs`, and
+`snapshot_generation_retention_evidence`. Cycles are idempotent by
+post-publication safe point; jobs preserve typed physical identity and policy
+state; cycles and jobs carry a constrained `report_only` mode; evidence is
+canonical JSONB linked by previous/current SHA-256 and is database-enforced
+append-only. Startup performs no backfill, archive, detach, drop, or relation
+rewrite.
+
+The default-off planner first takes nonblocking exclusive registration,
+shared publication, and exclusive planner advisory session locks in that
+order, then opens one repeatable-read PostgreSQL snapshot. Shared API
+publication readers remain compatible; allocation/commit writers remain
+excluded. It discovers only direct numeric leaves
+beneath the compiled
+nine roots and validates the exact top `LIST (instrument)` and root
+`LIST (snapshot_id)` keys from `pg_partitioned_table`/
+`pg_get_partkeydef`, exact root/default/leaf bounds, relation kinds,
+`pg_default` placement, exact parent primary-key and `score DESC` definitions,
+and definition-equivalent two-level root/leaf index attachments. Exact
+default-child counts must be zero.
+
+Protection is per instrument. Active snapshot state, projection source state,
+and physical sources for the current/previous/working publication slots are
+kept independently. Each named publication must match its generation scrape,
+exact catalog, ready `solo_scope_sources` binding, and the exact catalog-song ×
+nine-instrument × `alltime` source-key set. Current source rows must match
+complete current fingerprint evidence. Canonical SHA-256 fingerprints cover
+each named source map plus active-state, projection, and current-fingerprint
+rows, and flow into cycle evidence, job reference evidence, and the plan
+digest.
+
+Authoritative empty publication sources are valid only for `alltime`, with a
+null physical source ID, exact zero row/reported-entry/page evidence, and a
+ready zero-row `snapshot` projection whose source ID matches finalized active
+state. Lifecycle generation IDs protect a leaf only when one exists; only
+nonempty snapshot sources or other positive-row references require a physical
+leaf. Thus an all-unchanged current or previous generation may legitimately
+have no leaf.
+
+The transaction also verifies the terminal safe point itself: exact current
+publication identity, unfrozen reads, no working pointer or commit intent,
+completed same-scrape notifications or structurally disabled notifications,
+the shared durable registration/backfill/history drain, and no running scrape.
+Registered accounts without a backfill row are outstanding; the exclusive
+registration lock prevents a new registration from appearing outside the
+planner snapshot.
+Current, previous, and working publication pointers must be distinct; previous
+must resolve to `retained`, and the current generation's recorded predecessor
+must equal the singleton previous pointer.
+Any failure is durable blocked evidence with no executable job.
+Retryable runtime gates (freeze, working/commit state, notifications,
+registration drain, or running scrape) are the exception: they return deferred
+without inserting the safe point's unique cycle, so a later clean boundary can
+plan the same publication.
+
+Every discovered numeric leaf is persisted as observed, planned, deferred, or
+blocked evidence. Report-only cycles use `observed` for every eligible row and
+cannot contain `planned`, leased, executing, or safety-failed jobs. Only
+non-report-only cycles may create the bounded `planned` set. Oldest snapshot
+wins first; equal IDs use deterministic rotating instrument order. The planner
+never executes DDL or filesystem work. Query or catalog failure records a
+failed cycle when PostgreSQL remains writable and never becomes eligibility.
+
+Future non-report-only `leased`/`executing` jobs and `safety_failed` state
+block scrape allocation and reserve the global destructive placeholder against
+later executable planning. `observed` report-only cycles/jobs never do.
+Outstanding nonterminal physical-child identities are unique across cycles;
+later executable plans defer the same instrument/OID/relfilenode identity and
+advance to another eligible child.
+Disabling
+`DatabaseMaintenance:SnapshotGenerationRetentionPlannerEnabled` stops new
+cycles without deleting existing evidence.
+
+### Legacy regular-partition rewrite estimator
+
 `DatabaseMaintenanceDryRunReporter` estimates partition-local keep-only
 rewrites from bounded PostgreSQL catalogs and `pg_stats`; report-only planning
 does not scan snapshot partitions.
@@ -979,22 +1065,15 @@ emitted `47`, the registration drain completed with no queued account, and
 the worker exited `0`. PostgreSQL returned to the production `16/20 GiB`
 envelope with unchanged OOM/OOM-kill counters `9/2`.
 
-After migration, a separately gated retention owner can archive and drop
-obsolete generation children as whole relations. That recurring owner is not
-implemented by the layout migration itself. It must preserve
-current/previous/working publication sources, active snapshot state, and
-projection sources; archive/restore-prove nonempty obsolete children; and keep
-the default child empty. Readers continue to query the unchanged parent
-relation. Normal scheduling remains held until this recurring lifecycle is
-accepted. Normally one guarded run-once scrape is required after each
-instrument migration, followed by another worker hold before the next
-migration. The only current exception is the operator-authorized final
-interval: after a clean post-Solo Bass retry proves all six migrated writer
-paths, Pro Vocals, Pro Cymbals, and Pro Drums may be migrated sequentially
-under one hold, with every target independently completing the full migration
-state machine. All three migrations are accepted. One complete scrape across
-all nine instruments was required immediately afterward and is accepted as
-scrape `1310`.
+After migration, the implemented durable planner can record report-only
+whole-child intent with exact blockers and evidence. It cannot archive,
+restore-prove, detach, or drop a child. Readers continue to query the unchanged
+parent relation. Normal scheduling remains held until report-only parity and
+the separate executor/prover lifecycle are accepted. Normally one guarded
+run-once scrape is required after each instrument migration, followed by
+another worker hold before the next migration. The operator-authorized final
+interval completed all remaining migrations, and scrape `1310` accepted all
+nine writer paths.
 
 The first exact recurring-retention inventory after publication `103` finds
 only six wholly unreferenced children: the failed-scrape `1308` leaves for Pro
@@ -1006,10 +1085,64 @@ snapshot reuse; retained publication `101` still uses `621`, `220`, `153`,
 retirement is therefore the first safe owner, but sparse-child compaction is a
 separately gated second phase before storage can be described as bounded.
 
+### Verified generation-retention safety mechanics
+
+The reusable isolated PostgreSQL 17 safety drill now proves the mechanics for
+one whole-generation candidate without implementing a production owner. Its
+82,000-row fixture protects previous/current/working generation IDs
+`1402-1404`, identifies only unreferenced nonempty leaf `1401`, and keeps the
+default child empty.
+
+The `1,040,111`-byte custom archive contains exactly the top parent, selected
+instrument root, target leaf, and empty default child. A network-none restore
+proved `40,000` rows plus exact fingerprint, distribution, columns,
+constraints, indexes, partition bounds, tablespaces, and default-empty parity,
+then removed its `78,187,033`-byte PGDATA and container.
+
+The filesystem-only request/proof contract rejects torn and digest-mismatched
+requests, atomically publishes proofs, resumes idempotently, uses asymmetric
+read-only/read-write mounts, and exposes neither network nor the Docker
+socket. Every source, restore, TOC, cleanup, and prover container uses a
+controlled PGDATA bind beneath the 4 TB work root. Accepted run
+`snapshot-generation-retention-phase1-final-20260824T004250Z` pinned all 176
+Docker Engine calls to the validated Unix socket, including 10 direct
+`Popen` measurements; all nine container creations used the authorized
+`sha256:` image ID and `--pull=never`. Initial/final context, socket, daemon,
+and image identities matched. Repeated aggregate cleanup ended with no owned
+container, and the exact 304-volume Docker inventory had empty added/removed
+sets. The nonwritable, integrity-sealed 15-file tree has no symlink, and only
+its integrity-valid terminal seal grants acceptance.
+
+The catalog comparison proves direct attached-child drop under rollback and
+ordinary detach/check/reattach/final detached drop. Both acquired
+`AccessExclusiveLock` on the instrument root in the bounded fixture; their
+DDL-ready times were `0.004602` and `0.005151` seconds respectively.
+
+Four earlier sealed packages are rejected as acceptance evidence. The first
+two each leaked four anonymous prover PGDATA volumes; the operator removed all
+eight exact unreferenced volumes. The `fixed` and `finalcheck` zero-volume
+repairs still retained Docker/image TOCTOU, premature success publication, and
+first-error cleanup semantics. All four remain unchanged forensic evidence.
+
+This evidence is an accepted isolated capability, not production
+authorization. Durable report-only `observed` jobs now exist, while
+executor/prover roles, archive ownership, report-only production parity,
+canaries, live parity, and promotion remain open. See
+[snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
 The existing generic retention service remains the compatibility owner for
-unmigrated regular instrument partitions only. It deliberately produces no
-legacy rewrite candidate for a generation-subpartitioned root; child retirement
-belongs to the future archive-before-child-drop owner.
+unmigrated regular instrument partitions only. Its catalog query now selects
+only allowlisted direct regular children of the top snapshot parent, so
+generation roots, numeric leaves, defaults, and unattached lookalikes are
+excluded by topology rather than incidental nonexecutability. Generation-child
+retirement belongs only to the durable control plane and future
+archive-before-drop executor.
+
+The legacy rewrite path repeats the same exact regular-leaf check immediately
+before execution and again inside the `ACCESS EXCLUSIVE` swap transaction. The
+target must still be a direct regular child with the exact instrument bound and
+no descendants; a generation-partitioned root can never enter detach/rename/
+drop execution through a stale plan or direct call.
 
 ## Tier-0 replay evidence packages
 
