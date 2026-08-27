@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-27
+last_verified_commit: bd6e2f55
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -371,7 +371,7 @@ leaves the worker running and directs the operator to
 `tools/fst-worker-no-progress-watchdog.mjs` and the canonical
 [live-safety procedure](../operations/live-safety.md).
 
-### No-progress watchdog progress source
+### Worker safety watchdog sources and opt-in gates
 
 `tools/fst-worker-no-progress-watchdog.mjs` detects the normalized
 `scrape_phase_attempts` relation once at startup. When a running attempt
@@ -383,6 +383,27 @@ attempt retain the existing operation/outcome/registered-refresh fallback.
 Guarded timeout recovery also marks running normalized attempts `interrupted`
 and records their prior values in rollback SQL. Pointer, mapping, worker-query,
 lock, and maintenance guards are unchanged.
+
+The default behavior remains progress-only. Canary operators can opt into
+`--recover-worker-exit`, which treats an exited or OOM-killed worker as a
+recovery trigger only while the latest scrape is running under the
+post-process freeze. OOM and nonzero exits trigger immediately. Exit code zero
+uses `--worker-exit-grace-seconds S`, default `120`, before recovery so normal
+run-once shutdown can become terminal. `--max-worker-memory-percent P` adds an
+emergency Docker memory threshold; `0` disables it. A threshold breach
+intentionally takes precedence over the ordinary active-query defer, stops the
+worker through the existing Compose path, and then drains exact worker
+backends for up to `--worker-query-drain-seconds` (default `60`). Any remainder
+is terminated only by the worker-owned `fstworker-scraper` and
+`fst-path-generation-admission` application names and, when available, the
+captured worker IP as an alternate identity before the unchanged zero-query,
+zero-mapping, publication-pointer, lock, and maintenance gates run. These
+resource modes require the resolved worker restart policy `no`; they are not
+valid for the continuous `on-failure` lane. Recovery failures still produce
+query-drain/error evidence and a report while publication remains fail-closed.
+Observations include container status, restart policy, OOM state, exit code,
+memory percentage, and a sanitized memory-sample error when Docker statistics
+are temporarily unavailable.
 
 Accepted scrape `1296` used normalized attempts in all 392 watchdog
 observations across network, post-process, rankings, cleanup, and publication.
@@ -397,6 +418,7 @@ The action's host-side controls are documented in
 bash -n tools/fst-worker-compose-guard.sh
 bash -n tools/fst-worker-dual-lane-runonce.sh
 node --test tools/fst-worker-compose-guard.test.mjs
+node --test tools/fst-worker-no-progress-watchdog.test.mjs
 ```
 
 ## Pak extractor

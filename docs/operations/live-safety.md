@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-20
-last_verified_commit: 42583b72
+last_verified: 2026-08-27
+last_verified_commit: bd6e2f55
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -116,6 +116,39 @@ node tools/fst-worker-no-progress-watchdog.mjs \
   --evidence-dir <FST-drive-evidence-path> \
   --dry-run
 ```
+
+Full-scrape canaries with bounded worker memory may additionally enable:
+
+```bash
+node tools/fst-worker-no-progress-watchdog.mjs \
+  --evidence-dir <FST-drive-evidence-path> \
+  --monitor \
+  --recover-worker-exit \
+  --max-worker-memory-percent 90
+```
+
+Both resource options are disabled by default. `--recover-worker-exit` acts
+only when the latest scrape is still running and public reads are frozen for
+post-processing. OOM and nonzero exits trigger immediately; a clean exit gets
+the configurable `--worker-exit-grace-seconds` window, defaulting to 120
+seconds, so the run-once worker can publish its terminal state before a
+recovery decision. `--max-worker-memory-percent` is an emergency hard-limit
+guard: unlike an ordinary no-progress timeout, it may stop a worker that still
+owns active queries. Resource recovery is rejected unless the resolved worker
+restart policy is `no`, preventing a race with continuous `on-failure`
+restarts. After the bounded Compose stop, the watchdog waits up to
+`--worker-query-drain-seconds` (default `60`) for exact worker backends to
+disconnect, terminates only remaining `fstworker-scraper` backends (also
+the worker-owned `fst-path-generation-admission` lease backend, plus the
+captured worker IP as an alternate identity when available), and rechecks zero
+before the
+existing recovery transaction requires zero candidate publication mappings,
+an unchanged published pointer, no waiting locks, and no active database
+maintenance. Any failure after the stop still writes the query-drain/error
+evidence, renders the report, and attempts notification while publication
+remains fail-closed. A failed Docker memory sample is recorded in the
+observation and retried on the next poll; unexpected exit recovery remains the
+fallback for an OOM kill.
 
 Keep evidence on the 4 TB FST drive. Remove `--dry-run` only after the
 watchdog's own observation proves its timeout, database-activity,
