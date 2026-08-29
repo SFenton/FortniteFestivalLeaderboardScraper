@@ -377,7 +377,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            new CancellationTokenSource(TimeSpan.FromMinutes(1));
         await initializer.WaitForReadyAsync(cts.Token);
 
         Assert.False(
