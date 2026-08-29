@@ -111,6 +111,21 @@ public sealed class BackfillStatusInfo
     public string? DeferredReason { get; init; }
 }
 
+public sealed record RegistrationDrainStatusInfo(
+    int RunnableBackfills,
+    int RepairableHistory,
+    int MissingBackfills,
+    int TerminalBackfillErrors,
+    int InvalidBackfills,
+    int InvalidHistory)
+{
+    public bool HasTerminalBlocker =>
+        MissingBackfills > 0
+        || TerminalBackfillErrors > 0
+        || InvalidBackfills > 0
+        || InvalidHistory > 0;
+}
+
 /// <summary>
 /// User-facing song-level progress for a backfill whose stored counters are song/instrument pairs.
 /// </summary>

@@ -92,6 +92,197 @@ public sealed class PublicationReadinessTests
     }
 
     [Fact]
+    public void PublishedScopeSourceReadinessCachesBoundedChecksAndInvalidatesExplicitly()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                PublicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(
+                new PublicationSurfaceSourceEvidence(
+                    PublicationSurfaceNames.SoloScopeSources,
+                    Exists: true,
+                    PublicationId,
+                    ScrapeId,
+                    RowCount: 1,
+                    ContentHash: new string('a', 64)),
+                new PublicationSurfaceSourceEvidence(
+                    PublicationSurfaceNames.SoloScopeSources,
+                    Exists: false,
+                    PublicationId,
+                    ScrapeId,
+                    RowCount: 0,
+                    ContentHash: new string('b', 64)));
+        var service = new PublishedScopeSourceReadinessService(
+            metaDb,
+            Options.Create(new FeatureOptions
+            {
+                UsePublishedScopeSources = true,
+            }));
+        var pointers = new PublicationPointerState(
+            PublicationId,
+            PreviousPublicationId: null,
+            WorkingPublicationId: null,
+            ScrapeId,
+            PublishedAtUtc: DateTime.UtcNow);
+
+        var first = service.Evaluate(pointers);
+        var cached = service.Evaluate(pointers);
+        service.Invalidate();
+        var invalid = service.Evaluate(pointers);
+
+        Assert.True(first.Ready);
+        Assert.True(cached.Ready);
+        Assert.False(invalid.Ready);
+        metaDb.Received(2)
+            .GetPublicationSurfaceSourceEvidence(
+                PublicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                5);
+    }
+
+    [Fact]
+    public void PublishedScopeSourceReadinessFailsClosedWhenPointersAreMissing()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var service = new PublishedScopeSourceReadinessService(
+            metaDb,
+            Options.Create(new FeatureOptions
+            {
+                UsePublishedScopeSources = true,
+            }));
+
+        var result = service.Evaluate(
+            new PublicationPointerState(
+                CurrentPublicationId: null,
+                PreviousPublicationId: null,
+                WorkingPublicationId: null,
+                PublishedScrapeId: null,
+                PublishedAtUtc: null));
+
+        Assert.True(result.Required);
+        Assert.False(result.Ready);
+        Assert.Null(result.PublicationId);
+        Assert.Null(result.PublishedScrapeId);
+        Assert.Equal(
+            "current publication or published scrape pointer is missing",
+            result.Reason);
+        metaDb.DidNotReceiveWithAnyArgs()
+            .GetPublicationSurfaceSourceEvidence(
+                default,
+                default!,
+                default);
+    }
+
+    [Fact]
+    public void PublishedScopeSourceReadinessFailsClosedWhenPointerReadThrows()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState(Arg.Any<int>())
+            .Returns(_ => throw new InvalidOperationException(
+                "injected pointer failure"));
+        var service = new PublishedScopeSourceReadinessService(
+            metaDb,
+            Options.Create(new FeatureOptions
+            {
+                UsePublishedScopeSources = true,
+            }));
+
+        var result = service.EvaluateCurrent(forceRefresh: true);
+
+        Assert.True(result.Required);
+        Assert.False(result.Ready);
+        Assert.Null(result.PublicationId);
+        Assert.Null(result.PublishedScrapeId);
+        Assert.Equal(
+            "publication pointer query failed with InvalidOperationException",
+            result.Reason);
+    }
+
+    [Fact]
+    public void PublishedScopeSourceReadinessFailsClosedWhenBindingReadThrows()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                PublicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(_ => throw new TimeoutException(
+                "injected binding timeout"));
+        var service = new PublishedScopeSourceReadinessService(
+            metaDb,
+            Options.Create(new FeatureOptions
+            {
+                UsePublishedScopeSources = true,
+            }));
+
+        var result = service.Evaluate(
+            new PublicationPointerState(
+                PublicationId,
+                PreviousPublicationId: null,
+                WorkingPublicationId: null,
+                ScrapeId,
+                PublishedAtUtc: DateTime.UtcNow),
+            forceRefresh: true);
+
+        Assert.True(result.Required);
+        Assert.False(result.Ready);
+        Assert.Equal(PublicationId, result.PublicationId);
+        Assert.Equal(ScrapeId, result.PublishedScrapeId);
+        Assert.Equal(
+            "published scope-source validation query failed with TimeoutException",
+            result.Reason);
+    }
+
+    [Fact]
+    public void PublicationReadContextValidatesPointerTimeoutAndDelegatesCurrentSourceReadiness()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var service = new PublicationReadContextService(
+            fixture.Db,
+            fixture.DataSource,
+            Options.Create(new FeatureOptions()));
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => service.GetPointers(0));
+        var readiness =
+            service.EvaluateCurrentPublishedScopeSourceReadiness(
+                forceRefresh: true);
+
+        Assert.False(readiness.Required);
+        Assert.True(readiness.Ready);
+    }
+
+    [Fact]
+    public void PublishedScopeSourceReadinessPreservesRollingCompatibilityWhenFeatureIsOff()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var service = new PublishedScopeSourceReadinessService(
+            metaDb,
+            Options.Create(new FeatureOptions
+            {
+                UsePublishedScopeSources = false,
+            }));
+
+        var result = service.Evaluate(
+            new PublicationPointerState(
+                CurrentPublicationId: null,
+                PreviousPublicationId: null,
+                WorkingPublicationId: null,
+                PublishedScrapeId: null,
+                PublishedAtUtc: null));
+
+        Assert.False(result.Required);
+        Assert.True(result.Ready);
+        metaDb.DidNotReceiveWithAnyArgs()
+            .GetPublicationSurfaceSourceEvidence(
+                default,
+                default!,
+                default);
+    }
+
+    [Fact]
     public void MissingBindingFailsClosed()
     {
         var bindings = CreateReadyBindings()

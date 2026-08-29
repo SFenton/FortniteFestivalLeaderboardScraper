@@ -1,11 +1,13 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-27
-last_verified_commit: bd6e2f55
+last_verified: 2026-08-28
+last_verified_commit: c35b7f47
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Api/PublicApiCacheTelemetry.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
@@ -194,7 +196,52 @@ bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
 
-### Snapshot retention evidence
+### Snapshot-generation report-only evidence
+
+There is no new public/protected API, mutation CLI, archive tool, or delete
+tool. Visibility uses worker logs plus the existing read-only PostgreSQL
+tooling pattern.
+
+The durable relations are:
+
+- `snapshot_generation_retention_cycles`;
+- `snapshot_generation_retention_observations`;
+- `snapshot_generation_retention_deferrals`;
+- `snapshot_generation_retention_holds`;
+- `snapshot_generation_retention_evidence`.
+
+Read cycles by newest `created_at, cycle_id`, then read child observations by
+`cycle_id, snapshot_id, instrument`. A clean report requires
+`oracle_agreement=true`, no global/child blockers, exact planner/oracle JSON
+sets, matching stable hashes, and matching primary/SQL-oracle named-publication
+binding validation in the immutable summary evidence. Worker logs expose FIFO
+enqueue, non-cancelling registration-drain waits, bounded yield with the queue
+retained, retry retention, and terminal dequeue; a later publication never
+replaces the queued head. `row_estimate` and `total_bytes` are observational
+only and are intentionally outside the candidate identity hash.
+
+Inspect the cycle's `anomalies` JSON alongside `global_blockers`. Unnamed
+retained legacy publications appear there as structured
+`unpointed_retained_publication` warnings and in the immutable summary payload.
+They are included in `observation_hash` but are intentionally compatible with
+a clean `observed` cycle and nonzero candidates. Planner-v3 terminal unnamed
+failed publications with no live recovery artifact appear as
+`unpointed_terminal_failed_publication`. Their nested `publicationFailure`
+object records publication/scrape status and identity, terminal timestamps,
+named/resume/state references, binding/cache/staging/catalog/path/band counts,
+orphaned published-source rows, unreplayed writer failures, and canonical
+recovery reasons. Source rows alone remain warning provenance; writer failures
+still protect only exact `(instrument, scrape_id)` children. A failed
+publication with any recovery reason remains in `global_blockers`. Historical
+planner-v1/v2 cycles are not rewritten.
+
+Do not count tests or repeated reads as rollout evidence. Archive-only
+development requires two clean terminal cycles. Destructive enablement
+requires five exact-agreement cycles including a publication rotation and a
+real candidate-set change. See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+### Legacy snapshot rewrite evidence
 
 Snapshot-retention report harnesses must call only
 `DatabaseMaintenanceDryRunReporter.BuildSnapshotRetentionRewritePlansAsync`

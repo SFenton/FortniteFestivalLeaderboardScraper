@@ -5,6 +5,7 @@ using System.Text.Json;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Npgsql;
 
 namespace FSTService.Api;
 
@@ -19,6 +20,7 @@ public sealed class NotificationService
 {
     private const int MaxControlMessageBytes = 16 * 1024;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, PublicationWebSocketConnection>> _connections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _connectionMutationGate = new();
     private readonly ILogger<NotificationService> _log;
     private IShopProvider? _shopProvider;
     private FestivalService? _festivalService;
@@ -65,24 +67,27 @@ public sealed class NotificationService
         WebSocket ws,
         long? publicationId)
     {
-        var deviceMap = _connections.GetOrAdd(
-            accountId,
-            _ => new ConcurrentDictionary<string, PublicationWebSocketConnection>(
-                StringComparer.OrdinalIgnoreCase));
-        var connection = new PublicationWebSocketConnection(ws, publicationId);
-        var replacedExisting =
-            deviceMap.TryGetValue(deviceId, out var existing)
-            && !ReferenceEquals(existing.Socket, ws);
-        deviceMap[deviceId] = connection;
-        if (replacedExisting)
+        lock (_connectionMutationGate)
         {
-            _log.LogInformation("WebSocket replaced: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
-                accountId, deviceId, deviceMap.Count);
-            return;
-        }
+            var deviceMap = _connections.GetOrAdd(
+                accountId,
+                _ => new ConcurrentDictionary<string, PublicationWebSocketConnection>(
+                    StringComparer.OrdinalIgnoreCase));
+            var connection = new PublicationWebSocketConnection(ws, publicationId);
+            var replacedExisting =
+                deviceMap.TryGetValue(deviceId, out var existing)
+                && !ReferenceEquals(existing.Socket, ws);
+            deviceMap[deviceId] = connection;
+            if (replacedExisting)
+            {
+                _log.LogInformation("WebSocket replaced: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
+                    accountId, deviceId, deviceMap.Count);
+                return;
+            }
 
-        _log.LogInformation("WebSocket connected: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
-            accountId, deviceId, deviceMap.Count);
+            _log.LogInformation("WebSocket connected: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
+                accountId, deviceId, deviceMap.Count);
+        }
     }
 
     /// <summary>
@@ -90,32 +95,35 @@ public sealed class NotificationService
     /// </summary>
     public void RemoveConnection(string accountId, string deviceId, WebSocket? expectedSocket = null)
     {
-        var removed = false;
-        if (_connections.TryGetValue(accountId, out var deviceMap))
+        lock (_connectionMutationGate)
         {
-            if (expectedSocket is null)
+            var removed = false;
+            if (_connections.TryGetValue(accountId, out var deviceMap))
             {
-                removed = deviceMap.TryRemove(deviceId, out _);
-            }
-            else if (deviceMap.TryGetValue(deviceId, out var current)
-                && ReferenceEquals(current.Socket, expectedSocket))
-            {
-                removed = deviceMap.TryRemove(deviceId, out _);
+                if (expectedSocket is null)
+                {
+                    removed = deviceMap.TryRemove(deviceId, out _);
+                }
+                else if (deviceMap.TryGetValue(deviceId, out var current)
+                    && ReferenceEquals(current.Socket, expectedSocket))
+                {
+                    removed = deviceMap.TryRemove(deviceId, out _);
+                }
+
+                if (removed && deviceMap.IsEmpty)
+                {
+                    _connections.TryRemove(accountId, out _);
+                }
             }
 
-            if (removed && deviceMap.IsEmpty)
+            if (removed)
             {
-                _connections.TryRemove(accountId, out _);
+                _log.LogInformation("WebSocket disconnected: account={AccountId}, device={DeviceId}", accountId, deviceId);
             }
-        }
-
-        if (removed)
-        {
-            _log.LogInformation("WebSocket disconnected: account={AccountId}, device={DeviceId}", accountId, deviceId);
-        }
-        else if (expectedSocket is not null)
-        {
-            _log.LogDebug("Skipped stale WebSocket disconnect: account={AccountId}, device={DeviceId}", accountId, deviceId);
+            else if (expectedSocket is not null)
+            {
+                _log.LogDebug("Skipped stale WebSocket disconnect: account={AccountId}, device={DeviceId}", accountId, deviceId);
+            }
         }
     }
 
@@ -221,38 +229,64 @@ public sealed class NotificationService
         long publicationId,
         bool forceRefresh = false)
     {
-        foreach (var (accountId, deviceMap) in _connections)
+        List<(
+            string AccountId,
+            string DeviceId,
+            PublicationWebSocketConnection Connection)> connections;
+        lock (_connectionMutationGate)
         {
-            var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
-            foreach (var (deviceId, connection) in deviceMap)
-            {
-                try
-                {
-                    if (await EnsureCurrentPublicationAsync(
-                            connection.Socket,
-                            connection.PublicationId,
-                            publicationId,
-                            forceRefresh))
-                    {
-                        continue;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(
-                        ex,
-                        "Failed to rotate WebSocket {AccountId}/{DeviceId} to publication {PublicationId}.",
-                        accountId,
-                        deviceId,
-                        publicationId);
-                }
+            connections =
+                _connections
+                    .SelectMany(static account =>
+                        account.Value.Select(device => (
+                            account.Key,
+                            device.Key,
+                            device.Value)))
+                    .ToList();
+        }
 
-                deadConnections.Add((deviceId, connection.Socket));
+        var deadConnections =
+            new List<(
+                string AccountId,
+                string DeviceId,
+                WebSocket Socket)>();
+        foreach (var (
+                     accountId,
+                     deviceId,
+                     connection) in connections)
+        {
+            try
+            {
+                if (await EnsureCurrentPublicationAsync(
+                        connection.Socket,
+                        connection.PublicationId,
+                        publicationId,
+                        forceRefresh))
+                {
+                    continue;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Failed to rotate WebSocket {AccountId}/{DeviceId} to publication {PublicationId}.",
+                    accountId,
+                    deviceId,
+                    publicationId);
             }
 
-            foreach (var (deviceId, socket) in deadConnections)
-                RemoveConnection(accountId, deviceId, socket);
+            deadConnections.Add((
+                accountId,
+                deviceId,
+                connection.Socket));
         }
+
+        foreach (var (
+                     accountId,
+                     deviceId,
+                     socket) in deadConnections)
+            RemoveConnection(accountId, deviceId, socket);
     }
 
     /// <summary>
@@ -394,38 +428,141 @@ public sealed class NotificationService
     {
         var currentKey = accountId;
         PublicationReadLease? registrationLease = null;
+        var connectionRegistered = false;
+        long? changedPublicationId = null;
+        var publicationUnavailable = false;
         try
         {
-            if (publicationId.HasValue
-                && publicationService?.PinningConfigured == true)
+            if (publicationService is not null
+                && (publicationService.PinningConfigured
+                    || publicationService
+                        .PublishedScopeSourceReadinessRequired)
+                && !publicationId.HasValue)
             {
-                registrationLease =
-                    await publicationService.AcquireAsync(ct);
-                if (!await EnsureCurrentPublicationAsync(
-                        ws,
-                        publicationId,
-                        registrationLease.Pointers.CurrentPublicationId))
+                if (ws.State == WebSocketState.Open)
                 {
-                    return;
+                    await ws.CloseOutputAsync(
+                        WebSocketCloseStatus.PolicyViolation,
+                        "Publication unavailable",
+                        CancellationToken.None);
+                }
+                return;
+            }
+
+            if (publicationId.HasValue
+                && publicationService is not null)
+            {
+                try
+                {
+                    registrationLease =
+                        publicationService.PinningConfigured
+                            ? await publicationService
+                                .AcquireAsync(ct)
+                            : await publicationService
+                                .AcquireWebSocketAdmissionAsync(ct);
+                    var pointers =
+                        registrationLease.Pointers;
+                    if (!pointers.CurrentPublicationId.HasValue)
+                    {
+                        publicationUnavailable = true;
+                    }
+                    else if (pointers.CurrentPublicationId.Value !=
+                             publicationId.Value)
+                    {
+                        changedPublicationId =
+                            pointers.CurrentPublicationId.Value;
+                    }
+                    else
+                    {
+                        var sourceReadiness =
+                            publicationService
+                                .EvaluatePublishedScopeSourceReadiness(
+                                    pointers,
+                                    forceRefresh: true);
+                        if (!pointers.PublishedScrapeId.HasValue
+                            || !sourceReadiness.Ready
+                            || publicationService.PinningConfigured
+                            && !publicationService
+                                .EvaluateReadiness(pointers)
+                                .ReadyForPinning)
+                        {
+                            publicationUnavailable = true;
+                        }
+                        else
+                        {
+                            await registrationLease
+                                .VerifyHeldAsync(ct);
+                            AddConnection(
+                                currentKey,
+                                deviceId,
+                                ws,
+                                publicationId);
+                            connectionRegistered = true;
+                        }
+                    }
+                }
+                catch (Exception ex) when (
+                    ct.IsCancellationRequested
+                    && (ex is NpgsqlException
+                        or TimeoutException))
+                {
+                    throw new OperationCanceledException(
+                        "WebSocket publication admission was cancelled.",
+                        ex,
+                        ct);
+                }
+                catch (Exception ex) when (
+                    !ct.IsCancellationRequested
+                    && (ex is NpgsqlException
+                        or TimeoutException))
+                {
+                    publicationUnavailable = true;
+                    _log.LogWarning(
+                        ex,
+                        "WebSocket publication admission could not acquire or validate the bounded shared publication lease for {AccountId}/{DeviceId}.",
+                        accountId,
+                        deviceId);
+                }
+                finally
+                {
+                    if (registrationLease is not null)
+                    {
+                        await registrationLease.DisposeAsync();
+                        registrationLease = null;
+                    }
                 }
 
-                if (!registrationLease.Pointers.PublishedScrapeId.HasValue
-                    || !publicationService
-                        .EvaluateReadiness(registrationLease.Pointers)
-                        .ReadyForPinning)
+                if (!connectionRegistered)
                 {
-                    if (ws.State == WebSocketState.Open)
+                    if (changedPublicationId.HasValue)
+                    {
+                        await EnsureCurrentPublicationAsync(
+                            ws,
+                            publicationId,
+                            changedPublicationId);
+                    }
+                    else if (publicationUnavailable
+                             && ws.State ==
+                                WebSocketState.Open)
                     {
                         await ws.CloseOutputAsync(
-                            WebSocketCloseStatus.PolicyViolation,
+                            WebSocketCloseStatus
+                                .PolicyViolation,
                             "Publication unavailable",
                             CancellationToken.None);
                     }
                     return;
                 }
             }
-
-            AddConnection(currentKey, deviceId, ws, publicationId);
+            else
+            {
+                AddConnection(
+                    currentKey,
+                    deviceId,
+                    ws,
+                    publicationId);
+                connectionRegistered = true;
+            }
 
             // Send current shop snapshot so the client is immediately up-to-date.
             if (_shopProvider is not null && _festivalService is not null)
@@ -499,14 +636,43 @@ public sealed class NotificationService
                                 && doc.RootElement.TryGetProperty("accountId", out var aidProp)
                                 && aidProp.GetString() is { Length: > 0 } requestedAccountId)
                             {
-                                // Rebind: move this socket from current key to the requested accountId
-                                RemoveConnection(currentKey, deviceId);
+                                var rebind =
+                                    await TryRebindConnectionAsync(
+                                        currentKey,
+                                        requestedAccountId,
+                                        deviceId,
+                                        ws,
+                                        publicationId,
+                                        publicationService,
+                                        ct);
+                                if (!rebind.Rebound)
+                                {
+                                    if (rebind.ChangedPublicationId
+                                            .HasValue)
+                                    {
+                                        await EnsureCurrentPublicationAsync(
+                                            ws,
+                                            publicationId,
+                                            rebind
+                                                .ChangedPublicationId);
+                                    }
+                                    else if (rebind
+                                                 .PublicationUnavailable
+                                             && ws.State ==
+                                             WebSocketState.Open)
+                                    {
+                                        await ws.CloseOutputAsync(
+                                            WebSocketCloseStatus
+                                                .PolicyViolation,
+                                            "Publication unavailable",
+                                            CancellationToken.None);
+                                    }
+                                    break;
+                                }
+
                                 currentKey = requestedAccountId;
-                                AddConnection(
-                                    currentKey,
-                                    deviceId,
-                                    ws,
-                                    publicationId);
+                                publicationId =
+                                    rebind.PublicationId;
                                 _log.LogDebug("WebSocket {DeviceId} subscribed to account {AccountId}.", deviceId, currentKey);
 
                                 // Send current sync state immediately so late subscribers
@@ -530,13 +696,44 @@ public sealed class NotificationService
                                 // Move back to the original anonymous key
                                 if (currentKey != accountId)
                                 {
-                                    RemoveConnection(currentKey, deviceId);
+                                    var rebind =
+                                        await TryRebindConnectionAsync(
+                                            currentKey,
+                                            accountId,
+                                            deviceId,
+                                            ws,
+                                            publicationId,
+                                            publicationService,
+                                            ct);
+                                    if (!rebind.Rebound)
+                                    {
+                                        if (rebind
+                                                .ChangedPublicationId
+                                                .HasValue)
+                                        {
+                                            await EnsureCurrentPublicationAsync(
+                                                ws,
+                                                publicationId,
+                                                rebind
+                                                    .ChangedPublicationId);
+                                        }
+                                        else if (rebind
+                                                     .PublicationUnavailable
+                                                 && ws.State ==
+                                                 WebSocketState.Open)
+                                        {
+                                            await ws.CloseOutputAsync(
+                                                WebSocketCloseStatus
+                                                    .PolicyViolation,
+                                                "Publication unavailable",
+                                                CancellationToken.None);
+                                        }
+                                        break;
+                                    }
+
                                     currentKey = accountId;
-                                    AddConnection(
-                                        currentKey,
-                                        deviceId,
-                                        ws,
-                                        publicationId);
+                                    publicationId =
+                                        rebind.PublicationId;
                                     _log.LogDebug("WebSocket {DeviceId} unsubscribed, reverted to {AccountId}.", deviceId, currentKey);
                                 }
                             }
@@ -560,6 +757,159 @@ public sealed class NotificationService
         finally
         {
             RemoveConnection(currentKey, deviceId, ws);
+        }
+    }
+
+    private async Task<WebSocketRebindResult>
+        TryRebindConnectionAsync(
+            string currentKey,
+            string requestedKey,
+            string deviceId,
+            WebSocket ws,
+            long? publicationId,
+            PublicationReadContextService? publicationService,
+            CancellationToken ct)
+    {
+        if (publicationService is null)
+        {
+            MoveConnection(
+                currentKey,
+                requestedKey,
+                deviceId,
+                ws,
+                publicationId);
+            return new WebSocketRebindResult(
+                Rebound: true,
+                publicationId,
+                ChangedPublicationId: null,
+                PublicationUnavailable: false);
+        }
+
+        PublicationReadLease? lease = null;
+        try
+        {
+            lease =
+                publicationService.PinningConfigured
+                    ? await publicationService.AcquireAsync(ct)
+                    : await publicationService
+                        .AcquireWebSocketAdmissionAsync(ct);
+            var pointers = lease.Pointers;
+            if (!pointers.CurrentPublicationId.HasValue
+                && (publicationId.HasValue
+                    || publicationService
+                        .PinningConfigured
+                    || publicationService
+                        .PublishedScopeSourceReadinessRequired))
+            {
+                return new WebSocketRebindResult(
+                    Rebound: false,
+                    PublicationId: null,
+                    ChangedPublicationId: null,
+                    PublicationUnavailable: true);
+            }
+            if (publicationId.HasValue
+                && pointers.CurrentPublicationId !=
+                    publicationId)
+            {
+                return new WebSocketRebindResult(
+                    Rebound: false,
+                    PublicationId: null,
+                    pointers.CurrentPublicationId,
+                    PublicationUnavailable: false);
+            }
+
+            if (publicationService
+                    .PublishedScopeSourceReadinessRequired
+                && (!pointers.PublishedScrapeId.HasValue
+                    || !publicationService
+                        .EvaluatePublishedScopeSourceReadiness(
+                            pointers,
+                            forceRefresh: true)
+                        .Ready)
+                || publicationService.PinningConfigured
+                && (!pointers.PublishedScrapeId.HasValue
+                    || !publicationService
+                        .EvaluateReadiness(pointers)
+                        .ReadyForPinning))
+            {
+                return new WebSocketRebindResult(
+                    Rebound: false,
+                    PublicationId: null,
+                    ChangedPublicationId: null,
+                    PublicationUnavailable: true);
+            }
+
+            await lease.VerifyHeldAsync(ct);
+            MoveConnection(
+                currentKey,
+                requestedKey,
+                deviceId,
+                ws,
+                pointers.CurrentPublicationId);
+            return new WebSocketRebindResult(
+                Rebound: true,
+                pointers.CurrentPublicationId,
+                ChangedPublicationId: null,
+                PublicationUnavailable: false);
+        }
+        catch (Exception ex) when (
+            ct.IsCancellationRequested
+            && (ex is NpgsqlException
+                or TimeoutException))
+        {
+            throw new OperationCanceledException(
+                "WebSocket publication rebind was cancelled.",
+                ex,
+                ct);
+        }
+        catch (Exception ex) when (
+            !ct.IsCancellationRequested
+            && (ex is NpgsqlException
+                or TimeoutException))
+        {
+            _log.LogWarning(
+                ex,
+                "WebSocket publication rebind could not acquire or validate the bounded shared publication lease for {CurrentAccountId}/{RequestedAccountId}/{DeviceId}.",
+                currentKey,
+                requestedKey,
+                deviceId);
+            return new WebSocketRebindResult(
+                Rebound: false,
+                PublicationId: null,
+                ChangedPublicationId: null,
+                PublicationUnavailable: true);
+        }
+        finally
+        {
+            if (lease is not null)
+                await lease.DisposeAsync();
+        }
+    }
+
+    private sealed record WebSocketRebindResult(
+        bool Rebound,
+        long? PublicationId,
+        long? ChangedPublicationId,
+        bool PublicationUnavailable);
+
+    private void MoveConnection(
+        string currentKey,
+        string requestedKey,
+        string deviceId,
+        WebSocket ws,
+        long? publicationId)
+    {
+        lock (_connectionMutationGate)
+        {
+            RemoveConnection(
+                currentKey,
+                deviceId,
+                ws);
+            AddConnection(
+                requestedKey,
+                deviceId,
+                ws,
+                publicationId);
         }
     }
 
@@ -764,9 +1114,9 @@ public sealed class NotificationService
     {
         if (!currentPublicationId.HasValue
             || (!forceRefresh
-                && (!connectionPublicationId.HasValue
-                    || connectionPublicationId.Value
-                        == currentPublicationId.Value)))
+                && connectionPublicationId.HasValue
+                && connectionPublicationId.Value
+                        == currentPublicationId.Value))
         {
             return true;
         }

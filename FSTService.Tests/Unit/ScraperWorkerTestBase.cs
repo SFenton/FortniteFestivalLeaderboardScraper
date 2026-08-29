@@ -4,6 +4,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Hosting;
@@ -132,17 +133,27 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
     protected ScraperWorker CreateWorker(
         ScraperOptions? opts = null,
-        PublicationCommitOptions? publicationCommitOptions = null)
+        PublicationCommitOptions? publicationCommitOptions = null,
+        ISnapshotGenerationRetentionPlanner?
+            snapshotGenerationRetentionPlanner = null,
+        BackgroundWorkCoordinator?
+            backgroundWorkCoordinator = null)
         => CreateWorkerWithHttp(
             opts,
             null,
-            publicationCommitOptions);
+            publicationCommitOptions,
+            snapshotGenerationRetentionPlanner,
+            backgroundWorkCoordinator);
 
     protected ScraperWorker CreateWorkerWithHttp(
         ScraperOptions? opts,
         HttpMessageHandler? httpHandler,
         PublicationCommitOptions?
-            publicationCommitOptions = null)
+            publicationCommitOptions = null,
+        ISnapshotGenerationRetentionPlanner?
+            snapshotGenerationRetentionPlanner = null,
+        BackgroundWorkCoordinator?
+            backgroundWorkCoordinator = null)
     {
         opts ??= new ScraperOptions
         {
@@ -291,7 +302,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             lifecycle,
             precomputer,
             _progress,
-            new BackgroundWorkCoordinator(),
+            backgroundWorkCoordinator
+                ?? new BackgroundWorkCoordinator(),
             new FSTService.Scraping.UserSyncProgressTracker(
                 new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
                 Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()),
@@ -301,6 +313,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _lifetime,
             _log,
             registrationMutations,
+            snapshotGenerationRetentionPlanner:
+                snapshotGenerationRetentionPlanner,
             publicationCommitOptions:
                 Options.Create(
                     publicationCommitOptions

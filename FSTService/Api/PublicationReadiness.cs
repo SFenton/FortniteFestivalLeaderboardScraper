@@ -1,5 +1,7 @@
 using System.Text.Json;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService.Api;
 
@@ -202,6 +204,195 @@ public sealed record PublicationBootstrapResponse(
     bool ReadyForPinning,
     bool PinningEnabled,
     IReadOnlyList<PublicationUnreadySurface> UnreadySurfaces);
+
+public sealed record PublishedScopeSourceReadinessResult(
+    bool Required,
+    bool Ready,
+    long? PublicationId,
+    long? PublishedScrapeId,
+    string Reason,
+    DateTime CheckedAtUtc);
+
+public sealed class PublishedScopeSourceReadinessService
+{
+    private static readonly TimeSpan CacheLifetime =
+        TimeSpan.FromSeconds(1);
+    private const int CommandTimeoutSeconds = 5;
+
+    private readonly IMetaDatabase _metaDb;
+    private readonly IOptions<FeatureOptions> _features;
+    private readonly object _cacheLock = new();
+    private CacheEntry? _cache;
+
+    public PublishedScopeSourceReadinessService(
+        IMetaDatabase metaDb,
+        IOptions<FeatureOptions> features)
+    {
+        _metaDb = metaDb;
+        _features = features;
+    }
+
+    public bool Required =>
+        _features.Value.UsePublishedScopeSources;
+
+    public PublishedScopeSourceReadinessResult EvaluateCurrent(
+        bool forceRefresh = false)
+    {
+        if (!Required)
+        {
+            return new PublishedScopeSourceReadinessResult(
+                Required: false,
+                Ready: true,
+                PublicationId: null,
+                PublishedScrapeId: null,
+                "published scope-source reads are disabled",
+                DateTime.UtcNow);
+        }
+
+        try
+        {
+            return Evaluate(
+                _metaDb.GetPublicationPointerState(
+                    CommandTimeoutSeconds),
+                forceRefresh);
+        }
+        catch (Exception ex) when (
+            ex is NpgsqlException
+                or TimeoutException
+                or InvalidOperationException)
+        {
+            return new PublishedScopeSourceReadinessResult(
+                Required: true,
+                Ready: false,
+                PublicationId: null,
+                PublishedScrapeId: null,
+                ex is PostgresException postgres
+                    ? $"publication pointer query failed with PostgreSQL state {postgres.SqlState}"
+                    : $"publication pointer query failed with {ex.GetType().Name}",
+                DateTime.UtcNow);
+        }
+    }
+
+    public PublishedScopeSourceReadinessResult Evaluate(
+        PublicationPointerState pointers,
+        bool forceRefresh = false)
+    {
+        var checkedAtUtc = DateTime.UtcNow;
+        if (!Required)
+        {
+            return new PublishedScopeSourceReadinessResult(
+                Required: false,
+                Ready: true,
+                pointers.CurrentPublicationId,
+                pointers.PublishedScrapeId,
+                "published scope-source reads are disabled",
+                checkedAtUtc);
+        }
+
+        if (!pointers.CurrentPublicationId.HasValue
+            || !pointers.PublishedScrapeId.HasValue)
+        {
+            return new PublishedScopeSourceReadinessResult(
+                Required: true,
+                Ready: false,
+                pointers.CurrentPublicationId,
+                pointers.PublishedScrapeId,
+                "current publication or published scrape pointer is missing",
+                checkedAtUtc);
+        }
+
+        var publicationId =
+            pointers.CurrentPublicationId.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId.Value;
+        if (!forceRefresh)
+        {
+            lock (_cacheLock)
+            {
+                if (_cache is
+                    {
+                        PublicationId: var cachedPublicationId,
+                        PublishedScrapeId: var cachedScrapeId,
+                        ExpiresAtUtc: var expiresAtUtc,
+                    }
+                    && cachedPublicationId == publicationId
+                    && cachedScrapeId == publishedScrapeId
+                    && expiresAtUtc > checkedAtUtc)
+                {
+                    return _cache.Result;
+                }
+            }
+        }
+
+        PublishedScopeSourceReadinessResult result;
+        try
+        {
+            var evidence =
+                _metaDb.GetPublicationSurfaceSourceEvidence(
+                    publicationId,
+                    PublicationSurfaceNames.SoloScopeSources,
+                    CommandTimeoutSeconds);
+            var ready = evidence is
+            {
+                Exists: true,
+                PublicationId: var evidencePublicationId,
+                ScrapeId: var evidenceScrapeId,
+                RowCount: > 0,
+                ContentHash: var contentHash,
+            }
+            && evidencePublicationId == publicationId
+            && evidenceScrapeId == publishedScrapeId
+            && PublishedScopeSourceBindingContract
+                .IsKeyHash(contentHash);
+            result = new PublishedScopeSourceReadinessResult(
+                Required: true,
+                Ready: ready,
+                publicationId,
+                publishedScrapeId,
+                ready
+                    ? "authoritative published scope-source binding is exact"
+                    : "authoritative published scope-source binding is missing, legacy, partial, malformed, or mismatched",
+                checkedAtUtc);
+        }
+        catch (Exception ex) when (
+            ex is NpgsqlException
+                or TimeoutException
+                or InvalidOperationException)
+        {
+            result = new PublishedScopeSourceReadinessResult(
+                Required: true,
+                Ready: false,
+                publicationId,
+                publishedScrapeId,
+                ex is PostgresException postgres
+                    ? $"published scope-source validation query failed with PostgreSQL state {postgres.SqlState}"
+                    : $"published scope-source validation query failed with {ex.GetType().Name}",
+                checkedAtUtc);
+        }
+
+        lock (_cacheLock)
+        {
+            _cache = new CacheEntry(
+                publicationId,
+                publishedScrapeId,
+                checkedAtUtc + CacheLifetime,
+                result);
+        }
+        return result;
+    }
+
+    public void Invalidate()
+    {
+        lock (_cacheLock)
+            _cache = null;
+    }
+
+    private sealed record CacheEntry(
+        long PublicationId,
+        long PublishedScrapeId,
+        DateTime ExpiresAtUtc,
+        PublishedScopeSourceReadinessResult Result);
+}
 
 public sealed class PublicationReadinessEvaluator
 {

@@ -88,7 +88,10 @@ public sealed class RegistrationBackfillWorker : BackgroundService
                         var delay = opts.RegistrationBackfillPollInterval <= TimeSpan.Zero
                             ? TimeSpan.FromSeconds(30)
                             : opts.RegistrationBackfillPollInterval;
-                        await Task.Delay(delay, linkedCts.Token);
+                        await _coordinator
+                            .WaitForRegistrationDrainRequestAsync(
+                                delay,
+                                linkedCts.Token);
                     }
                 }
                 catch (OperationCanceledException) when (

@@ -51,42 +51,19 @@ public static class DatabaseInitializer
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         foreach (var step in GetSchemaInitializationPlan())
         {
-            if (step.UseShortTransaction)
+            if (step.UseConcurrentIndex)
             {
-                await using var tx = await conn.BeginTransactionAsync(ct);
-                await using (var timeout = conn.CreateCommand())
-                {
-                    timeout.Transaction = tx;
-                    timeout.CommandTimeout = NotificationSchemaCommandTimeoutSeconds;
-                    timeout.CommandText = """
-                        SELECT set_config('lock_timeout', @lockTimeout, true);
-                        SELECT set_config('statement_timeout', @statementTimeout, true);
-                        """;
-                    timeout.Parameters.AddWithValue(
-                        "lockTimeout",
-                        NotificationSchemaLockTimeout);
-                    timeout.Parameters.AddWithValue(
-                        "statementTimeout",
-                        NotificationSchemaStatementTimeout);
-                    await timeout.ExecuteNonQueryAsync(ct);
-                }
-
-                await using (var cmd = conn.CreateCommand())
-                {
-                    cmd.Transaction = tx;
-                    cmd.CommandTimeout = step.CommandTimeoutSeconds;
-                    cmd.CommandText = step.Sql;
-                    await cmd.ExecuteNonQueryAsync(ct);
-                }
-
-                await tx.CommitAsync(ct);
+                await ExecuteConcurrentIndexInitializationStepAsync(
+                    dataSource,
+                    step,
+                    ct);
                 continue;
             }
 
-            await using var unbounded = conn.CreateCommand();
-            unbounded.CommandTimeout = step.CommandTimeoutSeconds;
-            unbounded.CommandText = step.Sql;
-            await unbounded.ExecuteNonQueryAsync(ct);
+            await ExecuteSchemaInitializationStepAsync(
+                conn,
+                step,
+                ct);
         }
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
@@ -97,6 +74,267 @@ public static class DatabaseInitializer
             SELECT setval('user_sessions_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM user_sessions), 0) + 1, (SELECT last_value + CASE WHEN is_called THEN 1 ELSE 0 END FROM user_sessions_id_seq)), false);
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
+    }
+
+    internal static async Task
+        EnsurePublicationGenerationRetirementSchemaAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        foreach (var step in GetSchemaInitializationPlan()
+                     .Where(static item =>
+                         item.Name is
+                             "publication-generation-retirement-columns"
+                             or
+                             "publication-generation-retirement-index"))
+        {
+            if (step.UseConcurrentIndex)
+            {
+                await ExecuteConcurrentIndexInitializationStepAsync(
+                    dataSource,
+                    step,
+                    ct);
+                continue;
+            }
+
+            await using var connection =
+                await dataSource.OpenConnectionAsync(ct);
+            await ExecuteSchemaInitializationStepAsync(
+                connection,
+                step,
+                ct);
+        }
+    }
+
+    internal static async Task
+        EnsurePublicationGenerationRetirementIndexAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        var step = GetSchemaInitializationPlan()
+            .Single(static item =>
+                item.Name ==
+                    "publication-generation-retirement-index");
+        await ExecuteConcurrentIndexInitializationStepAsync(
+            dataSource,
+            step,
+            ct);
+    }
+
+    internal static async Task
+        EnsurePublicationGenerationForeignKeysAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        var step = GetSchemaInitializationPlan()
+            .Single(static item =>
+                item.Name ==
+                    "publication-generation-foreign-keys");
+        await using var connection =
+            await dataSource.OpenConnectionAsync(ct);
+        await ExecuteSchemaInitializationStepAsync(
+            connection,
+            step,
+            ct);
+    }
+
+    private static async Task ExecuteSchemaInitializationStepAsync(
+        NpgsqlConnection connection,
+        DatabaseSchemaInitializationStep step,
+        CancellationToken ct)
+    {
+        if (step.UseShortTransaction)
+        {
+            await using var transaction =
+                await connection.BeginTransactionAsync(ct);
+            await using (var timeout = connection.CreateCommand())
+            {
+                timeout.Transaction = transaction;
+                timeout.CommandTimeout =
+                    NotificationSchemaCommandTimeoutSeconds;
+                timeout.CommandText = """
+                    SELECT set_config(
+                        'lock_timeout',
+                        @lockTimeout,
+                        true);
+                    SELECT set_config(
+                        'statement_timeout',
+                        @statementTimeout,
+                        true);
+                    """;
+                timeout.Parameters.AddWithValue(
+                    "lockTimeout",
+                    step.LockTimeout
+                    ?? NotificationSchemaLockTimeout);
+                timeout.Parameters.AddWithValue(
+                    "statementTimeout",
+                    step.StatementTimeout
+                    ?? NotificationSchemaStatementTimeout);
+                await timeout.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var command =
+                         connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                command.CommandText = step.Sql;
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            await transaction.CommitAsync(ct);
+            return;
+        }
+
+        await using var unbounded =
+            connection.CreateCommand();
+        unbounded.CommandTimeout = step.CommandTimeoutSeconds;
+        unbounded.CommandText = step.Sql;
+        await unbounded.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task
+        ExecuteConcurrentIndexInitializationStepAsync(
+            NpgsqlDataSource dataSource,
+            DatabaseSchemaInitializationStep step,
+            CancellationToken ct)
+    {
+        if (!step.UseConcurrentIndex
+            || string.IsNullOrWhiteSpace(
+                step.ValidationSql)
+            || string.IsNullOrWhiteSpace(
+                step.CleanupSql))
+        {
+            throw new InvalidOperationException(
+                $"Concurrent index initialization step {step.Name} is incomplete.");
+        }
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync(ct);
+        await using (var timeout = connection.CreateCommand())
+        {
+            timeout.CommandTimeout =
+                step.CommandTimeoutSeconds;
+            timeout.CommandText = """
+                SELECT set_config(
+                    'lock_timeout',
+                    @lockTimeout,
+                    false);
+                SELECT set_config(
+                    'statement_timeout',
+                    @statementTimeout,
+                    false);
+                """;
+            timeout.Parameters.AddWithValue(
+                "lockTimeout",
+                step.LockTimeout
+                ?? NotificationSchemaLockTimeout);
+            timeout.Parameters.AddWithValue(
+                "statementTimeout",
+                step.StatementTimeout
+                ?? NotificationSchemaStatementTimeout);
+            await timeout.ExecuteNonQueryAsync(ct);
+        }
+
+        var advisoryLockHeld = false;
+        try
+        {
+            await using (var advisoryLock =
+                         connection.CreateCommand())
+            {
+                advisoryLock.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                advisoryLock.CommandText =
+                    "SELECT pg_advisory_lock(@lockKey)";
+                advisoryLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationRetirementSchemaMigration
+                        .AdvisoryLockKey);
+                await advisoryLock.ExecuteNonQueryAsync(ct);
+                advisoryLockHeld = true;
+            }
+
+            if (await IsConcurrentIndexValidAsync(
+                    connection,
+                    step,
+                    ct))
+            {
+                return;
+            }
+
+            await using (var cleanup =
+                         connection.CreateCommand())
+            {
+                cleanup.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                cleanup.CommandText =
+                    step.CleanupSql;
+                await cleanup.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var create =
+                         connection.CreateCommand())
+            {
+                create.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                create.CommandText = step.Sql;
+                await create.ExecuteNonQueryAsync(ct);
+            }
+
+            if (!await IsConcurrentIndexValidAsync(
+                    connection,
+                    step,
+                    ct))
+            {
+                throw new InvalidOperationException(
+                    $"Concurrent index initialization step {step.Name} did not produce its exact valid index.");
+            }
+        }
+        finally
+        {
+            if (advisoryLockHeld)
+            {
+                await using var advisoryUnlock =
+                    connection.CreateCommand();
+                advisoryUnlock.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                advisoryUnlock.CommandText =
+                    "SELECT pg_advisory_unlock(@lockKey)";
+                advisoryUnlock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationRetirementSchemaMigration
+                        .AdvisoryLockKey);
+                var unlocked =
+                    (bool)(await advisoryUnlock
+                        .ExecuteScalarAsync(
+                            CancellationToken.None))!;
+                if (!unlocked)
+                {
+                    throw new InvalidOperationException(
+                        $"Concurrent index initialization step {step.Name} lost its advisory lock.");
+                }
+            }
+        }
+    }
+
+    private static async Task<bool>
+        IsConcurrentIndexValidAsync(
+            NpgsqlConnection connection,
+            DatabaseSchemaInitializationStep step,
+            CancellationToken ct)
+    {
+        await using var validation =
+            connection.CreateCommand();
+        validation.CommandTimeout =
+            step.CommandTimeoutSeconds;
+        validation.CommandText =
+            step.ValidationSql!;
+        return (bool)(await validation
+            .ExecuteScalarAsync(ct))!;
     }
 
     internal static IReadOnlyList<DatabaseSchemaInitializationStep>
@@ -131,6 +369,49 @@ public static class DatabaseInitializer
                 LockTimeout: null,
                 StatementTimeout: null),
             new(
+                Name:
+                    "publication-generation-retirement-columns",
+                Sql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .ColumnsSql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "publication-generation-foreign-keys",
+                Sql:
+                    PublicationGenerationForeignKeyMigration
+                        .Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "publication-generation-retirement-index",
+                Sql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .CreateIndexSql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: false,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout,
+                UseConcurrentIndex: true,
+                ValidationSql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .IndexValidationSql,
+                CleanupSql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .DropIndexSql),
+            new(
                 Name: "publication-path-artifacts",
                 Sql: PublicationPathArtifactSchema.Sql,
                 CommandTimeoutSeconds:
@@ -138,6 +419,17 @@ public static class DatabaseInitializer
                 UseShortTransaction: true,
                 LockTimeout: NotificationSchemaLockTimeout,
                 StatementTimeout: NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "snapshot-generation-retention-report-only",
+                Sql: Maintenance
+                    .SnapshotGenerationRetentionSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
             new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,
@@ -3113,4 +3405,7 @@ internal sealed record DatabaseSchemaInitializationStep(
     int CommandTimeoutSeconds,
     bool UseShortTransaction,
     string? LockTimeout,
-    string? StatementTimeout);
+    string? StatementTimeout,
+    bool UseConcurrentIndex = false,
+    string? ValidationSql = null,
+    string? CleanupSql = null);

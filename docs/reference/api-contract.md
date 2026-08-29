@@ -14,6 +14,7 @@ sources:
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
@@ -212,6 +213,21 @@ Aggregate player scopes intentionally use different formulas:
   per second per client outside tests.
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
+- With `UsePublishedScopeSources=true`, startup, `/readyz`, L1/L2 cache hits,
+  uncached publication-bound HTTP reads, and WebSocket admission require the
+  exact current `solo_scope_sources` binding and canonical source-key hash.
+  Missing, partial, legacy, malformed, or publication/scrape-mismatched
+  mappings return `503` with `Retry-After: 1`; disabling that backend read path
+  preserves rolling compatibility and skips this serving gate. Lazy cache
+  waiters repeat validation after single-flight acquisition and before serving
+  bytes. WebSockets retain the validated publication identity even when full
+  request pinning is disabled. A bounded shared publication lease covers final
+  pointer/source validation plus initial registration and every
+  `subscribe_sync`/`unsubscribe_sync` account-key move. Publication-change
+  snapshots serialize with the atomic in-process move. All gates are released
+  before WebSocket I/O; commit either precedes and rejects admission/rebind or
+  follows registration and notifies the socket. Null/stale identities receive
+  `publication_changed` and close when current publication advances.
 - Covered freeze-critical JSON routes use a two-tier cache. L1 is process-local;
   L2 is the authoritative current/previous-publication row in
   `publication_api_response_cache`. Cache hits preserve exact bytes and ETag,

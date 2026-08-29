@@ -41,17 +41,24 @@ public sealed class PublicationReadLockDataSource : IAsyncDisposable
 
 public sealed class PublicationReadContextService
 {
+    internal const int AdmissionCommandTimeoutSeconds = 5;
+    internal const int AdmissionLeaseLifetimeSeconds = 20;
+
     private readonly IMetaDatabase _metaDb;
     private readonly NpgsqlDataSource _dataSource;
     private readonly IOptions<FeatureOptions> _features;
     private readonly PublicationReadinessEvaluator _readinessEvaluator;
+    private readonly PublishedScopeSourceReadinessService
+        _publishedScopeSourceReadiness;
     private readonly PublicationCommitOptions _commitOptions;
 
     public PublicationReadContextService(
         IMetaDatabase metaDb,
         NpgsqlDataSource dataSource,
         IOptions<FeatureOptions> features,
-        IOptions<PublicationCommitOptions>? commitOptions = null)
+        IOptions<PublicationCommitOptions>? commitOptions = null,
+        PublishedScopeSourceReadinessService?
+            publishedScopeSourceReadiness = null)
     {
         _metaDb = metaDb;
         _dataSource = dataSource;
@@ -60,23 +67,33 @@ public sealed class PublicationReadContextService
             commitOptions?.Value
             ?? new PublicationCommitOptions();
         _readinessEvaluator = new PublicationReadinessEvaluator(metaDb);
+        _publishedScopeSourceReadiness =
+            publishedScopeSourceReadiness
+            ?? new PublishedScopeSourceReadinessService(
+                metaDb,
+                features);
     }
 
     public PublicationReadContextService(
         IMetaDatabase metaDb,
         PublicationReadLockDataSource lockDataSource,
         IOptions<FeatureOptions> features,
-        IOptions<PublicationCommitOptions>? commitOptions = null)
+        IOptions<PublicationCommitOptions>? commitOptions = null,
+        PublishedScopeSourceReadinessService?
+            publishedScopeSourceReadiness = null)
         : this(
             metaDb,
             lockDataSource.DataSource,
             features,
-            commitOptions)
+            commitOptions,
+            publishedScopeSourceReadiness)
     {
     }
 
     public bool PinningConfigured =>
         _features.Value.EnablePublicationReadContext;
+    public bool PublishedScopeSourceReadinessRequired =>
+        _publishedScopeSourceReadiness.Required;
 
     public bool PinningEnabled
     {
@@ -94,6 +111,18 @@ public sealed class PublicationReadContextService
 
     public PublicationPointerState GetPointers() =>
         _metaDb.GetPublicationPointerState();
+
+    public PublicationPointerState GetPointers(
+        int commandTimeoutSeconds)
+    {
+        if (commandTimeoutSeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(commandTimeoutSeconds));
+        }
+        return _metaDb.GetPublicationPointerState(
+            commandTimeoutSeconds);
+    }
 
     public TimeSpan GetLeaseLifetime(HttpRequest request) =>
         PublicationReadLeasePolicy.Resolve(
@@ -114,6 +143,20 @@ public sealed class PublicationReadContextService
             pointers.CurrentPublicationId.Value,
             pointers.PublishedScrapeId.Value);
     }
+
+    public PublishedScopeSourceReadinessResult
+        EvaluatePublishedScopeSourceReadiness(
+            PublicationPointerState pointers,
+            bool forceRefresh = false) =>
+        _publishedScopeSourceReadiness.Evaluate(
+            pointers,
+            forceRefresh);
+
+    public PublishedScopeSourceReadinessResult
+        EvaluateCurrentPublishedScopeSourceReadiness(
+            bool forceRefresh = false) =>
+        _publishedScopeSourceReadiness
+            .EvaluateCurrent(forceRefresh);
 
     public PublicationBootstrapResponse BuildBootstrapResponse(
         PublicationPointerState pointers)
@@ -137,6 +180,14 @@ public sealed class PublicationReadContextService
                 Math.Max(
                     1,
                     _commitOptions.DefaultReadLeaseSeconds)),
+            ct);
+
+    internal Task<PublicationReadLease>
+        AcquireWebSocketAdmissionAsync(
+            CancellationToken ct) =>
+        AcquireAsync(
+            TimeSpan.FromSeconds(
+                AdmissionLeaseLifetimeSeconds),
             ct);
 
     public async Task<PublicationReadLease> AcquireAsync(
@@ -226,6 +277,7 @@ public sealed class PublicationReadContextService
 
     public void Invalidate()
     {
+        _publishedScopeSourceReadiness.Invalidate();
     }
 }
 
@@ -245,6 +297,24 @@ public sealed class PublicationReadLease : IAsyncDisposable
     }
 
     public PublicationPointerState Pointers { get; }
+
+    internal async Task VerifyHeldAsync(
+        CancellationToken ct)
+    {
+        await using var command =
+            _connection.CreateCommand();
+        command.Transaction = _transaction;
+        command.CommandTimeout =
+            PublicationReadContextService
+                .AdmissionCommandTimeoutSeconds;
+        command.CommandText = "SELECT 1";
+        var result = await command.ExecuteScalarAsync(ct);
+        if (result is not 1)
+        {
+            throw new InvalidOperationException(
+                "Publication read lease verification returned an unexpected result.");
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -326,11 +396,42 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
         PublicReadGateService publicReadGate,
         FSTService.Scraping.IPathDataStore pathStore)
     {
-        if (context.WebSockets.IsWebSocketRequest
-            || context.GetPublicationReadContext() is not null
+        if (context.GetPublicationReadContext() is not null
             || context.GetEndpoint()?.Metadata
                 .GetMetadata<PublicationBound>() is null)
         {
+            await _next(context);
+            return;
+        }
+
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            var pointers = publicationService.GetPointers(
+                PublicationReadContextService
+                    .AdmissionCommandTimeoutSeconds);
+            var readiness =
+                publicationService
+                    .EvaluatePublishedScopeSourceReadiness(
+                        pointers);
+            if (!readiness.Ready)
+            {
+                await PublishedScopeSourceReadinessHttpResults
+                    .Unavailable(
+                        context,
+                        readiness);
+                return;
+            }
+
+            if (pointers.CurrentPublicationId.HasValue
+                && pointers.PublishedScrapeId.HasValue)
+            {
+                SetValidatedPublicationContext(
+                    context,
+                    pointers.CurrentPublicationId.Value,
+                    pointers.PublishedScrapeId.Value,
+                    pointers.PublishedAtUtc);
+            }
+
             await _next(context);
             return;
         }
@@ -359,6 +460,19 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
         if (!lease.Pointers.CurrentPublicationId.HasValue
             || !lease.Pointers.PublishedScrapeId.HasValue)
         {
+            var missingSourceReadiness =
+                publicationService
+                    .EvaluatePublishedScopeSourceReadiness(
+                        lease.Pointers);
+            if (!missingSourceReadiness.Ready)
+            {
+                await PublishedScopeSourceReadinessHttpResults
+                    .Unavailable(
+                        context,
+                        missingSourceReadiness);
+                return;
+            }
+
             if (publicReadGate.FailedCandidateIsolationActive)
             {
                 context.Response.Headers.CacheControl = "no-store";
@@ -376,18 +490,25 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
             return;
         }
 
+        var sourceReadiness =
+            publicationService
+                .EvaluatePublishedScopeSourceReadiness(
+                    lease.Pointers);
+        if (!sourceReadiness.Ready)
+        {
+            await PublishedScopeSourceReadinessHttpResults
+                .Unavailable(
+                    context,
+                    sourceReadiness);
+            return;
+        }
+
         var publicationId = lease.Pointers.CurrentPublicationId.Value;
-        context.Response.Headers[
-            PublicationReadContextMiddleware.PublicationHeader] =
-            publicationId.ToString(
-                System.Globalization.CultureInfo.InvariantCulture);
-        context.Response.Headers.Append(
-            "Vary",
-            PublicationReadContextMiddleware.PublicationHeader);
-        context.SetPublicationReadContext(new PublicationReadContext(
+        SetValidatedPublicationContext(
+            context,
             publicationId,
             lease.Pointers.PublishedScrapeId.Value,
-            lease.Pointers.PublishedAtUtc));
+            lease.Pointers.PublishedAtUtc);
 
         try
         {
@@ -419,6 +540,26 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
                 context,
                 publicationId ?? ex.PublicationId);
         }
+    }
+
+    private static void SetValidatedPublicationContext(
+        HttpContext context,
+        long publicationId,
+        long publishedScrapeId,
+        DateTime? publishedAtUtc)
+    {
+        context.Response.Headers[
+            PublicationReadContextMiddleware.PublicationHeader] =
+            publicationId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+        context.Response.Headers.Append(
+            "Vary",
+            PublicationReadContextMiddleware.PublicationHeader);
+        context.SetPublicationReadContext(
+            new PublicationReadContext(
+                publicationId,
+                publishedScrapeId,
+                publishedAtUtc));
     }
 }
 
@@ -520,6 +661,19 @@ public sealed class PublicationReadContextMiddleware
                     previousPublicationId = pointers.PreviousPublicationId,
                     publishedScrapeId = pointers.PublishedScrapeId,
                 }, statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
+                return;
+            }
+
+            var sourceReadiness =
+                publicationService
+                    .EvaluatePublishedScopeSourceReadiness(
+                        pointers);
+            if (!sourceReadiness.Ready)
+            {
+                await PublishedScopeSourceReadinessHttpResults
+                    .Unavailable(
+                        context,
+                        sourceReadiness);
                 return;
             }
 
@@ -662,6 +816,24 @@ internal static class PublicationPathArtifactHttpResults
                 detail:
                     $"Publication {publicationId} does not have a complete, verified path artifact snapshot. Retry after publication recovery completes.",
                 statusCode: StatusCodes.Status503ServiceUnavailable)
+            .ExecuteAsync(context);
+    }
+}
+
+internal static class PublishedScopeSourceReadinessHttpResults
+{
+    internal static async Task Unavailable(
+        HttpContext context,
+        PublishedScopeSourceReadinessResult readiness)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers["Retry-After"] = "1";
+        await Results.Problem(
+                title: "Published leaderboard data unavailable",
+                detail:
+                    $"Publication {readiness.PublicationId?.ToString() ?? "unknown"} does not have an exact authoritative scope-source binding. Retry after publication recovery completes.",
+                statusCode:
+                    StatusCodes.Status503ServiceUnavailable)
             .ExecuteAsync(context);
     }
 }

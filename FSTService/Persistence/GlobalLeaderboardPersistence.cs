@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using FSTService.Api;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -33,11 +34,16 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly NpgsqlDataSource _pgDataSource;
     private readonly FeatureOptions _features;
+    private readonly PublishedScopeSourceReadinessService
+        _publishedScopeSourceReadiness;
     private readonly ConcurrentDictionary<(long ScrapeId, string SongId, string Instrument), ScopeCompletenessManifest>
         _snapshotReuseManifests = new();
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
+    public PublishedScopeSourceReadinessService
+        PublishedScopeSourceReadiness =>
+        _publishedScopeSourceReadiness;
 
     /// <summary>
     /// True when scrape flushes should maintain the legacy mutable leaderboard_entries table.
@@ -236,13 +242,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
                                         NpgsqlDataSource pgDataSource,
-                                        IOptions<FeatureOptions> features)
+                                        IOptions<FeatureOptions> features,
+                                        PublishedScopeSourceReadinessService?
+                                            publishedScopeSourceReadiness = null)
     {
         _metaDb = metaDb;
         _loggerFactory = loggerFactory;
         _log = log;
         _pgDataSource = pgDataSource;
         _features = features.Value;
+        _publishedScopeSourceReadiness =
+            publishedScopeSourceReadiness
+            ?? new PublishedScopeSourceReadinessService(
+                metaDb,
+                features);
     }
 
     /// <summary>
@@ -329,18 +342,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     private bool HasCompletePublishedScopeSourceMapping()
-    {
-        using var conn = _pgDataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT COUNT(*) > 0 AND BOOL_AND(source.is_complete)
-            FROM leaderboard_published_scope_source source
-            JOIN scrape_publication_state publication
-              ON publication.id = TRUE
-             AND publication.published_scrape_id = source.published_scrape_id
-            """;
-        return Convert.ToBoolean(cmd.ExecuteScalar());
-    }
+        => _publishedScopeSourceReadiness
+            .EvaluateCurrent(forceRefresh: true)
+            .Ready;
 
     /// <summary>Valid instrument keys accepted by <see cref="GetOrCreateInstrumentDb"/>.</summary>
     private static readonly Dictionary<string, string> CanonicalInstrumentKeys =

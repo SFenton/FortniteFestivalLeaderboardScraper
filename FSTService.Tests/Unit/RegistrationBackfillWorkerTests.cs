@@ -199,4 +199,20 @@ public class RegistrationBackfillWorkerTests
         Assert.True(coordinator.TryBeginBackgroundOperation(out var nextOperation));
         nextOperation!.Dispose();
     }
+
+    [Fact]
+    public async Task BackgroundWorkCoordinator_RegistrationDrainRequestWakesIdlePoll()
+    {
+        var coordinator =
+            new BackgroundWorkCoordinator();
+        var wait =
+            coordinator.WaitForRegistrationDrainRequestAsync(
+                TimeSpan.FromSeconds(30),
+                CancellationToken.None);
+
+        coordinator.RequestRegistrationDrain();
+
+        await wait.WaitAsync(
+            TimeSpan.FromSeconds(1));
+    }
 }

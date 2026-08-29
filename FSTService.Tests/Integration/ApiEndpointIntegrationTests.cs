@@ -2844,15 +2844,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task PublishedResolver_ForcedFrozenColdMissAndExportIgnoreActiveProjectionAndSnapshot()
     {
-        using var factory = _factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureServices(services =>
-            {
-                services.PostConfigure<FeatureOptions>(options => options.UsePublishedScopeSources = true);
-                services.PostConfigure<ScraperOptions>(
-                    options => options.EnableAutomaticPathGeneration = false);
-            });
-        });
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
         using var client = factory.CreateClient();
         var services = factory.Services;
         var metaDb = services.GetRequiredService<MetaDatabase>();
@@ -2969,6 +2963,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             cmd.Parameters.AddWithValue("activeId", activeId);
             cmd.ExecuteNonQuery();
         }
+        SetExactCurrentPublicationScopeSourceBinding(
+            dataSource,
+            publishedId);
 
         metaDb.SetPublicReadFreeze(true, reason: "scrape");
         services.GetRequiredService<PublicReadGateService>().Invalidate();
@@ -3009,7 +3006,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var unfrozenWorkbookXml = await ReadExportWorkbookXmlAsync(unfrozenExportResponse);
         Assert.Contains("100000", unfrozenWorkbookXml);
         Assert.DoesNotContain("900000", unfrozenWorkbookXml);
-
         metaDb.FailScrapeRun(
             activeId,
             MetaDatabase.FailedCandidateReadIsolationFailurePhase,
@@ -3079,6 +3075,100 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             cmd.ExecuteNonQuery();
         }
         services.GetRequiredService<PublicReadGateService>().Invalidate();
+    }
+
+    [Fact]
+    public async Task PublishedScopeSourceLossMakesPublicationBoundApiFailClosed()
+    {
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        using (var connection = factory.Services
+                   .GetRequiredService<NpgsqlDataSource>()
+                   .OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                pointers.PublishedScrapeId!.Value);
+            command.ExecuteNonQuery();
+        }
+        factory.Services
+            .GetRequiredService<
+                PublicationReadContextService>()
+            .Invalidate();
+
+        using var response = await client.GetAsync(
+            "/api/leaderboard/testSong1/Solo_Guitar");
+
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode);
+        Assert.Equal(
+            "1",
+            response.Headers.GetValues(
+                "Retry-After")
+                .Single());
+    }
+
+    [Fact]
+    public async Task PublishedScopeSourceLossCannotLeakLazyOverviewCacheHit()
+    {
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        var leakedJson = Encoding.UTF8.GetBytes(
+            "{\"mustNotLeak\":true}");
+        Assert.NotNull(
+            metaDb.TrySetCurrentCachedResponse(
+                pointers.CurrentPublicationId!.Value,
+                "rankings:overview:adjusted:25",
+                leakedJson,
+                ResponseCacheService.ComputeETag(
+                    leakedJson)));
+        using (var connection = factory.Services
+                   .GetRequiredService<NpgsqlDataSource>()
+                   .OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                pointers.PublishedScrapeId!.Value);
+            command.ExecuteNonQuery();
+        }
+        factory.Services
+            .GetRequiredService<
+                PublicationReadContextService>()
+            .Invalidate();
+
+        using var response = await client.GetAsync(
+            "/api/rankings/overview?pageSize=25");
+        var body = await response.Content
+            .ReadAsStringAsync();
+
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode);
+        Assert.DoesNotContain(
+            "mustNotLeak",
+            body,
+            StringComparison.Ordinal);
     }
 
     // ─── Songs ──────────────────────────────────────────────────
@@ -3717,18 +3807,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     """;
                 command.ExecuteNonQuery();
             }
-            var publishedProfile = Encoding.UTF8.GetBytes(
-                $$"""{"accountId":"{{selectedAccountId}}","scores":[]}""");
-            metaDb.BulkSetCachedResponses(
-            [
-                (
-                    $"player:{selectedAccountId}:::",
-                    publishedProfile,
-                    ResponseCacheService.ComputeETag(publishedProfile)
-                ),
-            ]);
-            Assert.NotNull(precomputer.TryGet($"player:{selectedAccountId}:::"));
-
             foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
             {
                 var database = Assert.IsType<InstrumentDatabase>(
@@ -3797,6 +3875,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 command.Parameters.AddWithValue("instrument", instrument);
                 command.ExecuteNonQuery();
             }
+            SetExactCurrentPublicationScopeSourceBinding(
+                dataSource,
+                50);
+            var publishedProfile = Encoding.UTF8.GetBytes(
+                $$"""{"accountId":"{{selectedAccountId}}","scores":[]}""");
+            metaDb.BulkSetCachedResponses(
+            [
+                (
+                    $"player:{selectedAccountId}:::",
+                    publishedProfile,
+                    ResponseCacheService.ComputeETag(publishedProfile)
+                ),
+            ]);
+            Assert.NotNull(
+                precomputer.TryGet(
+                    $"player:{selectedAccountId}:::"));
         }
     }
 
@@ -9542,6 +9636,216 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         return pointers;
     }
 
+    private static void
+        SetExactCurrentPublicationScopeSourceBinding(
+            NpgsqlDataSource dataSource,
+            long scrapeId)
+    {
+        long publicationId;
+        long? previousPublicationId;
+        var keys = new List<PublishedScopeSourceKey>();
+        using (var connection = dataSource.OpenConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            using (var generation = connection.CreateCommand())
+            {
+                generation.Transaction = transaction;
+                generation.CommandText = """
+                    INSERT INTO publication_generations (
+                        scrape_id,
+                        status,
+                        created_at,
+                        source_cut_at,
+                        ready_at,
+                        published_at)
+                    VALUES (
+                        @scrapeId,
+                        'current',
+                        now(),
+                        now(),
+                        now(),
+                        now())
+                    ON CONFLICT (scrape_id) DO UPDATE SET
+                        ready_at = COALESCE(
+                            publication_generations.ready_at,
+                            EXCLUDED.ready_at),
+                        published_at = COALESCE(
+                            publication_generations.published_at,
+                            EXCLUDED.published_at)
+                    RETURNING publication_id
+                    """;
+                generation.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                publicationId =
+                    (long)generation.ExecuteScalar()!;
+            }
+
+            using (var pointer = connection.CreateCommand())
+            {
+                pointer.Transaction = transaction;
+                pointer.CommandText = """
+                    SELECT
+                        current_publication_id,
+                        previous_publication_id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                    FOR UPDATE
+                    """;
+                using var reader = pointer.ExecuteReader();
+                Assert.True(reader.Read());
+                long? currentPublicationId =
+                    reader.IsDBNull(0)
+                        ? null
+                        : reader.GetInt64(0);
+                previousPublicationId =
+                    currentPublicationId ==
+                        publicationId
+                        ? reader.IsDBNull(1)
+                            ? (long?)null
+                            : reader.GetInt64(1)
+                        : currentPublicationId;
+            }
+
+            using (var sourceKeys = connection.CreateCommand())
+            {
+                sourceKeys.Transaction = transaction;
+                sourceKeys.CommandText = """
+                    SELECT instrument, song_id, scope_kind
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                    ORDER BY
+                        instrument COLLATE "C",
+                        song_id COLLATE "C",
+                        scope_kind COLLATE "C"
+                    """;
+                sourceKeys.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                using var reader = sourceKeys.ExecuteReader();
+                while (reader.Read())
+                {
+                    keys.Add(
+                        new PublishedScopeSourceKey(
+                            reader.GetString(0),
+                            reader.GetString(1),
+                            reader.GetString(2)));
+                }
+            }
+            Assert.NotEmpty(keys);
+
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = """
+                    UPDATE publication_generations
+                    SET status = 'retained'
+                    WHERE status = 'current'
+                      AND publication_id <> @publicationId;
+
+                    UPDATE publication_generations
+                    SET status = 'current',
+                        previous_publication_id =
+                            @previousPublicationId,
+                        source_cut_at = COALESCE(
+                            source_cut_at,
+                            now()),
+                        ready_at = COALESCE(
+                            ready_at,
+                            now()),
+                        published_at = COALESCE(
+                            published_at,
+                            now()),
+                        metadata = metadata
+                            || jsonb_build_object(
+                                'publicationPreparation',
+                                jsonb_build_object(
+                                    'scrapeId',
+                                        @scrapeId,
+                                    'publicationId',
+                                        @publicationId,
+                                    'expectedPublishedScopeCount',
+                                        @expectedCount))
+                    WHERE publication_id = @publicationId;
+
+                    INSERT INTO publication_surface_bindings (
+                        publication_id,
+                        surface_name,
+                        binding_kind,
+                        binding_json,
+                        row_count,
+                        content_hash,
+                        status,
+                        built_at)
+                    VALUES (
+                        @publicationId,
+                        'solo_scope_sources',
+                        'scrape_id',
+                        jsonb_build_object(
+                            'publicationId',
+                                @publicationId,
+                            'table',
+                                'leaderboard_published_scope_source',
+                            'publishedScrapeId',
+                                @scrapeId,
+                            'keyHashVersion',
+                                1),
+                        @expectedCount,
+                        @keyHash,
+                        'ready',
+                        now())
+                    ON CONFLICT (
+                        publication_id,
+                        surface_name)
+                    DO UPDATE SET
+                        binding_kind =
+                            EXCLUDED.binding_kind,
+                        binding_json =
+                            EXCLUDED.binding_json,
+                        row_count = EXCLUDED.row_count,
+                        content_hash =
+                            EXCLUDED.content_hash,
+                        status = EXCLUDED.status,
+                        built_at = EXCLUDED.built_at;
+
+                    UPDATE scrape_publication_state
+                    SET published_scrape_id = @scrapeId,
+                        current_publication_id =
+                            @publicationId,
+                        previous_publication_id =
+                            @previousPublicationId,
+                        working_publication_id = NULL,
+                        public_reads_frozen = FALSE,
+                        updated_at = now()
+                    WHERE id = TRUE;
+                    """;
+                update.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                update.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                update.Parameters.Add(
+                    "previousPublicationId",
+                    NpgsqlTypes.NpgsqlDbType.Bigint)
+                    .Value =
+                    previousPublicationId.HasValue
+                        ? previousPublicationId.Value
+                        : DBNull.Value;
+                update.Parameters.AddWithValue(
+                    "expectedCount",
+                    keys.Count);
+                update.Parameters.AddWithValue(
+                    "keyHash",
+                    PublishedScopeSourceBindingContract
+                        .ComputeKeyHash(keys));
+                update.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+    }
+
     private static void SeedRouteCache(
         MetaDatabase metaDb,
         string requestPath,
@@ -10007,6 +10311,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ? NpgsqlDataSource.Create(_serviceConnectionString)
                     : SharedPostgresContainer.CreateDatabase(
                         _maxPoolSize);
+                if (UsePublishedScopeSources)
+                {
+                    SeedPublishedScopeSourceReadiness(testDs);
+                }
                 services.AddSingleton(testDs);
                 services.RemoveAll<
                     PostgresUnpooledConnectionFactory>();
@@ -10090,6 +10398,73 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 services.AddHttpClient<EpicAuthService>()
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);
             });
+        }
+
+        private static void SeedPublishedScopeSourceReadiness(
+            NpgsqlDataSource dataSource)
+        {
+            DatabaseInitializer.EnsureSchemaAsync(dataSource)
+                .GetAwaiter()
+                .GetResult();
+            var metaDb = new MetaDatabase(
+                dataSource,
+                NullLogger<MetaDatabase>.Instance);
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                songsScraped: 1,
+                totalEntries: 0,
+                totalRequests: 1,
+                totalBytes: 1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            using (var connection =
+                   dataSource.OpenConnection())
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO leaderboard_published_scope_source (
+                        published_scrape_id,
+                        song_id,
+                        instrument,
+                        scope_kind,
+                        source_kind,
+                        source_snapshot_id,
+                        source_scrape_id,
+                        row_count,
+                        content_fingerprint,
+                        coverage_fingerprint,
+                        reported_total_entries,
+                        reported_total_pages,
+                        is_complete,
+                        created_at,
+                        validated_at)
+                    VALUES (
+                        @scrapeId,
+                        'factory-readiness',
+                        'Solo_Guitar',
+                        'alltime',
+                        'empty',
+                        NULL,
+                        @scrapeId,
+                        0,
+                        'empty-content',
+                        'empty-coverage',
+                        0,
+                        0,
+                        TRUE,
+                        now(),
+                        now())
+                    """;
+                command.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                command.ExecuteNonQuery();
+            }
+            SetExactCurrentPublicationScopeSourceBinding(
+                dataSource,
+                scrapeId);
         }
 
         private static FestivalService CreateTestFestivalService()

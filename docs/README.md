@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-18
-last_verified_commit: 3c467408
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - README.md
   - AGENTS.md
@@ -11,6 +11,7 @@ sources:
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
@@ -29,6 +30,7 @@ evidence remain the behavioral sources of truth.
 | Understand the whole system | [System overview](architecture/system-overview.md) |
 | Follow data from Epic to the browser | [Scrape and publication flow](architecture/data-publication-flow.md) |
 | Understand PostgreSQL ownership and data shapes | [Data storage](architecture/data-storage.md) |
+| Review snapshot-generation retention safety | [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
@@ -47,6 +49,10 @@ evidence remain the behavioral sources of truth.
 | Find active future work | [Roadmap](roadmap/README.md) |
 | Understand why a boundary exists | [Architecture decisions](decisions/README.md) |
 | Change documentation safely | [Documentation governance](governance/documentation.md) |
+
+## Database safety
+
+- [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md)
 
 ## Living runbooks
 

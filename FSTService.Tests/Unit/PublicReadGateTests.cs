@@ -1333,6 +1333,81 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public async Task PublicApiResponseCacheMiddleware_InvalidScopeBindingCannotBypassReadBoundary()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1278,
+                PublicReadFreezeState.PublicationCommitIntentReason));
+        var json = Encoding.UTF8.GetBytes("{}");
+        metaDb.GetCurrentCacheLookup(Arg.Any<string>())
+            .Returns(
+                new PublicationCacheLookup(
+                    true,
+                    new PublicationCachedResponse(
+                        19,
+                        1278,
+                        DateTime.UtcNow,
+                        json,
+                        ResponseCacheService.ComputeETag(json))));
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                19,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(
+                new PublicationSurfaceSourceEvidence(
+                    PublicationSurfaceNames.SoloScopeSources,
+                    Exists: false,
+                    PublicationId: 19,
+                    ScrapeId: 1278,
+                    RowCount: 0,
+                    ContentHash: new string('a', 64)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry(),
+            publicationService);
+
+        Assert.True(nextCalled);
+        Assert.False(
+            context.Response.Headers.ContainsKey(
+                "X-FST-Public-Cache"));
+    }
+
+    [Fact]
     public async Task PublicReadGate_TriggersSingleFlightRecoveryWithoutBlockingRequests()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -1898,6 +1973,146 @@ public class PublicReadGateTests
         Assert.Equal(
             "no-store",
             context.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task BoundaryReadLeaseRejectsInvalidPublishedScopeSourceBinding()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 0,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationService =
+            new PublicationReadContextService(
+                fixture.Db,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var gate = new PublicReadGateService(
+            fixture.Db,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                _ =>
+                {
+                    nextCalled = true;
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            gate,
+            Substitute.For<IPathDataStore>());
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "no-store",
+            context.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task BoundaryWebSocketCapturesValidatedPublicationWhenPinningIsDisabled()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publishedAt = DateTime.UtcNow;
+        var pointers = new PublicationPointerState(
+                CurrentPublicationId: 42,
+                PreviousPublicationId: 41,
+                WorkingPublicationId: null,
+                PublishedScrapeId: 1278,
+                PublishedAtUtc: publishedAt);
+        metaDb.GetPublicationPointerState().Returns(
+            pointers);
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(pointers);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                42,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: true,
+                PublicationId: 42,
+                ScrapeId: 1278,
+                RowCount: 1,
+                ContentHash: new string('a', 64)));
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        Assert.False(publicationService.PinningConfigured);
+        PublicationReadContext? captured = null;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                context =>
+                {
+                    captured =
+                        context.GetPublicationReadContext();
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/ws";
+        var webSocketFeature =
+            Substitute.For<IHttpWebSocketFeature>();
+        webSocketFeature.IsWebSocketRequest.Returns(true);
+        context.Features.Set(webSocketFeature);
+        SetPublicationEndpoint(
+            context,
+            "/api/ws",
+            ApiPublicationRouteCatalog.AnyMethod);
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            new PublicReadGateService(
+                metaDb,
+                NullLogger<PublicReadGateService>.Instance),
+            Substitute.For<IPathDataStore>());
+
+        Assert.Equal(
+            new PublicationReadContext(
+                42,
+                1278,
+                publishedAt),
+            captured);
+        Assert.Equal(
+            "42",
+            context.Response.Headers[
+                PublicationReadContextMiddleware
+                    .PublicationHeader]);
     }
 
     [Fact]

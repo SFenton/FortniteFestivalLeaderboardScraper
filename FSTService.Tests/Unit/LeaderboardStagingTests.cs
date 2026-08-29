@@ -200,7 +200,7 @@ public class LeaderboardStagingTests : IDisposable
     }
 
     [Fact]
-    public void CleanupAbandonedStaging_DeletesIncompleteOldScrapeLogRows()
+    public void CleanupAbandonedStaging_RetainsFailedOldScrapeProvenance()
     {
         var oldScrapeId = _metaFixture.Db.StartScrapeRun();
         var newScrapeId = _metaFixture.Db.StartScrapeRun();
@@ -208,8 +208,35 @@ public class LeaderboardStagingTests : IDisposable
         var deleted = _metaFixture.Db.CleanupAbandonedStaging(newScrapeId);
 
         Assert.True(deleted > 0);
-        Assert.Equal(0, CountScrapeLogRows(oldScrapeId));
+        Assert.Equal(1, CountScrapeLogRows(oldScrapeId));
         Assert.Equal(1, CountScrapeLogRows(newScrapeId));
+        using var conn =
+            _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                scrape.status,
+                scrape.failure_phase,
+                generation.status,
+                generation.failure_phase
+            FROM scrape_log scrape
+            JOIN publication_generations generation
+              ON generation.scrape_id = scrape.id
+            WHERE scrape.id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue(
+            "scrapeId",
+            oldScrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("failed", reader.GetString(0));
+        Assert.Equal(
+            "abandoned_staging_cleanup",
+            reader.GetString(1));
+        Assert.Equal("failed", reader.GetString(2));
+        Assert.Equal(
+            "abandoned_staging_cleanup",
+            reader.GetString(3));
     }
 
     [Fact]

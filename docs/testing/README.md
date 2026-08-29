@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-17
-last_verified_commit: dffca41c
+last_verified: 2026-08-28
+last_verified_commit: c35b7f47
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -14,6 +14,18 @@ sources:
   - FSTService.Tests/Unit/MaxScoreMaintenanceScoreHistoryEvidenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs
+  - FSTService.Tests/Unit/DatabaseInitializerTests.cs
+  - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
+  - FSTService.Tests/Unit/MetaDatabaseTests.cs
+  - FSTService.Tests/Unit/PublicationReadinessTests.cs
+  - FSTService.Tests/Unit/PublicReadGateTests.cs
+  - FSTService.Tests/Unit/NotificationServiceTests.cs
+  - FSTService.Tests/Integration/ApiEndpointIntegrationTests.cs
+  - FSTService.Tests/Unit/LeaderboardStagingTests.cs
   - FSTService.Tests/Unit/BandCurrentProjectionOptimizationTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
   - FSTService.Tests/Unit/PublicationApiResponseCacheServiceTests.cs
@@ -167,6 +179,71 @@ behavior, produced zero critical skips or retired phase rows, and recorded
 three nonblocking best-effort retention skips with durable pressure reasons.
 No speed claim was made; the unchanged 800/32/4 network lane remained a
 control.
+
+Focused snapshot-generation report-only retention and metadata-provenance TTL
+validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetention|FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests|FullyQualifiedName~RetentionSafePoint|FullyQualifiedName~RetentionPlannerIsOwned'
+```
+
+This matrix proves default-off/idempotent additive schema, immutable
+non-executable evidence, exact physical child/config identity, child-scoped
+active/projection/publication/running/resume/writer-failure/hold roots,
+non-disableable scrape-`1308` writer-failure protection, deterministic hashes
+with volatile metrics separated, exact named-publication ready bindings,
+expected counts, identities, and SHA-256 source-key sets, childless topology
+promotion, complete valid/ready top-parent/root/default/numeric index
+attachments through independent `pg_inherits` and `pg_partition_tree`
+catalog paths, independent trigger/named/child terminal scrape blockers,
+publication/freeze/max-score/notification/broadcast/registration/background
+blockers, centralized maintenance-lock contention and ordering, one
+repeatable-read read-only observation, independent SQL-oracle mismatch
+rejection with both sides perturbed, cancellation/failure behavior, and scrape
+admission remaining unblocked. Planner-v3 regressions reproduce the live
+failed-publication inventory: terminal unnamed failures with no live recovery
+artifacts remain immutable anomalies, including 6,273 orphaned source rows;
+an unreplayed writer failure remains an exact instrument/generation root
+without becoming a global publication blocker. Separate cases cover
+named/running/resumable/freeze/commit ownership, ready/building bindings,
+cache/cache-staging/catalog/path rows, prepared/retained band relations,
+malformed identities, per-artifact structured counts, observation-hash
+sensitivity, and planner-v1/v2 cycle immutability. Worker tests cover bounded keyed FIFO ordering,
+two queued publications, startup recovery, retry before later work,
+restart/idempotent existing cycles, unexpected exception retention, and
+advancement after a terminal registration blocker. Registration tests
+distinguish runnable pending/deferred work, safely re-admittable missing/error
+history state, explicit backfill requeue, and non-runnable missing/error
+backfill state. A simulated 5.5-second in-progress registration batch proves
+safe-point polling does not repeatedly cancel staged work, two queued
+publications eventually advance in FIFO order, bounded drain expiry preserves
+scrape continuity, terminal blockers bypass the wait, and shutdown leaves the
+queue intact without pausing background work. The registration worker's
+condition wake avoids waiting for its normal poll interval. Notification tests
+distinguish recoverable marker state from malformed terminal state.
+Deterministic WebSocket/commit-lock races prove source-only admission,
+`subscribe_sync`, and `unsubscribe_sync` hold the bounded shared lease through
+initial registration or atomic rebind and release it before socket I/O;
+cancellation while commit owns the lock remains bounded and propagates.
+Four-publication rotation proves old servable generations retire while
+immutable cycles remain and later observations stay clean. TTL tests prove
+scrape/source/writer-failure/hold evidence survives that separate surface
+retirement and cannot be cascade-laundered. Startup, ongoing `/readyz`,
+warm-cache, post-single-flight lazy overview, concurrent waiter,
+uncached-read, WebSocket admission/rotation, and pre-commit tests require the
+exact authoritative current source binding and publication identity. Numeric
+child tests independently perturb missing, invalid, unready, detached, and
+unique-attribute index facts. Schema tests cover additive rolling-safe
+restriction under a legacy `c35b7f47` initializer, exact no-op, bounded
+retirement-column rollback/retry, and concurrent-index timeout/invalid-artifact
+recovery.
+Staging cleanup tests additionally require superseded running scrapes and
+their allocated generations to become durable failures while only staging
+payloads are removed.
+
+These tests are repository evidence only. They do not satisfy the two-cycle or
+five-cycle live observation gates.
 
 The aggregate line denominator excludes long-running external/process/database
 orchestration already validated through focused contract and integration

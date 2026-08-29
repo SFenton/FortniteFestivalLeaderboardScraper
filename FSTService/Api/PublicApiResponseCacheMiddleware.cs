@@ -92,14 +92,17 @@ public sealed class PublicApiResponseCacheMiddleware
                     safety);
             if (serviceHit is not null)
             {
-                await ServeHitAsync(
-                    context,
-                    metaDb,
-                    gate,
-                    telemetry,
-                    plan,
-                    serviceHit.Value);
-                return;
+                if (await TryServeHitAsync(
+                        context,
+                        metaDb,
+                        gate,
+                        telemetry,
+                        plan,
+                        serviceHit.Value,
+                        publicationService))
+                {
+                    return;
+                }
             }
 
             if (cacheService is null && safety.IsFrozen)
@@ -129,7 +132,7 @@ public sealed class PublicApiResponseCacheMiddleware
                     : (currentCached.Json, currentCached.ETag);
 
                 if (currentCached is not null
-                    && publicationService?.PinningConfigured == true
+                    && publicationService is not null
                     && !CanServePinnedCacheHit(
                         context,
                         publicationService,
@@ -208,7 +211,8 @@ public sealed class PublicApiResponseCacheMiddleware
                 telemetry,
                 cacheService,
                 plan,
-                publicationId);
+                publicationId,
+                publicationService);
             return;
         }
 
@@ -222,6 +226,7 @@ public sealed class PublicApiResponseCacheMiddleware
         PublicationReadContextService? publicationService,
         PublicReadCacheSafetySnapshot safety)
     {
+        PublicationApiCacheHit? hit;
         if (PublicationReadContextMiddleware
                 .TryReadRequestedPublicationId(
                     context.Request,
@@ -232,48 +237,74 @@ public sealed class PublicApiResponseCacheMiddleware
             if (publicationService?.PinningConfigured
                 != true)
             {
-                return cacheService.TryGetCurrent(
+                hit = cacheService.TryGetCurrent(
                     plan,
                     safety);
             }
-
-            var hit = cacheService.TryGet(
-                requestedPublicationId.Value,
+            else
+            {
+                hit = cacheService.TryGet(
+                    requestedPublicationId.Value,
+                    plan,
+                    safety);
+            }
+        }
+        else
+        {
+            hit = cacheService.TryGetCurrent(
                 plan,
                 safety);
-            if (hit is null)
-                return null;
-            var cached = new PublicationCachedResponse(
-                hit.Value.PublicationId,
-                hit.Value.PublishedScrapeId,
-                hit.Value.PublishedAtUtc,
-                hit.Value.Json,
-                hit.Value.ETag,
-                hit.Value.CachedAtUtc,
-                hit.Value.ContentType,
-                hit.Value.ContentSha256,
-                hit.Value.SourceCacheKey);
-            return CanServePinnedCacheHit(
-                context,
-                publicationService,
-                cached)
-                    ? hit
-                    : null;
         }
 
-        return cacheService.TryGetCurrent(
-            plan,
-            safety);
+        if (hit is null || publicationService is null)
+            return hit;
+
+        var cached = new PublicationCachedResponse(
+            hit.Value.PublicationId,
+            hit.Value.PublishedScrapeId,
+            hit.Value.PublishedAtUtc,
+            hit.Value.Json,
+            hit.Value.ETag,
+            hit.Value.CachedAtUtc,
+            hit.Value.ContentType,
+            hit.Value.ContentSha256,
+            hit.Value.SourceCacheKey);
+        return CanServePinnedCacheHit(
+            context,
+            publicationService,
+            cached)
+                ? hit
+                : null;
     }
 
-    private async Task ServeHitAsync(
+    private async Task<bool> TryServeHitAsync(
         HttpContext context,
         IMetaDatabase metaDb,
         PublicReadGateService gate,
         PublicApiCacheTelemetry telemetry,
         PublicApiCacheRequestPlan plan,
-        PublicationApiCacheHit hit)
+        PublicationApiCacheHit hit,
+        PublicationReadContextService? publicationService)
     {
+        var cached = new PublicationCachedResponse(
+            hit.PublicationId,
+            hit.PublishedScrapeId,
+            hit.PublishedAtUtc,
+            hit.Json,
+            hit.ETag,
+            hit.CachedAtUtc,
+            hit.ContentType,
+            hit.ContentSha256,
+            hit.SourceCacheKey);
+        if (publicationService is not null
+            && !CanServePinnedCacheHit(
+                context,
+                publicationService,
+                cached))
+        {
+            return false;
+        }
+
         context.Response.ContentType = hit.ContentType;
         if (!string.IsNullOrWhiteSpace(
                 plan.ResponseCacheControl))
@@ -283,16 +314,7 @@ public sealed class PublicApiResponseCacheMiddleware
         }
         SetPublicationContext(
             context,
-            new PublicationCachedResponse(
-                hit.PublicationId,
-                hit.PublishedScrapeId,
-                hit.PublishedAtUtc,
-                hit.Json,
-                hit.ETag,
-                hit.CachedAtUtc,
-                hit.ContentType,
-                hit.ContentSha256,
-                hit.SourceCacheKey));
+            cached);
         context.Response.Headers[
             "X-FST-Public-Cache"] = "hit";
         context.Response.Headers[
@@ -322,6 +344,7 @@ public sealed class PublicApiResponseCacheMiddleware
             context,
             metaDb,
             gate);
+        return true;
     }
 
     private async Task ExecuteSingleFlightBuildAsync(
@@ -331,7 +354,8 @@ public sealed class PublicApiResponseCacheMiddleware
         PublicApiCacheTelemetry telemetry,
         PublicationApiResponseCacheService cacheService,
         PublicApiCacheRequestPlan plan,
-        long publicationId)
+        long publicationId,
+        PublicationReadContextService? publicationService)
     {
         await using var buildLease =
             await cacheService.AcquireBuildLeaseAsync(
@@ -353,19 +377,25 @@ public sealed class PublicApiResponseCacheMiddleware
 
         var retrySafety =
             gate.GetCacheSafetySnapshot();
-        var existing = cacheService.TryGetCurrent(
+        var existing = TryGetServiceHit(
+            context,
             plan,
+            cacheService,
+            publicationService,
             retrySafety);
         if (existing is not null)
         {
-            await ServeHitAsync(
-                context,
-                metaDb,
-                gate,
-                telemetry,
-                plan,
-                existing.Value);
-            return;
+            if (await TryServeHitAsync(
+                    context,
+                    metaDb,
+                    gate,
+                    telemetry,
+                    plan,
+                    existing.Value,
+                    publicationService))
+            {
+                return;
+            }
         }
 
         if (gate.IsFrozen)
@@ -644,21 +674,26 @@ public sealed class PublicApiResponseCacheMiddleware
             return false;
         }
 
-        try
-        {
-            var readiness =
-                publicationService.EvaluateReadiness(
-                    new PublicationPointerState(
-                        cached.PublicationId,
-                        PreviousPublicationId: null,
-                        WorkingPublicationId: null,
-                        cached.PublishedScrapeId,
-                        cached.PublishedAtUtc));
-            return readiness.ReadyForPinning;
-        }
-        catch
+        var pointers = new PublicationPointerState(
+            cached.PublicationId,
+            PreviousPublicationId: null,
+            WorkingPublicationId: null,
+            cached.PublishedScrapeId,
+            cached.PublishedAtUtc);
+        if (!publicationService
+                .EvaluatePublishedScopeSourceReadiness(
+                    pointers)
+                .Ready)
         {
             return false;
         }
+
+        if (!publicationService.PinningConfigured)
+            return true;
+
+        var readiness =
+            publicationService.EvaluateReadiness(
+                pointers);
+        return readiness.ReadyForPinning;
     }
 }

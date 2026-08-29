@@ -1,13 +1,15 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-28
+last_verified_commit: c35b7f47
 sources:
   - FSTService/ScraperWorker.cs
+  - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
@@ -22,11 +24,15 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/MetaDatabase.Publication.cs
+  - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/LeaderboardRivalsCalculator.cs
@@ -41,6 +47,10 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
   - Publication-bound path artifact capture, binding, read-scope, staging, or
@@ -137,9 +147,9 @@ diagnostic or replay data without becoming the published generation.
    - Build required published scope-source mappings and notification plans.
    - Physical snapshot IDs in those mappings are retention pins only while
      their generation is named as current, previous, or working. Publication
-     IDs resolve through `publication_generations.scrape_id`; older unnamed
-     source maps remain historical evidence but do not pin hot partitions
-     forever.
+     IDs resolve through `publication_generations.scrape_id`; immutable
+     report evidence preserves retired identity after older publication-owned
+     source maps leave the serving window.
    - Prepare the next publication generation outside the final commit.
    - When caches are promoted, require the canonical songs payload count and
      exact song-ID set to match the candidate catalog. When caches are
@@ -148,6 +158,11 @@ diagnostic or replay data without becoming the published generation.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
      publication pointer and generation-owned state.
+   - Immediately before pointer movement, recompute the candidate's
+     authoritative scope-source validation: generation/scrape identity,
+     positive expected count, exact row set, canonical SHA-256 key hash, and
+     ready binding must still agree. A mutation after preparation rolls back
+     commit rather than exposing an ignored or partial mapping.
    - Staged path promotions are compare-and-swapped into live `songs` rows in
      the same transaction, immediately before the pointer advances. The CAS
      owns the live revision and current generation ID, not the provider
@@ -161,8 +176,51 @@ diagnostic or replay data without becoming the published generation.
      payload against the exact publication catalog before pointer movement.
 9. **Release and notify**
    - Unfreeze public reads and invalidate in-process caches.
+   - Retire the generation that just left current/previous/working only after
+     its servable cache/catalog/path/band surfaces are gone and its exact
+     publication-owned scope-source rows validate. The generation and every
+     binding become terminally retired while immutable cycles, scrape
+     provenance, writer failures, holds, and newer source references remain.
+     Startup cleanup can idempotently finish this transition after interruption.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+10. **Terminal report-only retention safe point**
+    - The worker queues keyed `(scrape_id, publication_id)` work for accepted
+      and startup-recovered publications; restart re-entry deduplicates the
+      current publication.
+    - Run-once observes after registration drain. At the continuous
+      pre-allocation boundary, one bounded aggregate registration query
+      distinguishes runnable work from terminal blockers. Runnable work wakes
+      the registration worker and gets up to 30 seconds of adaptive
+      `250 ms`-to-`2 s` polling without any background cancellation. If it is
+      still runnable, the FIFO remains intact and the scheduled scrape may
+      proceed; no cycle is recorded. Once the durable drain is complete, or a
+      terminal registration blocker exists, background work is paused and
+      quiesced exactly once for planning. Retryable planner results stay at the
+      head. Non-runnable missing or terminal-error registration state persists
+      as a blocked cycle instead of retrying forever, so the FIFO advances
+      without producing candidates.
+    - The planner rechecks exact publication, notification, registration,
+      freeze/commit-intent, max-score gate, broadcast evidence, terminal scrape
+      identities, and named-publication source binding/count/key-set
+      completeness before one bounded repeatable-read observation.
+    - Unnamed retained legacy generations and exact terminal unnamed failed
+      generations with no recovery owner or live artifact are persisted as
+      nonblocking, observation-hashed anomaly warnings without changing
+      candidates or cycle status. Failed-publication evidence includes exact
+      scrape identity, recovery references, artifact/source/writer-failure
+      counts, and canonical reasons. Orphaned source rows remain provenance;
+      unreplayed writer failures protect only their exact instrument child.
+      Unpointed building/ready/current state and genuinely recoverable,
+      nonterminal, or malformed failed state remain blockers.
+    - The observer persists immutable per-child evidence only. It is not part
+      of pre-publication cleanup and cannot create archive, detach, drop, or
+      delete work.
+    - Metadata TTL shares the centralized service-maintenance lock, so TTL and
+      generation observation cannot race.
+
+See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 ## Live catalog refresh versus publication
 
@@ -457,6 +515,15 @@ The browser bootstraps through `/api/publication`. When publication changes it
 clears React Query and song caches, reconnects the application WebSocket, and
 remounts the application against the new publication. Request pinning remains
 effective only when configured and every required surface reports ready.
+The service-role WebSocket boundary still records the exact source-validated
+publication when full request pinning is disabled. Final admission and each
+`subscribe_sync`/`unsubscribe_sync` rebind hold a short shared publication
+lease across pointer/source validation and the atomic registration move,
+releasing it before any socket I/O or lifetime. Publication-change snapshots
+serialize with the in-process move. Commit therefore either wins first and
+rejects the stale identity or runs after registration so the transition
+notification includes the socket. Null/stale sockets are closed
+rather than matching every future publication.
 
 When `Scraper:UsePublicationPathArtifacts` is enabled, the publication read
 middleware also opens a `PathDataStore` publication read scope for the exact
@@ -470,6 +537,9 @@ current safety revision, then the authoritative current/previous L2 row.
 During a required-cache freeze, misses never compute or write. Unfrozen bounded
 overview variants may single-flight, compute once, and write through only when
 the measured response is successful JSON below the one-second/2 MiB gates.
+The post-lease lookup and final cache-serving boundary repeat authoritative
+source readiness, preventing a concurrently discovered row from bypassing the
+same check that rejected the initial lookup.
 Same-publication maintenance changes the L2 surface hash/bytes before unfreeze;
 API monitors clear L1 on that safety transition.
 

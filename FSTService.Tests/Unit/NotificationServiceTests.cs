@@ -4,6 +4,10 @@ using System.Text.Json;
 using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -126,6 +130,35 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task NotifyPublicationChanged_NullPublicationIdentityFailsClosed()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection(
+            "acct1",
+            "unidentified",
+            ws,
+            publicationId: null);
+
+        await svc.NotifyPublicationChangedAsync(42);
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    "\"publicationId\":42")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task NotifyPublicationChanged_ForceRefreshRotatesCurrentConnections()
     {
         var svc = CreateService();
@@ -176,6 +209,523 @@ public sealed class NotificationServiceTests
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task UnpinnedPublishedSourceWebSocketClosesWhenPublicationChanges()
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var storedPointers =
+            fixture.Db.GetPublicationPointerState();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var currentPublicationId =
+            Assert.IsType<long>(
+                storedPointers.CurrentPublicationId);
+        var currentPublishedScrapeId =
+            Assert.IsType<long>(
+                storedPointers.PublishedScrapeId);
+        metaDb.GetPublicationPointerState().Returns(_ =>
+            new PublicationPointerState(
+                currentPublicationId,
+                storedPointers.PreviousPublicationId,
+                WorkingPublicationId: null,
+                currentPublishedScrapeId,
+                PublishedAtUtc: DateTime.UtcNow));
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(_ =>
+                new PublicationPointerState(
+                    currentPublicationId,
+                    storedPointers.PreviousPublicationId,
+                    WorkingPublicationId: null,
+                    currentPublishedScrapeId,
+                    PublishedAtUtc: DateTime.UtcNow));
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                currentPublicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: true,
+                currentPublicationId,
+                currentPublishedScrapeId,
+                RowCount: 1,
+                ContentHash: new string('a', 64)));
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        Assert.False(publicationService.PinningConfigured);
+        var svc = CreateService();
+        svc.SetMetaDatabase(metaDb);
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        var receiveStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        ws.ReceiveAsync(
+                Arg.Any<ArraySegment<byte>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                receiveStarted.TrySetResult();
+                await Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    call.ArgAt<CancellationToken>(1));
+                return new WebSocketReceiveResult(
+                    0,
+                    WebSocketMessageType.Close,
+                    true);
+            });
+        using var cancellation =
+            new CancellationTokenSource();
+        var boundary =
+            new PublicationBoundaryReadLeaseMiddleware(
+                context => svc.HandleConnectionAsync(
+                    "acct1",
+                    "dev1",
+                    ws,
+                    context.GetPublicationReadContext()
+                        ?.PublicationId,
+                    publicationService,
+                    cancellation.Token));
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/ws";
+        context.RequestAborted = cancellation.Token;
+        var webSocketFeature =
+            Substitute.For<IHttpWebSocketFeature>();
+        webSocketFeature.IsWebSocketRequest.Returns(true);
+        context.Features.Set(webSocketFeature);
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/ws"),
+            0,
+            new EndpointMetadataCollection(
+                PublicationBound.Instance,
+                new HttpMethodMetadata([HttpMethods.Get])),
+            "/api/ws"));
+
+        var connectionTask = boundary.InvokeAsync(
+            context,
+            publicationService,
+            new PublicReadGateService(
+                metaDb,
+                Microsoft.Extensions.Logging.Abstractions
+                    .NullLogger<PublicReadGateService>.Instance),
+            Substitute.For<IPathDataStore>());
+        await receiveStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        currentPublicationId++;
+
+        await svc.NotifyPublicationChangedAsync(
+            currentPublicationId);
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    $"\"publicationId\":{currentPublicationId}")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+        cancellation.Cancel();
+        await connectionTask;
+    }
+
+    [Fact]
+    public async Task SourceOnlyWebSocketAdmissionSerializesRegistrationWithPublicationCommit()
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var pointers = fixture.Db.GetPublicationPointerState();
+        var publicationId =
+            Assert.IsType<long>(pointers.CurrentPublicationId);
+        var publishedScrapeId =
+            Assert.IsType<long>(pointers.PublishedScrapeId);
+
+        var validationEntered =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var releaseValidation =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(pointers);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(_ =>
+            {
+                validationEntered.TrySetResult();
+                if (!releaseValidation.Task
+                        .Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException(
+                        "Timed out waiting to release WebSocket admission validation.");
+                }
+                return new PublicationSurfaceSourceEvidence(
+                    PublicationSurfaceNames.SoloScopeSources,
+                    Exists: true,
+                    publicationId,
+                    publishedScrapeId,
+                    RowCount: 1,
+                    ContentHash: new string('a', 64));
+            });
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        var notifications = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        var receiveStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        ws.ReceiveAsync(
+                Arg.Any<ArraySegment<byte>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                receiveStarted.TrySetResult();
+                await Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    call.ArgAt<CancellationToken>(1));
+                return new WebSocketReceiveResult(
+                    0,
+                    WebSocketMessageType.Close,
+                    true);
+            });
+        using var cancellation =
+            new CancellationTokenSource();
+        var connectionTask = Task.Run(
+            () => notifications.HandleConnectionAsync(
+                "acct1",
+                "dev1",
+                ws,
+                publicationId,
+                publicationService,
+                cancellation.Token));
+        await validationEntered.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        var commitLockAcquired =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var releaseCommit =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var commitTask = Task.Run(async () =>
+        {
+            await using var connection =
+                await fixture.DataSource
+                    .OpenConnectionAsync();
+            await using var transaction =
+                await connection.BeginTransactionAsync();
+            await using var command =
+                connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            command.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            await command.ExecuteNonQueryAsync();
+            commitLockAcquired.TrySetResult();
+            await releaseCommit.Task.WaitAsync(
+                TimeSpan.FromSeconds(5));
+            await transaction.CommitAsync();
+        });
+
+        var earlyCommitLock =
+            await Task.WhenAny(
+                commitLockAcquired.Task,
+                Task.Delay(TimeSpan.FromMilliseconds(250)));
+        var commitPassedAdmission =
+            ReferenceEquals(
+                earlyCommitLock,
+                commitLockAcquired.Task);
+
+        releaseValidation.TrySetResult();
+        await receiveStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        await commitLockAcquired.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        releaseCommit.TrySetResult();
+        await commitTask;
+
+        await notifications.NotifyPublicationChangedAsync(
+            publicationId + 1);
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    $"\"publicationId\":{publicationId + 1}")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+        cancellation.Cancel();
+        await connectionTask;
+
+        Assert.False(
+            commitPassedAdmission,
+            "Publication commit acquired its exclusive lock while source-only WebSocket validation had not yet registered the socket.");
+    }
+
+    [Fact]
+    public async Task SourceOnlyWebSocketAdmissionPropagatesCancellationWhileCommitOwnsLock()
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var pointers =
+            fixture.Db.GetPublicationPointerState();
+        var publicationId =
+            Assert.IsType<long>(
+                pointers.CurrentPublicationId);
+        var publishedScrapeId =
+            Assert.IsType<long>(
+                pointers.PublishedScrapeId);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(pointers);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: true,
+                publicationId,
+                publishedScrapeId,
+                RowCount: 1,
+                ContentHash: new string('a', 64)));
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        var notifications = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+
+        await using var lockConnection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var lockTransaction =
+            await lockConnection.BeginTransactionAsync();
+        await using (var lockCommand =
+                     lockConnection.CreateCommand())
+        {
+            lockCommand.Transaction = lockTransaction;
+            lockCommand.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            lockCommand.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+        using var cancellation =
+            new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(200));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => notifications.HandleConnectionAsync(
+                "acct1",
+                "dev1",
+                ws,
+                publicationId,
+                publicationService,
+                cancellation.Token));
+
+        await ws.DidNotReceive().ReceiveAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<CancellationToken>());
+        await lockTransaction.RollbackAsync();
+    }
+
+    [Fact]
+    public async Task SourceOnlyWebSocketAdmissionWaitsForCommitThenRejectsStalePublication()
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var firstScrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            firstScrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+        var stalePublicationId =
+            Assert.IsType<long>(
+                fixture.Db.GetPublicationPointerState()
+                    .CurrentPublicationId);
+        var secondScrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            secondScrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            secondScrapeId,
+            promoteCachedResponses: false);
+        var currentPointers =
+            fixture.Db.GetPublicationPointerState();
+        var currentPublicationId =
+            Assert.IsType<long>(
+                currentPointers.CurrentPublicationId);
+
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(currentPointers);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        var notifications = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+
+        await using var lockConnection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var lockTransaction =
+            await lockConnection.BeginTransactionAsync();
+        await using (var lockCommand =
+                     lockConnection.CreateCommand())
+        {
+            lockCommand.Transaction = lockTransaction;
+            lockCommand.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            lockCommand.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+
+        var admissionTask = Task.Run(
+            () => notifications.HandleConnectionAsync(
+                "acct1",
+                "dev1",
+                ws,
+                stalePublicationId,
+                publicationService,
+                CancellationToken.None));
+        await Task.Delay(
+            TimeSpan.FromMilliseconds(250));
+
+        await ws.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+        await ws.DidNotReceive().CloseOutputAsync(
+            Arg.Any<WebSocketCloseStatus>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+
+        await lockTransaction.RollbackAsync();
+        await admissionTask.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    $"\"publicationId\":{currentPublicationId}")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+        await ws.DidNotReceive().ReceiveAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public Task SourceOnlyWebSocketSubscribeRebindSerializesWithPublicationCommit() =>
+        AssertSourceOnlyWebSocketRebindSerializesWithPublicationCommitAsync(
+            unsubscribe: false);
+
+    [Fact]
+    public Task SourceOnlyWebSocketUnsubscribeRebindSerializesWithPublicationCommit() =>
+        AssertSourceOnlyWebSocketRebindSerializesWithPublicationCommitAsync(
+            unsubscribe: true);
 
     [Fact]
     public async Task RemoveConnection_ThenNotify_DoesNotSend()
@@ -1186,5 +1736,242 @@ public sealed class NotificationServiceTests
                 Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("\"test\"")),
             WebSocketMessageType.Text, true,
             Arg.Any<CancellationToken>());
+    }
+
+    private static async Task
+        AssertSourceOnlyWebSocketRebindSerializesWithPublicationCommitAsync(
+            bool unsubscribe)
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var pointers = fixture.Db.GetPublicationPointerState();
+        var publicationId =
+            Assert.IsType<long>(pointers.CurrentPublicationId);
+        var publishedScrapeId =
+            Assert.IsType<long>(pointers.PublishedScrapeId);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(pointers);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: true,
+                publicationId,
+                publishedScrapeId,
+                RowCount: 1,
+                ContentHash: new string('a', 64)));
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        var blockedAccountId =
+            unsubscribe ? "real-acct" : "anon-123";
+        var barrierLog =
+            new RebindBarrierLogger(blockedAccountId);
+        var notifications =
+            new NotificationService(barrierLog);
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        var subscribeJson = Encoding.UTF8.GetBytes(
+            """{"action":"subscribe_sync","accountId":"real-acct"}""");
+        var unsubscribeJson = Encoding.UTF8.GetBytes(
+            """{"action":"unsubscribe_sync"}""");
+        var receiveCount = 0;
+        ws.ReceiveAsync(
+                Arg.Any<ArraySegment<byte>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var count = Interlocked.Increment(
+                    ref receiveCount);
+                var buffer =
+                    call.ArgAt<ArraySegment<byte>>(0);
+                if (count == 1)
+                {
+                    Array.Copy(
+                        subscribeJson,
+                        0,
+                        buffer.Array!,
+                        buffer.Offset,
+                        subscribeJson.Length);
+                    return new WebSocketReceiveResult(
+                        subscribeJson.Length,
+                        WebSocketMessageType.Text,
+                        true);
+                }
+                if (unsubscribe && count == 2)
+                {
+                    Array.Copy(
+                        unsubscribeJson,
+                        0,
+                        buffer.Array!,
+                        buffer.Offset,
+                        unsubscribeJson.Length);
+                    return new WebSocketReceiveResult(
+                        unsubscribeJson.Length,
+                        WebSocketMessageType.Text,
+                        true);
+                }
+
+                await Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    call.ArgAt<CancellationToken>(1));
+                return new WebSocketReceiveResult(
+                    0,
+                    WebSocketMessageType.Close,
+                    true);
+            });
+        using var cancellation =
+            new CancellationTokenSource();
+        var connectionTask = Task.Run(
+            () => notifications.HandleConnectionAsync(
+                "anon-123",
+                "dev1",
+                ws,
+                publicationId,
+                publicationService,
+                cancellation.Token));
+
+        await barrierLog.RemovalEntered.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        var commitLockAcquired =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var commitTask = Task.Run(async () =>
+        {
+            await using var connection =
+                await fixture.DataSource
+                    .OpenConnectionAsync();
+            await using var transaction =
+                await connection.BeginTransactionAsync();
+            await using var command =
+                connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            command.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            await command.ExecuteNonQueryAsync();
+            commitLockAcquired.TrySetResult();
+            await notifications.NotifyPublicationChangedAsync(
+                publicationId + 1);
+            await transaction.CommitAsync();
+        });
+
+        var earlyCommit =
+            await Task.WhenAny(
+                commitLockAcquired.Task,
+                Task.Delay(
+                    TimeSpan.FromMilliseconds(250)));
+        var commitPassedRebind =
+            ReferenceEquals(
+                earlyCommit,
+                commitLockAcquired.Task);
+
+        barrierLog.ReleaseRemoval();
+        await commitTask.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await connectionTask.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(
+            commitPassedRebind,
+            "Publication commit acquired its exclusive lock while a WebSocket rebind had removed but not re-registered the socket.");
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    $"\"publicationId\":{publicationId + 1}")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+        metaDb.Received(unsubscribe ? 3 : 2)
+            .GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>());
+    }
+
+    private sealed class RebindBarrierLogger(
+        string blockedAccountId)
+        : ILogger<NotificationService>
+    {
+        private readonly TaskCompletionSource
+            _removalEntered = new(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource
+            _releaseRemoval = new(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        private int _blocked;
+
+        internal Task RemovalEntered =>
+            _removalEntered.Task;
+
+        public IDisposable? BeginScope<TState>(
+            TState state)
+            where TState : notnull =>
+            null;
+
+        public bool IsEnabled(LogLevel logLevel) =>
+            true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (!message.Contains(
+                    $"WebSocket disconnected: account={blockedAccountId},",
+                    StringComparison.Ordinal)
+                || Interlocked.Exchange(
+                    ref _blocked,
+                    1) != 0)
+            {
+                return;
+            }
+
+            _removalEntered.TrySetResult();
+            if (!_releaseRemoval.Task.Wait(
+                    TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException(
+                    "Timed out waiting to release the WebSocket rebind barrier.");
+            }
+        }
+
+        internal void ReleaseRemoval() =>
+            _releaseRemoval.TrySetResult();
     }
 }

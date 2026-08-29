@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-17
-last_verified_commit: c79d39f
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - tools/postgres-pro-bass-snapshot-rewrite.py
@@ -10,6 +10,7 @@ sources:
   - tools/postgres-pro-bass-snapshot-rewrite-drill.py
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - docs/operations/live-safety.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
 update_triggers:
   - Pro-bass snapshot ownership, archive, rewrite, capacity, swap, validation, rollback, drop, or archive-retention behavior changes.
 ---
@@ -26,8 +27,9 @@ tablespace and Compose mount were removed, and the verified archive remains.
 Guarded validation scrape `1303` then published successfully. The relation now
 contains `1301-1303`; source maps reuse 350 pro-bass scopes / 1,436,731 rows
 from `1302` and write 352 scopes / 1,910,331 rows for `1303`. Snapshot `1301`
-is now obsolete. The next gate is durable whole-generation retention plus
-remaining-instrument migration before another scrape.
+was physically obsolete for that pilot, but no pilot conclusion is automatic
+recurring-retention eligibility. The default-off generation observer is
+report-only; archive/drop remains behind its evidence and live-safety gates.
 
 The exact target is fixed in code:
 

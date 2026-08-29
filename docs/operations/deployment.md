@@ -1,14 +1,16 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-24
-last_verified_commit: 4c36926a
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
   - FSTService/StartupInitializer.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
@@ -155,15 +157,34 @@ changes publication-bound surfaces must be applied before those roles start:
    older binary cannot prepare or commit a candidate after the schema cut.
 2. Start the API/schema-initializing role (`fstservice`, which keeps
    `Scraper__SkipStartupSchemaInitialization=false`). Its startup applies the
-   schema plan, including the `publication-path-artifacts` migration and the
-   rebinding of retained active pointer snapshots to the current path manifest
-   version.
+   schema plan, including the bounded
+   `publication-generation-retirement-columns`,
+   `publication-generation-foreign-keys` migration, the
+   concurrent `publication-generation-retirement-index` migration, the
+   `publication-path-artifacts` migration, and the rebinding of retained active
+   pointer snapshots to the current path manifest version. Retirement columns
+   use a short transaction; the exact partial index uses bounded
+   `CREATE INDEX CONCURRENTLY` under a migration advisory lock and repairs an
+   invalid interrupted artifact on retry. The foreign-key step additively
+   installs a separately named restrictive FK plus a `BEFORE DELETE` guard.
+   An old `c35b7f47` service may restore the legacy named FK to CASCADE without
+   removing either new invariant. All steps use bounded lock/statement/command
+   timeouts and fail startup for retry rather than continuing partially.
 3. Confirm that role is healthy on `/readyz`.
 4. Start `fstworker`, any API-only role, and any rollout read-only role. With
    `Scraper__UsePublicationPathArtifacts=true` each verifies the current
    publication's path artifact release before signalling ready, including
    before the rollout read-only early return, and fails fast with an explicit
    remediation message if the schema-initializing step has not been applied.
+
+The service role currently enables `UsePublishedScopeSources`. It therefore
+does not signal startup readiness until the current publication owns an exact
+authoritative source binding, and `/readyz` continues to revalidate that
+binding through a one-second keyed cache. Apply the schema and allow a
+publication produced by the binding-hash-aware worker before starting that
+role. A legacy or partial current mapping is intentionally unhealthy rather
+than silently served; a role that deliberately retains the old read path may
+keep `UsePublishedScopeSources=false` during a coordinated rolling transition.
 
 The worker deployment must also provide `MIDI_ENCRYPTION_KEY` as a valid 32-
 or 64-character hexadecimal AES key when scrape-pass staging is enabled.

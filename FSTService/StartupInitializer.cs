@@ -86,6 +86,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                 _persistence.InitializeReadOnly();
                 await _festivalService.InitializePersistedStateOnlyAsync();
                 await _shopService.InitializePersistedStateOnlyAsync(ct);
+                EnsurePublishedScopeSourceReadiness();
                 _readySignal.TrySetResult();
                 _log.LogInformation(
                     "Rollout read-only initialization complete. {SongCount} persisted songs loaded.",
@@ -172,6 +173,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
             // Initialize Item Shop service (loads from DB + first scrape)
             await _shopService.InitializeAsync(ct);
 
+            EnsurePublishedScopeSourceReadiness();
             _log.LogInformation(
                 "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
                 _festivalService.Songs.Count, 6);
@@ -301,8 +303,33 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                 "A PostgreSQL read-only violation was detected.",
                 _readOnlyViolations.LastViolation));
         }
-        return Task.FromResult(IsReady
-            ? HealthCheckResult.Healthy("Databases initialized.")
-            : HealthCheckResult.Unhealthy("Databases still initializing."));
+        if (!IsReady)
+        {
+            return Task.FromResult(
+                HealthCheckResult.Unhealthy(
+                    "Databases still initializing."));
+        }
+
+        var publicationReadiness =
+            _persistence.PublishedScopeSourceReadiness
+                .EvaluateCurrent();
+        return Task.FromResult(
+            publicationReadiness.Ready
+                ? HealthCheckResult.Healthy(
+                    "Databases initialized and published scope-source binding verified.")
+                : HealthCheckResult.Unhealthy(
+                    $"Published scope-source readiness failed: {publicationReadiness.Reason}."));
+    }
+
+    private void EnsurePublishedScopeSourceReadiness()
+    {
+        var readiness =
+            _persistence.PublishedScopeSourceReadiness
+                .EvaluateCurrent(forceRefresh: true);
+        if (!readiness.Ready)
+        {
+            throw new InvalidOperationException(
+                $"Published scope-source readiness failed during startup: {readiness.Reason}.");
+        }
     }
 }
