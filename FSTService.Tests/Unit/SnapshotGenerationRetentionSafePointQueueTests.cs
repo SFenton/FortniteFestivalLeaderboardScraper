@@ -5,6 +5,41 @@ namespace FSTService.Tests.Unit;
 public sealed class SnapshotGenerationRetentionSafePointQueueTests
 {
     [Fact]
+    public void ConstructorRejectsNonPositiveCapacity()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new SnapshotGenerationRetentionSafePointQueue(
+                capacity: 0));
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    public void EnqueueRejectsNonPositiveIdentities(
+        long scrapeId,
+        long publicationId)
+    {
+        var queue =
+            new SnapshotGenerationRetentionSafePointQueue();
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => queue.Enqueue(
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    scrapeId,
+                    publicationId)));
+    }
+
+    [Fact]
+    public void EmptyQueueHasNoHead()
+    {
+        var queue =
+            new SnapshotGenerationRetentionSafePointQueue();
+
+        Assert.False(queue.TryPeek(out var safePoint));
+        Assert.Null(safePoint);
+    }
+
+    [Fact]
     public void QueueIsKeyedOrderedAndIdempotent()
     {
         var queue =
