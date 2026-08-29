@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-27
-last_verified_commit: e32e9d49
+last_verified: 2026-08-29
+last_verified_commit: c35b7f47
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -20,6 +20,8 @@ sources:
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService.Tests/Unit/InstrumentDatabaseTests.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
@@ -27,6 +29,7 @@ sources:
   - docs/components/worker.md
   - docs/database/SnapshotReuseRunbook.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/decisions/0005-post-scrape-modular-monolith.md
 update_triggers:
   - A post-scrape phase, dependency, criticality, progress contract, replay path, deployment gate, overlap decision, or measured baseline changes.
@@ -48,10 +51,12 @@ update_triggers:
 - The one-instrument-at-a-time snapshot-generation conversion is accepted.
   Scrape `1310` proved all nine generation writer paths through publication,
   notifications, registration drain, and worker exit.
-- Make recurring generation retention the active storage lane. Phase 1
-  archives, restore-proves, and retires wholly unreferenced children through
-  durable intent plus separate executor/prover roles. Phase 2 later compacts
-  sparsely pinned children before storage is considered bounded.
+- Make recurring generation retention the active storage lane in evidence
+  gates. The implemented first slice is default-off/report-only and has no
+  executable work state. Live cycles `5` and `6` satisfy the archive-only
+  development entry gate. Archive-only implementation, executor/prover,
+  destructive canary, and later sparse-compaction tiers remain separate
+  unresolved iterations.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -147,7 +152,7 @@ public-read freeze.
 | Live writer mode | `OnlineBounded`; successful page batches are not retained as replay files |
 | Production correctness flags | Scope manifests, successful writers, publication-critical phases, and published-scope-source writes are enforced; legacy live scrape writes are disabled |
 | Snapshot reuse | All supporting correctness prerequisites are present, but `SkipUnchangedPhysicalLeaderboardSnapshots` remains false |
-| Snapshot retention | Report-only planning is enabled by the current code/appsettings default and is not explicitly set in the worker role environment; rewrite false; max one partition; free-space path `/app/data`; 500 GiB minimum free-space gate currently blocks rewrite |
+| Snapshot retention | The generation-child report-only planner did not exist at the research boundary. The legacy rewrite path was disabled and its 500 GiB free-space gate blocked rewrite |
 
 ### Workload and wall-clock baseline
 
@@ -291,8 +296,10 @@ empty, publication `103` became current/unfrozen, notification runs emitted
 `101` player and `47` band events, registration drain completed, and the
 worker exited `0`.
 
-**Verified:** the first exact recurring-retention inventory contains six
-unreferenced failed-scrape `1308` children totaling `12,908,355,584` bytes.
+**Verified:** the first physical-reference inventory contains six
+failed-scrape `1308` children with no active/projection/named-publication
+source, totaling `12,908,355,584` bytes. That is not accepted retention
+eligibility while same-instrument unreplayed writer-failure evidence remains.
 The nine `1310` children total `15,870,648,320` bytes, while older successful
 generations remain sparsely pinned. Whole-child retirement is necessary but
 does not by itself prove bounded steady-state storage.
@@ -647,46 +654,37 @@ Each iteration below is a separate branch/PR.
 
 ### Parallel storage and reclaim evidence
 
-**Establish an exact executable snapshot-retention plan**
+The default-off generation-child report-only control plane is implemented.
+Live cycles `5` and `6` satisfy the archive-only development entry gate.
+Current unresolved work is archive proof, further evidence accrual, and later
+tier design:
 
-- Planner-estimator correctness is `continuous-safe`: it changes only bounded
-  read-only evidence and fail-closed eligibility, and the live harness can
-  validate it without a scrape or deployment.
-- Use only plans with complete protected-ID coverage, reconciled row/byte
-  totals, and `CanExecute=true`.
-- Current publication-`1293` catalog evidence reconciles but all nine plans are
-  blocked: protected IDs `1293` and `1291` are absent from MCV statistics,
-  `n_live_tup` and `reltuples` are stale/inconsistent, and unknown MCV
-  remainder is material.
-- Informational candidate purge estimates are about `2.52` billion rows /
-  `1.46 TB`; executable purge estimates remain zero and full retained workspace
-  is about `2.61 TB`.
-- When catalog statistics are stale or partial, choose and validate a bounded
-  evidence source: maintenance-window statistics refresh with adequate target,
-  durable per-snapshot rollup metadata, or exact partition counts under a
-  separately approved load window.
-- Persist exact candidate partitions, protected snapshot IDs/publications,
-  retained/purge rows and bytes, required rewrite workspace, rollback objects,
-  query/runtime cost, and the current `500 GiB` free-space gate.
-- Do not enable rewrite, lower the 500 GiB gate, delete rows/indexes, repack, or
-  move data.
-- Execution remains `parity-gated-maintenance` and blocked until statistics,
-  exact-count, parity, and workspace evidence all agree.
+- implement archive-only evidence and network-isolated restore proof without
+  detach/drop;
+- require five exact planner/oracle agreement cycles before destructive enable;
+- include at least one publication rotation and one genuine candidate-set
+  change in those five cycles;
+- keep scrape `1308` protected wherever unreplayed writer-failure evidence
+  remains;
+- retain exact archive/restore, live A/B, canary, rollback, API, lock, resource,
+  and capacity gates.
+
+No current code can create archive, detach, rename, drop, truncate, or delete
+work. The legacy whole-instrument estimator remains disabled and is not the
+generation-child oracle.
 
 ### Next iterations
 
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - isolated PostgreSQL 17 leaf archive/restore, lock, pressure, and
-     no-socket mailbox/prover drills;
-   - durable cycles/jobs/evidence, exact per-instrument protection fences,
-     default-child auditing, and explicit generation-leaf exclusion from the
-     legacy rewrite planner;
-   - separate no-Docker-socket executor and network-none restore prover,
-     initially disabled/report-only;
-   - archive-only and manual smallest/large-child canaries before automatic
-     one-active-child execution;
+   - implement archive-only evidence and network-isolated restore proof without
+     detach/drop;
+   - accrue at least three more qualifying cycles to complete the five-cycle
+     exact-agreement gate, including a genuine candidate-set change;
+   - design a separate no-Docker-socket executor and network-none restore
+     prover only after those gates;
+   - run manual smallest/large-child canaries before automatic execution;
    - separately gated sparse-child compaction before claiming bounded
      steady-state storage;
 2. review and qualify the freeze-safe publication API cache candidate. The

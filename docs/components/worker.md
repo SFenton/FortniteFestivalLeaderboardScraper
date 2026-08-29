@@ -1,21 +1,24 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-27
-last_verified_commit: e32e9d49
+last_verified: 2026-08-29
+last_verified_commit: c35b7f47
 sources:
   - FSTService/ScraperWorker.cs
+  - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService.Tests/Unit/GlobalLeaderboardScraperTests.cs
+  - FSTService.Tests/Unit/LeaderboardStagingTests.cs
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
@@ -43,6 +46,13 @@ sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - deploy/config/fstworker-role.env
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -135,10 +145,30 @@ After startup the worker:
 3. authenticates with Epic;
 4. runs a scrape pass;
 5. retries deferred publication/recovery;
-6. exits in run-once mode or sleeps for `ScrapeInterval`.
+6. queues keyed generation-retention safe points for new or startup-recovered
+   publications without replacing an earlier item;
+7. in run-once mode, drains registration work and the enabled report-only FIFO
+   before exit;
+8. in continuous mode, sleeps for `ScrapeInterval`, then reads one bounded
+   aggregate registration-drain snapshot before the next scrape allocation.
+   Runnable work wakes the registration worker and receives up to 30 seconds
+   of adaptive polling without background cancellation. A still-runnable drain
+   keeps the FIFO and yields to the scheduled scrape. Once durable registration
+   work is complete, background work is paused/quiesced once and the FIFO is
+   planned. Retryable planner results and unexpected invocation failures remain
+   queued until a terminal persisted cycle exists. Missing/error/unknown
+   non-runnable backfill state and malformed terminal notification state
+   persist a blocked cycle instead, allowing later queued publications to
+   advance while every child remains fail-closed.
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+At a new scrape boundary, obsolete staging rows and deep-scrape work are
+removed, but an older `running` scrape and its allocated publication generation
+are transitioned to durable `failed` provenance with
+`abandoned_staging_cleanup`; they are not deleted. Named/frozen publication
+state is excluded from this transition.
 
 The public service independently polls the Spark Tracks catalog on the
 boundary-aligned `Scraper:SongSyncInterval` (five minutes by default). It
@@ -687,8 +717,9 @@ validated all nine writer paths: `8,484/8,484` manifests and
 zero, every `1310` child matched its published-source row sum, and publication
 `103` committed. Player and band notification runs completed, the
 post-publication registration drain found no queued account, and the run-once
-worker exited `0`. The worker remains held before recurring generation
-retention is implemented and accepted.
+worker exited `0`. The production worker hold remains a separate operational
+gate; the default-off report-only observer does not authorize unattended
+destructive retention.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
@@ -699,20 +730,70 @@ part of the migration candidate: normal scheduling remains held until
 archive-before-child-drop, default-child auditing, rollback, and public parity
 are implemented and accepted.
 
-The accepted retention direction keeps long-running archive/proof/drop work
-out of the normal worker process. After a terminal publication, notifications,
-and registration drain, the worker will record only a bounded durable safe
-point. A separately deployed executor and network-isolated PostgreSQL 17
-restore prover will process one child at a time from durable intent and a
-4 TB-drive evidence mailbox. Whole-child retirement is Phase 1; sparse-child
-compaction remains separately gated because snapshot reuse can keep a large
-generation alive for only a few historical scopes.
+The first recurring-retention slice now keeps all archive/proof/drop behavior
+out of the worker and the repository. After publication, unfreeze,
+notifications, scores-changed broadcast, registration drain, and background
+quiescence, `ScraperWorker` may run a bounded report-only observation when
+`DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled=true`.
+Accepted and recovered publications enter a 128-item fail-closed FIFO keyed by
+scrape/publication. Duplicate restart re-entry is harmless, later publications
+cannot overwrite the head. Before requesting final background quiescence, the
+worker uses one five-second-command-timeout aggregate query to classify
+registration state. Runnable `pending`/`in_progress`/`deferred` backfill work
+and safely re-admittable missing/error history work signal the registration
+worker and receive an adaptive `250 ms`-to-`2 s`, 30-second drain window without
+safe-point cancellation. If work remains, the FIFO stays durable and the next
+scrape may proceed; no observation is recorded. Missing backfill state,
+backfill `error`, unknown registration state, and malformed terminal
+notification state bypass the wait and become immutable cycle blockers; the
+FIFO removes that terminal head and proceeds to later publications. The option
+is off by default.
 
-## Service-level retention planning
+The observer takes the registration mutation lock, centralized
+service-maintenance lock, shared publication lock, and planner lock in that
+order. It then captures exact child topology and liveness in one bounded
+repeatable-read read-only transaction and compares the result with an
+independent SQL oracle. Named publication source bindings require exact
+preparation identity/count and canonical source-key hash agreement on both
+independent reads. Both catalog paths inventory every numeric child's exact
+root-index attachments, validity, readiness, cardinality, and unique/primary
+attributes. Topology and nonterminal scrape blockers remain effective even
+when a child is protected or a broken instrument has no numeric child.
+Unnamed retained legacy publications are recorded in a separate immutable,
+observation-hashed anomaly collection and do not block candidates or an
+otherwise observed cycle. Planner version 3 also records an exact terminal,
+unnamed failed publication as an anomaly when no named/resume/freeze/commit/
+max-score/notification owner, live surface binding, cache/staging/catalog/path
+row, scrape-staging work, or prepared/retained band relation remains.
+Orphaned publication source rows remain counted warning provenance, while an
+unreplayed writer failure still roots only its exact instrument/generation.
+All publication/scrape identities, artifact/source/writer counts, and recovery
+reasons remain in the observation hash. Unpointed building/ready/current
+publications and genuinely recoverable, nonterminal, or malformed failed
+publications remain fail-closed blockers. Existing planner-v1/v2 cycles remain
+immutable. The observer never mutates legacy publication/source rows to remove
+the warning, while newly produced generations keep the validated v1 retirement
+path.
+Disagreement is durable and produces zero candidates. No job, executable
+state, archive, detach, rename, drop, truncate, or child-deletion path exists.
+The planner is deliberately absent from
+`PostScrapeOrchestrator.RunCleanupAsync`, which remains pre-publication and
+best effort.
+
+Planner-v3 cycles `5` and `6` satisfy the two-clean-cycle entry gate for a
+separate archive-only implementation. No archive behavior exists in the
+current worker. Destructive work remains blocked until five exact-agreement
+cycles include a publication rotation and a genuine candidate-set change,
+plus all separate archive/restore/parity/live-safety gates. See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+## Legacy service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention
 plans while rewrite execution remains disabled. Planning uses bounded
 PostgreSQL catalog/statistics queries and does not scan snapshot partitions.
+This whole-instrument estimator is not the generation-child oracle and its
+rewrite option remains disabled.
 
 Plans retain active, projection-source, rollback, publication-physical-source,
 and policy-blocked IDs. Publication physical sources are limited to the scrape

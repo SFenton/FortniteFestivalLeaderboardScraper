@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -15,6 +15,7 @@ sources:
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicationReadiness.cs
   - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
@@ -61,6 +62,36 @@ After CORS, WebSockets, and forwarded headers, the service applies:
 7. selected-profile activity tracking.
 
 This order is part of the read-safety contract.
+
+When the service role enables `UsePublishedScopeSources`, publication-bound
+reads have an additional fail-closed invariant across that order. The
+authoritative current `solo_scope_sources` binding must match its publication
+and scrape, positive expected count, complete source rows, and canonical
+SHA-256 key set. The outer L1/L2 cache validates the exact cached
+publication/scrape before serving, and the publication-context/boundary
+middleware validates uncached HTTP and WebSocket admission. Missing, partial,
+legacy, or malformed mappings return `503`/`Retry-After: 1`; they cannot bypass
+the check through a warm cache while request pinning remains disabled. A lazy
+overview request repeats the same validation after taking its single-flight
+lease and again immediately before cached bytes are served, so a concurrent
+lookup cannot reintroduce a row rejected before the lease.
+Startup performs an uncached check before signalling ready. `/readyz` and
+requests then use the same publication-keyed result for at most one second,
+with explicit lifecycle invalidation, so the exact hash query is bounded
+without allowing a stale result to remain healthy indefinitely.
+
+WebSocket admission records the exact validated current publication even when
+full request pinning is disabled for the service role. `NotificationService`
+holds a bounded shared publication lease across its final pointer/source
+recheck and `AddConnection`. It repeats the same validation and lease for
+`subscribe_sync` and `unsubscribe_sync`, atomically moving the account-key
+registration under an in-process mutation gate shared with publication-change
+snapshots. The lease and mutation gate are released before sending, closing,
+snapshot delivery, or the receive loop. Publication commit therefore either
+wins first and causes stale admission/rebind to be rejected, or waits until the
+socket is registered and can receive the transition notification. A
+missing/stale identity or later publication change sends `publication_changed`
+and closes the socket instead of treating a null identity as current forever.
 
 The digest-owned max-score freeze has one narrow short circuit within that
 order. After the outer public-response cache gets the first chance to serve,
@@ -164,6 +195,9 @@ bytes. Unfrozen overview sizes `25` and `50` are the only lazy
 write-through variants. They use process single-flight, store only successful
 JSON responses whose measured build is below one second, and reject slow,
 oversized, failed, or transition-raced builds without poisoning L2.
+Every post-wait lookup passes the authoritative publication/source readiness
+gate before `TryServeHitAsync`; a waiter cannot serve an invalid row populated by
+another request.
 Metric, instrument, band-type, query-order, and numeric spellings normalize to
 one semantic lazy/canonical key; request spelling cannot expand the bounded
 variant set.

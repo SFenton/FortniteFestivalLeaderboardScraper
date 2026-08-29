@@ -9,6 +9,10 @@ public sealed class BackgroundWorkCoordinator
 {
     private readonly object _gate = new();
     private CancellationTokenSource _backgroundCts = new();
+    private readonly SemaphoreSlim
+        _registrationDrainRequested = new(
+            initialCount: 0,
+            maxCount: 1);
     private TaskCompletionSource _quiesced = CompletedQuiescence();
     private int _activeOperations;
     private volatile bool _scrapeRunning;
@@ -61,6 +65,30 @@ public sealed class BackgroundWorkCoordinator
         lock (_gate)
             quiescence = _quiesced.Task;
         return quiescence.WaitAsync(ct);
+    }
+
+    public void RequestRegistrationDrain()
+    {
+        lock (_gate)
+        {
+            if (_registrationDrainRequested.CurrentCount == 0)
+                _registrationDrainRequested.Release();
+        }
+    }
+
+    public async Task WaitForRegistrationDrainRequestAsync(
+        TimeSpan maximumDelay,
+        CancellationToken ct)
+    {
+        if (maximumDelay <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumDelay));
+        }
+
+        _ = await _registrationDrainRequested.WaitAsync(
+            maximumDelay,
+            ct);
     }
 
     public void ResumeAfterScrape()

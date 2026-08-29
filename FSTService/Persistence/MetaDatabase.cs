@@ -871,11 +871,18 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
-    public PublicationPointerState GetPublicationPointerState()
+    public PublicationPointerState GetPublicationPointerState() =>
+        GetPublicationPointerState(0);
+
+    public PublicationPointerState GetPublicationPointerState(
+        int commandTimeoutSeconds)
     {
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = Math.Max(
+            0,
+            commandTimeoutSeconds);
         cmd.CommandText = """
             SELECT current_publication_id,
                    previous_publication_id,
@@ -1108,7 +1115,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     public PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
         long publicationId,
-        string surfaceName)
+        string surfaceName,
+        int commandTimeoutSeconds = 0)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(surfaceName);
 
@@ -1119,7 +1127,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
             PublicationSurfaceNames.BandRankings =>
                 GetPublicationBandRankingsEvidence(publicationId),
             PublicationSurfaceNames.SoloScopeSources =>
-                GetPublicationSoloScopeSourceEvidence(publicationId),
+                GetPublicationSoloScopeSourceEvidence(
+                    publicationId,
+                    commandTimeoutSeconds),
             PublicationSurfaceNames.SongCatalog =>
                 GetPublicationSongCatalogEvidence(publicationId),
             PublicationSurfaceNames.PathArtifacts =>
@@ -1254,25 +1264,26 @@ public sealed partial class MetaDatabase : IMetaDatabase
     }
 
     private PublicationSurfaceSourceEvidence?
-        GetPublicationSoloScopeSourceEvidence(long publicationId)
+        GetPublicationSoloScopeSourceEvidence(
+            long publicationId,
+            int commandTimeoutSeconds)
     {
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = Math.Max(
+            0,
+            commandTimeoutSeconds);
         cmd.CommandText = """
-            WITH target AS (
-                SELECT publication_id, scrape_id
-                FROM publication_generations
-                WHERE publication_id = @publicationId
-            )
             SELECT
-                target.publication_id,
-                target.scrape_id,
-                COUNT(source.song_id)
-            FROM target
-            LEFT JOIN leaderboard_published_scope_source source
-              ON source.published_scrape_id = target.scrape_id
-            GROUP BY target.publication_id, target.scrape_id
+                validation.publication_id,
+                validation.scrape_id,
+                validation.actual_row_count,
+                validation.actual_key_hash,
+                validation.is_valid
+                    AND validation.generation_status = 'current'
+            FROM publication_scope_source_binding_validation(
+                @publicationId) validation
             """;
         cmd.Parameters.AddWithValue("publicationId", publicationId);
         using var reader = cmd.ExecuteReader();
@@ -1282,11 +1293,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
         var rowCount = reader.GetInt64(2);
         return new PublicationSurfaceSourceEvidence(
             PublicationSurfaceNames.SoloScopeSources,
-            Exists: rowCount > 0,
+            Exists: reader.GetBoolean(4),
             reader.GetInt64(0),
             reader.IsDBNull(1) ? null : reader.GetInt64(1),
             rowCount,
-            ContentHash: null);
+            reader.GetString(3));
     }
 
     private PublicationSurfaceSourceEvidence?
@@ -4426,6 +4437,113 @@ public sealed partial class MetaDatabase : IMetaDatabase
     public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('deferred', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
+    public async Task<RegistrationDrainStatusInfo>
+        GetRegistrationDrainStatusAsync(
+            int commandTimeoutSeconds = 5,
+            CancellationToken ct = default)
+    {
+        await using var conn =
+            await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = Math.Clamp(
+            commandTimeoutSeconds,
+            1,
+            30);
+        cmd.CommandText = """
+            WITH registered AS (
+                SELECT DISTINCT account_id
+                FROM registered_users
+            ), backfill_inventory AS (
+                SELECT
+                    COALESCE(
+                        registered.account_id,
+                        backfill.account_id) AS account_id,
+                    registered.account_id IS NOT NULL
+                        AS is_registered,
+                    backfill.status
+                FROM registered
+                FULL OUTER JOIN backfill_status backfill
+                  ON backfill.account_id =
+                        registered.account_id
+            ), history_inventory AS (
+                SELECT
+                    registered.account_id,
+                    history.status
+                FROM registered
+                JOIN backfill_status backfill
+                  ON backfill.account_id =
+                        registered.account_id
+                 AND backfill.status = 'complete'
+                LEFT JOIN history_recon_status history
+                  ON history.account_id =
+                        registered.account_id
+            )
+            SELECT
+                COUNT(DISTINCT backfill.account_id)
+                    FILTER (
+                        WHERE backfill.status IN (
+                            'pending',
+                            'in_progress',
+                            'deferred')
+                    )::INTEGER,
+                (
+                    SELECT COUNT(DISTINCT history.account_id)
+                    FROM history_inventory history
+                    WHERE history.status IS NULL
+                       OR history.status IN (
+                            'pending',
+                            'in_progress',
+                            'error')
+                )::INTEGER,
+                COUNT(DISTINCT backfill.account_id)
+                    FILTER (
+                        WHERE backfill.is_registered
+                          AND backfill.status IS NULL
+                    )::INTEGER,
+                COUNT(DISTINCT backfill.account_id)
+                    FILTER (
+                        WHERE backfill.is_registered
+                          AND backfill.status = 'error'
+                    )::INTEGER,
+                COUNT(DISTINCT backfill.account_id)
+                    FILTER (
+                        WHERE backfill.is_registered
+                          AND backfill.status IS NOT NULL
+                          AND backfill.status NOT IN (
+                              'pending',
+                              'in_progress',
+                              'deferred',
+                              'complete',
+                              'error')
+                    )::INTEGER,
+                (
+                    SELECT COUNT(DISTINCT history.account_id)
+                    FROM history_inventory history
+                    WHERE history.status IS NOT NULL
+                      AND history.status NOT IN (
+                          'pending',
+                          'in_progress',
+                          'complete',
+                          'error')
+                )::INTEGER
+            FROM backfill_inventory backfill
+            """;
+        await using var reader =
+            await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                "Registration drain query returned no state.");
+        }
+
+        return new RegistrationDrainStatusInfo(
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetInt32(2),
+            reader.GetInt32(3),
+            reader.GetInt32(4),
+            reader.GetInt32(5));
+    }
     public void StartBackfill(string accountId)
     {
         using var conn = _ds.OpenConnection();
@@ -15233,18 +15351,74 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 cmd.Transaction = tx;
                 cmd.CommandText = """
-                    DELETE FROM scrape_log log
-                    WHERE log.id < @id
-                      AND log.completed_at IS NULL
-                      AND log.status = 'running'
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM scrape_publication_state state
-                          WHERE state.public_reads_frozen_scrape_id = log.id
-                      )
+                    WITH abandoned AS (
+                        UPDATE scrape_log log
+                        SET status = 'failed',
+                            failed_at = COALESCE(
+                                failed_at,
+                                @failedAt),
+                            failure_phase =
+                                'abandoned_staging_cleanup',
+                            failure_message =
+                                'Older running scrape was superseded at a new scrape boundary; staging was removed but provenance was retained.'
+                        WHERE log.id < @id
+                          AND log.completed_at IS NULL
+                          AND log.status = 'running'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM scrape_publication_state state
+                              LEFT JOIN publication_generations current_generation
+                                ON current_generation.publication_id =
+                                    state.current_publication_id
+                              LEFT JOIN publication_generations previous_generation
+                                ON previous_generation.publication_id =
+                                    state.previous_publication_id
+                              LEFT JOIN publication_generations working_generation
+                                ON working_generation.publication_id =
+                                    state.working_publication_id
+                              WHERE state.id = TRUE
+                                AND (
+                                    state.published_scrape_id =
+                                        log.id
+                                    OR state.public_reads_frozen_scrape_id =
+                                        log.id
+                                    OR current_generation.scrape_id =
+                                        log.id
+                                    OR previous_generation.scrape_id =
+                                        log.id
+                                    OR working_generation.scrape_id =
+                                        log.id
+                                )
+                          )
+                        RETURNING log.id
+                    ), failed_generations AS (
+                        UPDATE publication_generations generation
+                        SET status = 'failed',
+                            failed_at = COALESCE(
+                                failed_at,
+                                @failedAt),
+                            failure_phase =
+                                'abandoned_staging_cleanup',
+                            failure_message =
+                                'Older running scrape was superseded at a new scrape boundary; staging was removed but provenance was retained.'
+                        FROM abandoned
+                        WHERE generation.scrape_id =
+                                abandoned.id
+                          AND generation.status NOT IN (
+                              'current',
+                              'retained',
+                              'retired')
+                        RETURNING generation.publication_id
+                    )
+                    SELECT COUNT(*)::INTEGER
+                    FROM abandoned
                     """;
                 cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
-                total += cmd.ExecuteNonQuery();
+                cmd.Parameters.AddWithValue(
+                    "failedAt",
+                    DateTime.UtcNow);
+                total += Convert.ToInt32(
+                    cmd.ExecuteScalar());
             }
             tx.Commit();
         }

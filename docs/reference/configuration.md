@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-27
-last_verified_commit: e32e9d49
+last_verified_commit: c35b7f47
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -15,6 +15,9 @@ sources:
   - FSTService/FeatureOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/DatabaseMaintenanceOptions.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - docker-compose.yml
   - .env.example
@@ -56,6 +59,29 @@ overrides intentionally diverge between the public service and mutation worker.
 | `Api` | API key and allowed origins |
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
+
+## Snapshot-generation report-only retention
+
+| Key | Default | Effective bound | Purpose |
+|---|---:|---:|---|
+| `DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled` | `false` | Boolean | Enables terminal worker-owned observation only; it cannot create executable work |
+| `DatabaseMaintenance:SnapshotGenerationRetentionCommandTimeoutSeconds` | `30` | clamped to `5`-`120` | Npgsql and transaction-local statement/idle timeout for one repeatable-read observation and its short evidence write |
+| `DatabaseMaintenance:ServiceMaintenanceLockWaitMilliseconds` | `500` | clamped to `0`-`5000` | Bounded wait used by metadata TTL and generation observation for the shared service-maintenance advisory lock |
+
+The tracked configuration is safe-by-default. There is no option that enables
+archive/detach/drop/delete behavior and no option that disables unreplayed
+writer-failure protection. The legacy
+`DatabaseMaintenance:SnapshotRetentionRewriteEnabled` remains `false` and is
+not reused as the generation-child oracle.
+
+Enabling report-only observation is a worker-role change and does not expose a
+browser feature flag or public API. The enabled worker uses a code-bounded
+128-item keyed FIFO. Planner deferrals remain at its head instead of being
+overwritten. Runnable registration work first receives a code-bounded
+30-second, non-cancelling adaptive drain window; if still incomplete, the FIFO
+is retained and the scheduled scrape may proceed without recording a cycle.
+It must be enabled only for a later coordinator-owned observation window. See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 ## Publication API cache safety bounds
 

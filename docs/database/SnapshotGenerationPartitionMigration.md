@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-23
-last_verified_commit: f86e3915
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - tools/postgres-snapshot-generation-migration.py
   - tools/postgres-snapshot-generation-migration.sh
@@ -10,6 +10,7 @@ sources:
   - tools/postgres-snapshot-generation-migration.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.py
   - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/operations/live-safety.md
 update_triggers:
   - Snapshot instrument bounds, protected-source ownership, archive/restore evidence, migration stages, capacity margins, rollback, or retention rules change.
@@ -35,12 +36,14 @@ Generation-aware validation scrapes `1304`, `1305`, `1306`, `1307`, `1309`,
 and `1310` completed through publication, notifications, registration drain,
 and normal run-once worker exit. Scrape `1310` accepted all nine generation
 writer paths and the global generation-DDL lock. The worker remains held
-offline before recurring generation retention is implemented and accepted.
+offline before recurring destructive generation retention is implemented and
+accepted. A separate default-off report-only observer now exists, but it
+cannot create executable work.
 This runbook is not authorization to unfreeze reads, select alternate scratch
 storage, delete an archive, or weaken a failed gate.
 
-This package migrates physical layout only. It does not implement recurring
-generation retention. After each instrument migration, run exactly one
+This package migrates physical layout only. It does not implement archive,
+detach, drop, or recurring deletion. After each instrument migration, run exactly one
 guarded run-once validation scrape and hold the worker again after terminal
 publication, notification recovery, registration drain, and exit. Do not
 resume unattended normal worker scheduling after the nine instrument
@@ -765,8 +768,8 @@ Checksummed terminal evidence is under:
 ```
 
 The all-nine migration gate is accepted. Normal scheduling remains held until
-recurring generation retention is implemented, restore-tested, documented,
-and accepted.
+recurring destructive generation retention is restore-tested, documented, and
+accepted. The report-only control plane does not satisfy that gate.
 
 ## Current protected-source expectation
 

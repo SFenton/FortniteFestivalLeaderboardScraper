@@ -491,6 +491,41 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         var changedRows = GetCurrentState(glp, "song_1", "Solo_Guitar");
         var changedEntry = Assert.Single(changedRows);
         Assert.Equal(101_000, changedEntry.Score);
+
+        var publicationId = _metaFixture.Db
+            .GetPublicationGenerationForScrape(42)!
+            .PublicationId;
+        var sourceBinding = Assert.Single(
+            _metaFixture.Db
+                .GetPublicationSurfaceBindings(publicationId),
+            binding =>
+                binding.SurfaceName ==
+                    PublicationSurfaceNames.SoloScopeSources);
+        Assert.True(
+            PublishedScopeSourceBindingContract.IsKeyHash(
+                sourceBinding.ContentHash));
+        Assert.Contains(
+            "\"keyHashVersion\": 1",
+            sourceBinding.BindingJson,
+            StringComparison.Ordinal);
+
+        using var readiness = CreatePersistence(
+            new FeatureOptions
+            {
+                UsePublishedScopeSources = true,
+            });
+        Assert.True(readiness.IsReady());
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = 42
+                """;
+            command.ExecuteNonQuery();
+        }
+        Assert.False(readiness.IsReady());
     }
 
     [Fact]

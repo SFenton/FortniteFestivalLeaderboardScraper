@@ -1,11 +1,13 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-08-28
+last_verified_commit: c35b7f47
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/MetaDatabase.Publication.cs
+  - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
@@ -26,8 +28,15 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/Api/PublicationReadiness.cs
   - FSTService/SongCatalogRefreshWorker.cs
   - tools/postgres-retire-ix-le-song-rank.py
   - FSTService/Scraping/BackfillOrchestrator.cs
@@ -75,7 +84,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
 ### Freeze-safe publication API cache
@@ -675,11 +684,126 @@ indexes). It ended with zero running, interrupted, cancelled, orphaned, or
 null-completion rows. The matched wall-clock upper bound for all PR-2 overhead
 was `0.0696%`; summed terminal phase outcomes differed by `0.736%`.
 
-## Snapshot retention planning evidence
+## Generation-child report-only retention
+
+The additive snapshot-generation control plane is default-off and structurally
+report-only. It stores immutable cycles, exact physical-child observations,
+safe-point deferrals, explicit holds, and append-only hash-chain evidence. It
+has no job relation, operation kind, lease, executor state, or service method
+that can archive, detach, rename, drop, truncate, or delete a child.
+
+Physical identity and liveness are per `(instrument, snapshot_id)` and exact
+OID/relfilenode/bound/name/schema configuration. Stable child/config hashes
+exclude row/byte estimates; a separate observation hash includes those
+metrics. One bounded `REPEATABLE READ`, `READ ONLY` transaction captures all
+topology and liveness rows. A separately implemented SQL oracle independently
+derives exact child/live/unreferenced sets; any mismatch persists both sides
+and forces zero candidates.
+
+Topology validation covers the complete partitioned-index tree. The top
+snapshot parent must retain its required primary and score indexes; every
+instrument root must own exactly one valid/ready partitioned index attached to
+each top index; and its default and numeric children must each own exactly one
+valid/ready regular index attached to every root index with matching
+primary/unique/access-method attributes. The primary
+`pg_inherits` inventory and independent oracle `pg_partition_tree` inventory
+persist and compare canonical validation facts for every numeric child,
+including missing, duplicate, detached, invalid, unready, and attribute-
+mismatched indexes, plus childless roots.
+
+Roots include active rows, projection sources, named current/previous/working
+publication sources, running/configured-resume scrapes, same-instrument
+unreplayed writer failures, and active holds. Named publication roots are
+accepted only when their ready binding, preparation identity/count, and
+canonical SHA-256 source-key set exactly match every source row; the independent
+SQL oracle validates the same facts separately. Instrument topology failures
+remain cycle-global without numeric children, and trigger/named/physical-child
+scrape provenance is independently terminal-validated even for otherwise
+protected children. Unpointed building/ready/current generations are blockers.
+Planner version 3 inventories every failed publication's exact scrape status,
+pointer/recovery references, surface bindings, caches and staging, catalog,
+path and scrape-staging rows, prepared/retained band relations, source rows,
+and unreplayed writer failures. A named, resumable, nonterminal/malformed, or
+live-artifact-backed failed publication remains a global blocker. An exact
+terminal unnamed failure with no live recovery artifact is instead immutable
+`unpointed_terminal_failed_publication` anomaly evidence; orphaned source-map
+rows remain counted provenance, and writer failures retain only their separate
+instrument/generation root. Unnamed retained legacy generations likewise
+remain nonblocking `unpointed_retained_publication` anomalies introduced by
+planner version 2. Canonical anomaly/blocker evidence participates in the
+observation hash without changing candidate identity. Version 1 and 2 cycles
+remain immutable and are never reclassified. Freeze, commit intent, max-score
+mutation, notification, broadcast, registration-drain, and
+background-quiescence state also fail closed. The temporary max-score evidence
+table is never queried.
+
+Registration drain inventory separates runnable `pending`/`in_progress`/
+`deferred` backfills and safely re-admittable missing/error history work from
+non-runnable missing/error/unknown backfill state. The worker reads these
+counts through one command-timeout-bounded aggregate query. Runnable work wakes
+the registration claimant and receives a bounded adaptive drain window before
+background pause; safe-point polling never repeatedly cancels and discards a
+long staged batch. If the window expires, the queue remains durable and the
+next scrape may proceed without recording a cycle. Non-runnable state bypasses
+that wait and persists a cycle-global blocker with counts rather than account
+identifiers, allowing the FIFO to advance without making any child a
+candidate. Malformed terminal notification state follows the same blocker
+rule; only exact `pending`/`running`/`failed` notification state is retryable.
+
+Publication rotation retires servable generation state separately from
+scrape/evidence retention. Once a generation leaves
+current/previous/working, bounded post-commit cleanup verifies its exact ready
+scope-source binding, removes only its publication-owned source rows and
+servable cache/catalog/path/band artifacts, marks every binding retired, stores
+`retired_at` plus `retired_scrape_id`, and clears `scrape_id`. Startup cleanup
+and metadata TTL can retry that exact transition after interruption.
+
+Immutable report cycles/deferrals/observations, active holds, unreplayed writer
+failures, and newer publication rows that cite the retired scrape remain
+unchanged. Their restrictive references continue to block scrape-log aging and
+protect physical children, but no longer force a normal third publication to
+remain `unpointed_retained`. Missing/legacy/partial binding evidence still
+leaves the generation retained, but that stale-bookkeeping row is reported as
+a nonblocking anomaly rather than laundering or suppressing candidate
+classification. The observer never deletes or rewrites those legacy
+generation, binding, or source rows merely to clear the warning. Metadata TTL
+shares the centralized service-maintenance lock with the observer, and its
+scrape-delete predicate independently retains all of those provenance
+references.
+
+Existing databases receive `retired_at` and `retired_scrape_id` only through a
+short transactional migration with bounded lock/statement/command timeouts.
+Their partial lookup index is built separately with
+`CREATE INDEX CONCURRENTLY` on a bounded, advisory-lock-serialized session.
+Exact catalog validation makes a valid index a no-op; an invalid artifact from
+a timed-out attempt is concurrently dropped and rebuilt on retry. The
+unbounded main-publication bootstrap performs neither retirement `ALTER` nor
+retirement-index work.
+
+Publication-to-scrape protection is rolling compatible. The legacy
+`publication_generations_scrape_id_fkey` may remain `ON DELETE CASCADE` because
+an old `c35b7f47` binary can recreate that exact constraint. A separately named
+validated `publication_generations_scrape_id_restrict_fkey_v2` plus a
+`BEFORE DELETE` guard on `scrape_log` are installed additively in the bounded
+foreign-key migration; the old initializer does not know either invariant.
+The legacy FK is never dropped during cutover, and a timeout rolls back the
+additive transaction, so no migration step exposes an unreferenced window.
+The previous-publication foreign keys retain their bounded exact upgrades.
+
+Scrape-boundary staging cleanup follows the same provenance rule. It may remove
+obsolete staging and deep-scrape rows, but an older incomplete `running`
+scrape and its allocated generation become explicit
+`abandoned_staging_cleanup` failures rather than being deleted.
+
+See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+## Legacy whole-instrument snapshot retention planning evidence
 
 `DatabaseMaintenanceDryRunReporter` estimates partition-local keep-only
 rewrites from bounded PostgreSQL catalogs and `pg_stats`; report-only planning
-does not scan snapshot partitions.
+does not scan snapshot partitions. Its rewrite option remains disabled and it
+is not the generation-child deletion oracle.
 
 The estimator is fail-closed:
 
@@ -996,10 +1120,13 @@ state machine. All three migrations are accepted. One complete scrape across
 all nine instruments was required immediately afterward and is accepted as
 scrape `1310`.
 
-The first exact recurring-retention inventory after publication `103` finds
-only six wholly unreferenced children: the failed-scrape `1308` leaves for Pro
-Bass, Pro Guitar, Solo Guitar, Solo Bass, Solo Vocals, and Solo Drums. They
-occupy `12,908,355,584` bytes, while the nine new `1310` children occupy
+The first physical-reference inventory after publication `103` found six
+children with no active/projection/named-publication source: the failed-scrape
+`1308` leaves for Pro Bass, Pro Guitar, Solo Guitar, Solo Bass, Solo Vocals,
+and Solo Drums. That observation is not accepted retention eligibility:
+same-instrument unreplayed writer-failure evidence remains a mandatory root
+until explicitly replayed/proven. The six children occupy
+`12,908,355,584` bytes, while the nine new `1310` children occupy
 `15,870,648,320` bytes. Older successful generations remain sparsely pinned by
 snapshot reuse; retained publication `101` still uses `621`, `220`, `153`,
 `384`, `406`, and `525` scopes from generations `1302-1307`. Whole-child

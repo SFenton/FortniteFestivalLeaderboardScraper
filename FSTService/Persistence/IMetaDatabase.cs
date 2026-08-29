@@ -73,13 +73,16 @@ public interface IMetaDatabase : IDisposable
     PublicReadCacheDatabaseState?
         GetPublicReadCacheDatabaseState();
     PublicationPointerState GetPublicationPointerState();
+    PublicationPointerState GetPublicationPointerState(
+        int commandTimeoutSeconds);
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
     PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(long scrapeId);
     IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(long publicationId);
     PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
         long publicationId,
-        string surfaceName);
+        string surfaceName,
+        int commandTimeoutSeconds = 0);
     PublicationPathPromotionOutcome
         ApplyWorkingPublicationPathPromotion(
             PublicationPathPromotionRequest request);
@@ -226,6 +229,10 @@ public interface IMetaDatabase : IDisposable
     List<BackfillStatusInfo> GetPendingBackfills();
     List<BackfillStatusInfo> GetDeferredBackfills();
     BackfillStatusInfo? GetBackfillStatus(string accountId);
+    Task<RegistrationDrainStatusInfo>
+        GetRegistrationDrainStatusAsync(
+            int commandTimeoutSeconds = 5,
+            CancellationToken ct = default);
     void StartBackfill(string accountId);
     void CompleteBackfill(string accountId, bool rankingsPending = false);
     IReadOnlyList<SoloCurrentProjectionScopeKey> GetBackfillProjectionScopesCompletedBefore(

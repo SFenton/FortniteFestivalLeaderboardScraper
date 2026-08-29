@@ -526,6 +526,165 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
     }
 
     [Fact]
+    public async Task Lazy_overview_hit_revalidates_binding_after_build_lease()
+    {
+        using var database = new Helpers.InMemoryMetaDatabase();
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var json = Encoding.UTF8.GetBytes(
+            "{\"mustNotLeak\":true}");
+        fixture.MetaDb.GetCurrentCacheLookup(
+                "rankings:overview:adjusted:25")
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        fixture.MetaDb.GetPublicationSurfaceSourceEvidence(
+                42,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: false,
+                PublicationId: 42,
+                ScrapeId: 1302,
+                RowCount: 0,
+                ContentHash: null));
+        var publicationService =
+            new PublicationReadContextService(
+                fixture.MetaDb,
+                database.DataSource,
+                Microsoft.Extensions.Options.Options.Create(
+                    new FeatureOptions
+                    {
+                        UsePublishedScopeSources = true,
+                    }));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            context =>
+            {
+                nextCalled = true;
+                context.Response.StatusCode =
+                    StatusCodes.Status503ServiceUnavailable;
+                return Task.CompletedTask;
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            publicationService,
+            fixture.Cache);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.False(
+            context.Response.Headers.ContainsKey(
+                "X-FST-Public-Cache"));
+        Assert.DoesNotContain(
+            "mustNotLeak",
+            await Body(context),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Concurrent_invalid_overview_hits_retry_downstream_without_serving_cache()
+    {
+        using var database = new Helpers.InMemoryMetaDatabase();
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var json = Encoding.UTF8.GetBytes(
+            "{\"mustNotLeak\":true}");
+        fixture.MetaDb.GetCurrentCacheLookup(
+                "rankings:overview:adjusted:25")
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        fixture.MetaDb.GetPublicationSurfaceSourceEvidence(
+                42,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: false,
+                PublicationId: 42,
+                ScrapeId: 1302,
+                RowCount: 0,
+                ContentHash: null));
+        var publicationService =
+            new PublicationReadContextService(
+                fixture.MetaDb,
+                database.DataSource,
+                Microsoft.Extensions.Options.Options.Create(
+                    new FeatureOptions
+                    {
+                        UsePublishedScopeSources = true,
+                    }));
+        var downstreamCalls = 0;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                Interlocked.Increment(
+                    ref downstreamCalls);
+                await Task.Delay(50);
+                context.Response.StatusCode =
+                    StatusCodes.Status503ServiceUnavailable;
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var first = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+        var second = Context(
+            "/api/rankings/overview?pageSize=25",
+            "/api/rankings/overview");
+
+        await Task.WhenAll(
+            middleware.InvokeAsync(
+                first,
+                fixture.MetaDb,
+                fixture.Gate,
+                fixture.Telemetry,
+                publicationService,
+                fixture.Cache),
+            middleware.InvokeAsync(
+                second,
+                fixture.MetaDb,
+                fixture.Gate,
+                fixture.Telemetry,
+                publicationService,
+                fixture.Cache));
+
+        Assert.Equal(2, downstreamCalls);
+        Assert.All(
+            new[] { first, second },
+            context =>
+            {
+                Assert.Equal(
+                    StatusCodes.Status503ServiceUnavailable,
+                    context.Response.StatusCode);
+                Assert.False(
+                    context.Response.Headers.ContainsKey(
+                        "X-FST-Public-Cache"));
+            });
+        Assert.DoesNotContain(
+            "mustNotLeak",
+            await Body(first),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "mustNotLeak",
+            await Body(second),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Failed_build_does_not_poison_cache()
     {
         var fixture = Fixture(

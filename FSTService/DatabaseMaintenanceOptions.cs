@@ -22,6 +22,9 @@ public sealed class DatabaseMaintenanceOptions
     public long SnapshotRetentionMaximumEstimatedRetainedBytes { get; set; } = 0;
     public string? SnapshotRetentionFreeSpacePath { get; set; }
     public long SnapshotRetentionMinimumFreeBytes { get; set; } = 0;
+    public int ServiceMaintenanceLockWaitMilliseconds { get; set; } = 500;
+    public bool SnapshotGenerationRetentionReportOnlyEnabled { get; set; } = false;
+    public int SnapshotGenerationRetentionCommandTimeoutSeconds { get; set; } = 30;
     public bool MetadataTtlCleanupEnabled { get; set; } = true;
     public int MetadataRetentionDays { get; set; } = 180;
     public int MetadataCleanupBatchSize { get; set; } = DefaultCleanupBatchSize;

@@ -875,6 +875,17 @@ public sealed partial class MetaDatabase
                 conn,
                 tx,
                 staleRetainedPublicationId.Value);
+            if (staleRetainedPublicationId.Value > 0
+                && !TryRetireUnpointedPublicationGeneration(
+                    conn,
+                    tx,
+                    staleRetainedPublicationId.Value,
+                    "publication_rotation"))
+            {
+                _log.LogWarning(
+                    "Publication {PublicationId} left the current/previous window but could not complete validated terminal retirement. It remains retained and will block report-only generation planning until its source binding or servable artifacts are reconciled.",
+                    staleRetainedPublicationId.Value);
+            }
         }
 
         tx.Commit();
@@ -1081,6 +1092,55 @@ public sealed partial class MetaDatabase
                 dropped.Add(tableName);
             }
 
+            var retiredPublicationIds = new List<long>();
+            if (currentPublicationId.HasValue
+                && !activeWorkingPublicationId.HasValue)
+            {
+                RetainPublicationArtifacts(
+                    conn,
+                    tx,
+                    currentPublicationId.Value,
+                    previousPublicationId);
+
+                using var candidates = conn.CreateCommand();
+                candidates.Transaction = tx;
+                candidates.CommandText = """
+                    SELECT generation.publication_id
+                    FROM publication_generations generation
+                    JOIN scrape_publication_state publication
+                      ON publication.id = TRUE
+                    WHERE generation.status = 'retained'
+                      AND generation.publication_id
+                            IS DISTINCT FROM
+                                publication.current_publication_id
+                      AND generation.publication_id
+                            IS DISTINCT FROM
+                                publication.previous_publication_id
+                      AND generation.publication_id
+                            IS DISTINCT FROM
+                                publication.working_publication_id
+                    ORDER BY generation.publication_id
+                    LIMIT 128
+                    """;
+                using var reader = candidates.ExecuteReader();
+                var candidatePublicationIds = new List<long>();
+                while (reader.Read())
+                    candidatePublicationIds.Add(reader.GetInt64(0));
+                reader.Close();
+
+                foreach (var publicationId in candidatePublicationIds)
+                {
+                    if (TryRetireUnpointedPublicationGeneration(
+                            conn,
+                            tx,
+                            publicationId,
+                            "startup_or_cleanup_recovery"))
+                    {
+                        retiredPublicationIds.Add(publicationId);
+                    }
+                }
+            }
+
             tx.Commit();
             if (dropped.Count > 0)
             {
@@ -1088,6 +1148,13 @@ public sealed partial class MetaDatabase
                     "Dropped {Count} orphan publication band table(s): {Tables}.",
                     dropped.Count,
                     string.Join(", ", dropped));
+            }
+            if (retiredPublicationIds.Count > 0)
+            {
+                _log.LogInformation(
+                    "Completed validated terminal retirement for {Count} unpointed publication generation(s): {PublicationIds}.",
+                    retiredPublicationIds.Count,
+                    string.Join(", ", retiredPublicationIds));
             }
             return new PublicationBandOrphanSweepResult(
                 LockAcquired: true,
@@ -2574,6 +2641,40 @@ public sealed partial class MetaDatabase
         }
     }
 
+    private static void VerifyPreparedPublishedScopeSourceBinding(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        PublicationPreparationResult preparation)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            SELECT COALESCE(
+                validation.is_valid
+                AND validation.publication_id = @publicationId
+                AND validation.scrape_id = @scrapeId
+                AND validation.generation_status = 'ready'
+                AND validation.expected_row_count = @expectedCount,
+                FALSE)
+            FROM publication_scope_source_binding_validation(
+                @publicationId) validation
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            preparation.PublicationId);
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            preparation.ScrapeId);
+        command.Parameters.AddWithValue(
+            "expectedCount",
+            preparation.ExpectedPublishedScopeCount!.Value);
+        if (command.ExecuteScalar() is not true)
+        {
+            throw new InvalidOperationException(
+                $"Publication {preparation.PublicationId} scope-source binding is incomplete, malformed, or no longer matches scrape {preparation.ScrapeId}.");
+        }
+    }
+
     private static long? ReadBandProjectionGeneration(
         NpgsqlConnection conn,
         NpgsqlTransaction? transaction)
@@ -2840,6 +2941,11 @@ public sealed partial class MetaDatabase
         long? bandProjectionGeneration,
         IReadOnlyList<PreparedBandTableSet> preparedBandTables)
     {
+        var publishedScopeSourceKeyHash =
+            ComputePublishedScopeSourceKeyHash(
+                conn,
+                tx,
+                scrapeId);
         var bandBindingJson = JsonSerializer.Serialize(new
         {
             publicationId,
@@ -2899,13 +3005,15 @@ public sealed partial class MetaDatabase
                     jsonb_build_object(
                         'publicationId', @publicationId,
                         'table', 'leaderboard_published_scope_source',
-                        'publishedScrapeId', @scrapeId),
+                        'publishedScrapeId', @scrapeId,
+                        'keyHashVersion',
+                            @scopeSourceKeyHashVersion),
                     (
                         SELECT COUNT(*)
                         FROM leaderboard_published_scope_source
                         WHERE published_scrape_id = @scrapeId
                     ),
-                    NULL,
+                    @publishedScopeSourceKeyHash,
                     'ready',
                     @now
                 ),
@@ -2969,6 +3077,13 @@ public sealed partial class MetaDatabase
         bindings.Parameters.AddWithValue(
             "notificationScopeCount",
             notificationScopeCount);
+        bindings.Parameters.AddWithValue(
+            "scopeSourceKeyHashVersion",
+            PublishedScopeSourceBindingContract
+                .KeyHashVersion);
+        bindings.Parameters.AddWithValue(
+            "publishedScopeSourceKeyHash",
+            publishedScopeSourceKeyHash);
         bindings.Parameters.Add(
             "bandBinding",
             NpgsqlDbType.Jsonb).Value = bandBindingJson;
@@ -3004,6 +3119,38 @@ public sealed partial class MetaDatabase
                     $"Publication {publicationId} scope-source binding does not match the expected count.");
             }
         }
+    }
+
+    private static string ComputePublishedScopeSourceKeyHash(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long scrapeId)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            SELECT instrument, song_id, scope_kind
+            FROM leaderboard_published_scope_source
+            WHERE published_scrape_id = @scrapeId
+            ORDER BY
+                instrument COLLATE "C",
+                song_id COLLATE "C",
+                scope_kind COLLATE "C"
+            """;
+        command.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = command.ExecuteReader();
+        var keys = new List<PublishedScopeSourceKey>();
+        while (reader.Read())
+        {
+            keys.Add(
+                new PublishedScopeSourceKey(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2)));
+        }
+
+        return PublishedScopeSourceBindingContract
+            .ComputeKeyHash(keys);
     }
 
     private bool CommitPreparedPublicationTransaction(
@@ -3058,6 +3205,10 @@ public sealed partial class MetaDatabase
                 tx,
                 preparation.ScrapeId,
                 preparation.ExpectedPublishedScopeCount.Value);
+            VerifyPreparedPublishedScopeSourceBinding(
+                conn,
+                tx,
+                preparation);
         }
 
         var currentBandGeneration =
@@ -3787,6 +3938,210 @@ public sealed partial class MetaDatabase
                 : DBNull.Value;
         command.Parameters.AddWithValue("now", DateTime.UtcNow);
         command.ExecuteNonQuery();
+    }
+
+    private static bool TryRetireUnpointedPublicationGeneration(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long publicationId,
+        string reason)
+    {
+        long scrapeId;
+        long expectedSourceRows;
+        using (var select = conn.CreateCommand())
+        {
+            select.Transaction = tx;
+            select.CommandText = """
+                SELECT
+                    validation.scrape_id,
+                    validation.expected_row_count
+                FROM publication_generations generation
+                JOIN scrape_log scrape
+                  ON scrape.id = generation.scrape_id
+                JOIN scrape_publication_state publication
+                  ON publication.id = TRUE
+                CROSS JOIN LATERAL
+                    publication_scope_source_binding_validation(
+                        generation.publication_id) validation
+                WHERE generation.publication_id =
+                        @publicationId
+                  AND generation.status = 'retained'
+                  AND validation.generation_status = 'retained'
+                  AND validation.is_valid
+                  AND scrape.status = 'completed'
+                  AND scrape.completed_at IS NOT NULL
+                  AND scrape.failed_at IS NULL
+                  AND generation.publication_id
+                        IS DISTINCT FROM
+                            publication.current_publication_id
+                  AND generation.publication_id
+                        IS DISTINCT FROM
+                            publication.previous_publication_id
+                  AND generation.publication_id
+                        IS DISTINCT FROM
+                            publication.working_publication_id
+                  AND generation.scrape_id
+                        IS DISTINCT FROM
+                            publication.published_scrape_id
+                  AND generation.scrape_id
+                        IS DISTINCT FROM
+                            publication.public_reads_frozen_scrape_id
+                  AND generation.scrape_id
+                        IS DISTINCT FROM
+                            publication.improvement_notifications_scrape_id
+                  AND generation.scrape_id
+                        IS DISTINCT FROM
+                            publication.improvement_notifications_projection_scrape_id
+                  AND NOT COALESCE(
+                        publication.public_reads_frozen,
+                        FALSE)
+                  AND publication.publication_commit_intent_started_at
+                        IS NULL
+                  AND publication.publication_commit_intent_owner
+                        IS NULL
+                  AND publication.max_score_mutation_gate_token
+                        IS NULL
+                  AND publication.max_score_mutation_gate_publication_id
+                        IS NULL
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM publication_api_response_cache
+                        WHERE publication_id =
+                                generation.publication_id)
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM publication_api_response_cache_staging
+                        WHERE publication_id =
+                                generation.publication_id)
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM publication_song_catalog
+                        WHERE publication_id =
+                                generation.publication_id)
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM publication_path_artifacts
+                        WHERE publication_id =
+                                generation.publication_id)
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM publication_surface_bindings binding
+                        WHERE binding.publication_id =
+                                generation.publication_id
+                          AND binding.status NOT IN (
+                                'ready',
+                                'retired')
+                          AND NOT (
+                                binding.surface_name =
+                                    'item_shop'
+                                AND binding.status =
+                                    'building'
+                                AND binding.binding_kind =
+                                    'legacy_live_unversioned'
+                                AND binding.binding_json
+                                    ->> 'table' =
+                                    'item_shop_tracks'))
+                FOR UPDATE OF generation
+                """;
+            select.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            using var reader = select.ExecuteReader();
+            if (!reader.Read())
+                return false;
+            scrapeId = reader.GetInt64(0);
+            expectedSourceRows = reader.GetInt64(1);
+        }
+
+        var retiredAt = DateTime.UtcNow;
+        using (var retireBindings = conn.CreateCommand())
+        {
+            retireBindings.Transaction = tx;
+            retireBindings.CommandText = """
+                UPDATE publication_surface_bindings
+                SET binding_kind = CASE
+                        WHEN surface_name =
+                            'solo_scope_sources'
+                        THEN 'retired_scrape_id'
+                        ELSE binding_kind
+                    END,
+                    binding_json = binding_json
+                        || jsonb_build_object(
+                            'retired', TRUE,
+                            'retiredAt', @retiredAt,
+                            'retiredScrapeId', @scrapeId),
+                    status = 'retired',
+                    built_at = @retiredAt
+                WHERE publication_id = @publicationId
+                """;
+            retireBindings.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            retireBindings.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            retireBindings.Parameters.AddWithValue(
+                "retiredAt",
+                retiredAt);
+            retireBindings.ExecuteNonQuery();
+        }
+
+        using (var deleteSources = conn.CreateCommand())
+        {
+            deleteSources.Transaction = tx;
+            deleteSources.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            deleteSources.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            var deletedSources = deleteSources.ExecuteNonQuery();
+            if (deletedSources != expectedSourceRows)
+            {
+                throw new InvalidOperationException(
+                    $"Publication {publicationId} terminal retirement expected to remove {expectedSourceRows} source row(s) but removed {deletedSources}.");
+            }
+        }
+
+        using var retireGeneration = conn.CreateCommand();
+        retireGeneration.Transaction = tx;
+        retireGeneration.CommandText = """
+            UPDATE publication_generations
+            SET status = 'retired',
+                retired_at = @retiredAt,
+                retired_scrape_id = @scrapeId,
+                scrape_id = NULL,
+                metadata = metadata
+                    || jsonb_build_object(
+                        'retirement',
+                        jsonb_build_object(
+                            'retiredAt', @retiredAt,
+                            'scrapeId', @scrapeId,
+                            'reason', @reason))
+            WHERE publication_id = @publicationId
+              AND scrape_id = @scrapeId
+              AND status = 'retained'
+            """;
+        retireGeneration.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        retireGeneration.Parameters.AddWithValue(
+            "scrapeId",
+            scrapeId);
+        retireGeneration.Parameters.AddWithValue(
+            "retiredAt",
+            retiredAt);
+        retireGeneration.Parameters.AddWithValue(
+            "reason",
+            reason);
+        if (retireGeneration.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Publication {publicationId} lost its retained identity during terminal retirement.");
+        }
+
+        return true;
     }
 
     private void RecordFailedScrapeWithDegradedIsolation(

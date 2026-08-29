@@ -485,8 +485,12 @@ builder.Services.AddSingleton<FSTService.Scraping.DurablePhaseProgressSink>();
 builder.Services.AddSingleton<FSTService.Scraping.WorkerStatusPublisher>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.ServiceMaintenanceLock>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.SnapshotGenerationRetentionRepository>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.ISnapshotGenerationRetentionOracle, FSTService.Persistence.Maintenance.SnapshotGenerationRetentionOracle>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.ISnapshotGenerationRetentionPlanner, FSTService.Persistence.Maintenance.SnapshotGenerationRetentionPlanner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
@@ -505,6 +509,8 @@ builder.Services.AddSingleton<SoloFamilyRankingBackfillService>(sp =>
 
 // ─── Shared services ────────────────────────────────────────
 
+builder.Services.AddSingleton<
+    FSTService.Api.PublishedScopeSourceReadinessService>();
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
 {
     return new GlobalLeaderboardPersistence(
@@ -512,7 +518,9 @@ builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
         sp.GetRequiredService<ILoggerFactory>(),
         sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>(),
         sp.GetRequiredService<NpgsqlDataSource>(),
-        sp.GetRequiredService<IOptions<FeatureOptions>>());
+        sp.GetRequiredService<IOptions<FeatureOptions>>(),
+        sp.GetRequiredService<
+            FSTService.Api.PublishedScopeSourceReadinessService>());
 });
 
 builder.Services.AddSingleton<BackfillQueue>();
@@ -565,7 +573,9 @@ builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<FSTService.Api.PublicationReadLockDataSource>(),
         sp.GetRequiredService<IOptions<FeatureOptions>>(),
-        sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
+        sp.GetRequiredService<IOptions<PublicationCommitOptions>>(),
+        sp.GetRequiredService<
+            FSTService.Api.PublishedScopeSourceReadinessService>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
 builder.Services.AddSingleton(sp =>
     new FSTService.Api.PublicationApiResponseCacheService(

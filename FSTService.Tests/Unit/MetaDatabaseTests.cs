@@ -406,7 +406,8 @@ public sealed class MetaDatabaseTests : IDisposable
                     created_at,
                     source_cut_at,
                     ready_at,
-                    published_at)
+                    published_at,
+                    metadata)
                 VALUES (
                     700,
                     700,
@@ -414,13 +415,52 @@ public sealed class MetaDatabaseTests : IDisposable
                     now() - interval '5 minutes',
                     now() - interval '2 minutes',
                     now() - interval '1 minute',
-                    now())
+                    now(),
+                    jsonb_build_object(
+                        'publicationPreparation',
+                        jsonb_build_object(
+                            'scrapeId', 700,
+                            'publicationId', 700,
+                            'expectedPublishedScopeCount', 1)))
                 ON CONFLICT (publication_id) DO UPDATE SET
                     scrape_id = EXCLUDED.scrape_id,
                     status = EXCLUDED.status,
                     source_cut_at = EXCLUDED.source_cut_at,
                     ready_at = EXCLUDED.ready_at,
-                    published_at = EXCLUDED.published_at;
+                    published_at = EXCLUDED.published_at,
+                    metadata = EXCLUDED.metadata;
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id,
+                    surface_name,
+                    binding_kind,
+                    binding_json,
+                    row_count,
+                    content_hash,
+                    status,
+                    built_at)
+                VALUES (
+                    700,
+                    'solo_scope_sources',
+                    'scrape_id',
+                    jsonb_build_object(
+                        'publicationId', 700,
+                        'table',
+                            'leaderboard_published_scope_source',
+                        'publishedScrapeId', 700,
+                        'keyHashVersion', 1),
+                    1,
+                    '08afff698fd00a224cd416ef639c354dea9c1f4865abf674c2c28b9bdd9538b8',
+                    'ready',
+                    now())
+                ON CONFLICT (publication_id, surface_name)
+                DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at;
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -433,6 +473,102 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.True(evidence!.Exists);
         Assert.Equal(1, evidence.RowCount);
         Assert.Equal(700, evidence.ScrapeId);
+    }
+
+    [Fact]
+    public void SoloScopeSourceEvidenceRejectsPartialBoundSet()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE publication_generations
+                SET metadata = metadata || jsonb_build_object(
+                    'publicationPreparation',
+                    jsonb_build_object(
+                        'scrapeId', @scrapeId,
+                        'publicationId', publication_id,
+                        'expectedPublishedScopeCount', 2))
+                WHERE scrape_id = @scrapeId;
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    'remaining-only',
+                    'Solo_Guitar',
+                    'alltime',
+                    'empty',
+                    NULL,
+                    @scrapeId,
+                    0,
+                    'content',
+                    'coverage',
+                    0,
+                    0,
+                    TRUE,
+                    now(),
+                    now());
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id,
+                    surface_name,
+                    binding_kind,
+                    binding_json,
+                    row_count,
+                    content_hash,
+                    status,
+                    built_at)
+                SELECT
+                    generation.publication_id,
+                    'solo_scope_sources',
+                    'scrape_id',
+                    jsonb_build_object(
+                        'publicationId',
+                            generation.publication_id,
+                        'table',
+                            'leaderboard_published_scope_source',
+                        'publishedScrapeId', @scrapeId,
+                        'keyHashVersion', 1),
+                    2,
+                    repeat('a', 64),
+                    'ready',
+                    now()
+                FROM publication_generations generation
+                WHERE generation.scrape_id = @scrapeId;
+                """;
+            cmd.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            cmd.ExecuteNonQuery();
+        }
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!
+                .PublicationId;
+
+        var evidence = Db.GetPublicationSurfaceSourceEvidence(
+            publicationId,
+            PublicationSurfaceNames.SoloScopeSources);
+
+        Assert.NotNull(evidence);
+        Assert.False(evidence!.Exists);
+        Assert.Equal(1, evidence.RowCount);
     }
 
     [Fact]
@@ -2476,7 +2612,7 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void Retaining_newer_publication_does_not_block_old_scrape_deletion()
+    public void Named_previous_publication_blocks_old_scrape_deletion()
     {
         var firstScrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
@@ -2495,14 +2631,22 @@ public sealed class MetaDatabaseTests : IDisposable
         {
             cmd.CommandText = "DELETE FROM scrape_log WHERE id = @scrapeId";
             cmd.Parameters.AddWithValue("scrapeId", firstScrapeId);
-            Assert.Equal(1, cmd.ExecuteNonQuery());
+            var error = Assert.Throws<PostgresException>(
+                () => cmd.ExecuteNonQuery());
+            Assert.Equal(
+                PostgresErrorCodes.ForeignKeyViolation,
+                error.SqlState);
         }
 
-        Assert.Null(Db.GetPublicationGeneration(firstPublicationId));
-        Assert.Null(
+        Assert.NotNull(
+            Db.GetPublicationGeneration(firstPublicationId));
+        Assert.Equal(
+            firstPublicationId,
             Db.GetPublicationGeneration(secondPublicationId)!
                 .PreviousPublicationId);
-        Assert.Null(Db.GetPublicationPointerState().PreviousPublicationId);
+        Assert.Equal(
+            firstPublicationId,
+            Db.GetPublicationPointerState().PreviousPublicationId);
     }
 
     [Fact]
@@ -4169,6 +4313,133 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(oldId, Db.GetPublishedScrapeRun()?.Id);
     }
 
+    [Fact]
+    public void CommitPreparedScrapePublicationRejectsTamperedScopeSourceBinding()
+    {
+        var oldId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldId,
+            promoteCachedResponses: false);
+
+        var candidateId = Db.StartScrapeRun();
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO leaderboard_scope_fingerprints (
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    fingerprint_version,
+                    source_scrape_id,
+                    published_scrape_id,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    is_complete,
+                    entry_count,
+                    reported_total_entries,
+                    reported_total_pages,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    changed_at,
+                    seen_at)
+                VALUES (
+                    'commit-binding',
+                    'Solo_Guitar',
+                    'alltime',
+                    2,
+                    @scrapeId,
+                    NULL,
+                    @scrapeId,
+                    @scrapeId,
+                    @scrapeId,
+                    TRUE,
+                    0,
+                    0,
+                    0,
+                    'empty-content',
+                    'empty-coverage',
+                    now(),
+                    now());
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    'commit-binding',
+                    'Solo_Guitar',
+                    'alltime',
+                    'empty',
+                    NULL,
+                    @scrapeId,
+                    0,
+                    'empty-content',
+                    'empty-coverage',
+                    0,
+                    0,
+                    TRUE,
+                    now(),
+                    now());
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                candidateId);
+            command.ExecuteNonQuery();
+        }
+        Db.CompleteScrapeRun(
+            candidateId,
+            1,
+            0,
+            1,
+            1);
+        var preparation = Db.PrepareScrapePublication(
+            candidateId,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: 1);
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE publication_surface_bindings
+                SET content_hash = repeat('f', 64)
+                WHERE publication_id = @publicationId
+                  AND surface_name = 'solo_scope_sources'
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                preparation.PublicationId);
+            command.ExecuteNonQuery();
+        }
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => Db.CommitPreparedScrapePublication(
+                preparation));
+
+        Assert.Contains(
+            "scope-source binding",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            oldId,
+            Db.GetPublishedScrapeRun()?.Id);
+    }
+
     private async Task WaitForBlockedRelationLockAsync(string relationName)
     {
         using var conn = DataSource.OpenConnection();
@@ -4900,6 +5171,38 @@ public sealed class MetaDatabaseTests : IDisposable
         var deferred = Db.GetDeferredBackfills();
 
         Assert.Contains(deferred, p => p.AccountId == "acct_resume" && p.Status == "in_progress");
+    }
+
+    [Fact]
+    public async Task RegistrationDrainStatus_UsesOneBoundedAggregateClassification()
+    {
+        Db.EnqueueBackfill("acct_pending", 10);
+        Db.DeferBackfill(
+            "acct_deferred",
+            10,
+            "worker_backfill_queue");
+        Db.RegisterUser("dev_history", "acct_history");
+        Db.EnqueueBackfill("acct_history", 10);
+        Db.StartBackfill("acct_history");
+        Db.CompleteBackfill("acct_history");
+        Db.EnqueueHistoryRecon("acct_history", 1);
+        Db.RegisterUser("dev_error", "acct_error");
+        Db.EnqueueBackfill("acct_error", 10);
+        Db.FailBackfill(
+            "acct_error",
+            "operator repair required");
+
+        var status =
+            await Db.GetRegistrationDrainStatusAsync(
+                commandTimeoutSeconds: 1);
+
+        Assert.Equal(2, status.RunnableBackfills);
+        Assert.Equal(1, status.RepairableHistory);
+        Assert.Equal(0, status.MissingBackfills);
+        Assert.Equal(1, status.TerminalBackfillErrors);
+        Assert.Equal(0, status.InvalidBackfills);
+        Assert.Equal(0, status.InvalidHistory);
+        Assert.True(status.HasTerminalBlocker);
     }
 
     [Fact]

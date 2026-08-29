@@ -2,6 +2,7 @@ using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using FSTService.Api;
 using FSTService.Tests.Helpers;
@@ -161,6 +162,135 @@ public class DatabaseInitializerTests : IDisposable
         Assert.False(init.PostgresDefaultTransactionReadOnly);
         var result = await init.CheckHealthAsync(new HealthCheckContext());
         Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task StartAsync_InvalidPublishedScopeBindingFailsClosedBeforeReady()
+    {
+        var scrapeId = PublishReadyScopeSource();
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue("scrapeId", scrapeId);
+            command.ExecuteNonQuery();
+        }
+
+        var loggerFactory = Substitute.For<ILoggerFactory>();
+        loggerFactory.CreateLogger(Arg.Any<string>())
+            .Returns(Substitute.For<ILogger>());
+        using var persistence =
+            new GlobalLeaderboardPersistence(
+                _metaFixture.Db,
+                loggerFactory,
+                Substitute.For<
+                    ILogger<GlobalLeaderboardPersistence>>(),
+                _metaFixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var festivalService =
+            new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var initializer = new StartupInitializer(
+            persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => initializer.WaitForReadyAsync(cts.Token));
+        Assert.False(initializer.IsReady);
+        lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
+    public async Task CheckHealthAsync_PublishedScopeBindingLossAfterStartupBecomesUnhealthy()
+    {
+        var scrapeId = PublishReadyScopeSource();
+        var loggerFactory = Substitute.For<ILoggerFactory>();
+        loggerFactory.CreateLogger(Arg.Any<string>())
+            .Returns(Substitute.For<ILogger>());
+        using var persistence =
+            new GlobalLeaderboardPersistence(
+                _metaFixture.Db,
+                loggerFactory,
+                Substitute.For<
+                    ILogger<GlobalLeaderboardPersistence>>(),
+                _metaFixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var festivalService =
+            new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var initializer = new StartupInitializer(
+            persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            Substitute.For<IHostApplicationLifetime>(),
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await initializer.WaitForReadyAsync(cts.Token);
+        Assert.Equal(
+            HealthStatus.Healthy,
+            (await initializer.CheckHealthAsync(
+                new HealthCheckContext())).Status);
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue("scrapeId", scrapeId);
+            command.ExecuteNonQuery();
+        }
+        await Task.Delay(TimeSpan.FromMilliseconds(1_100));
+
+        var health = await initializer.CheckHealthAsync(
+            new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, health.Status);
+        Assert.Contains(
+            "scope-source",
+            health.Description,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -866,7 +996,11 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "publication-generation-retirement-columns",
+                "publication-generation-foreign-keys",
+                "publication-generation-retirement-index",
                 "publication-path-artifacts",
+                "snapshot-generation-retention-report-only",
                 "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
@@ -885,7 +1019,75 @@ public class DatabaseInitializerTests : IDisposable
             ScoreHistoryDedupMaintenanceSchema.Sql,
             scoreHistoryAudit.Sql);
         Assert.False(plan[2].UseShortTransaction);
-        var pathArtifacts = plan[3];
+        Assert.DoesNotContain(
+            "DROP CONSTRAINT publication_generations_scrape_id_fkey",
+            plan[2].Sql,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ADD COLUMN IF NOT EXISTS retired_at",
+            plan[2].Sql,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ADD COLUMN IF NOT EXISTS retired_scrape_id",
+            plan[2].Sql,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ix_publication_generations_retired_scrape",
+            plan[2].Sql,
+            StringComparison.Ordinal);
+        var retirementColumns = plan[3];
+        Assert.True(retirementColumns.UseShortTransaction);
+        Assert.Equal(20, retirementColumns.CommandTimeoutSeconds);
+        Assert.Equal("2s", retirementColumns.LockTimeout);
+        Assert.Equal("15s", retirementColumns.StatementTimeout);
+        Assert.Contains(
+            "ADD COLUMN IF NOT EXISTS retired_at",
+            retirementColumns.Sql,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ADD COLUMN IF NOT EXISTS retired_scrape_id",
+            retirementColumns.Sql,
+            StringComparison.Ordinal);
+        var publicationForeignKeys = plan[4];
+        Assert.True(publicationForeignKeys.UseShortTransaction);
+        Assert.Equal(20, publicationForeignKeys.CommandTimeoutSeconds);
+        Assert.Equal("2s", publicationForeignKeys.LockTimeout);
+        Assert.Equal("15s", publicationForeignKeys.StatementTimeout);
+        Assert.Contains(
+            "publication_generations_scrape_id_restrict_fkey_v2",
+            publicationForeignKeys.Sql,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ON DELETE RESTRICT",
+            publicationForeignKeys.Sql,
+            StringComparison.Ordinal);
+        var retirementIndex = plan[5];
+        Assert.False(retirementIndex.UseShortTransaction);
+        Assert.True(retirementIndex.UseConcurrentIndex);
+        Assert.Equal(20, retirementIndex.CommandTimeoutSeconds);
+        Assert.Equal("2s", retirementIndex.LockTimeout);
+        Assert.Equal("15s", retirementIndex.StatementTimeout);
+        Assert.Contains(
+            "CREATE INDEX CONCURRENTLY",
+            retirementIndex.Sql,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "IF NOT EXISTS",
+            retirementIndex.Sql,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ix_publication_generations_retired_scrape",
+            retirementIndex.Sql,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            PublicationGenerationRetirementSchemaMigration
+                .IndexValidationSql,
+            retirementIndex.ValidationSql);
+        Assert.Equal(
+            PublicationGenerationRetirementSchemaMigration
+                .DropIndexSql,
+            retirementIndex.CleanupSql);
+        var pathArtifacts = plan[6];
         Assert.True(pathArtifacts.UseShortTransaction);
         Assert.Equal(20, pathArtifacts.CommandTimeoutSeconds);
         Assert.Equal("2s", pathArtifacts.LockTimeout);
@@ -893,7 +1095,12 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             PublicationPathArtifactSchema.Sql,
             pathArtifacts.Sql);
-        var maxScoreMaintenance = plan[4];
+        var retention = plan[7];
+        Assert.True(retention.UseShortTransaction);
+        Assert.Equal(
+            SnapshotGenerationRetentionSchema.Sql,
+            retention.Sql);
+        var maxScoreMaintenance = plan[8];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);
@@ -901,6 +1108,559 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             MaxScoreMaintenanceSchema.Sql,
             maxScoreMaintenance.Sql);
+    }
+
+    [Fact]
+    public async Task PublicationGenerationForeignKeyMigrationAddsRollingSafeRestrict()
+    {
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                ALTER TABLE publication_generations
+                    DROP CONSTRAINT IF EXISTS
+                        publication_generations_scrape_id_restrict_fkey_v2
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationForeignKeysAsync(
+                _metaFixture.DataSource);
+
+        using var verifyConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                (
+                    SELECT confdeltype::TEXT
+                    FROM pg_constraint
+                    WHERE conrelid =
+                            'publication_generations'::regclass
+                      AND conname =
+                            'publication_generations_scrape_id_fkey'
+                ),
+                (
+                    SELECT confdeltype::TEXT
+                    FROM pg_constraint
+                    WHERE conrelid =
+                            'publication_generations'::regclass
+                      AND conname =
+                            'publication_generations_scrape_id_restrict_fkey_v2'
+                      AND convalidated
+                )
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("c", reader.GetString(0));
+        Assert.Equal("r", reader.GetString(1));
+    }
+
+    [Fact]
+    public async Task PublicationGenerationForeignKeyMigrationIsNoOpWhenAlreadyExact()
+    {
+        long beforeOid;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT oid::BIGINT
+                FROM pg_constraint
+                WHERE conrelid =
+                        'publication_generations'::regclass
+                  AND conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+                """;
+            beforeOid = (long)command.ExecuteScalar()!;
+        }
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationForeignKeysAsync(
+                _metaFixture.DataSource);
+
+        using var verifyConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT oid::BIGINT
+            FROM pg_constraint
+            WHERE conrelid =
+                    'publication_generations'::regclass
+              AND conname =
+                    'publication_generations_scrape_id_restrict_fkey_v2'
+            """;
+        Assert.Equal(
+            beforeOid,
+            (long)verify.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task PublicationGenerationForeignKeyMigrationLockTimeoutRollsBackAndRetries()
+    {
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                ALTER TABLE publication_generations
+                    DROP CONSTRAINT IF EXISTS
+                        publication_generations_scrape_id_restrict_fkey_v2
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        await using var holder =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var holderTransaction =
+            await holder.BeginTransactionAsync();
+        await using (var lockCommand = holder.CreateCommand())
+        {
+            lockCommand.Transaction = holderTransaction;
+            lockCommand.CommandText = """
+                LOCK TABLE publication_generations
+                IN ACCESS EXCLUSIVE MODE
+                """;
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+
+        var timeout = await Assert.ThrowsAsync<PostgresException>(
+            () => DatabaseInitializer
+                .EnsurePublicationGenerationForeignKeysAsync(
+                    _metaFixture.DataSource));
+        Assert.Equal(
+            PostgresErrorCodes.LockNotAvailable,
+            timeout.SqlState);
+        await using (var verifyRollback = holder.CreateCommand())
+        {
+            verifyRollback.Transaction = holderTransaction;
+            verifyRollback.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_constraint
+                WHERE conrelid =
+                        'publication_generations'::regclass
+                  AND conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+                """;
+            Assert.Equal(
+                0L,
+                Convert.ToInt64(
+                    await verifyRollback
+                        .ExecuteScalarAsync()));
+        }
+        await holderTransaction.RollbackAsync();
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationForeignKeysAsync(
+                _metaFixture.DataSource);
+
+        await using var verifyConnection =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT confdeltype::TEXT
+            FROM pg_constraint
+            WHERE conrelid =
+                    'publication_generations'::regclass
+              AND conname =
+                    'publication_generations_scrape_id_restrict_fkey_v2'
+            """;
+        Assert.Equal(
+            "r",
+            await verify.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task PublicationGenerationProtectionSurvivesLegacyInitializerRewrite()
+    {
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var priorService = connection.CreateCommand())
+        {
+            priorService.CommandText = """
+                ALTER TABLE publication_generations
+                    DROP CONSTRAINT
+                        publication_generations_scrape_id_fkey;
+                ALTER TABLE publication_generations
+                    ADD CONSTRAINT
+                        publication_generations_scrape_id_fkey
+                    FOREIGN KEY (scrape_id)
+                    REFERENCES scrape_log(id)
+                    ON DELETE RESTRICT;
+                """;
+            priorService.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationForeignKeysAsync(
+                _metaFixture.DataSource);
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var legacyInitializer =
+               connection.CreateCommand())
+        {
+            legacyInitializer.CommandText = """
+                DO $legacy_initializer$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conrelid =
+                                'publication_generations'
+                                    ::regclass
+                          AND conname =
+                                'publication_generations_scrape_id_fkey'
+                          AND confdeltype <> 'c'
+                    ) THEN
+                        ALTER TABLE publication_generations
+                            DROP CONSTRAINT
+                                publication_generations_scrape_id_fkey;
+                        ALTER TABLE publication_generations
+                            ADD CONSTRAINT
+                                publication_generations_scrape_id_fkey
+                            FOREIGN KEY (scrape_id)
+                            REFERENCES scrape_log(id)
+                            ON DELETE CASCADE;
+                    END IF;
+                END
+                $legacy_initializer$;
+                """;
+            legacyInitializer.ExecuteNonQuery();
+        }
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var verify = connection.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT
+                    (
+                        SELECT confdeltype = 'c'
+                        FROM pg_constraint constraint_row
+                        WHERE constraint_row.conrelid =
+                                'publication_generations'
+                                    ::regclass
+                          AND constraint_row.conname =
+                                'publication_generations_scrape_id_fkey'
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM pg_constraint constraint_row
+                        WHERE constraint_row.conrelid =
+                                'publication_generations'
+                                    ::regclass
+                          AND constraint_row.conname =
+                                'publication_generations_scrape_id_restrict_fkey_v2'
+                          AND constraint_row.confdeltype = 'r'
+                          AND constraint_row.convalidated),
+                    EXISTS (
+                        SELECT 1
+                        FROM pg_trigger trigger_row
+                        WHERE trigger_row.tgrelid =
+                                'scrape_log'::regclass
+                          AND trigger_row.tgname =
+                                'trg_scrape_log_restrict_publication_generation_delete_v2'
+                          AND NOT trigger_row.tgisinternal
+                          AND trigger_row.tgenabled = 'O')
+                """;
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+        }
+
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var delete = connection.CreateCommand())
+        {
+            delete.CommandText = """
+                DELETE FROM scrape_log
+                WHERE id = @scrapeId
+                """;
+            delete.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            var error =
+                Assert.Throws<PostgresException>(
+                    () => delete.ExecuteNonQuery());
+            Assert.Equal(
+                PostgresErrorCodes.ForeignKeyViolation,
+                error.SqlState);
+        }
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var verify = connection.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT COUNT(*)
+                FROM publication_generations
+                WHERE scrape_id = @scrapeId
+                """;
+            verify.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            Assert.Equal(
+                1L,
+                Convert.ToInt64(
+                    verify.ExecuteScalar()));
+        }
+    }
+
+    [Fact]
+    public async Task PublicationGenerationRetirementMigrationIsIdempotent()
+    {
+        long beforeIndexOid;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var before = connection.CreateCommand())
+        {
+            before.CommandText = """
+                SELECT oid::BIGINT
+                FROM pg_class
+                WHERE oid =
+                    'public.ix_publication_generations_retired_scrape'
+                        ::regclass
+                """;
+            beforeIndexOid =
+                (long)before.ExecuteScalar()!;
+        }
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationRetirementSchemaAsync(
+                _metaFixture.DataSource);
+        await DatabaseInitializer
+            .EnsurePublicationGenerationRetirementSchemaAsync(
+                _metaFixture.DataSource);
+
+        using var verifyConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify =
+            verifyConnection.CreateCommand();
+        verify.CommandText = $"""
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name =
+                            'publication_generations'
+                      AND column_name IN (
+                            'retired_at',
+                            'retired_scrape_id')
+                ),
+                (
+                    SELECT oid::BIGINT
+                    FROM pg_class
+                    WHERE oid =
+                        'public.ix_publication_generations_retired_scrape'
+                            ::regclass
+                ),
+                ({PublicationGenerationRetirementSchemaMigration.IndexValidationSql})
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(2, reader.GetInt64(0));
+        Assert.Equal(
+            beforeIndexOid,
+            reader.GetInt64(1));
+        Assert.True(reader.GetBoolean(2));
+    }
+
+    [Fact]
+    public async Task PublicationGenerationRetirementColumnLockTimeoutRollsBackAndRetries()
+    {
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var drop = connection.CreateCommand())
+        {
+            drop.CommandText = """
+                DROP INDEX CONCURRENTLY
+                    public.ix_publication_generations_retired_scrape
+                """;
+            drop.ExecuteNonQuery();
+            drop.CommandText = """
+                ALTER TABLE publication_generations
+                    DROP COLUMN retired_at,
+                    DROP COLUMN retired_scrape_id
+                """;
+            drop.ExecuteNonQuery();
+        }
+
+        await using var holder =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var holderTransaction =
+            await holder.BeginTransactionAsync();
+        await using (var hold = holder.CreateCommand())
+        {
+            hold.Transaction = holderTransaction;
+            hold.CommandText = """
+                LOCK TABLE publication_generations
+                IN ACCESS SHARE MODE
+                """;
+            await hold.ExecuteNonQueryAsync();
+        }
+
+        var timeout = await Assert.ThrowsAsync<PostgresException>(
+            () => DatabaseInitializer
+                .EnsurePublicationGenerationRetirementSchemaAsync(
+                    _metaFixture.DataSource));
+        Assert.Equal(
+            PostgresErrorCodes.LockNotAvailable,
+            timeout.SqlState);
+        await using (var verifyRollback =
+                     holder.CreateCommand())
+        {
+            verifyRollback.Transaction =
+                holderTransaction;
+            verifyRollback.CommandText = """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name =
+                        'publication_generations'
+                  AND column_name IN (
+                        'retired_at',
+                        'retired_scrape_id')
+                """;
+            Assert.Equal(
+                0L,
+                Convert.ToInt64(
+                    await verifyRollback
+                        .ExecuteScalarAsync()));
+        }
+        await holderTransaction.RollbackAsync();
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationRetirementSchemaAsync(
+                _metaFixture.DataSource);
+
+        await using var verifyConnection =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var verify =
+            verifyConnection.CreateCommand();
+        verify.CommandText = $"""
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name =
+                            'publication_generations'
+                      AND column_name IN (
+                            'retired_at',
+                            'retired_scrape_id')
+                ) = 2
+                AND
+                ({PublicationGenerationRetirementSchemaMigration.IndexValidationSql})
+            """;
+        Assert.True(
+            (bool)(await verify
+                .ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task PublicationGenerationRetirementIndexLockTimeoutIsRetryable()
+    {
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var drop = connection.CreateCommand())
+        {
+            drop.CommandText =
+                PublicationGenerationRetirementSchemaMigration
+                    .DropIndexSql;
+            drop.ExecuteNonQuery();
+        }
+
+        await using var holder =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var holderTransaction =
+            await holder.BeginTransactionAsync();
+        await using (var hold = holder.CreateCommand())
+        {
+            hold.Transaction = holderTransaction;
+            hold.CommandText = """
+                LOCK TABLE publication_generations
+                IN SHARE UPDATE EXCLUSIVE MODE
+                """;
+            await hold.ExecuteNonQueryAsync();
+        }
+
+        var timeout = await Assert.ThrowsAsync<PostgresException>(
+            () => DatabaseInitializer
+                .EnsurePublicationGenerationRetirementIndexAsync(
+                    _metaFixture.DataSource));
+        Assert.Equal(
+            PostgresErrorCodes.LockNotAvailable,
+            timeout.SqlState);
+        await holderTransaction.RollbackAsync();
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationRetirementIndexAsync(
+                _metaFixture.DataSource);
+
+        await using var verifyConnection =
+            await _metaFixture.DataSource.OpenConnectionAsync();
+        await using var verify =
+            verifyConnection.CreateCommand();
+        verify.CommandText =
+            PublicationGenerationRetirementSchemaMigration
+                .IndexValidationSql;
+        Assert.True(
+            (bool)(await verify
+                .ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task PublicationGenerationRetirementIndexRepairsInvalidRetryArtifact()
+    {
+        long invalidIndexOid;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var corrupt = connection.CreateCommand())
+        {
+            corrupt.CommandText = """
+                UPDATE pg_index
+                SET indisvalid = FALSE,
+                    indisready = FALSE
+                WHERE indexrelid =
+                    'public.ix_publication_generations_retired_scrape'
+                        ::regclass
+                RETURNING indexrelid::BIGINT
+                """;
+            invalidIndexOid =
+                (long)corrupt.ExecuteScalar()!;
+        }
+
+        await DatabaseInitializer
+            .EnsurePublicationGenerationRetirementIndexAsync(
+                _metaFixture.DataSource);
+
+        using var verifyConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify =
+            verifyConnection.CreateCommand();
+        verify.CommandText = $"""
+            SELECT
+                index_relation.oid::BIGINT,
+                ({PublicationGenerationRetirementSchemaMigration.IndexValidationSql})
+            FROM pg_class index_relation
+            WHERE index_relation.oid =
+                'public.ix_publication_generations_retired_scrape'
+                    ::regclass
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.NotEqual(
+            invalidIndexOid,
+            reader.GetInt64(0));
+        Assert.True(reader.GetBoolean(1));
     }
 
     [Fact]
@@ -2762,6 +3522,100 @@ public class DatabaseInitializerTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
+
+    private long PublishReadyScopeSource()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO leaderboard_scope_fingerprints (
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    fingerprint_version,
+                    source_scrape_id,
+                    published_scrape_id,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    is_complete,
+                    entry_count,
+                    reported_total_entries,
+                    reported_total_pages,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    changed_at,
+                    seen_at)
+                VALUES (
+                    'startup-readiness',
+                    'Solo_Guitar',
+                    'alltime',
+                    2,
+                    @scrapeId,
+                    NULL,
+                    @scrapeId,
+                    @scrapeId,
+                    @scrapeId,
+                    TRUE,
+                    0,
+                    0,
+                    0,
+                    'empty-content',
+                    'empty-coverage',
+                    now(),
+                    now());
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    'startup-readiness',
+                    'Solo_Guitar',
+                    'alltime',
+                    'empty',
+                    NULL,
+                    @scrapeId,
+                    0,
+                    'empty-content',
+                    'empty-coverage',
+                    0,
+                    0,
+                    TRUE,
+                    now(),
+                    now());
+                """;
+            command.Parameters.AddWithValue("scrapeId", scrapeId);
+            command.ExecuteNonQuery();
+        }
+        _metaFixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 0,
+            totalRequests: 1,
+            totalBytes: 1);
+        _metaFixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: 1);
+        return scrapeId;
     }
 
     private sealed class CountingFailureHandler : HttpMessageHandler

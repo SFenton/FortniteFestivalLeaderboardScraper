@@ -1,3 +1,7 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace FSTService.Persistence;
 
 public sealed class PublicationCommitOptions
@@ -207,6 +211,68 @@ public static class PublicationSurfaceNames
     public const string SongCatalog = "song_catalog";
 }
 
+public sealed record PublishedScopeSourceKey(
+    string Instrument,
+    string SongId,
+    string ScopeKind);
+
+public static class PublishedScopeSourceBindingContract
+{
+    public const int KeyHashVersion = 1;
+    public const string BindingKind = "scrape_id";
+    public const string TableName =
+        "leaderboard_published_scope_source";
+
+    public static string ComputeKeyHash(
+        IEnumerable<PublishedScopeSourceKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        using var hash =
+            IncrementalHash.CreateHash(
+                HashAlgorithmName.SHA256);
+        foreach (var key in keys
+                     .OrderBy(
+                         static key => key.Instrument,
+                         StringComparer.Ordinal)
+                     .ThenBy(
+                         static key => key.SongId,
+                         StringComparer.Ordinal)
+                     .ThenBy(
+                         static key => key.ScopeKind,
+                         StringComparer.Ordinal))
+        {
+            AppendValue(hash, key.Instrument);
+            AppendValue(hash, key.SongId);
+            AppendValue(hash, key.ScopeKind);
+            hash.AppendData([(byte)'\n']);
+        }
+
+        return Convert.ToHexString(
+                hash.GetHashAndReset())
+            .ToLowerInvariant();
+    }
+
+    public static bool IsKeyHash(string? value) =>
+        value is { Length: 64 }
+        && value.All(static character =>
+            character is >= '0' and <= '9'
+            or >= 'a' and <= 'f');
+
+    private static void AppendValue(
+        IncrementalHash hash,
+        string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var valueBytes = Encoding.UTF8.GetBytes(value);
+        var lengthBytes = Encoding.ASCII.GetBytes(
+            valueBytes.Length.ToString(
+                CultureInfo.InvariantCulture));
+        hash.AppendData(lengthBytes);
+        hash.AppendData([(byte)':']);
+        hash.AppendData(valueBytes);
+    }
+}
+
 public sealed record PublicationSongCatalogInfo(
     long PublicationId,
     long ScrapeId,
@@ -216,6 +282,414 @@ public sealed record PublicationSongCatalogInfo(
     string ContentHash,
     int SongCount,
     DateTime SourceCapturedAtUtc);
+
+public static class PublicationGenerationRetirementSchemaMigration
+{
+    public const long AdvisoryLockKey =
+        5067481511116520100L;
+
+    public const string ColumnsSql = """
+        ALTER TABLE publication_generations
+            ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+        ALTER TABLE publication_generations
+            ADD COLUMN IF NOT EXISTS retired_scrape_id BIGINT;
+        """;
+
+    public const string CreateIndexSql = """
+        CREATE INDEX CONCURRENTLY
+            ix_publication_generations_retired_scrape
+        ON public.publication_generations (retired_scrape_id)
+        WHERE retired_scrape_id IS NOT NULL
+        """;
+
+    public const string DropIndexSql = """
+        DROP INDEX CONCURRENTLY IF EXISTS
+            public.ix_publication_generations_retired_scrape
+        """;
+
+    public const string IndexValidationSql = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_class index_relation
+            JOIN pg_namespace index_namespace
+              ON index_namespace.oid =
+                    index_relation.relnamespace
+            JOIN pg_index index_row
+              ON index_row.indexrelid =
+                    index_relation.oid
+            JOIN pg_class table_relation
+              ON table_relation.oid =
+                    index_row.indrelid
+            JOIN pg_namespace table_namespace
+              ON table_namespace.oid =
+                    table_relation.relnamespace
+            JOIN pg_am access_method
+              ON access_method.oid =
+                    index_relation.relam
+            WHERE index_namespace.nspname = 'public'
+              AND index_relation.relname =
+                    'ix_publication_generations_retired_scrape'
+              AND index_relation.relkind = 'i'
+              AND table_namespace.nspname = 'public'
+              AND table_relation.relname =
+                    'publication_generations'
+              AND access_method.amname = 'btree'
+              AND index_row.indisvalid
+              AND index_row.indisready
+              AND NOT index_row.indisprimary
+              AND NOT index_row.indisunique
+              AND index_row.indnkeyatts = 1
+              AND (
+                    SELECT array_agg(
+                        attribute.attname::TEXT
+                        ORDER BY key.ordinality)
+                    FROM unnest(index_row.indkey)
+                        WITH ORDINALITY
+                        AS key(attnum, ordinality)
+                    JOIN pg_attribute attribute
+                      ON attribute.attrelid =
+                            index_row.indrelid
+                     AND attribute.attnum =
+                            key.attnum
+                  ) = ARRAY['retired_scrape_id']::TEXT[]
+              AND regexp_replace(
+                    pg_get_expr(
+                        index_row.indpred,
+                        index_row.indrelid),
+                    '[()[:space:]]',
+                    '',
+                    'g') =
+                    'retired_scrape_idISNOTNULL'
+        )
+        """;
+}
+
+public static class PublicationGenerationForeignKeyMigration
+{
+    public const string Sql = """
+        CREATE OR REPLACE FUNCTION
+            public.fst_restrict_publication_generation_scrape_delete_v2()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        SET search_path = pg_catalog, public
+        AS $publication_scrape_delete_guard$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM public.publication_generations generation
+                WHERE generation.scrape_id = OLD.id
+            ) THEN
+                RAISE EXCEPTION
+                    'scrape_log row % is retained by publication_generations',
+                    OLD.id
+                    USING
+                        ERRCODE = '23503',
+                        TABLE = 'scrape_log',
+                        CONSTRAINT =
+                            'publication_generations_scrape_id_restrict_fkey_v2';
+            END IF;
+            RETURN OLD;
+        END
+        $publication_scrape_delete_guard$;
+
+        DO $publication_fk_migration$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+                  AND NOT (
+                      constraint_row.contype = 'f'
+                      AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname = 'scrape_id'
+                    )]::SMALLINT[]
+                      AND constraint_row.confrelid =
+                        'scrape_log'::regclass
+                      AND constraint_row.confkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'scrape_log'::regclass
+                          AND attribute.attname = 'id'
+                    )]::SMALLINT[]
+                      AND constraint_row.confupdtype = 'a'
+                      AND constraint_row.confdeltype = 'r'
+                      AND constraint_row.confmatchtype = 's'
+                      AND NOT constraint_row.condeferrable
+                      AND NOT constraint_row.condeferred
+                  )
+            ) THEN
+                ALTER TABLE publication_generations
+                    DROP CONSTRAINT
+                        publication_generations_scrape_id_restrict_fkey_v2;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+            ) THEN
+                ALTER TABLE publication_generations
+                    ADD CONSTRAINT
+                        publication_generations_scrape_id_restrict_fkey_v2
+                    FOREIGN KEY (scrape_id)
+                    REFERENCES scrape_log(id)
+                    ON DELETE RESTRICT
+                    NOT VALID;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+                  AND NOT constraint_row.convalidated
+            ) THEN
+                ALTER TABLE publication_generations
+                    VALIDATE CONSTRAINT
+                        publication_generations_scrape_id_restrict_fkey_v2;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM pg_trigger trigger_row
+                WHERE trigger_row.tgrelid =
+                        'scrape_log'::regclass
+                  AND trigger_row.tgname =
+                        'trg_scrape_log_restrict_publication_generation_delete_v2'
+                  AND (
+                      trigger_row.tgisinternal
+                      OR trigger_row.tgenabled <> 'O'
+                      OR trigger_row.tgfoid <>
+                            'public.fst_restrict_publication_generation_scrape_delete_v2()'
+                                ::regprocedure
+                      OR (trigger_row.tgtype & 1) = 0
+                      OR (trigger_row.tgtype & 2) = 0
+                      OR (trigger_row.tgtype & 8) = 0
+                  )
+            ) THEN
+                DROP TRIGGER
+                    trg_scrape_log_restrict_publication_generation_delete_v2
+                    ON scrape_log;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_trigger trigger_row
+                WHERE trigger_row.tgrelid =
+                        'scrape_log'::regclass
+                  AND trigger_row.tgname =
+                        'trg_scrape_log_restrict_publication_generation_delete_v2'
+            ) THEN
+                CREATE TRIGGER
+                    trg_scrape_log_restrict_publication_generation_delete_v2
+                BEFORE DELETE ON scrape_log
+                FOR EACH ROW
+                EXECUTE FUNCTION
+                    public.fst_restrict_publication_generation_scrape_delete_v2();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.conname =
+                        'publication_generations_previous_publication_id_fkey'
+                  AND constraint_row.contype = 'f'
+                  AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname =
+                                'previous_publication_id'
+                    )]::SMALLINT[]
+                  AND constraint_row.confrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.confkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname = 'publication_id'
+                    )]::SMALLINT[]
+                  AND constraint_row.confupdtype = 'a'
+                  AND constraint_row.confdeltype = 'n'
+                  AND constraint_row.confmatchtype = 's'
+                  AND NOT constraint_row.condeferrable
+                  AND NOT constraint_row.condeferred
+                  AND constraint_row.convalidated
+            ) THEN
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid =
+                            'publication_generations'::regclass
+                      AND conname =
+                            'publication_generations_previous_publication_id_fkey'
+                ) THEN
+                    ALTER TABLE publication_generations
+                        DROP CONSTRAINT
+                            publication_generations_previous_publication_id_fkey;
+                END IF;
+                ALTER TABLE publication_generations
+                    ADD CONSTRAINT
+                        publication_generations_previous_publication_id_fkey
+                    FOREIGN KEY (previous_publication_id)
+                    REFERENCES publication_generations(publication_id)
+                    ON DELETE SET NULL;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'scrape_publication_state'::regclass
+                  AND constraint_row.conname =
+                        'scrape_publication_state_previous_publication_id_fkey'
+                  AND constraint_row.contype = 'f'
+                  AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'scrape_publication_state'::regclass
+                          AND attribute.attname =
+                                'previous_publication_id'
+                    )]::SMALLINT[]
+                  AND constraint_row.confrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.confkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname = 'publication_id'
+                    )]::SMALLINT[]
+                  AND constraint_row.confupdtype = 'a'
+                  AND constraint_row.confdeltype = 'n'
+                  AND constraint_row.confmatchtype = 's'
+                  AND NOT constraint_row.condeferrable
+                  AND NOT constraint_row.condeferred
+                  AND constraint_row.convalidated
+            ) THEN
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid =
+                            'scrape_publication_state'::regclass
+                      AND conname =
+                            'scrape_publication_state_previous_publication_id_fkey'
+                ) THEN
+                    ALTER TABLE scrape_publication_state
+                        DROP CONSTRAINT
+                            scrape_publication_state_previous_publication_id_fkey;
+                END IF;
+                ALTER TABLE scrape_publication_state
+                    ADD CONSTRAINT
+                        scrape_publication_state_previous_publication_id_fkey
+                    FOREIGN KEY (previous_publication_id)
+                    REFERENCES publication_generations(publication_id)
+                    ON DELETE SET NULL;
+            END IF;
+
+            IF (
+                SELECT COUNT(*)
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.conname =
+                        'publication_generations_scrape_id_restrict_fkey_v2'
+                  AND constraint_row.contype = 'f'
+                  AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname = 'scrape_id'
+                    )]::SMALLINT[]
+                  AND constraint_row.confrelid =
+                        'scrape_log'::regclass
+                  AND constraint_row.confdeltype = 'r'
+                  AND constraint_row.convalidated
+            ) <> 1 THEN
+                RAISE EXCEPTION
+                    'publication_generations.scrape_id must own the exact rolling-safe restrictive foreign key';
+            END IF;
+
+            IF (
+                SELECT COUNT(*)
+                FROM pg_trigger trigger_row
+                WHERE trigger_row.tgrelid =
+                        'scrape_log'::regclass
+                  AND trigger_row.tgname =
+                        'trg_scrape_log_restrict_publication_generation_delete_v2'
+                  AND NOT trigger_row.tgisinternal
+                  AND trigger_row.tgenabled = 'O'
+                  AND trigger_row.tgfoid =
+                        'public.fst_restrict_publication_generation_scrape_delete_v2()'
+                            ::regprocedure
+                  AND (trigger_row.tgtype & 1) <> 0
+                  AND (trigger_row.tgtype & 2) <> 0
+                  AND (trigger_row.tgtype & 8) <> 0
+            ) <> 1 THEN
+                RAISE EXCEPTION
+                    'scrape_log must own the rolling-safe publication generation delete guard';
+            END IF;
+
+            IF (
+                SELECT COUNT(*)
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'publication_generations'::regclass
+                  AND constraint_row.contype = 'f'
+                  AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'publication_generations'::regclass
+                          AND attribute.attname =
+                                'previous_publication_id'
+                    )]::SMALLINT[]
+            ) <> 1 THEN
+                RAISE EXCEPTION
+                    'publication_generations.previous_publication_id must own exactly one foreign key';
+            END IF;
+
+            IF (
+                SELECT COUNT(*)
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'scrape_publication_state'::regclass
+                  AND constraint_row.contype = 'f'
+                  AND constraint_row.conkey = ARRAY[(
+                        SELECT attribute.attnum
+                        FROM pg_attribute attribute
+                        WHERE attribute.attrelid =
+                                'scrape_publication_state'::regclass
+                          AND attribute.attname =
+                                'previous_publication_id'
+                    )]::SMALLINT[]
+            ) <> 1 THEN
+                RAISE EXCEPTION
+                    'scrape_publication_state.previous_publication_id must own exactly one foreign key';
+            END IF;
+        END
+        $publication_fk_migration$;
+        """;
+}
 
 public static class PublicationGenerationSchema
 {
@@ -236,6 +710,8 @@ public static class PublicationGenerationSchema
             failed_at              TIMESTAMPTZ,
             failure_phase          TEXT,
             failure_message        TEXT,
+            retired_at             TIMESTAMPTZ,
+            retired_scrape_id      BIGINT,
             metadata               JSONB NOT NULL DEFAULT '{}'::jsonb,
             CONSTRAINT ck_publication_generations_status
                 CHECK (status IN ('building', 'ready', 'current', 'retained', 'failed', 'retired'))
@@ -243,41 +719,6 @@ public static class PublicationGenerationSchema
 
         CREATE INDEX IF NOT EXISTS ix_publication_generations_status
             ON publication_generations (status, publication_id DESC);
-
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conrelid = 'publication_generations'::regclass
-                  AND conname = 'publication_generations_scrape_id_fkey'
-                  AND confdeltype <> 'c'
-            ) THEN
-                ALTER TABLE publication_generations
-                    DROP CONSTRAINT publication_generations_scrape_id_fkey;
-                ALTER TABLE publication_generations
-                    ADD CONSTRAINT publication_generations_scrape_id_fkey
-                    FOREIGN KEY (scrape_id)
-                    REFERENCES scrape_log(id)
-                    ON DELETE CASCADE;
-            END IF;
-
-            IF EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conrelid = 'publication_generations'::regclass
-                  AND conname = 'publication_generations_previous_publication_id_fkey'
-                  AND confdeltype <> 'n'
-            ) THEN
-                ALTER TABLE publication_generations
-                    DROP CONSTRAINT publication_generations_previous_publication_id_fkey;
-                ALTER TABLE publication_generations
-                    ADD CONSTRAINT publication_generations_previous_publication_id_fkey
-                    FOREIGN KEY (previous_publication_id)
-                    REFERENCES publication_generations(publication_id)
-                    ON DELETE SET NULL;
-            END IF;
-        END $$;
 
         CREATE TABLE IF NOT EXISTS publication_surface_bindings (
             publication_id BIGINT NOT NULL
@@ -296,6 +737,232 @@ public static class PublicationGenerationSchema
 
         CREATE INDEX IF NOT EXISTS ix_publication_surface_bindings_surface
             ON publication_surface_bindings (surface_name, publication_id DESC);
+
+        CREATE OR REPLACE FUNCTION
+            publication_scope_source_binding_validation(
+                target_publication_id BIGINT)
+        RETURNS TABLE (
+            publication_id BIGINT,
+            scrape_id BIGINT,
+            generation_status TEXT,
+            expected_row_count BIGINT,
+            binding_row_count BIGINT,
+            actual_row_count BIGINT,
+            binding_content_hash TEXT,
+            actual_key_hash TEXT,
+            invalid_row_count INTEGER,
+            duplicate_key_count INTEGER,
+            binding_identity_valid BOOLEAN,
+            is_valid BOOLEAN)
+        LANGUAGE sql
+        STABLE
+        AS $scope_source_validation$
+            WITH target AS (
+                SELECT
+                    generation.publication_id,
+                    generation.scrape_id,
+                    generation.status,
+                    generation.metadata #>>
+                        '{publicationPreparation,scrapeId}'
+                        AS metadata_scrape_id,
+                    generation.metadata #>>
+                        '{publicationPreparation,publicationId}'
+                        AS metadata_publication_id,
+                    CASE
+                        WHEN generation.metadata #>>
+                                '{publicationPreparation,expectedPublishedScopeCount}'
+                                ~ '^[1-9][0-9]*$'
+                        THEN (
+                            generation.metadata #>>
+                                '{publicationPreparation,expectedPublishedScopeCount}'
+                        )::BIGINT
+                        ELSE NULL
+                    END AS expected_row_count
+                FROM publication_generations generation
+                WHERE generation.publication_id =
+                        target_publication_id
+                  AND generation.scrape_id IS NOT NULL
+            ), binding AS (
+                SELECT
+                    target.publication_id,
+                    COUNT(binding.*)::INTEGER
+                        AS binding_count,
+                    MAX(binding.binding_kind)
+                        AS binding_kind,
+                    MAX(binding.binding_json::TEXT)::JSONB
+                        AS binding_json,
+                    MAX(binding.row_count)
+                        AS row_count,
+                    MAX(binding.content_hash)
+                        AS content_hash,
+                    MAX(binding.status)
+                        AS status
+                FROM target
+                LEFT JOIN publication_surface_bindings binding
+                  ON binding.publication_id =
+                        target.publication_id
+                 AND binding.surface_name =
+                        'solo_scope_sources'
+                GROUP BY target.publication_id
+            ), source_stats AS (
+                SELECT
+                    target.publication_id,
+                    COUNT(source.*)::BIGINT
+                        AS actual_row_count,
+                    COUNT(source.*) FILTER (
+                        WHERE btrim(source.song_id) = ''
+                           OR source.instrument NOT IN (
+                                'Solo_Guitar',
+                                'Solo_Bass',
+                                'Solo_Vocals',
+                                'Solo_Drums',
+                                'Solo_PeripheralGuitar',
+                                'Solo_PeripheralBass',
+                                'Solo_PeripheralVocals',
+                                'Solo_PeripheralCymbals',
+                                'Solo_PeripheralDrums')
+                           OR source.scope_kind <> 'alltime'
+                           OR btrim(
+                                source.content_fingerprint) = ''
+                           OR btrim(
+                                source.coverage_fingerprint) = ''
+                           OR NOT source.is_complete
+                           OR source.source_scrape_id <= 0
+                           OR source.source_scrape_id >
+                                source.published_scrape_id
+                           OR source.reported_total_entries <
+                                source.row_count
+                           OR (
+                                source.source_kind = 'snapshot'
+                                AND (
+                                    source.source_snapshot_id IS NULL
+                                    OR source.source_snapshot_id <= 0
+                                    OR source.source_snapshot_id <>
+                                        source.source_scrape_id
+                                    OR source.row_count <= 0
+                                    OR source.reported_total_pages <= 0
+                                )
+                           )
+                           OR (
+                                source.source_kind = 'empty'
+                                AND (
+                                    source.source_snapshot_id IS NOT NULL
+                                    OR source.row_count <> 0
+                                    OR source.reported_total_entries <> 0
+                                    OR source.reported_total_pages <> 0
+                                )
+                           )
+                           OR source.source_kind NOT IN (
+                                'snapshot',
+                                'empty')
+                    )::INTEGER AS invalid_row_count,
+                    (
+                        COUNT(source.*)
+                        - COUNT(DISTINCT (
+                            source.instrument,
+                            source.song_id,
+                            source.scope_kind))
+                    )::INTEGER AS duplicate_key_count,
+                    encode(
+                        sha256(
+                            convert_to(
+                                COALESCE(
+                                    string_agg(
+                                        octet_length(
+                                            source.instrument)::TEXT
+                                            || ':'
+                                            || source.instrument
+                                            || octet_length(
+                                                source.song_id)::TEXT
+                                            || ':'
+                                            || source.song_id
+                                            || octet_length(
+                                                source.scope_kind)::TEXT
+                                            || ':'
+                                            || source.scope_kind
+                                            || chr(10),
+                                        '' ORDER BY
+                                            source.instrument
+                                                COLLATE "C",
+                                            source.song_id
+                                                COLLATE "C",
+                                            source.scope_kind
+                                                COLLATE "C"),
+                                    ''),
+                                'UTF8')),
+                        'hex') AS actual_key_hash
+                FROM target
+                LEFT JOIN leaderboard_published_scope_source source
+                  ON source.published_scrape_id =
+                        target.scrape_id
+                GROUP BY target.publication_id
+            ), validation AS (
+                SELECT
+                    target.publication_id,
+                    target.scrape_id,
+                    target.status AS generation_status,
+                    target.expected_row_count,
+                    binding.row_count
+                        AS binding_row_count,
+                    source.actual_row_count,
+                    binding.content_hash
+                        AS binding_content_hash,
+                    source.actual_key_hash,
+                    source.invalid_row_count,
+                    source.duplicate_key_count,
+                    COALESCE(
+                        binding.binding_count = 1
+                        AND target.metadata_scrape_id =
+                            target.scrape_id::TEXT
+                        AND target.metadata_publication_id =
+                            target.publication_id::TEXT
+                        AND binding.binding_kind = 'scrape_id'
+                        AND binding.status = 'ready'
+                        AND binding.binding_json ->> 'table' =
+                            'leaderboard_published_scope_source'
+                        AND binding.binding_json ->> 'publicationId' =
+                            target.publication_id::TEXT
+                        AND binding.binding_json ->> 'publishedScrapeId' =
+                            target.scrape_id::TEXT
+                        AND binding.binding_json ->> 'keyHashVersion' =
+                            '1',
+                        FALSE) AS binding_identity_valid
+                FROM target
+                JOIN binding
+                  ON binding.publication_id =
+                        target.publication_id
+                JOIN source_stats source
+                  ON source.publication_id =
+                        target.publication_id
+            )
+            SELECT
+                validation.publication_id,
+                validation.scrape_id,
+                validation.generation_status,
+                validation.expected_row_count,
+                validation.binding_row_count,
+                validation.actual_row_count,
+                validation.binding_content_hash,
+                validation.actual_key_hash,
+                validation.invalid_row_count,
+                validation.duplicate_key_count,
+                validation.binding_identity_valid,
+                COALESCE(
+                    validation.expected_row_count > 0
+                    AND validation.binding_row_count =
+                        validation.expected_row_count
+                    AND validation.actual_row_count =
+                        validation.expected_row_count
+                    AND validation.invalid_row_count = 0
+                    AND validation.duplicate_key_count = 0
+                    AND validation.binding_identity_valid
+                    AND validation.binding_content_hash ~
+                        '^[0-9a-f]{64}$'
+                    AND validation.binding_content_hash =
+                        validation.actual_key_hash,
+                    FALSE) AS is_valid
+            FROM validation
+        $scope_source_validation$;
 
         CREATE SEQUENCE IF NOT EXISTS song_catalog_version_seq;
 
@@ -516,25 +1183,6 @@ public static class PublicationGenerationSchema
         ALTER TABLE scrape_publication_state
             ADD COLUMN IF NOT EXISTS publication_commit_intent_owner
                 TEXT;
-
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conrelid = 'scrape_publication_state'::regclass
-                  AND conname = 'scrape_publication_state_previous_publication_id_fkey'
-                  AND confdeltype <> 'n'
-            ) THEN
-                ALTER TABLE scrape_publication_state
-                    DROP CONSTRAINT scrape_publication_state_previous_publication_id_fkey;
-                ALTER TABLE scrape_publication_state
-                    ADD CONSTRAINT scrape_publication_state_previous_publication_id_fkey
-                    FOREIGN KEY (previous_publication_id)
-                    REFERENCES publication_generations(publication_id)
-                    ON DELETE SET NULL;
-            END IF;
-        END $$;
 
         INSERT INTO publication_generations (
             scrape_id,

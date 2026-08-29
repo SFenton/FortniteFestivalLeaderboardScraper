@@ -1,10 +1,14 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: 86379374
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - FSTService/FeatureOptions.cs
+  - FSTService/StartupInitializer.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/FeatureEndpoints.cs
   - deploy/config/fstservice-role.env
@@ -74,6 +78,17 @@ false, `RankRecompute` is retained as a rollback contract and completes without
 scheduling the legacy update. A publication-critical phase cannot record
 `skipped`. Turning the flag back on restores the existing recompute path; it
 does not weaken the publication-critical phase policy.
+
+`UsePublishedScopeSources=true` is also a readiness and request-admission
+contract. Startup, ongoing `/readyz`, warm publication-cache hits, uncached
+publication-bound reads, and WebSocket admission require the current
+publication's exact positive-count `solo_scope_sources` binding and canonical
+SHA-256 key set. Publication commit rechecks the binding immediately before
+pointer movement. The validation result is cached for at most one second and
+invalidated on local publication lifecycle changes. Keeping the flag false
+preserves intentional rolling compatibility for a role still using the legacy
+read path; report-only retention planning still validates named publication
+bindings independently.
 
 ## Public feature contract
 
