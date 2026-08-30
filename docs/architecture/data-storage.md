@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -33,9 +33,11 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - tools/postgres-snapshot-generation-archive.py
   - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/FstSnapshotGenerationQuarantine/
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationReadiness.cs
@@ -86,7 +88,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, maintenance notification quarantine, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
 ### Freeze-safe publication API cache
@@ -751,6 +753,35 @@ and logical catalog SHA-256
 `dce534bec2cd70afe873ccd5cc0c327d636bc93137839b07f20ee57631908501`,
 then proved complete container, anonymous-volume, PGDATA, and scratch cleanup.
 No source relation or row changed.
+
+The next repository tier adds a separate no-Docker-socket
+quarantine/reattach CLI. Its durable control plane is additive:
+
+- `snapshot_generation_quarantine_operations` stores one immutable sealed-plan
+  execution and exact child/default-partition identities;
+- `snapshot_generation_quarantine_reattachments` stores the one immutable
+  rollback completion;
+- `snapshot_generation_quarantine_attestations` stores immutable
+  `quarantined`, `soak`, and `reattached` parity observations;
+- `fst_snapshot_quarantine` owns detached children during a bounded canary.
+
+Quarantine and its `retention_in_flight` hold commit atomically. Before detach,
+the empty instrument DEFAULT child receives a validated
+`CHECK (snapshot_id <> G)` so later writes cannot silently route into it.
+The detached child receives `CHECK (snapshot_id = G)` plus a mutation-rejection
+trigger. Reattach is the only implemented source transition: it requires
+successful original-publication quarantine evidence, successful soak evidence
+for the current publication, zero current liveness roots, exact physical
+identity, and both required index attachment chains. It then restores the same
+child and removes both temporary checks in one transaction.
+
+The CLI has no service scheduler, Docker access, arbitrary relation/SQL input,
+drop, truncate, delete, or automatic-retirement path. Its first live canary
+accepted Pro Cymbals snapshot `1314`: the child remained quarantined for 452
+seconds, passed 11 public-health samples and three exact 55-route
+attestations, then reattached with unchanged OID, relfilenode, 8,627 rows,
+4,628,480 bytes, row SHA-256, and both required index links. The next
+non-cascading drop tier remains unimplemented and separately gated.
 
 Physical identity and liveness are per `(instrument, snapshot_id)` and exact
 OID/relfilenode/bound/name/schema configuration. Stable child/config hashes

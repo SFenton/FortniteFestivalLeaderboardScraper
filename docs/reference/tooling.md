@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -28,6 +28,9 @@ sources:
   - tools/postgres-snapshot-generation-archive-drill.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
+  - tools/FstSnapshotGenerationQuarantine/
+  - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/capture-publication-route-contract.sh
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -328,6 +331,100 @@ removes only synthetic containers and same-drive scratch. It never connects to
 and canonical serializer types with multiple nonempty record arrays. The drill
 rejects an image with an extra `VOLUME` and proves its anonymous volume is
 removed.
+
+### Snapshot-generation quarantine and rollback
+
+`tools/postgres-snapshot-generation-quarantine.sh` builds and invokes the
+standalone .NET executor. It connects directly with Npgsql and never invokes
+Docker. Its only commands are `plan`, `quarantine`, `attest`, and `reattach`;
+there is no drop/truncate/delete command and no arbitrary relation or SQL
+argument.
+
+All paths must be new or existing files below
+`FST_SNAPSHOT_QUARANTINE_EVIDENCE_ROOT`, which itself must resolve below the
+canonical FST evidence directory. Inputs reject symbolic links. The connection
+string is read only from
+`FST_SNAPSHOT_QUARANTINE_CONNECTION_STRING` or the environment variable named
+by `--connection-env`.
+
+Generate each immutable 55-route capture with:
+
+```bash
+FST_ROUTE_EVIDENCE_ROOT=<FST-drive-run-root> \
+FST_ROUTE_SAMPLE_ACCOUNT_ID=<registered-account-id> \
+API_BASE=http://127.0.0.1:3001 \
+tools/capture-publication-route-contract.sh \
+  <new-directory-below-FST_ROUTE_EVIDENCE_ROOT>
+```
+
+The capture requires an idle, unfrozen publication before and after all
+requests. It records 55 route statuses, raw bodies, normalized JSON, timings,
+hashed sample identifiers, and `SHA256SUMS`. The executor authenticates raw
+sizes/hashes, normalizes JSON from raw bytes, compares deterministic binary
+responses exactly, and recursively compares ZIP exports after excluding only
+generated outer filename timestamps and Office core-property IDs/timestamps.
+Workbook sheets and all other payload entries remain byte-compared.
+
+Create a sealed read-only plan:
+
+```bash
+tools/postgres-snapshot-generation-quarantine.sh plan \
+  --archive-package <newest accepted archive package> \
+  --proof-manifest <accepted proof-manifest.json> \
+  --source-evidence-manifest <matching full-scrape manifest.json> \
+  --baseline-route-manifest <same-publication baseline/manifest.json> \
+  --candidate-route-manifest <same-publication candidate/manifest.json> \
+  --output <new plan.json>
+```
+
+The archive cycle, full scrape, both route captures, and current database
+publication must be identical. `plan` also requires the latest accepted
+five-cycle planner state and recomputes the exact archived row fingerprint.
+
+After explicit operator approval:
+
+```bash
+tools/postgres-snapshot-generation-quarantine.sh quarantine \
+  --plan <plan.json> \
+  --expected-plan-digest <sha256> \
+  --approved-by <operator> \
+  --approval-reference <approval-evidence> \
+  --output <new quarantine-report.json>
+```
+
+The first `quarantined` attestation compares the plan's candidate capture with
+a post-detach capture. A later `soak` attestation uses two exact captures of
+the then-current publication. Publication rotation is allowed only if the
+target remains absent from every live/recovery root.
+
+```bash
+tools/postgres-snapshot-generation-quarantine.sh attest \
+  --plan <plan.json> \
+  --expected-plan-digest <sha256> \
+  --stage quarantined \
+  --baseline-route-manifest <plan candidate capture> \
+  --candidate-route-manifest <post-detach capture> \
+  --attested-by <operator> \
+  --output <new attestation.json>
+
+tools/postgres-snapshot-generation-quarantine.sh reattach \
+  --plan <plan.json> \
+  --expected-plan-digest <sha256> \
+  --reattached-by <operator> \
+  --reattach-reference <rollback-evidence> \
+  --output <new reattach-report.json>
+```
+
+After reattach, capture again and record a `reattached` attestation whose
+baseline is the candidate capture from the latest successful soak. The
+database refuses reattach without successful `quarantined` and
+current-publication `soak` evidence.
+
+The first accepted live run used plan digest
+`d7d9305ae11061d3ce88de892d0a248096ee35211f464ab9018e67c5f9849550`
+and operation `73bee4a09dc7648b98b7176c32616f2f` for Pro Cymbals snapshot
+`1314`. It passed all three attestations and exact physical rollback. This is
+authorization evidence for the quarantine/reattach tier only, not a drop.
 
 ### Legacy snapshot rewrite evidence
 

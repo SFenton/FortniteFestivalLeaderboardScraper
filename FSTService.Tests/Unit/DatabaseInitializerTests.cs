@@ -1001,6 +1001,7 @@ public class DatabaseInitializerTests : IDisposable
                 "publication-generation-retirement-index",
                 "publication-path-artifacts",
                 "snapshot-generation-retention-report-only",
+                "snapshot-generation-quarantine",
                 "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
@@ -1100,7 +1101,15 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             SnapshotGenerationRetentionSchema.Sql,
             retention.Sql);
-        var maxScoreMaintenance = plan[8];
+        var quarantine = plan[8];
+        Assert.True(quarantine.UseShortTransaction);
+        Assert.Equal(
+            SnapshotGenerationQuarantineSchema.Sql,
+            quarantine.Sql);
+        Assert.Equal(20, quarantine.CommandTimeoutSeconds);
+        Assert.Equal("2s", quarantine.LockTimeout);
+        Assert.Equal("15s", quarantine.StatementTimeout);
+        var maxScoreMaintenance = plan[9];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);
