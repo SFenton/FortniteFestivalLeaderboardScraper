@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/appsettings.json
@@ -27,6 +27,7 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
   - FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs
@@ -38,6 +39,8 @@ sources:
   - FSTService.Tests/Unit/NotificationServiceTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
   - tools/postgres-snapshot-generation-archive.py
   - tools/postgres-snapshot-generation-archive.sh
   - tools/postgres-snapshot-generation-archive.test.py
@@ -45,6 +48,9 @@ sources:
   - tools/postgres-snapshot-generation-archive-drill.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
+  - tools/FstSnapshotGenerationQuarantine/
+  - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/capture-publication-route-contract.sh
 update_triggers:
   - Snapshot-generation report planning, liveness roots, provenance TTL, maintenance locks, observation gates, or later archive/destructive tiers change.
 ---
@@ -76,6 +82,14 @@ creates a checksummed recovery package. It has no retention job, service
 executor, source relation mutation, or arbitrary relation/SQL argument. Its
 isolated `prove` subcommand restores only into a transient PostgreSQL 17
 container with network mode `none` and no published ports.
+
+An additional operator-only quarantine/reattach tier is implemented and has
+completed its first live production canary. It is a separate .NET command, has
+no Docker access, is not hosted by the service or worker, and has no `drop`,
+`truncate`, row-delete, or automatic-retirement command. It can move exactly
+one already archived and currently eligible numeric child into a private
+quarantine schema, collect immutable soak evidence, and reattach that same
+OID/relfilenode as rollback.
 
 The legacy whole-instrument `SnapshotRetentionPolicy`/rewrite path remains
 disabled and is not used as the generation-child deletion oracle.
@@ -249,6 +263,127 @@ The checksummed package is:
 This accepts the archive-only package and restore-prover tier. It does not
 authorize source detach, quarantine, rename, drop, truncate, or deletion.
 
+## Quarantine and reattach tier
+
+`tools/postgres-snapshot-generation-quarantine.sh` exposes only:
+
+- `plan`, which is read-only;
+- `quarantine`, which requires the exact sealed plan digest plus explicit
+  operator identity and approval reference;
+- `attest`, which records an immutable 55-route/database-state observation;
+- `reattach`, which restores the same child after successful quarantine and
+  soak attestations.
+
+The tool connects directly through Npgsql. It never invokes Docker, accepts no
+relation name or SQL text, and maps only the fixed nine instrument families.
+Every input and output path must remain beneath the configured FST evidence
+root without symbolic-link traversal. `plan` authenticates the complete
+archive package and network-none restore proof, a checksummed successful
+full-scrape evidence bundle, and two same-publication 55-route captures. Raw
+route bodies must match their manifest sizes and SHA-256 values. JSON is
+normalized from the authenticated raw bytes; deterministic binary responses
+compare exact hashes. ZIP exports compare sorted entry names and contents
+recursively; only timestamp suffixes on generated outer workbook names,
+random Office core-property part names/relationship IDs, and Office
+created/modified metadata are excluded. Workbook sheets and all other payload
+entries remain byte-compared.
+
+The sealed plan binds the PostgreSQL system/database identity, current
+publication, latest accepted planner cycle, exact candidate observation,
+OID/relfilenode/bound, stable child/config hashes, physical bytes, exact row
+count, and the archive row fingerprint. `quarantine` revalidates all evidence,
+then acquires the registration, service-maintenance, publication, planner,
+snapshot-generation DDL, and executor session advisory locks in that order
+before opening the `SERIALIZABLE` transaction. The database functions repeat
+the chain with nonblocking transaction locks and fail with `55P03` rather than
+wait on an older MVCC snapshot. The child receives a shared table lock while
+the CLI streams the same ordered row fingerprint used by the archive tool.
+
+The mutation transaction:
+
+1. inserts one `retention_in_flight` hold;
+2. requires the instrument DEFAULT child to be attached and empty;
+3. adds and validates an exact `CHECK (snapshot_id <> G)` constraint on that
+   DEFAULT child so writes for the quarantined generation fail rather than
+   becoming ghost rows;
+4. detaches the numeric child, moves and renames it under
+   `fst_snapshot_quarantine`, adds an exact `CHECK (snapshot_id = G)`, and
+   installs a trigger rejecting insert/update/delete/truncate;
+5. inserts one immutable operation row containing all evidence digests and
+   physical identities.
+
+Any failure rolls back the hold, both constraints, relation moves, and
+operation evidence together. Quarantine operations, reattachments, and
+attestations are append-only; active state is derived from the absence of a
+reattachment row.
+
+The first post-detach `quarantined` attestation must compare the sealed
+pre-quarantine candidate capture with a new capture on the original
+publication. Later `soak` evidence may follow publication rotation, but it
+must use two exact captures of the same then-current idle/unfrozen
+publication. Before reattach, the database requires that current publication's
+successful soak and proves the target has no active snapshot, current
+projection, named current/previous/working publication source, unreplayed
+writer failure, or additional active hold. Reattach verifies the private
+relation, exact check, mutation trigger, DEFAULT exclusion, zero DEFAULT rows
+for `G`, row count, OID, and relfilenode; it then attaches the same child,
+proves both required child -> root -> top index links, removes the two
+temporary checks, releases the hold, and writes one immutable rollback row in
+the same transaction.
+
+A final `reattached` attestation must compare the latest successful soak
+capture with the post-reattach capture on that same publication. Publication
+rotation therefore cannot strand rollback, but it also cannot weaken liveness
+or same-publication parity.
+
+### Accepted live quarantine/reattach canary
+
+The first live canary used cycle `11`, scrape `1331`, publication `153`, and
+Pro Cymbals snapshot `1314`. Candidate scrape `1331` completed all 21 terminal
+phases with zero critical/best-effort failures, zero unreplayed writer
+failures, 6,390 complete published source rows, notifications complete, and a
+clean run-once exit. Cycle `11` observed 107 candidates, 160 protected
+children, zero blocked children, and `186,638,991,360` candidate bytes with
+exact planner/oracle agreement.
+
+The fresh archive/proof retained:
+
+- child OID and relfilenode `319748510`;
+- `4,628,480` physical bytes;
+- `8,627` rows;
+- row SHA-256
+  `89bb111ca53eb905c344f113a3668102b8ad9a0fc5581cb585d6fb5004a81c29`;
+- a network-none PostgreSQL 17 restore with exact row/catalog parity and
+  complete cleanup.
+
+Operation `73bee4a09dc7648b98b7176c32616f2f`, sealed by plan digest
+`d7d9305ae11061d3ce88de892d0a248096ee35211f464ab9018e67c5f9849550`,
+quarantined the child for 452 seconds. Eleven 30-second soak samples returned
+HTTP 200 for readiness, songs, and a representative leaderboard while
+publication 153 remained idle/unfrozen. The private relation retained the same
+OID, relfilenode, and 8,627 rows; the DEFAULT child retained zero rows for
+snapshot 1314; the hold and both safety constraints remained present; and no
+lock waiter appeared.
+
+All three 55-route attestations (`quarantined`, `soak`, and `reattached`) had
+zero status, normalized JSON, deterministic-binary, or normalized-export
+differences. Reattach restored the original public relation with the same
+OID/relfilenode, physical bytes, row count, row SHA-256, parent attachment, and
+two required index chains. It removed both temporary constraints, removed the
+private relation, released the exact hold, and persisted the immutable
+reattachment.
+
+The acceptance bundle is:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/
+  snapshot-generation-quarantine-candidate/
+  acceptance-cycle11-pro-cymbals-1314/
+```
+
+This accepts the bounded quarantine/soak/reattach tier. It does not implement
+or authorize `DROP`, automatic retirement, or sparse-child compaction.
+
 ## Scheduling boundary
 
 Only `ScraperWorker` schedules the observer. It is not a
@@ -311,8 +446,9 @@ service-maintenance lock. Metadata TTL and generation observation therefore
 cannot overlap. Acquisition uses bounded `pg_try_advisory_lock` retries and
 records a retryable deferral on contention.
 
-The observer does not acquire the snapshot-generation DDL lock. A future
-executor would require that lock, but no executor exists in this slice.
+The observer does not acquire the snapshot-generation DDL or executor lock.
+The separate quarantine CLI acquires both after the four observer locks while
+holding its serializable transaction.
 
 ## One-snapshot observation
 
@@ -566,17 +702,14 @@ window produced accepted cycles `5` through `9`.
   genuine candidate-set change.
 
 The accepted five-cycle set includes publication rotation and genuine
-candidate-set changes. That completes the observation prerequisite only.
-Archive-only packages and restore proofs do not themselves authorize
-destructive behavior. A separate executor implementation, exact matched
-live-scrape/API/source parity, smallest-child transactional
-quarantine/reattach rollback proof, soak evidence, and explicit operator
-approval remain required before any later drop without `CASCADE`.
+candidate-set changes. The separate quarantine/reattach executor and its first
+smallest-child live canary are accepted.
 
-A later destructive design, if separately approved, uses ordinary
-transactional detach, quarantine rename, an exact
-`CHECK (snapshot_id = G)`, soak/reattach rollback, and a separate drop without
-`CASCADE`. None of that behavior or SQL is implemented here.
+The next tier must be a separate branch and command surface for one
+non-cascading drop canary. It must consume the accepted archive and immutable
+quarantine/reattach evidence, repeat current liveness/publication checks, and
+retain explicit operator approval plus restore monitoring. No current command
+can drop, truncate, delete, or automatically retire a child.
 
 Rollback for this slice is to keep
 `DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled=false`.

@@ -431,6 +431,17 @@ public static class DatabaseInitializer
                 StatementTimeout:
                     NotificationSchemaStatementTimeout),
             new(
+                Name:
+                    "snapshot-generation-quarantine",
+                Sql: Maintenance
+                    .SnapshotGenerationQuarantineSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,
                 CommandTimeoutSeconds:

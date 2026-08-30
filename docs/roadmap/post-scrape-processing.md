@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -22,6 +22,8 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
+  - tools/FstSnapshotGenerationQuarantine/
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
@@ -57,8 +59,9 @@ update_triggers:
   implemented, synthetically validated, and live-accepted on unchanged Pro
   Cymbals snapshot `1314`. Live cycles `5/1325` through `9/1329` have exact
   agreement, zero blockers, publication rotation, and genuine candidate-set
-  changes. Destructive executor/parity/quarantine canaries and later
-  sparse-compaction tiers remain separate unresolved iterations.
+  changes. The no-Docker-socket quarantine/reattach executor is implemented
+  and live-accepted on Pro Cymbals snapshot `1314`; any later non-cascading
+  drop and sparse compaction remain separate unresolved iterations.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -662,31 +665,31 @@ disposable PostgreSQL 17 network-none drill. Live cycles `5/1325` through
 `9/1329` satisfy the five-cycle observation prerequisite with publication
 rotation and genuine candidate-set changes. A parent-controlled live
 smallest-child archive/restore canary also passed on unchanged Pro Cymbals
-snapshot `1314`. Current unresolved work is later destructive-tier design and
-validation:
+snapshot `1314`. The separate no-Docker-socket quarantine/reattach executor is
+implemented and live-accepted after a 452-second soak and exact reattach.
+Current unresolved work is the later drop-tier design:
 
-- design a separate no-Docker-socket destructive executor;
-- require matched full-scrape and same-publication API/source parity;
-- quarantine one smallest eligible child transactionally and prove reattach
-  rollback before any later non-cascade drop;
+- consume the accepted full-scrape, archive/restore, quarantine, soak,
+  reattach, and same-publication API/source evidence;
+- implement one separately approved non-cascade drop canary with restore
+  monitoring;
 - keep scrape `1308` protected wherever unreplayed writer-failure evidence
   remains;
 - retain exact archive/restore, live A/B, canary, rollback, API, lock, resource,
   and capacity gates.
 
-No current code can create archive, detach, rename, drop, truncate, or delete
-work. The legacy whole-instrument estimator remains disabled and is not the
-generation-child oracle.
+Current code can create recovery archives and can explicitly quarantine and
+reattach one sealed-plan child. No current code can drop, truncate, delete, or
+automatically retire a child. The legacy whole-instrument estimator remains
+disabled and is not the generation-child oracle.
 
 ### Next iterations
 
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - design a separate no-Docker-socket destructive executor after the
-     accepted five-cycle and archive/restore gates;
-   - run matched parity and a manual transactional quarantine/reattach canary
-     before implementing any later non-cascade drop;
+   - design a separate non-cascade drop tier from the accepted
+     quarantine/soak/reattach evidence;
    - run a separately approved large-child recovery canary before automatic
      execution;
    - separately gated sparse-child compaction before claiming bounded

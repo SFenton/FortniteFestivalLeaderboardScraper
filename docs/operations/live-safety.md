@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -23,6 +23,9 @@ sources:
   - tools/postgres-snapshot-generation-archive.py
   - tools/postgres-snapshot-generation-archive.sh
   - tools/postgres-snapshot-generation-archive-drill.py
+  - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
+  - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/capture-publication-route-contract.sh
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
@@ -133,6 +136,74 @@ archive-only tier. They do not authorize source detach, rename, quarantine,
 drop, truncate, or row removal. Those actions still require a separately
 implemented executor, exact matched parity, transactional reattach rollback
 proof, soak evidence, and explicit operator approval.
+
+## Snapshot-generation quarantine boundary
+
+The repository contains a no-Docker-socket quarantine/reattach executor. Its
+first production canary is accepted, but it is never automatic and must not
+run from the API or worker process. There is no drop, truncate, row-delete, or
+cleanup command.
+
+Before `plan`, require:
+
+1. a newest-cycle accepted archive and network-none restore proof;
+2. a checksummed successful full-scrape evidence bundle for that same scrape;
+3. two exact 55-route captures on the same current publication;
+4. an idle, unfrozen publication with completed notifications;
+5. zero running scrape, active target hold, or unreplayed target writer
+   failure;
+6. exact current PostgreSQL system/database identity, candidate
+   OID/relfilenode/bound, row count, bytes, and row fingerprint.
+
+Set only variable names in operator shell history; never print the connection
+string:
+
+```bash
+export FST_SNAPSHOT_QUARANTINE_EVIDENCE_ROOT=<FST-drive-evidence-root>
+export FST_SNAPSHOT_QUARANTINE_CONNECTION_STRING=<direct-Npgsql-connection>
+```
+
+`quarantine` additionally requires the sealed plan digest, an operator
+identity, and an approval reference. It obtains bounded registration,
+maintenance, publication, planner, generation-DDL, and executor locks in
+order before beginning its serializable mutation transaction. The in-database
+functions take the same transaction locks without waiting, so lock contention
+forces a new transaction and a fresh snapshot. The exact DEFAULT partition
+must be empty. The same transaction adds a validated
+`snapshot_id <> G` DEFAULT exclusion, inserts the
+`retention_in_flight` hold, detaches and privately renames the child, adds
+`snapshot_id = G`, installs a mutation-rejection trigger, and stores immutable
+operation evidence. A failed statement rolls back all of those changes.
+
+Immediately capture and attest the original-publication post-quarantine
+55-route result. During soak, preserve the archive and hold. If publication
+rotates, take two new same-publication captures while the child remains
+quarantined and attest that current publication. Reattach is allowed only
+while the current publication is idle/unfrozen and the target has zero
+active/projection/named-publication/writer-failure/additional-hold roots. It
+requires a successful soak for that current publication.
+
+Reattach validates zero target rows in the DEFAULT child, the validated
+DEFAULT exclusion, exact private child identity/check/trigger/row count, and
+then restores the same OID/relfilenode and both required index chains. It drops
+only the two temporary CHECK constraints and releases only its own hold. Take
+a final capture and attest it against the latest successful pre-reattach soak
+capture.
+
+Any live quarantine still requires explicit operator approval after current
+preflight and parity evidence. A successful reattach canary does not authorize
+a later non-cascading drop.
+
+The accepted canary used operation
+`73bee4a09dc7648b98b7176c32616f2f` on Pro Cymbals snapshot `1314`,
+publication `153`. It held the exact child in quarantine for 452 seconds,
+returned HTTP 200 for all 11 health samples, passed zero-difference
+`quarantined`, `soak`, and `reattached` 55-route attestations, and restored OID
+and relfilenode `319748510`, 8,627 rows, 4,628,480 bytes, the original row
+SHA-256, and both index links. The DEFAULT child remained empty for snapshot
+1314. The exact hold was released and both temporary constraints were removed.
+Evidence is under
+`fst-data/evidence/snapshot-generation-quarantine-candidate/acceptance-cycle11-pro-cymbals-1314/`.
 
 ## Startup auto-heal
 

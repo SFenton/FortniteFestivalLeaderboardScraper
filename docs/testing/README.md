@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-30
-last_verified_commit: 9a0a08dd
+last_verified_commit: 35cfe4a2
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -17,6 +17,8 @@ sources:
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
   - FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs
   - FSTService.Tests/Unit/DatabaseInitializerTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
@@ -45,6 +47,9 @@ sources:
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
+  - tools/FstSnapshotGenerationQuarantine/
+  - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/capture-publication-route-contract.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -288,6 +293,33 @@ before PGDATA cleanup. It also rejects a PostgreSQL image declaring an extra
 anonymous `VOLUME` and proves `docker rm -f -v` removed it. It never uses live
 `fst-postgres`. These tests prove
 repository behavior only; a live archive canary remains parent-controlled.
+
+Focused snapshot-generation quarantine/reattach validation:
+
+```bash
+bash -n tools/postgres-snapshot-generation-quarantine.sh
+bash -n tools/capture-publication-route-contract.sh
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationQuarantine'
+```
+
+The PostgreSQL-backed tests prove additive/idempotent schema, no
+drop/truncate/delete command surface, atomic hold plus detach plus evidence,
+rollback on failed preflight, exact OID/relfilenode preservation, a validated
+DEFAULT-partition exclusion that rejects ghost writes, detached-child mutation
+rejection, exact child/root/top index restoration, publication rotation during
+soak, current-publication liveness gates, a publication change committed while
+the executor waits for its pre-transaction lock chain, and immutable
+operation, reattachment, and attestation evidence. Tool tests cover archive/proof and
+full-scrape checksums, path/symlink fencing, strict 55-route identity, raw body
+hashes/sizes, volatile-only JSON normalization, semantic ZIP comparison,
+including narrow generated Office-metadata normalization, sealed plan
+identity, and absence of Docker or drop commands.
+
+These tests authorize no live detach. The live gate still requires a fresh
+completed scrape, same-publication source/API parity, a newest-cycle
+archive/proof, explicit approval, public-health monitoring, and a successful
+quarantine/soak/reattach canary.
 
 The first parent-controlled canary is now accepted: cycle `9` selected Pro
 Cymbals snapshot `1314`, the custom archive and all package/proof checksums
