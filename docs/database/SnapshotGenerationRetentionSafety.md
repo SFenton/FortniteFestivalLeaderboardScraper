@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-29
-last_verified_commit: c35b7f47
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/appsettings.json
@@ -38,6 +38,13 @@ sources:
   - FSTService.Tests/Unit/NotificationServiceTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - tools/postgres-snapshot-generation-archive.py
+  - tools/postgres-snapshot-generation-archive.sh
+  - tools/postgres-snapshot-generation-archive.test.py
+  - tools/postgres-snapshot-generation-archive.test.sh
+  - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
+  - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
 update_triggers:
   - Snapshot-generation report planning, liveness roots, provenance TTL, maintenance locks, observation gates, or later archive/destructive tiers change.
 ---
@@ -46,10 +53,10 @@ update_triggers:
 
 ## Current capability
 
-The first automatic snapshot-generation pruning slice is **default-off and
-report-only**. It can observe exact physical children and persist immutable
-evidence. It cannot archive, detach, rename, drop, truncate, or delete a
-snapshot child.
+The service-owned automatic snapshot-generation pruning slice remains
+**default-off and report-only**. It can observe exact physical children and
+persist immutable evidence. It cannot archive, detach, rename, drop, truncate,
+or delete a snapshot child.
 
 This is a structural boundary, not an option convention:
 
@@ -63,17 +70,34 @@ This is a structural boundary, not an option convention:
 - cycles, child observations, deferrals, and hash-chain evidence reject update,
   delete, and truncate.
 
+The repository also contains a separate operator-facing archive-only tool.
+It reads one immutable candidate selected from the newest accepted cycle and
+creates a checksummed recovery package. It has no retention job, service
+executor, source relation mutation, or arbitrary relation/SQL argument. Its
+isolated `prove` subcommand restores only into a transient PostgreSQL 17
+container with network mode `none` and no published ports.
+
 The legacy whole-instrument `SnapshotRetentionPolicy`/rewrite path remains
 disabled and is not used as the generation-child deletion oracle.
 
 ## Live report-only acceptance
 
-The archive-only development entry gate is satisfied by two distinct terminal
-production cycles on planner v3 image
-`sha256:d11a7d27c018efa160009533f88ad759b4b61ce8c3c79e1f27b8208b99386133`:
+The archive-only development entry gate is satisfied. Five distinct terminal
+production cycles exist on planner v3:
 
 - cycle `5` observed scrape `1325` / publication `140`;
-- cycle `6` observed scrape `1326` / publication `142`.
+- cycle `6` observed scrape `1326` / publication `142`;
+- cycle `7` observed scrape `1327`;
+- cycle `8` observed scrape `1328`;
+- cycle `9` observed scrape `1329` / publication `148`.
+
+All five cycles had exact planner/oracle child, live, and candidate-set
+agreement with zero blockers. The set includes publication rotation and a
+genuine candidate-set change. Solo Bass snapshot `1308` remained protected by
+its unreplayed writer failure throughout.
+
+The first two cycles used planner v3 image
+`sha256:d11a7d27c018efa160009533f88ad759b4b61ce8c3c79e1f27b8208b99386133`:
 
 Both cycles had exact planner/oracle child, live, and candidate-set equality,
 zero blocked children, the same 89-child candidate identity, and immutable
@@ -92,6 +116,138 @@ The checksummed acceptance bundle is stored on the FST drive at
 `fst-data/evidence/snapshot-pruning-report-only-v3-candidate/acceptance-1325-1326/`.
 This evidence authorizes a separate archive-only implementation and isolated
 restore proof. It does not authorize detach, rename, drop, truncate, or delete.
+
+Cycle `9` classified 99 candidate and 150 protected children with
+`170,139,426,816` candidate bytes. Its 250-row evidence chain is contiguous,
+and its planner/oracle child, live, and candidate sets are exactly equal. A
+planner-only run persisted the cycle before deliberately rejecting completed
+scrape `1329` as a resume target; no scrape `1330` was allocated during that
+archive window.
+
+## Archive-only package and proof
+
+`tools/postgres-snapshot-generation-archive.sh archive` selects the smallest
+candidate by `(snapshot_id, instrument, child_oid)` from the newest immutable
+cycle. An optional exact `--instrument` plus `--snapshot-id` pair is accepted
+only from the fixed nine-instrument allowlist and must resolve to a candidate
+in that same newest cycle. Partial selection, relation names, and SQL text are
+not accepted.
+
+Before and after `pg_dump`, the tool rechecks the accepted cycle, current
+publication, public-read state, notifications, running/resumable scrapes,
+holds, unreplayed writer failures, PostgreSQL 17 identity, container/image and
+PGDATA identity, same-drive capacity, exact root/parent/child attachments,
+catalog configuration, stable observation hashes, mutation counters, row
+count, and deterministic SHA-256 row fingerprint. Any drift removes the
+partial archive acceptance files and leaves a `rejected.json` record.
+
+The cycle check loads every latest-cycle observation and evidence row. It
+requires exact planner version `3` and config version `1`, rebuilds the
+physical child/live/candidate sets, recomputes stable child/config/metrics and
+cycle candidate/observation hashes with `TierZeroCanonicalJson` rules, and
+verifies the complete summary/child evidence sequence and SHA-256 linkage.
+Stored planner/oracle sets and summary validation sets must agree exactly.
+Canonical encoding matches `Utf8JsonWriter` and the default
+`JavaScriptEncoder`, including `\u0022` for embedded quotes. Persisted blocker,
+anomaly, evaluation, validation, and evidence ordering is retained exactly.
+Summary publication/index validation arrays remain production record objects
+for evidence hashing; only each record's exact `comparisonKey` is extracted
+and sorted for planner/oracle agreement.
+
+The custom archive contains only the top partitioned snapshot table, selected
+instrument root, and selected numeric child. It uses strict names,
+`--no-owner`, `--no-privileges`, compression, and a bounded dump lock wait.
+The accepted package retains the archive, TOC, full source catalog,
+`manifest.json`, and `SHA256SUMS`; it never retains a plaintext row export.
+
+Packages are accepted only below
+`fst-data/evidence/snapshot-generation-archives`. Before package creation, the
+tool resolves source PGDATA, every tablespace, every source-container mount,
+and Docker root. Equal, ancestor, or descendant overlap is rejected with
+path-relative and mount-source/FS-root identity checks, including bind aliases.
+Nested mount boundaries beneath archive/proof roots reject. Archive and proof
+share an exclusive reservation lock. Capacity uses the current physical
+catalog/archive and is rechecked immediately before admission rather than
+trusting planner byte estimates.
+
+The lock is the pre-provisioned regular file
+`fst-data/evidence/.snapshot-generation-archive-operation.lock`; public
+commands open it read-only without `O_CREAT`. They validate and pin
+archive-root/protected-source mount identity before lock acquisition, recheck
+immediately after locking, and revalidate again before their first output
+write. An unsafe archive-root alias receives no lock, rejection, or proof file.
+
+`prove` verifies every package checksum before starting a transient
+PostgreSQL 17 container. The package is mounted read-only, PGDATA is on the FST
+drive, network mode is `none`, no ports are published, and CPU, memory, PID,
+and shared-memory limits are explicit. Restore uses `pg_restore
+--exit-on-error --no-owner --no-privileges`. The proof compares hierarchy,
+partition bounds, columns/defaults/nullability, constraints, indexes, relation
+options, access methods, tablespaces, expected restore ownership, exact row
+count, and row SHA-256. It then removes the owned container and guarded scratch
+PGDATA and retains a checksummed proof manifest. `--keep-proof-outputs` also
+retains the detailed restored catalog and container evidence.
+
+The proof forces `data_directory` to its exact owned read-write bind, rejects
+anonymous or unexpected writable data mounts, and independently rechecks the
+device and free-space reserve. Cleanup targets are discovered by unique
+tool/proof/package labels even after an uncertain `docker run`; PGDATA is not
+cleaned until container absence is proven. Every completed attempt writes
+final cleanup evidence, and failures also write a checksummed rejection.
+Source discovery resolves the immutable container ID; every source query and
+dump uses that ID, with container/image/database/system/PGDATA/tablespace
+provenance re-inspected at dump admission and after streaming.
+
+Before creating `proofs`, a proof directory, marker, or PGDATA, the tool checks
+the existing package/prospective parent mount identity, nested boundaries, and
+all protected-source aliases. It rechecks parent mount identity immediately
+before atomic proof-directory reservation. Proof and cleanup bind mounts use
+Docker's structured `--mount` form.
+Unexpected image-declared volumes are captured before `docker rm -f -v` and
+must be absent before cleanup can be accepted.
+
+Repository unit/static tests and the disposable network-none PostgreSQL 17
+drill prove this mechanism without contacting `fst-postgres`. The drill rejects
+a placeholder planner hash and compares the complete source row fingerprint
+and logical catalog before/after. A C# fixture references the actual
+FSTService record and canonical serializer types and emits multiple nonempty
+record-shaped publication/index/numeric-child validations. The drill also rejects and cleans an image-declared extra volume.
+
+### Accepted smallest-child live canary
+
+The first live archive-only canary completed on cycle `9` without changing the
+source database. The exact target was
+`Solo_PeripheralCymbals` snapshot `1314`,
+`public.leaderboard_entries_snapshot_pro_cymbals_s1314`:
+
+- source OID and relfilenode: `319748510`;
+- source bytes: `4,628,480`;
+- exact rows: `8,627`;
+- stable child identity:
+  `7167d2b6b5a01e73d3ca8e5e49378a51a61f0e1b1753b1e12011c5dd05f1201b`;
+- row fingerprint:
+  `89bb111ca53eb905c344f113a3668102b8ad9a0fc5581cb585d6fb5004a81c29`.
+
+The custom archive is `359,470` bytes with SHA-256
+`0187f8894222846c9040c60461001643c9cd908cd830b1c0fad5c190dba8e5de`.
+The PostgreSQL `17.9` proof ran with network mode `none`, zero published ports,
+one CPU, 1 GiB memory, and a read-only package mount. It reproduced the exact
+row fingerprint and logical catalog hash
+`dce534bec2cd70afe873ccd5cc0c327d636bc93137839b07f20ee57631908501`.
+Cleanup proved container absence and removed all owned volumes, PGDATA, and
+scratch. The live child remained attached with the same OID, relfilenode,
+bytes, and row count, and every sampled public-health request returned HTTP
+`200`.
+
+The checksummed package is:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/
+  snapshot-generation-archives/cycle9-pro-cymbals-1314/
+```
+
+This accepts the archive-only package and restore-prover tier. It does not
+authorize source detach, quarantine, rename, drop, truncate, or deletion.
 
 ## Scheduling boundary
 
@@ -398,19 +554,24 @@ physical-row guard, age metadata, and prove that TTL cannot launder blockers.
 ## Promotion gates and future tiers
 
 Repository tests are not live evidence. The coordinator-owned report-only
-window produced accepted cycles `5` and `6`.
+window produced accepted cycles `5` through `9`.
 
 - The **two clean terminal report-only cycle** gate for archive-only
   development is satisfied.
+- Archive-only implementation, isolated synthetic proof, and the smallest-child
+  live archive/restore canary are accepted.
 - Destructive enablement requires **five exact planner/oracle agreement
   cycles**.
 - The five-cycle set must include at least one publication rotation and one
   genuine candidate-set change.
 
-The accepted pair includes a publication rotation but not a genuine
-candidate-set change. At least three more qualifying cycles, including a real
-candidate-set change, remain required. Do not fabricate or infer them from
-tests, duplicate invocations, or historical inventories.
+The accepted five-cycle set includes publication rotation and genuine
+candidate-set changes. That completes the observation prerequisite only.
+Archive-only packages and restore proofs do not themselves authorize
+destructive behavior. A separate executor implementation, exact matched
+live-scrape/API/source parity, smallest-child transactional
+quarantine/reattach rollback proof, soak evidence, and explicit operator
+approval remain required before any later drop without `CASCADE`.
 
 A later destructive design, if separately approved, uses ordinary
 transactional detach, quarantine rename, an exact
