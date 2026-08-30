@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-28
-last_verified_commit: c35b7f47
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -34,6 +34,8 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
+  - tools/postgres-snapshot-generation-archive.py
+  - tools/postgres-snapshot-generation-archive-drill.py
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationReadiness.cs
@@ -684,13 +686,71 @@ indexes). It ended with zero running, interrupted, cancelled, orphaned, or
 null-completion rows. The matched wall-clock upper bound for all PR-2 overhead
 was `0.0696%`; summed terminal phase outcomes differed by `0.736%`.
 
-## Generation-child report-only retention
+## Generation-child report-only retention and archive evidence
 
 The additive snapshot-generation control plane is default-off and structurally
 report-only. It stores immutable cycles, exact physical-child observations,
 safe-point deferrals, explicit holds, and append-only hash-chain evidence. It
 has no job relation, operation kind, lease, executor state, or service method
 that can archive, detach, rename, drop, truncate, or delete a child.
+
+A separate operator tool can copy one cryptographically authenticated planner
+candidate into a custom-format PostgreSQL archive and prove that package in an
+isolated PostgreSQL 17 container. It rebuilds the newest cycle's full
+observation sets, stable/cycle hashes, and evidence chain rather than trusting
+stored candidate flags. It is not a service executor and cannot change source
+catalog or row state. Accepted packages contain the exact top parent,
+instrument parent, and numeric child plus source identity, catalog,
+before/after fences, row count/fingerprint, TOC, manifest, and checksums. No
+duplicate plaintext row export is created.
+
+The evidence verifier reproduces `TierZeroCanonicalJson` byte-for-byte,
+including default `Utf8JsonWriter` string escaping and explicit persisted
+planner order. Production record-shaped validation arrays remain unchanged in
+the summary hash; their exact computed `comparisonKey` values alone drive
+planner/oracle agreement. A C# fixture references the actual FSTService record
+types and serializer, including numeric-child keys with embedded JSON quotes.
+
+Packages use one dedicated FST evidence root. Source PGDATA, tablespaces,
+container mounts, and Docker root are resolved before package creation and
+cannot overlap it by equality, ancestry, bind alias, mount FS-root identity, or
+nested mount boundary. Source commands are pinned to the discovered immutable
+container ID and revalidate full provenance before and after streaming. A
+shared reservation lock serializes archive/proof capacity; current physical
+size and free space are rechecked at admission.
+
+The reservation lock is pre-provisioned outside the archive root and opened
+read-only without creation. Public commands pin archive-root/protected mount
+identity before lock acquisition and revalidate after locking and before the
+first output write.
+
+The proof container has network mode `none`, no published ports, bounded
+resources, and a read-only package mount. Restore validation covers the exact
+logical hierarchy, columns, defaults, nullability, constraints, indexes,
+options, access methods, tablespaces, expected restore owner, row count, and
+SHA-256 row fingerprint. The exact PGDATA bind and `data_directory` must agree,
+and unexpected data volumes fail. Label-based cleanup proves container absence
+before removing PGDATA and writes final cleanup/rejection evidence. Structured
+Docker bind mounts avoid colon ambiguity; anonymous image-declared volumes are
+captured and must disappear through `docker rm -f -v`. The archive and
+checksummed proof manifest remain durable evidence.
+
+Prospective proof storage is validated before any write beneath `proofs` or
+scratch. Existing/prospective parent mount identity, nested boundaries, and
+protected-source aliases are checked first and revalidated immediately before
+the proof directory is atomically reserved.
+
+The first live package/proof canary used the newest cycle-`9` smallest
+candidate, Pro Cymbals snapshot `1314`. The attached source remained
+`4,628,480` bytes and `8,627` rows with unchanged OID/relfilenode. Its
+`359,470`-byte custom archive has SHA-256
+`0187f8894222846c9040c60461001643c9cd908cd830b1c0fad5c190dba8e5de`.
+The network-none PostgreSQL 17 restore reproduced the exact row SHA-256
+`89bb111ca53eb905c344f113a3668102b8ad9a0fc5581cb585d6fb5004a81c29`
+and logical catalog SHA-256
+`dce534bec2cd70afe873ccd5cc0c327d636bc93137839b07f20ee57631908501`,
+then proved complete container, anonymous-volume, PGDATA, and scratch cleanup.
+No source relation or row changed.
 
 Physical identity and liveness are per `(instrument, snapshot_id)` and exact
 OID/relfilenode/bound/name/schema configuration. Stable child/config hashes

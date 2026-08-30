@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-27
-last_verified_commit: bd6e2f55
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -20,6 +20,9 @@ sources:
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-retire-ix-le-song-rank.sh
   - tools/postgres-pro-bass-snapshot-rewrite.sh
+  - tools/postgres-snapshot-generation-archive.py
+  - tools/postgres-snapshot-generation-archive.sh
+  - tools/postgres-snapshot-generation-archive-drill.py
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
@@ -55,6 +58,81 @@ Check:
 7. CPU and memory pressure.
 
 Use bounded read-only probes first.
+
+## Snapshot-generation archive-only boundary
+
+The archive-only CLI is repository tooling, not a production-owned service or
+automatic retention executor. A live invocation must be parent-controlled and
+must use a new output directory under `/mnt/docker-storage`. It must never use
+the repository Compose templates to mutate production and must not be combined
+with any source partition maintenance.
+
+`archive` fails closed unless the newest planner cycle is observed,
+report-only, oracle-agreeing, and unblocked; its trigger is still the current
+unfrozen publication; notifications are complete; no working publication,
+running/resumable scrape, active target hold, or unreplayed target writer
+failure exists; and the complete physical/catalog identity still matches the
+immutable candidate observation. Solo Bass snapshot `1308` is an explicit
+defense-in-depth rejection.
+
+The source is fenced before and after the custom-format dump with exact
+catalog, OID/relfilenode, mutation-counter, byte, row-count, and deterministic
+row-fingerprint evidence. Full observation sets, exact planner versions,
+canonical cycle hashes, summary evidence, and every hash-chain link are
+independently rebuilt first; placeholders reject. Drift rejects the package.
+Canonical JSON bytes and persisted ordering must match the C# repository,
+including embedded-quote escaping and nonempty record-shaped validation
+arrays. Preserve those arrays/order for hashing; use only exact
+`comparisonKey` values for planner/oracle comparison.
+
+Output is restricted to
+`fst-data/evidence/snapshot-generation-archives`. Resolve PGDATA, tablespaces,
+all source mounts, and Docker root before creating output, then reject any
+equal/ancestor/descendant overlap, bind alias, mount-source/FS-root alias, or
+nested mount boundary. Pin all later source commands to the discovered
+container ID and re-inspect container/image/database/system/PGDATA/tablespace
+identity at dump admission and after streaming. Archive and proof share an
+exclusive same-drive reservation lock and recheck current physical size/free
+space immediately before admission.
+
+Pre-provision
+`fst-data/evidence/.snapshot-generation-archive-operation.lock` as a regular
+non-symlink file. The tool opens it read-only and never creates it. Both public
+commands pin archive-root/protected-source mount identity before opening the
+lock, revalidate immediately after acquisition, and check again before their
+first archive/proof-path write. Unsafe archive-root aliases must receive zero
+files, including lock and rejection evidence.
+
+`prove` uses a transient PostgreSQL 17 container with network mode `none`,
+zero published ports, bounded resources, read-only package access, and an
+exact same-drive PGDATA bind. Extra/anonymous data mounts or
+`data_directory` mismatch reject. Label-based cleanup after uncertain starts
+proves container absence before touching PGDATA and always records final
+cleanup plus rejection evidence when unsuccessful. Use structured `--mount`
+binds. Remove owned containers with `docker rm -f -v`, record unexpected
+anonymous volume names, and reject cleanup while any captured volume remains.
+Before writing `proofs`, markers, PGDATA, cleanup, or rejection evidence,
+validate the existing/prospective parent mount identity, nested boundaries,
+and protected-source aliases. Revalidate immediately before atomic proof
+directory creation; a rejected parent must receive zero files.
+
+Five live report-only cycles are accepted: `5/1325`, `6/1326`, `7/1327`,
+`8/1328`, and `9/1329`. They have exact planner/oracle agreement, zero
+blockers, publication rotation, and genuine candidate-set changes.
+
+The accepted live archive-only canary targeted Pro Cymbals snapshot `1314`
+from cycle `9`. It produced and network-none restore-proved the checksummed
+package under
+`fst-data/evidence/snapshot-generation-archives/cycle9-pro-cymbals-1314/`
+while the worker was offline and publication `1329` was idle and unfrozen.
+The source child remained attached and unchanged, transient proof resources
+were fully removed, and sampled public health remained HTTP `200`.
+
+These facts complete the five-cycle observation prerequisite and accept the
+archive-only tier. They do not authorize source detach, rename, quarantine,
+drop, truncate, or row removal. Those actions still require a separately
+implemented executor, exact matched parity, transactional reattach rollback
+proof, soak evidence, and explicit operator approval.
 
 ## Startup auto-heal
 

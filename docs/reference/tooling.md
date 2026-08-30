@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-28
-last_verified_commit: c35b7f47
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -21,6 +21,13 @@ sources:
   - tools/postgres-pro-bass-snapshot-rewrite.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.sh
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
+  - tools/postgres-snapshot-generation-archive.py
+  - tools/postgres-snapshot-generation-archive.sh
+  - tools/postgres-snapshot-generation-archive.test.py
+  - tools/postgres-snapshot-generation-archive.test.sh
+  - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
+  - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -196,11 +203,10 @@ bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
 
-### Snapshot-generation report-only evidence
+### Snapshot-generation report-only evidence and archive proof
 
-There is no new public/protected API, mutation CLI, archive tool, or delete
-tool. Visibility uses worker logs plus the existing read-only PostgreSQL
-tooling pattern.
+There is no new public/protected API or source-mutation CLI. Planner visibility
+uses worker logs plus the existing read-only PostgreSQL tooling pattern.
 
 The durable relations are:
 
@@ -240,6 +246,88 @@ development requires two clean terminal cycles. Destructive enablement
 requires five exact-agreement cycles including a publication rotation and a
 real candidate-set change. See
 [Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+The separate archive-only entry point is:
+
+```bash
+tools/postgres-snapshot-generation-archive.sh archive \
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-archives/<new-package>
+
+tools/postgres-snapshot-generation-archive.sh prove \
+  --package /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-archives/<completed-package> \
+  --keep-proof-outputs
+```
+
+`archive` defaults to the smallest candidate in the newest accepted planner
+cycle. Exact selection requires both `--instrument` and `--snapshot-id`; the
+instrument is one of nine fixed keys and the pair must still be a candidate in
+that newest cycle. It authenticates all cycle observations, exact versions,
+canonical sets/hashes, summary validations, and evidence-chain links. The CLI
+accepts no relation name or SQL text; source SQL is restricted to internal
+single-statement read forms.
+
+Canonical evidence uses exact C# `Utf8JsonWriter` escaping. Production
+validation record arrays and their original order remain unchanged for
+summary/evidence hashing; sorted exact `comparisonKey` values are used only for
+planner/oracle agreement. Once source discovery finishes, queries, TOC,
+fingerprints, and `pg_dump` use the immutable container ID; complete provenance
+is checked again before and after streaming.
+
+An accepted package contains `archive.custom`, `archive.toc`, `catalog.json`,
+`manifest.json`, and `SHA256SUMS`. `prove` verifies those files before restore,
+uses a PostgreSQL 17 network-none/no-port container, and always removes its
+container and owned PGDATA after proving container absence. Packages must use
+the dedicated archive root and cannot overlap source PGDATA, tablespaces,
+mounts, or Docker root. A reservation lock and current physical-size/free-space
+gate serialize admission. The optional flag retains detailed proof outputs;
+cleanup and the checksummed proof manifest are retained either way.
+Pre-provision
+`fst-data/evidence/.snapshot-generation-archive-operation.lock` as a regular
+non-symlink file. The CLI opens it read-only without creating it and validates
+archive-root/protected mount identity before and after lock acquisition and
+again before the first output write.
+Mount fencing compares findmnt source, filesystem root, device, and target,
+rejects bind aliases and nested mount boundaries, and uses structured Docker
+`--mount` binds. Cleanup uses `docker rm -f -v` and verifies every captured
+anonymous volume is absent.
+Before creating `proofs`, a proof directory, marker, PGDATA, cleanup, or
+rejection evidence, the tool checks existing/prospective parent mount identity,
+nested boundaries, and protected-source aliases. It revalidates the parent
+immediately before atomic proof-directory reservation.
+
+The first accepted live invocation archived Pro Cymbals snapshot `1314` from
+cycle `9` and restore-proved it with:
+
+```bash
+tools/postgres-snapshot-generation-archive.sh archive \
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-archives/cycle9-pro-cymbals-1314 \
+  --instrument pro-cymbals \
+  --snapshot-id 1314
+
+tools/postgres-snapshot-generation-archive.sh prove \
+  --package /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-archives/cycle9-pro-cymbals-1314 \
+  --proof-id live-cycle9-1314 \
+  --postgres-image fst-postgres:17-repack \
+  --keep-proof-outputs
+```
+
+The archive and proof were accepted without source mutation. This command
+pair is recovery evidence only, not a detach/drop executor.
+
+Static/unit and disposable synthetic validation:
+
+```bash
+bash tools/postgres-snapshot-generation-archive.test.sh
+python3 tools/postgres-snapshot-generation-archive-drill.py
+```
+
+The drill creates authentic planner hashes/evidence, confirms placeholder-hash
+rejection, compares the full source row fingerprint and logical catalog, and
+removes only synthetic containers and same-drive scratch. It never connects to
+`fst-postgres`. The archive test references actual FSTService validation record
+and canonical serializer types with multiple nonempty record arrays. The drill
+rejects an image with an extra `VOLUME` and proves its anonymous volume is
+removed.
 
 ### Legacy snapshot rewrite evidence
 

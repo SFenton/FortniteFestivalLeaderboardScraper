@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-29
-last_verified_commit: c35b7f47
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -53,10 +53,12 @@ update_triggers:
   notifications, registration drain, and worker exit.
 - Make recurring generation retention the active storage lane in evidence
   gates. The implemented first slice is default-off/report-only and has no
-  executable work state. Live cycles `5` and `6` satisfy the archive-only
-  development entry gate. Archive-only implementation, executor/prover,
-  destructive canary, and later sparse-compaction tiers remain separate
-  unresolved iterations.
+  executable work state. The separate archive-only CLI and isolated prover are
+  implemented, synthetically validated, and live-accepted on unchanged Pro
+  Cymbals snapshot `1314`. Live cycles `5/1325` through `9/1329` have exact
+  agreement, zero blockers, publication rotation, and genuine candidate-set
+  changes. Destructive executor/parity/quarantine canaries and later
+  sparse-compaction tiers remain separate unresolved iterations.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -655,15 +657,18 @@ Each iteration below is a separate branch/PR.
 ### Parallel storage and reclaim evidence
 
 The default-off generation-child report-only control plane is implemented.
-Live cycles `5` and `6` satisfy the archive-only development entry gate.
-Current unresolved work is archive proof, further evidence accrual, and later
-tier design:
+The separate archive-only package/proof tool is implemented and passes a
+disposable PostgreSQL 17 network-none drill. Live cycles `5/1325` through
+`9/1329` satisfy the five-cycle observation prerequisite with publication
+rotation and genuine candidate-set changes. A parent-controlled live
+smallest-child archive/restore canary also passed on unchanged Pro Cymbals
+snapshot `1314`. Current unresolved work is later destructive-tier design and
+validation:
 
-- implement archive-only evidence and network-isolated restore proof without
-  detach/drop;
-- require five exact planner/oracle agreement cycles before destructive enable;
-- include at least one publication rotation and one genuine candidate-set
-  change in those five cycles;
+- design a separate no-Docker-socket destructive executor;
+- require matched full-scrape and same-publication API/source parity;
+- quarantine one smallest eligible child transactionally and prove reattach
+  rollback before any later non-cascade drop;
 - keep scrape `1308` protected wherever unreplayed writer-failure evidence
   remains;
 - retain exact archive/restore, live A/B, canary, rollback, API, lock, resource,
@@ -678,13 +683,12 @@ generation-child oracle.
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - implement archive-only evidence and network-isolated restore proof without
-     detach/drop;
-   - accrue at least three more qualifying cycles to complete the five-cycle
-     exact-agreement gate, including a genuine candidate-set change;
-   - design a separate no-Docker-socket executor and network-none restore
-     prover only after those gates;
-   - run manual smallest/large-child canaries before automatic execution;
+   - design a separate no-Docker-socket destructive executor after the
+     accepted five-cycle and archive/restore gates;
+   - run matched parity and a manual transactional quarantine/reattach canary
+     before implementing any later non-cascade drop;
+   - run a separately approved large-child recovery canary before automatic
+     execution;
    - separately gated sparse-child compaction before claiming bounded
      steady-state storage;
 2. review and qualify the freeze-safe publication API cache candidate. The

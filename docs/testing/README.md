@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-28
-last_verified_commit: c35b7f47
+last_verified: 2026-08-30
+last_verified_commit: 9a0a08dd
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -39,6 +39,12 @@ sources:
   - tools/postgres-retire-ix-le-song-rank.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.py
+  - tools/postgres-snapshot-generation-archive.test.py
+  - tools/postgres-snapshot-generation-archive.test.sh
+  - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
+  - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
+  - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -244,6 +250,52 @@ payloads are removed.
 
 These tests are repository evidence only. They do not satisfy the two-cycle or
 five-cycle live observation gates.
+
+Focused archive-only retention validation:
+
+```bash
+bash -n tools/postgres-snapshot-generation-archive.sh
+bash -n tools/postgres-snapshot-generation-archive.test.sh
+bash tools/postgres-snapshot-generation-archive.test.sh
+python3 tools/postgres-snapshot-generation-archive-drill.py
+```
+
+The unit/static suite covers the fixed instrument allowlist, newest-cycle
+candidate SQL, exact-pair selection, exact versions, full
+observation/set/candidate/cycle-hash reconstruction, summary/child evidence
+linkage, exact C# quote/default-encoder behavior, actual FSTService
+record-shaped publication/index/numeric-child fixture serialization,
+original-array-order hashing and comparison-key-only agreement,
+planner/publication/notification/hold
+failures, Solo Bass `1308`, dedicated-root/symlink/PGDATA/tablespace/Docker
+overlap guards, bind aliases and nested/different-device mounts, immutable
+container-ID provenance, current physical capacity and reservation locking,
+source-fence drift, primary-key/fingerprint timeouts, structured colon-safe
+Docker mounts, checksum tampering, network-none restore, exact PGDATA/package
+mounts, uncertain-start label cleanup, anonymous-volume verification,
+owned-scratch cleanup, zero-write rejection of a bind-aliased proofs parent,
+public-wrapper zero-write rejection of a bind-aliased archive root,
+pre-provisioned no-create lock and remount revalidation, and strict read-only
+source command behavior.
+
+The disposable drill creates a minimal top snapshot table, instrument
+partition, numeric child, publication state, and authentic immutable planner
+cycle/evidence chain in a fresh PostgreSQL 17 container under the dedicated
+archive root. It proves a placeholder hash is rejected, runs `archive` and
+`prove`, verifies exact restoration plus the full before/after source row
+fingerprint and logical catalog, and proves every transient container is absent
+before PGDATA cleanup. It also rejects a PostgreSQL image declaring an extra
+anonymous `VOLUME` and proves `docker rm -f -v` removed it. It never uses live
+`fst-postgres`. These tests prove
+repository behavior only; a live archive canary remains parent-controlled.
+
+The first parent-controlled canary is now accepted: cycle `9` selected Pro
+Cymbals snapshot `1314`, the custom archive and all package/proof checksums
+passed, PostgreSQL 17 network-none restore reproduced the exact 8,627-row
+fingerprint and logical catalog, cleanup removed every transient resource, and
+the source child remained unchanged. Live cycles `5` through `9` also satisfy
+the five-cycle observation prerequisite. Neither result is a destructive
+executor test or authorization.
 
 The aggregate line denominator excludes long-running external/process/database
 orchestration already validated through focused contract and integration
