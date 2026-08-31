@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -25,6 +25,12 @@ sources:
   - tools/postgres-snapshot-generation-archive-drill.py
   - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
   - tools/postgres-snapshot-generation-quarantine.sh
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
+  - tools/postgres-snapshot-generation-drop.sh
+  - tools/postgres-snapshot-generation-restore.py
+  - tools/capture-snapshot-generation-drop-health.py
+  - tools/postgres-snapshot-generation-drop-drill.py
+  - docs/database/SnapshotGenerationDropRunbook.md
   - tools/capture-publication-route-contract.sh
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
@@ -171,9 +177,12 @@ functions take the same transaction locks without waiting, so lock contention
 forces a new transaction and a fresh snapshot. The exact DEFAULT partition
 must be empty. The same transaction adds a validated
 `snapshot_id <> G` DEFAULT exclusion, inserts the
-`retention_in_flight` hold, detaches and privately renames the child, adds
+`retention_in_flight` hold, detaches the child, structurally classifies exactly
+its PK and score btree indexes, renames their existing OIDs to
+`sgqi_<full-operation-id>_{pk|score}`, privately moves/renames the child, adds
 `snapshot_id = G`, installs a mutation-rejection trigger, and stores immutable
-operation evidence. A failed statement rolls back all of those changes.
+operation plus per-index mapping evidence. The PK constraint follows its
+index rename. A failed statement rolls back all of those changes.
 
 Immediately capture and attest the original-publication post-quarantine
 55-route result. During soak, preserve the archive and hold. If publication
@@ -185,10 +194,13 @@ requires a successful soak for that current publication.
 
 Reattach validates zero target rows in the DEFAULT child, the validated
 DEFAULT exclusion, exact private child identity/check/trigger/row count, and
-then restores the same OID/relfilenode and both required index chains. It drops
-only the two temporary CHECK constraints and releases only its own hold. Take
-a final capture and attest it against the latest successful pre-reattach soak
-capture.
+the operation-scoped index mappings. For a pre-change operation it performs
+the same exact role-based normalization as a repair before the schema move.
+It never renames, drops, or rebuilds an unrelated destination object, then
+restores the same table and index OIDs/relfilenodes and both required index
+chains. It drops only the two temporary CHECK constraints and releases only
+its own hold. Take a final capture and attest it against the latest successful
+pre-reattach soak capture.
 
 Any live quarantine still requires explicit operator approval after current
 preflight and parity evidence. A successful reattach canary does not authorize
@@ -204,6 +216,115 @@ SHA-256, and both index links. The DEFAULT child remained empty for snapshot
 1314. The exact hold was released and both temporary constraints were removed.
 Evidence is under
 `fst-data/evidence/snapshot-generation-quarantine-candidate/acceptance-cycle11-pro-cymbals-1314/`.
+
+## Snapshot-generation DROP and restore boundary
+
+The repository contains a separate DROP-only executable and a separate
+logical-restore tool. They are not production services and are never scheduled
+by the API or worker. Their presence is not authorization to run them.
+
+Official confirmation scrape `1333` and retention cycle `13` are accepted.
+Scrape `1333` completed 710 songs, 41,154,968 entries, 608,691 requests, and
+92,821,715,390 bytes with 8,520/8,520 complete manifests across 12
+instruments, zero critical/best-effort/writer failures, and no
+retry-exhausted/failure reason. Publication `157` became current, unfrozen, and
+idle with 6,390 published solo source bindings and first-attempt completed
+notifications. Cycle `13` records 111 candidates, 174 protected, zero blocked,
+194,754,322,432 candidate bytes, exact planner/oracle sets, and zero global
+blockers. Solo Bass `1308` remains protected by
+`unreplayed_writer_failure` with stable identity
+`4e3310328261704da558e6d83f99cbc77bc01cef10abbac0840df471d33809cc`;
+Pro Cymbals `1314` was the true smallest cycle-13 candidate at 4,628,480
+bytes. Production continued automatically into scrape `1334`; cycle `15`
+correctly recorded that target absent while Q1 was private.
+
+Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` subsequently passed the
+scrape-1335/publication-159-to-162 rotation, exact cycle `15`, and
+publication-162 55-route soak. Its first reattach failed transactionally with
+`42P07` because a new Solo Guitar child had reused the private target's former
+secondary-index name. No residue committed: the target remained private at
+OID/relfilenode `319748510`, its then-active hold/checks/trigger and validated
+DEFAULT fence were exact, the DEFAULT had zero target rows, and no
+reattachment row existed at that incident boundary. Later live progression
+reached a separately approved DROP function call; do not infer the exact
+intervening acceptance state without re-reading operator evidence.
+
+Before any DROP retry:
+
+1. deploy and verify the reviewed empty-table upgrade for all nine DROP and
+   seven restore semantic/index/authorization columns plus the six rebuilt
+   constraints;
+2. rebuild and pin the service/quarantine/DROP artifacts and exact hashes;
+3. repeat current Docker/PostgreSQL/publication/worker/lock/resource safety
+   checks and verify the production-owned invoker remains least-privilege;
+4. reauthenticate the exact Q1/Q2/archive/proof/route/health/bundle evidence,
+   regenerate any expired plan, and continue excluding Solo Bass `1308`;
+5. obtain explicit operator authorization for the new attempt.
+
+The database functions are `SECURITY INVOKER`, remain revoked from `PUBLIC`,
+and have no repository-provisioned grants.
+
+The DROP wrapper runs only a prebuilt SHA-256-verified DLL and has no Docker
+access. It accepts no relation, schema, SQL, batch, force, or automatic
+selection argument. The transaction keeps the worker offline, acquires the
+existing six locks plus the dedicated drop lock, explicitly takes `SHARE` on
+the exact DEFAULT child and `ACCESS EXCLUSIVE` on the private child, and
+executes exactly one `DROP TABLE <derived-private-child> RESTRICT`. It retains
+the hold and the already validated Q2 DEFAULT exclusion under its existing
+deterministic name. The DROP transaction holds no relation lock on the top
+table, instrument root, or sibling children.
+
+Before rebuilding or retrying a live DROP, run the reviewed initializer and
+verify the persisted evidence schema, not merely function presence. The first
+approved attempt failed closed with `42703` before DDL because the empty live
+drop-operation table predated nine semantic columns; no child was dropped.
+The explicit upgrade may add those columns and replace the two named
+constraints only when the table is empty. Missing semantic columns on a
+nonempty drop or restore operation table are an unrecoverable provenance
+ambiguity for automation and raise `55000`; never backfill asserted hashes.
+
+The subsequent approved retry committed DROP operation
+`333ba4b9fb69dbc098d127f0008ec709` with plan digest
+`fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`.
+Do not attempt reattach or another DROP. Restore planning initially failed
+before output or mutation because Python reserialization did not preserve the
+C# canonical plan bytes. The validator must authenticate the original
+canonical file and the immutable database row before any restore action.
+
+The repair authorization is inserted only after the accepted post-DROP
+monitor. It uses a separate no-Docker authorizer, distinct operator/reviewer,
+and a sealed tool-only package; it never changes or duplicates the original
+bundle. Before authorization, verify the restore-operation table is empty.
+Before planning, immediately before `pg_restore`, and immediately before
+attach, re-read the same authorization and committed DROP. Authorization age
+only warns; it never expires and cannot strand confirm/attest/finalize after a
+restore row commits. Mandatory restore remains required before canary
+acceptance.
+
+If commit acknowledgement is lost, run `confirm`; never issue another DROP
+until the immutable operation row and old relation name/OID have been
+reconciled. A mixed state stops all mutation.
+
+The restore tool selects only the child table, table data, primary-key
+constraint, and secondary index from the accepted custom archive for
+authentication. It excludes both parent relations and all table/index
+attachment entries and executes only table plus table data through
+`pg_restore --single-transaction`. Archived index DDL is never executable.
+After fixed-shape validation, a short transaction creates deterministic
+`sgri_<full-restore-operation-id>_{pk|score}` indexes from repository-owned
+SQL, attaches the exact table, and verifies both chains. Archived-name
+collisions on unrelated objects are harmless because those objects remain
+untouched. A new OID/relfilenode is expected. Raw archive/catalog/config
+hashes remain independent provenance; cross-Q1/Q2 equality uses exact physical
+identity and a versioned name-insensitive semantic catalog. The retained hold
+is released only after exact restored route/data/catalog parity and explicit
+finalization; the restore mutation guard is removed atomically with that
+release.
+
+The first live DROP canary must be restored after its 30-minute post-DROP
+monitoring window. Permanent single-child DROP is a later approval; batch and
+automatic retirement remain prohibited. Follow
+[the dedicated runbook](../database/SnapshotGenerationDropRunbook.md).
 
 ## Startup auto-heal
 

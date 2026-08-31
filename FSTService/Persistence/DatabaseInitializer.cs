@@ -442,6 +442,17 @@ public static class DatabaseInitializer
                 StatementTimeout:
                     NotificationSchemaStatementTimeout),
             new(
+                Name:
+                    "snapshot-generation-drop",
+                Sql: Maintenance
+                    .SnapshotGenerationDropSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,
                 CommandTimeoutSeconds:
@@ -799,6 +810,9 @@ public static class DatabaseInitializer
             instrument_partition TEXT;
             generation_partition TEXT;
             observed_bound TEXT;
+            observed_oid BIGINT;
+            active_hold_exists BOOLEAN := FALSE;
+            committed_drop_exists BOOLEAN := FALSE;
         BEGIN
             IF p_snapshot_id <= 0 THEN
                 RAISE EXCEPTION 'snapshot generation ID must be positive';
@@ -839,8 +853,40 @@ public static class DatabaseInitializer
             generation_partition :=
                 instrument_partition || '_s' || p_snapshot_id::TEXT;
 
-            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
-            INTO observed_bound
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            SELECT
+                pg_get_expr(
+                    relation.relpartbound,
+                    relation.oid,
+                    TRUE),
+                relation.oid::BIGINT
+            INTO
+                observed_bound,
+                observed_oid
             FROM pg_class relation
             JOIN pg_namespace namespace
               ON namespace.oid = relation.relnamespace
@@ -852,6 +898,55 @@ public static class DatabaseInitializer
                     to_regclass('public.' || instrument_partition);
 
             IF observed_bound IS NOT NULL THEN
+                IF to_regclass(
+                        'public.snapshot_generation_drop_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_finalizations')
+                        IS NOT NULL
+                THEN
+                    EXECUTE
+                        'WITH latest_drop AS (
+                            SELECT drop_row.drop_operation_id
+                            FROM public.snapshot_generation_drop_operations
+                                drop_row
+                            WHERE drop_row.instrument = $1
+                              AND drop_row.snapshot_id = $2
+                            ORDER BY
+                                drop_row.dropped_at DESC,
+                                drop_row.drop_operation_id DESC
+                            LIMIT 1)
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM latest_drop)
+                           AND NOT EXISTS (
+                            SELECT 1
+                            FROM latest_drop
+                            JOIN public.snapshot_generation_restore_operations
+                                restore_row
+                              ON restore_row.drop_operation_id =
+                                    latest_drop.drop_operation_id
+                            JOIN public.snapshot_generation_restore_finalizations
+                                finalization
+                              ON finalization.restore_operation_id =
+                                    restore_row.restore_operation_id
+                            WHERE restore_row.restored_child_oid = $3)'
+                    INTO committed_drop_exists
+                    USING
+                        p_instrument,
+                        p_snapshot_id,
+                        observed_oid;
+                    IF committed_drop_exists THEN
+                        RAISE EXCEPTION
+                            'snapshot generation %/% does not match a finalized logical restore',
+                            p_instrument,
+                            p_snapshot_id
+                            USING ERRCODE = '55000';
+                    END IF;
+                END IF;
                 IF observed_bound IS DISTINCT FROM
                         format('FOR VALUES IN (%L)', p_snapshot_id) THEN
                     RAISE EXCEPTION
@@ -866,6 +961,27 @@ public static class DatabaseInitializer
                 RAISE EXCEPTION
                     'snapshot generation relation % exists outside expected parent',
                     generation_partition;
+            END IF;
+
+            IF to_regclass(
+                    'public.snapshot_generation_drop_operations')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_drop_operations
+                        WHERE instrument = $1
+                          AND snapshot_id = $2)'
+                INTO committed_drop_exists
+                USING p_instrument, p_snapshot_id;
+                IF committed_drop_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has a committed DROP tombstone',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
             END IF;
 
             -- PostgreSQL chooses inherited index names in the shared schema.
@@ -876,8 +992,40 @@ public static class DatabaseInitializer
                     'fst.snapshot-generation-partition-ddl',
                     0));
 
-            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
-            INTO observed_bound
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            SELECT
+                pg_get_expr(
+                    relation.relpartbound,
+                    relation.oid,
+                    TRUE),
+                relation.oid::BIGINT
+            INTO
+                observed_bound,
+                observed_oid
             FROM pg_class relation
             JOIN pg_namespace namespace
               ON namespace.oid = relation.relnamespace
@@ -889,6 +1037,55 @@ public static class DatabaseInitializer
                     to_regclass('public.' || instrument_partition);
 
             IF observed_bound IS NOT NULL THEN
+                IF to_regclass(
+                        'public.snapshot_generation_drop_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_finalizations')
+                        IS NOT NULL
+                THEN
+                    EXECUTE
+                        'WITH latest_drop AS (
+                            SELECT drop_row.drop_operation_id
+                            FROM public.snapshot_generation_drop_operations
+                                drop_row
+                            WHERE drop_row.instrument = $1
+                              AND drop_row.snapshot_id = $2
+                            ORDER BY
+                                drop_row.dropped_at DESC,
+                                drop_row.drop_operation_id DESC
+                            LIMIT 1)
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM latest_drop)
+                           AND NOT EXISTS (
+                            SELECT 1
+                            FROM latest_drop
+                            JOIN public.snapshot_generation_restore_operations
+                                restore_row
+                              ON restore_row.drop_operation_id =
+                                    latest_drop.drop_operation_id
+                            JOIN public.snapshot_generation_restore_finalizations
+                                finalization
+                              ON finalization.restore_operation_id =
+                                    restore_row.restore_operation_id
+                            WHERE restore_row.restored_child_oid = $3)'
+                    INTO committed_drop_exists
+                    USING
+                        p_instrument,
+                        p_snapshot_id,
+                        observed_oid;
+                    IF committed_drop_exists THEN
+                        RAISE EXCEPTION
+                            'snapshot generation %/% does not match a finalized logical restore',
+                            p_instrument,
+                            p_snapshot_id
+                            USING ERRCODE = '55000';
+                    END IF;
+                END IF;
                 IF observed_bound IS DISTINCT FROM
                         format('FOR VALUES IN (%L)', p_snapshot_id) THEN
                     RAISE EXCEPTION
@@ -903,6 +1100,51 @@ public static class DatabaseInitializer
                 RAISE EXCEPTION
                     'snapshot generation relation % exists outside expected parent',
                     generation_partition;
+            END IF;
+
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+            IF to_regclass(
+                    'public.snapshot_generation_drop_operations')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_drop_operations
+                        WHERE instrument = $1
+                          AND snapshot_id = $2)'
+                INTO committed_drop_exists
+                USING p_instrument, p_snapshot_id;
+                IF committed_drop_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has a committed DROP tombstone',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
             END IF;
 
             EXECUTE format(

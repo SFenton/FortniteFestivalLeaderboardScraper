@@ -57,6 +57,64 @@ public sealed class SnapshotGenerationQuarantineToolTests
     }
 
     [Fact]
+    public void ArchivePackageBindsManifestCatalogDigestToCatalogBytes()
+    {
+        var package = CreateArchivePackage();
+        var proofDirectory = Path.Combine(
+            package,
+            "proofs",
+            "test-proof");
+        var proofPath = Path.Combine(
+            proofDirectory,
+            "proof-manifest.json");
+        var manifestPath = Path.Combine(
+            package,
+            "manifest.json");
+        var manifest = JsonNode.Parse(
+            File.ReadAllText(manifestPath))!
+            .AsObject();
+        manifest["catalog"]!["sha256"] =
+            new string('0', 64);
+        File.WriteAllText(
+            manifestPath,
+            manifest.ToJsonString());
+        WriteChecksumFile(
+            package,
+            [
+                "archive.custom",
+                "archive.toc",
+                "catalog.json",
+                "manifest.json",
+            ]);
+        var proof = JsonNode.Parse(
+            File.ReadAllText(proofPath))!
+            .AsObject();
+        proof["packageManifestSha256"] =
+            Sha256(manifestPath);
+        File.WriteAllText(
+            proofPath,
+            proof.ToJsonString());
+        WriteChecksumFile(
+            proofDirectory,
+            [
+                "cleanup.json",
+                "container-evidence.json",
+                "proof-manifest.json",
+                "restored-catalog.json",
+            ]);
+
+        var failure = Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateArchivePackage(
+                    package,
+                    proofPath));
+        Assert.Contains(
+            "catalog",
+            failure.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SourceEvidenceRequiresCompleteChecksummedScrape()
     {
         var directory = Path.Combine(_root, "source");
@@ -253,12 +311,22 @@ public sealed class SnapshotGenerationQuarantineToolTests
             repository,
             "tools",
             "FstSnapshotGenerationQuarantine");
+        var sharedDirectory = Path.Combine(
+            repository,
+            "tools",
+            "FstSnapshotGenerationEvidence");
         var source = string.Join(
             "\n",
-            Directory.EnumerateFiles(
+            new[]
+                {
                     directory,
-                    "*.cs",
-                    SearchOption.AllDirectories)
+                    sharedDirectory,
+                }
+                .SelectMany(path =>
+                    Directory.EnumerateFiles(
+                        path,
+                        "*.cs",
+                        SearchOption.AllDirectories))
                 .Select(File.ReadAllText));
         var wrapper = File.ReadAllText(
             Path.Combine(
@@ -350,6 +418,13 @@ public sealed class SnapshotGenerationQuarantineToolTests
                         Path.Combine(
                             package,
                             "archive.custom")),
+                },
+                catalog = new
+                {
+                    sha256 = Sha256(
+                        Path.Combine(
+                            package,
+                            "catalog.json")),
                 },
                 cycle = new
                 {

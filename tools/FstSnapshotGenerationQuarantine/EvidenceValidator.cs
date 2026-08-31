@@ -222,6 +222,18 @@ public static class QuarantineEvidenceValidator
             throw new InvalidDataException(
                 "Archive digest differs from SHA256SUMS.");
         }
+        var catalog = RequireObject(root, "catalog");
+        var catalogSha = RequireSha256(
+            catalog,
+            "sha256");
+        if (!string.Equals(
+                catalogSha,
+                packageChecksums["catalog.json"],
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "Archive manifest catalog digest differs from catalog.json.");
+        }
 
         var cycle = RequireObject(root, "cycle");
         RequireInt32(cycle, "plannerVersion", 3);

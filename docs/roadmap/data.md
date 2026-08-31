@@ -2,7 +2,7 @@
 status: roadmap
 owner: data
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - FSTService/FeatureOptions.cs
   - FSTService/appsettings.json
@@ -15,6 +15,8 @@ sources:
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
   - docs/database/SnapshotGenerationRetentionSafety.md
+  - docs/database/SnapshotGenerationDropRunbook.md
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
   - docs/roadmap/post-scrape-processing.md
 update_triggers:
   - Publication, snapshot ownership, retention, or analytics readiness changes.
@@ -28,7 +30,7 @@ These are verified gaps, not automatic implementation approvals.
 |---|---|---|
 | Complete generation-addressable publication bindings | `EnablePublicationReadContext` remains false for both service and worker roles | Every publication-bound surface reports ready; stale/current generation behavior passes contract tests and live-safe validation |
 | Finish snapshot/current-state ownership migration | Snapshot reuse is accepted and enabled. Scrape 1304 proved mixed legacy/generation writer routing and publication, but snapshot-overlay readers remain disabled. | Complete reader migration with replay/live parity, rollback, and storage/resource comparison |
-| Bound physical snapshot generations | All nine instrument roots are generation-partitioned. The default-off report-only owner retains exact child/config identity, child-scoped roots, immutable cycles/deferrals/evidence, centralized TTL/planner locking, and an independent SQL liveness oracle. Cycles `5/1325` through `11/1331` continue exact agreement with zero blockers. The archive-only and no-Docker-socket quarantine/reattach tiers are live-accepted on Pro Cymbals snapshot `1314`; the 452-second canary preserved OID/relfilenode, bytes, 8,627 rows, row SHA-256, DEFAULT emptiness, public health, and three zero-difference 55-route attestations. Scrape `1308` remains protected by unreplayed Solo Bass writer-failure evidence. | Design and validate a separate non-cascading single-child drop tier using the accepted archive and quarantine rollback evidence. Automatic bounded retirement and sparse-child compaction stay later and remain disabled |
+| Bound physical snapshot generations | All nine instrument roots are generation-partitioned. The default-off report-only owner retains exact child/config identity, child-scoped roots, immutable cycles/deferrals/evidence, centralized TTL/planner locking, and an independent SQL liveness oracle. Archive-only and the original quarantine/reattach canary are live-accepted on Pro Cymbals `1314`. Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` passed scrape `1335`, publication rotation `159` to `162`, exact cycle `15`, and publication-162 route soak; its initial reattach failed closed with `42P07` and no residue. A first approved DROP attempt then failed before DDL with `42703` on the empty pre-semantic operation schema. After explicit upgrade, DROP operation `333ba4b9fb69dbc098d127f0008ec709` committed under plan digest `fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`. The first restore-plan attempt emitted no output and performed no mutation because Python reserialization did not reproduce the authoritative C# plan digest. The corrective branch now has an immutable exact-DROP restore-tool authorization, separate no-Docker authorizer, one-use restore FK, and tool-only repair package without changing the original bundle. Solo Bass `1308` remains excluded by unreplayed writer-failure evidence with stable identity `4e3310328261704da558e6d83f99cbc77bc01cef10abbac0840df471d33809cc`. | Build and review final H3/authorizer/package evidence; deploy the additive empty-restore-table upgrade; authorize and confirm the exact repair after post-DROP monitoring; execute mandatory logical restore under fresh approval; prove exact rows/topology/routes/health and later clean confirmation evidence before promotion. Automatic retirement and sparse-child compaction stay later and disabled |
 | Evaluate bounded artifact analytics | DuckDB/Parquet is routed as an artifact-only option, not a production source of truth | Bounded export/replay benchmark that preserves PostgreSQL publication correctness and stays on the FST drive |
 | Verify freeze-safe publication cache at a natural publication switch | Service-only promotion is complete. Scrape `1310` advanced publication `103`, preserved persisted reads through one deferred retry, and recorded zero HTTP failures across 309 monitor samples. The scrape evidence still did not attribute first-hit L1/L2 recovery or prove every invalidation-card observation. | At the next bounded cache-specific test, capture pre-publication leakage checks, atomic current/previous cache binding, L1 reset, first-hit L2 attribution, exact route parity, and public health without coupling that evidence to another data candidate |
 

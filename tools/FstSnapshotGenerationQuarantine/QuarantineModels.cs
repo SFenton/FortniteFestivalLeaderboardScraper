@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using FSTService.Persistence.Maintenance;
-using FSTService.Scraping.Replay;
+using FstSnapshotGenerationEvidence;
 
 namespace FstSnapshotGenerationQuarantine;
 
@@ -26,7 +25,7 @@ public static class QuarantineJson
     }
 
     public static byte[] Canonical<T>(T value) =>
-        TierZeroCanonicalJson.Serialize(value);
+        SnapshotGenerationCanonicalJson.Serialize(value);
 
     public static string Sha256<T>(T value) =>
         Convert.ToHexString(
@@ -169,7 +168,8 @@ public sealed record SnapshotGenerationQuarantinePlan(
             new
             {
                 ToolId =
-                    SnapshotGenerationQuarantineContract.ToolId,
+                    SnapshotGenerationQuarantineEvidenceContract
+                        .ToolId,
                 PlanDigest = digest,
             })[..32];
         return this with
@@ -182,9 +182,11 @@ public sealed record SnapshotGenerationQuarantinePlan(
     public void Validate()
     {
         if (SchemaVersion !=
-                SnapshotGenerationQuarantineContract.SchemaVersion
+                SnapshotGenerationQuarantineEvidenceContract
+                    .SchemaVersion
             || ToolId !=
-                SnapshotGenerationQuarantineContract.ToolId
+                SnapshotGenerationQuarantineEvidenceContract
+                    .ToolId
             || !ExplicitApprovalRequired
             || string.IsNullOrWhiteSpace(PlanDigest)
             || string.IsNullOrWhiteSpace(OperationId))
@@ -307,3 +309,9 @@ public sealed record QuarantineOperationState(
     int SuccessfulQuarantinedAttestations,
     int SuccessfulSoakAttestations,
     int SuccessfulReattachedAttestations);
+
+public sealed record FingerprintEvidence(
+    string Algorithm,
+    string Sha256,
+    long RowCount,
+    long StreamBytes);

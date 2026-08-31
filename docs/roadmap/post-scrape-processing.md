@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -23,7 +23,10 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
   - tools/FstSnapshotGenerationQuarantine/
+  - tools/FstSnapshotGenerationDrop/
+  - tools/postgres-snapshot-generation-restore.py
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
@@ -60,8 +63,25 @@ update_triggers:
   Cymbals snapshot `1314`. Live cycles `5/1325` through `9/1329` have exact
   agreement, zero blockers, publication rotation, and genuine candidate-set
   changes. The no-Docker-socket quarantine/reattach executor is implemented
-  and live-accepted on Pro Cymbals snapshot `1314`; any later non-cascading
-  drop and sparse compaction remain separate unresolved iterations.
+  and live-accepted on Pro Cymbals snapshot `1314`. The separate
+  non-cascading DROP/logical-restore implementation is repository-ready but
+  is not live-accepted. Official scrape `1333`, publication `157`, and cycle
+  `13` are accepted; its disposable PostgreSQL 17 archive/proof plus
+  DROP/restore drill is also accepted locally. Q1 operation
+  `1b44941dc5d5ea806dabc2187c3cffed` passed scrape `1335`, publication
+  rotation `159` to `162`, cycle `15`, and the publication-162 soak. Its
+  first reattach failed closed with `42P07` and no residue after an unrelated
+  new child reused its leaf-index name. Later work reached an independently
+  approved DROP call, which failed before DDL with `42703` because the empty
+  initial operation table lacked semantic columns. After explicit upgrade,
+  operation `333ba4b9fb69dbc098d127f0008ec709` committed under plan digest
+  `fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`.
+  Restore planning then failed before output/mutation on non-authoritative
+  Python reserialization. The corrective branch now implements immutable
+  exact-DROP tool authorization and a tool-only repair package. Final
+  H3/package review, live authorization, mandatory restore, and confirmation
+  evidence remain.
+  Sparse compaction remains a separate unresolved iteration.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
   generation-retention owner.
@@ -667,29 +687,32 @@ rotation and genuine candidate-set changes. A parent-controlled live
 smallest-child archive/restore canary also passed on unchanged Pro Cymbals
 snapshot `1314`. The separate no-Docker-socket quarantine/reattach executor is
 implemented and live-accepted after a 452-second soak and exact reattach.
-Current unresolved work is the later drop-tier design:
+Current unresolved work is live acceptance of the implemented drop tier:
 
-- consume the accepted full-scrape, archive/restore, quarantine, soak,
-  reattach, and same-publication API/source evidence;
-- implement one separately approved non-cascade drop canary with restore
-  monitoring;
+- build/review the final H3, authorizer, source/diff/test manifests, and
+  tool-only package; deploy the additive authorization/empty-restore-table
+  schema and confirm the exact immutable authorization;
+- execute the mandatory collision-safe logical restore under current
+  live-safety approval, then collect route/health/topology and later
+  confirmation evidence before promotion;
 - keep scrape `1308` protected wherever unreplayed writer-failure evidence
   remains;
 - retain exact archive/restore, live A/B, canary, rollback, API, lock, resource,
   and capacity gates.
 
-Current code can create recovery archives and can explicitly quarantine and
-reattach one sealed-plan child. No current code can drop, truncate, delete, or
-automatically retire a child. The legacy whole-instrument estimator remains
-disabled and is not the generation-child oracle.
+Current code can create recovery archives, explicitly quarantine/reattach one
+sealed-plan child, and execute one separately authenticated private-child
+`DROP ... RESTRICT` plus fixed-DDL logical restore. It has no truncate,
+row-delete, batch, or automatic-retirement path. The legacy whole-instrument
+estimator remains disabled and is not the generation-child oracle.
 
 ### Next iterations
 
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - design a separate non-cascade drop tier from the accepted
-     quarantine/soak/reattach evidence;
+   - validate the implemented non-cascade drop/restore tier through its
+     disposable drill and mandatory-restore live canary;
    - run a separately approved large-child recovery canary before automatic
      execution;
    - separately gated sparse-child compaction before claiming bounded
@@ -852,5 +875,11 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Durable publication-keyed API caching is the next active implementation;
   broader snapshot-capacity recovery remains separately gated.
 - Current-projection optimization remains a separate later full-scrape A/B.
-- Snapshot-retention execution remains a separate parity- and capacity-gated
-  maintenance task.
+- Snapshot-generation DROP/restore is implemented as a separate manual,
+  default-inert maintenance surface. Scrape `1333`, cycle `13`, and its
+  disposable drill are accepted. DROP operation
+  `333ba4b9fb69dbc098d127f0008ec709` is committed; mandatory authenticated
+  logical restore and confirmation remain. The corrective branch now carries
+  separate immutable tool authorization and a nonduplicating repair package;
+  live H3/package authorization has not yet been performed.
+  Automatic retention is still a later parity- and capacity-gated task.

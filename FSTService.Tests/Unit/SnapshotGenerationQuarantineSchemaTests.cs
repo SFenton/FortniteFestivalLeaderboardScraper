@@ -1,8 +1,12 @@
+using System.Diagnostics;
 using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
 using FSTService.Tests.Helpers;
 using FstSnapshotGenerationQuarantine;
+using FstSnapshotGenerationRestoreAuthorization;
 using Npgsql;
+using NpgsqlTypes;
+using System.Text.Json;
 
 namespace FSTService.Tests.Unit;
 
@@ -74,6 +78,10 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
         await DatabaseInitializer.EnsureSchemaAsync(
             _fixture.DataSource);
         var identity = SeedAcceptedCandidate();
+        var indexIdentityBefore =
+            LoadIndexIdentity(
+                "public",
+                OriginalRelation);
 
         var result = ExecuteScalar<string>(
             QuarantineSql,
@@ -101,6 +109,58 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 SnapshotGenerationQuarantineContract
                     .QuarantineSchema,
                 QuarantineRelation));
+        var privateIndexIdentity =
+            LoadIndexIdentity(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation);
+        Assert.Equal(
+            indexIdentityBefore
+                .OrderBy(item => item.Role)
+                .Select(item =>
+                    (item.Role,
+                     item.Oid,
+                     item.Relfilenode)),
+            privateIndexIdentity
+                .OrderBy(item => item.Role)
+                .Select(item =>
+                    (item.Role,
+                     item.Oid,
+                     item.Relfilenode)));
+        Assert.Equal(
+            [
+                "sgqi_0123456789abcdef0123456789abcdef_pk",
+                "sgqi_0123456789abcdef0123456789abcdef_score",
+            ],
+            privateIndexIdentity
+                .OrderBy(item => item.Role)
+                .Select(item => item.Name)
+                .ToArray());
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_quarantine_index_renames
+                WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+                  AND source_phase = 'quarantine'
+                  AND semantic_before =
+                        semantic_after
+                  AND semantic_before_sha256 =
+                        semantic_after_sha256
+                """));
+        Assert.Equal(
+            "sgqi_0123456789abcdef0123456789abcdef_pk",
+            Scalar<string>(
+                """
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid =
+                        'fst_snapshot_quarantine.sgq_pc_1005_0123456789ab'
+                            ::regclass
+                  AND contype = 'p'
+                """));
         Assert.Equal(
             1,
             Scalar<int>(
@@ -206,6 +266,20 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     '0123456789abcdef0123456789abcdef'
                 """));
         Assert.Equal("55000", evidenceMutation.SqlState);
+        var renameEvidenceMutation =
+            Assert.Throws<PostgresException>(
+                () => Execute(
+                    """
+                    UPDATE snapshot_generation_quarantine_index_renames
+                    SET new_index_name =
+                            new_index_name || '_tampered'
+                    WHERE operation_id =
+                            '0123456789abcdef0123456789abcdef'
+                      AND index_role = 'pk'
+                    """));
+        Assert.Equal(
+            "55000",
+            renameEvidenceMutation.SqlState);
 
         RecordAttestation(
             "quarantined",
@@ -248,6 +322,25 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
         Assert.Equal(
             identity.ChildRelfilenode,
             RelationRelfilenode("public", OriginalRelation));
+        var reattachedIndexIdentity =
+            LoadIndexIdentity(
+                "public",
+                OriginalRelation);
+        Assert.Equal(
+            privateIndexIdentity
+                .OrderBy(item => item.Role)
+                .Select(item =>
+                    (item.Role,
+                     item.Oid,
+                     item.Relfilenode,
+                     item.Name)),
+            reattachedIndexIdentity
+                .OrderBy(item => item.Role)
+                .Select(item =>
+                    (item.Role,
+                     item.Oid,
+                     item.Relfilenode,
+                     item.Name)));
         Assert.Equal(
             identity.RootOid,
             Scalar<long>(
@@ -334,6 +427,2608 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                   AND conname =
                         'ck_sgq_default_1005_0123456789ab'
                 """));
+    }
+
+    [Fact]
+    public async Task ReattachSurvivesFreedIndexNameReuse()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var originalScoreName =
+            Assert.Single(
+                LoadIndexIdentity(
+                    "public",
+                    OriginalRelation),
+                index => index.Role == "score")
+                .Name;
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+
+        ExecuteScalar<string>(
+            """
+            SELECT ensure_leaderboard_snapshot_generation_partition(
+                'Solo_Guitar',
+                1006)
+            """);
+        var newScoreName =
+            Assert.Single(
+                LoadIndexIdentity(
+                    "public",
+                    "leaderboard_entries_snapshot_solo_guitar_s1006"),
+                index => index.Role == "score")
+                .Name;
+        Assert.Equal(originalScoreName, newScoreName);
+
+        RecordAttestation(
+            "quarantined",
+            baselineHashCharacter: '5',
+            candidateHashCharacter: '8');
+        RecordAttestation(
+            "soak",
+            baselineHashCharacter: '8',
+            candidateHashCharacter: '9');
+        ExecuteScalar<string>(
+            """
+            SELECT fst_reattach_snapshot_generation(
+                @operationId,
+                @planDigest,
+                'test-operator',
+                'rotation-collision-recovery',
+                '{}'::jsonb)
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue(
+                    "operationId",
+                    OperationId);
+                command.Parameters.AddWithValue(
+                    "planDigest",
+                    PlanDigest);
+            });
+
+        Assert.Equal(
+            identity.ChildOid,
+            RelationOid("public", OriginalRelation));
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_inherits inheritance
+                JOIN pg_index child_index
+                  ON child_index.indexrelid =
+                        inheritance.inhrelid
+                WHERE child_index.indrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                            ::regclass
+                """));
+    }
+
+    [Fact]
+    public async Task ReattachRepairsPrePatchIndexNames()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        var oldPkName = Scalar<string>(
+            """
+            SELECT old_index_name
+            FROM snapshot_generation_quarantine_index_renames
+            WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+              AND index_role = 'pk'
+            """);
+        var oldScoreName = Scalar<string>(
+            """
+            SELECT old_index_name
+            FROM snapshot_generation_quarantine_index_renames
+            WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+              AND index_role = 'score'
+            """);
+        Execute(
+            $"""
+            ALTER INDEX
+                fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_pk
+                RENAME TO {oldPkName};
+            ALTER INDEX
+                fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score
+                RENAME TO {oldScoreName};
+            SET session_replication_role = replica;
+            DELETE FROM snapshot_generation_quarantine_index_renames
+            WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef';
+            SET session_replication_role = origin;
+            CREATE TABLE public.reattach_name_collision (
+                value INTEGER NOT NULL);
+            CREATE INDEX {oldScoreName}
+                ON public.reattach_name_collision (value);
+            """);
+        var unrelatedOid =
+            RelationOid("public", oldScoreName);
+        RecordAttestation(
+            "quarantined",
+            baselineHashCharacter: '5',
+            candidateHashCharacter: '8');
+        RecordAttestation(
+            "soak",
+            baselineHashCharacter: '8',
+            candidateHashCharacter: '9');
+
+        ExecuteScalar<string>(
+            """
+            SELECT fst_reattach_snapshot_generation(
+                @operationId,
+                @planDigest,
+                'test-operator',
+                'pre-patch-repair',
+                '{}'::jsonb)
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue(
+                    "operationId",
+                    OperationId);
+                command.Parameters.AddWithValue(
+                    "planDigest",
+                    PlanDigest);
+            });
+
+        Assert.Equal(
+            unrelatedOid,
+            RelationOid("public", oldScoreName));
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_quarantine_index_renames
+                WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+                  AND source_phase = 'reattach_repair'
+                """));
+    }
+
+    [Fact]
+    public async Task QuarantineSurvivesPrivateDestinationIndexCollisions()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var originalIndexes =
+            LoadIndexIdentity(
+                "public",
+                OriginalRelation);
+        var oldPkName = Assert.Single(
+            originalIndexes,
+            index => index.Role == "pk").Name;
+        var oldScoreName = Assert.Single(
+            originalIndexes,
+            index => index.Role == "score").Name;
+        Execute(
+            $"""
+            CREATE TABLE
+                fst_snapshot_quarantine.destination_collision (
+                    id INTEGER NOT NULL,
+                    score INTEGER NOT NULL);
+            CREATE UNIQUE INDEX {oldPkName}
+                ON fst_snapshot_quarantine.destination_collision (id);
+            CREATE INDEX {oldScoreName}
+                ON fst_snapshot_quarantine.destination_collision (score);
+            """);
+
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+
+        Assert.Equal(
+            identity.ChildOid,
+            RelationOid(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            [
+                "sgqi_0123456789abcdef0123456789abcdef_pk",
+                "sgqi_0123456789abcdef0123456789abcdef_score",
+            ],
+            LoadIndexIdentity(
+                    SnapshotGenerationQuarantineContract
+                        .QuarantineSchema,
+                    QuarantineRelation)
+                .OrderBy(index => index.Role)
+                .Select(index => index.Name)
+                .ToArray());
+    }
+
+    [Fact]
+    public async Task QuarantineIndexNameCollisionRollsBackEarlierRename()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var originalIndexes =
+            LoadIndexIdentity(
+                "public",
+                OriginalRelation);
+        Execute(
+            """
+            CREATE TABLE public.derived_name_collision (
+                value INTEGER NOT NULL);
+            CREATE INDEX
+                sgqi_0123456789abcdef0123456789abcdef_score
+                ON public.derived_name_collision (value);
+            """);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                QuarantineSql,
+                command => ConfigureQuarantine(
+                    command,
+                    identity,
+                    expectedRowCount: 1)));
+
+        Assert.Equal("42P07", failure.SqlState);
+        Assert.Equal(
+            identity.ChildOid,
+            RelationOid("public", OriginalRelation));
+        Assert.Equal(
+            originalIndexes.OrderBy(index => index.Role),
+            LoadIndexIdentity(
+                    "public",
+                    OriginalRelation)
+                .OrderBy(index => index.Role));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_quarantine_operations
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_quarantine_index_renames
+                """));
+    }
+
+    [Fact]
+    public async Task ReattachRejectsIncompleteNormalizedEvidence()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        Execute(
+            """
+            SET session_replication_role = replica;
+            DELETE FROM snapshot_generation_quarantine_index_renames
+            WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+              AND index_role = 'score';
+            SET session_replication_role = origin;
+            """);
+        RecordAttestation(
+            "quarantined",
+            baselineHashCharacter: '5',
+            candidateHashCharacter: '8');
+        RecordAttestation(
+            "soak",
+            baselineHashCharacter: '8',
+            candidateHashCharacter: '9');
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT fst_reattach_snapshot_generation(
+                    @operationId,
+                    @planDigest,
+                    'test-operator',
+                    'inconsistent-evidence',
+                    '{}'::jsonb)
+                """,
+                command =>
+                {
+                    command.Parameters.AddWithValue(
+                        "operationId",
+                        OperationId);
+                    command.Parameters.AddWithValue(
+                        "planDigest",
+                        PlanDigest);
+                }));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_quarantine_reattachments
+                """));
+    }
+
+    [Fact]
+    public async Task ActiveRetentionHoldPreventsQuarantinedChildRecreation()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT ensure_leaderboard_snapshot_generation_partition(
+                    'Solo_PeripheralCymbals',
+                    1005)
+                """));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.False(RelationExists("public", OriginalRelation));
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+    }
+
+    [Fact]
+    public async Task ExactPrivateChildDropIsAtomicAndRetainsFenceAndHold()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+
+        var result = ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+
+        Assert.Equal(
+            "fedcba9876543210fedcba9876543210",
+            result);
+        Assert.False(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.False(RelationExists("public", OriginalRelation));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                WHERE drop_operation_id =
+                    'fedcba9876543210fedcba9876543210'
+                """));
+        Assert.Equal(
+            "55|true|true|0",
+            Scalar<string>(
+                """
+                SELECT
+                    route_count::TEXT || '|' ||
+                    status_parity::TEXT || '|' ||
+                    semantic_json_parity::TEXT || '|' ||
+                    difference_count::TEXT
+                FROM snapshot_generation_drop_attestations
+                WHERE drop_operation_id =
+                        'fedcba9876543210fedcba9876543210'
+                  AND stage = 'pre_drop'
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_retention_holds
+                WHERE instrument = 'Solo_PeripheralCymbals'
+                  AND snapshot_id = 1005
+                  AND hold_kind = 'retention_in_flight'
+                  AND released_at IS NULL
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_constraint
+                WHERE conrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_default'
+                            ::regclass
+                  AND conname =
+                        'ck_sgq_default_1005_0123456789ab'
+                  AND convalidated
+                """));
+        var mutation = Assert.Throws<PostgresException>(
+            () => Execute(
+                """
+                UPDATE snapshot_generation_drop_operations
+                SET approved_by = 'changed'
+                WHERE drop_operation_id =
+                    'fedcba9876543210fedcba9876543210'
+                """));
+        Assert.Equal("55000", mutation.SqlState);
+        var lateAttestation =
+            Assert.Throws<PostgresException>(
+                () => RecordAttestation(
+                    "soak",
+                    baselineHashCharacter: '8',
+                    candidateHashCharacter: '9'));
+        Assert.Equal("55000", lateAttestation.SqlState);
+        var lateReattach =
+            Assert.Throws<PostgresException>(
+                () => Execute(
+                    """
+                    INSERT INTO
+                        snapshot_generation_quarantine_reattachments (
+                            operation_id,
+                            reattached_by,
+                            reattach_reference,
+                            reattach_evidence)
+                    VALUES (
+                        '0123456789abcdef0123456789abcdef',
+                        'test-operator',
+                        'late-reattach',
+                        '{}'::jsonb)
+                    """));
+        Assert.Equal("55000", lateReattach.SqlState);
+        Execute(
+            """
+            UPDATE snapshot_generation_retention_holds
+            SET released_at = now(),
+                released_by = 'fault-injection',
+                release_reason = 'prove committed-drop tombstone'
+            WHERE instrument = 'Solo_PeripheralCymbals'
+              AND snapshot_id = 1005
+              AND released_at IS NULL
+            """);
+        var recreation = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT ensure_leaderboard_snapshot_generation_partition(
+                    'Solo_PeripheralCymbals',
+                    1005)
+                """));
+        Assert.Equal("55000", recreation.SqlState);
+        Assert.Contains(
+            "committed DROP tombstone",
+            recreation.MessageText,
+            StringComparison.Ordinal);
+        Assert.False(RelationExists("public", OriginalRelation));
+    }
+
+    [Fact]
+    public async Task RestoreToolAuthorizationIsExactImmutableAndIdempotent()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+        var request = BuildAuthorizationRequest();
+        await using var database =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+
+        var first = await database.AuthorizeAsync(request);
+        var second = await database.AuthorizeAsync(request);
+        var confirmed = await database.ReadAsync(
+            request.DropOperationId,
+            first.AuthorizationId);
+
+        Assert.Equal(
+            RestoreToolAuthorizationContract
+                .DeriveAuthorizationId(
+                    request,
+                    first.CanonicalEvidenceDbSha256),
+            first.AuthorizationId);
+        Assert.Equal(
+            first.CanonicalEvidenceDbSha256,
+            DbCanonicalEvidenceSha256(
+                request.CanonicalEvidence));
+        Assert.Equal(
+            first.AuthorizationId,
+            second.AuthorizationId);
+        Assert.Equal(
+            first.EvidenceSha256,
+            second.EvidenceSha256);
+        Assert.Equal(
+            first.AuthorizationId,
+            confirmed.AuthorizationId);
+        Assert.Equal(
+            first.CanonicalEvidence.GetRawText(),
+            confirmed.CanonicalEvidence.GetRawText());
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM
+                    snapshot_generation_restore_tool_authorizations
+                """));
+        var mutation = Assert.Throws<PostgresException>(
+            () => Execute(
+                """
+                UPDATE
+                    snapshot_generation_restore_tool_authorizations
+                SET reason_text = 'tampered'
+                """));
+        Assert.Equal("55000", mutation.SqlState);
+        var conflict = request with
+        {
+            ReasonText = "different reviewed reason",
+        };
+        Assert.NotEqual(
+            first.AuthorizationId,
+            RestoreToolAuthorizationContract
+                .DeriveAuthorizationId(
+                    conflict,
+                    first.CanonicalEvidenceDbSha256));
+        var conflictError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(conflict));
+        Assert.Equal("55000", conflictError.SqlState);
+        var wrongPinned = request with
+        {
+            PinnedRestoreToolSha256 =
+                new string('8', 64),
+        };
+        var pinnedError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    wrongPinned));
+        Assert.Equal("55000", pinnedError.SqlState);
+        var sameApprover = request with
+        {
+            ApprovedBy = "drop-operator",
+        };
+        var actorError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    sameApprover));
+        Assert.Equal("55000", actorError.SqlState);
+        var changedContent = request with
+        {
+            CanonicalEvidence =
+                JsonDocument.Parse(
+                    """{"packageValidated":false}""")
+                    .RootElement.Clone(),
+        };
+        Assert.NotEqual(
+            first.AuthorizationId,
+            RestoreToolAuthorizationContract
+                .DeriveAuthorizationId(
+                    changedContent,
+                    DbCanonicalEvidenceSha256(
+                        changedContent
+                            .CanonicalEvidence)));
+        var contentError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    changedContent));
+        Assert.Equal("55000", contentError.SqlState);
+    }
+
+    [Theory]
+    [InlineData("hold")]
+    [InlineData("fence")]
+    [InlineData("original-name")]
+    public async Task RestoreToolAuthorizationRejectsUnsafeDropState(
+        string drift)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+        Execute(
+            drift switch
+            {
+                "hold" =>
+                    """
+                    UPDATE snapshot_generation_retention_holds
+                    SET released_at = now(),
+                        released_by = 'fault-injection',
+                        release_reason = 'fault-injection'
+                    WHERE released_at IS NULL
+                    """,
+                "fence" =>
+                    """
+                    ALTER TABLE
+                        public.leaderboard_entries_snapshot_pro_cymbals_default
+                        DROP CONSTRAINT
+                            ck_sgq_default_1005_0123456789ab
+                    """,
+                _ =>
+                    """
+                    CREATE TABLE
+                        public.leaderboard_entries_snapshot_pro_cymbals_s1005 (
+                            value INTEGER)
+                    """,
+            });
+        await using var database =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+
+        var failure =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    BuildAuthorizationRequest()));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM
+                    snapshot_generation_restore_tool_authorizations
+                """));
+    }
+
+    [Fact]
+    public async Task AuthorizedRestoreConsumesExactToolAuthorization()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var original = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                original,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, original));
+        var request = BuildAuthorizationRequest();
+        await using var database =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var authorization =
+            await database.AuthorizeAsync(request);
+        CreateRestoreStagingRelation();
+        var restoredOid =
+            RelationOid("public", OriginalRelation);
+        var restoredRelfilenode =
+            RelationRelfilenode(
+                "public",
+                OriginalRelation);
+
+        var wrongPackage =
+            Assert.Throws<PostgresException>(
+                () => ExecuteScalar<string>(
+                    RestoreSql,
+                    command => ConfigureRestore(
+                        command,
+                        restoredOid,
+                        restoredRelfilenode,
+                        authorization.AuthorizationId,
+                        request.AuthorizedRestoreToolSha256,
+                        request.ValidatorBaseToolSha256,
+                        request.AuthorizedArchiveHelperSha256,
+                        new string('8', 64))));
+        Assert.Equal("55000", wrongPackage.SqlState);
+        var result = ExecuteScalar<string>(
+            RestoreSql,
+            command => ConfigureRestore(
+                command,
+                restoredOid,
+                restoredRelfilenode,
+                authorization.AuthorizationId,
+                request.AuthorizedRestoreToolSha256,
+                request.ValidatorBaseToolSha256,
+                request.AuthorizedArchiveHelperSha256,
+                request.RepairPackageManifestSha256));
+
+        Assert.Equal(new string('a', 32), result);
+        Assert.Equal(
+            $"{new string('f', 64)}|"
+            + $"{request.AuthorizedRestoreToolSha256}|"
+            + authorization.AuthorizationId,
+            Scalar<string>(
+                """
+                SELECT
+                    pinned_tool_sha256 || '|' ||
+                    executing_tool_sha256 || '|' ||
+                    authorization_id
+                FROM snapshot_generation_restore_operations
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_operations
+                    restore_row
+                JOIN
+                    snapshot_generation_restore_tool_authorizations
+                        authorization_row
+                  ON authorization_row.drop_operation_id =
+                        restore_row.drop_operation_id
+                 AND authorization_row.authorization_id =
+                        restore_row.authorization_id
+                """));
+        ExecuteScalar<string>(
+            """
+            SELECT
+                fst_record_snapshot_generation_restore_attestation(
+                    repeat('a', 32),
+                    2005,
+                    1005,
+                    55,
+                    repeat('b', 64),
+                    repeat('2', 64),
+                    '{}'::jsonb,
+                    repeat('3', 64),
+                    'restore-operator')
+            """);
+        ExecuteScalar<string>(
+            """
+            SELECT fst_finalize_snapshot_generation_restore(
+                repeat('a', 32),
+                'restore-operator',
+                'authorized-restore-complete',
+                '{}'::jsonb)
+            """);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_retention_holds
+                    hold_row
+                JOIN snapshot_generation_restore_operations
+                    restore_row
+                  ON restore_row.hold_id =
+                        hold_row.hold_id
+                WHERE hold_row.released_at IS NOT NULL
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM
+                    snapshot_generation_restore_tool_authorizations
+                """));
+        var afterRestore = request with
+        {
+            AuthorizedRestoreToolSha256 =
+                new string('6', 64),
+            RepairPackageManifestSha256 =
+                new string('7', 64),
+        };
+        var afterRestoreError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    afterRestore));
+        Assert.Equal(
+            "55000",
+            afterRestoreError.SqlState);
+    }
+
+    [Fact]
+    public async Task ReplacementRestoreToolWithoutExactAuthorizationRejects()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var original = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                original,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, original));
+        CreateRestoreStagingRelation();
+        var restoredOid =
+            RelationOid("public", OriginalRelation);
+        var restoredRelfilenode =
+            RelationRelfilenode(
+                "public",
+                OriginalRelation);
+
+        var missing = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                RestoreSql,
+                command => ConfigureRestore(
+                    command,
+                    restoredOid,
+                    restoredRelfilenode,
+                    authorizationId: null,
+                    executingToolSha256:
+                        new string('a', 64),
+                    validatorBaseToolSha256:
+                        RestoreToolAuthorizationContract
+                            .ValidatorBaseToolSha256,
+                    archiveHelperSha256:
+                        new string('b', 64),
+                    repairPackageManifestSha256:
+                        new string('d', 64))));
+        Assert.Equal("55000", missing.SqlState);
+        var wrong = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                RestoreSql,
+                command => ConfigureRestore(
+                    command,
+                    restoredOid,
+                    restoredRelfilenode,
+                    new string('9', 32),
+                    new string('a', 64),
+                    RestoreToolAuthorizationContract
+                        .ValidatorBaseToolSha256,
+                    new string('b', 64),
+                    new string('d', 64))));
+        Assert.Equal("55000", wrong.SqlState);
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_operations
+                """));
+        Assert.True(
+            RelationExists("public", OriginalRelation));
+    }
+
+    [Fact]
+    public async Task EmptyRestoreIdentityUpgradeAllowsCommittedDrop()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+        Execute(DowngradeRestoreOperationsToPreSemanticSql);
+        Execute(
+            """
+            DROP TABLE
+                snapshot_generation_restore_tool_authorizations
+                CASCADE
+            """);
+        var dropHash = Scalar<string>(
+            """
+            SELECT md5(to_jsonb(operation_row)::TEXT)
+            FROM snapshot_generation_drop_operations
+                operation_row
+            """);
+
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+
+        Assert.Equal(0, MissingRestoreSemanticColumnCount());
+        Assert.Equal(
+            dropHash,
+            Scalar<string>(
+                """
+                SELECT md5(to_jsonb(operation_row)::TEXT)
+                FROM snapshot_generation_drop_operations
+                    operation_row
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_operations
+                """));
+    }
+
+    [Fact]
+    public async Task NonemptyPreSemanticDropEvidenceBlocksSchemaUpgrade()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+        Execute(DowngradeDropOperationsToPreSemanticSql);
+        var before = Scalar<string>(
+            """
+            SELECT md5(to_jsonb(operation_row)::TEXT)
+            FROM snapshot_generation_drop_operations
+                operation_row
+            """);
+
+        var failure = await Assert.ThrowsAsync<PostgresException>(
+            () => DatabaseInitializer.EnsureSchemaAsync(
+                _fixture.DataSource));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Contains(
+            "nonempty pre-semantic committed evidence",
+            failure.MessageText,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            before,
+            Scalar<string>(
+                """
+                SELECT md5(to_jsonb(operation_row)::TEXT)
+                FROM snapshot_generation_drop_operations
+                    operation_row
+                """));
+        Assert.Equal(
+            9,
+            MissingDropSemanticColumnCount());
+        Assert.DoesNotContain(
+            "semantic_projection_version",
+            Scalar<string>(
+                """
+                SELECT pg_get_expr(
+                    constraint_row.conbin,
+                    constraint_row.conrelid,
+                    TRUE)
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'snapshot_generation_drop_operations'
+                            ::regclass
+                  AND constraint_row.conname =
+                        'ck_snapshot_generation_drop_identity'
+                """),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NonemptyPreSemanticRestoreEvidenceBlocksSchemaUpgrade()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var original = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                original,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, original));
+        Execute(
+            """
+            CREATE TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                (
+                    LIKE
+                        public.leaderboard_entries_snapshot_pro_cymbals
+                    INCLUDING DEFAULTS
+                    INCLUDING STORAGE
+                    INCLUDING COMPRESSION
+                );
+            INSERT INTO
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005 (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+            VALUES (
+                1005,
+                'song-test',
+                'Solo_PeripheralCymbals',
+                'account-test',
+                123456,
+                'scrape',
+                now(),
+                now());
+            ALTER TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                ADD CONSTRAINT ck_sgr_1005_aaaaaaaaaaaa
+                CHECK (
+                    snapshot_id = 1005
+                    AND instrument =
+                        'Solo_PeripheralCymbals');
+            CREATE TRIGGER trg_sgr_1005_aaaaaaaaaaaa
+                BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+                ON
+                    public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                FOR EACH STATEMENT EXECUTE FUNCTION
+                    fst_reject_snapshot_generation_quarantine_relation_mutation();
+            """);
+        var restoredOid =
+            RelationOid("public", OriginalRelation);
+        var restoredRelfilenode =
+            RelationRelfilenode("public", OriginalRelation);
+        ExecuteScalar<string>(
+            RestoreSql,
+            command => ConfigureRestore(
+                command,
+                restoredOid,
+                restoredRelfilenode));
+        Execute(DowngradeRestoreOperationsToPreSemanticSql);
+        var before = Scalar<string>(
+            """
+            SELECT md5(to_jsonb(operation_row)::TEXT)
+            FROM snapshot_generation_restore_operations
+                operation_row
+            """);
+
+        var failure = await Assert.ThrowsAsync<PostgresException>(
+            () => DatabaseInitializer.EnsureSchemaAsync(
+                _fixture.DataSource));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Contains(
+            "nonempty pre-semantic committed evidence",
+            failure.MessageText,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            before,
+            Scalar<string>(
+                """
+                SELECT md5(to_jsonb(operation_row)::TEXT)
+                FROM snapshot_generation_restore_operations
+                    operation_row
+                """));
+        Assert.Equal(
+            7,
+            MissingRestoreSemanticColumnCount());
+        Assert.DoesNotContain(
+            "archived_index_names",
+            Scalar<string>(
+                """
+                SELECT pg_get_expr(
+                    constraint_row.conbin,
+                    constraint_row.conrelid,
+                    TRUE)
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'snapshot_generation_restore_operations'
+                            ::regclass
+                  AND constraint_row.conname =
+                        'ck_snapshot_generation_restore_identity'
+                """),
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(
+        "wrong-name",
+        """
+        ALTER INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score
+            RENAME TO sgqi_wrong_name_score
+        """)]
+    [InlineData(
+        "wrong-oid",
+        """
+        DROP INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score;
+        CREATE INDEX
+            sgqi_0123456789abcdef0123456789abcdef_score
+            ON
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+                USING btree (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    score DESC)
+        """)]
+    [InlineData(
+        "wrong-relfilenode",
+        """
+        REINDEX INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score
+        """)]
+    [InlineData(
+        "wrong-role",
+        """
+        ALTER INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_pk
+            RENAME TO sgqi_swap_temp;
+        ALTER INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score
+            RENAME TO sgqi_0123456789abcdef0123456789abcdef_pk;
+        ALTER INDEX
+            fst_snapshot_quarantine.sgqi_swap_temp
+            RENAME TO sgqi_0123456789abcdef0123456789abcdef_score
+        """)]
+    [InlineData(
+        "extra-index",
+        """
+        CREATE INDEX sgqi_unexpected_extra
+            ON
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+                (account_id)
+        """)]
+    [InlineData(
+        "missing-index",
+        """
+        DROP INDEX
+            fst_snapshot_quarantine.sgqi_0123456789abcdef0123456789abcdef_score
+        """)]
+    public async Task DropRejectsCurrentPrivateIndexDriftWithoutResidue(
+        string scenario,
+        string mutationSql)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(mutationSql);
+        AssertPrivateIndexDrift(
+            scenario,
+            identity);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            identity.ChildOid,
+            RelationOid(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_attestations
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_retention_holds
+                WHERE instrument =
+                        'Solo_PeripheralCymbals'
+                  AND snapshot_id = 1005
+                  AND hold_kind =
+                        'retention_in_flight'
+                  AND released_at IS NULL
+                """));
+        Assert.True(
+            RelationExists(
+                "public",
+                "leaderboard_entries_snapshot_pro_cymbals_default"));
+    }
+
+    [Fact]
+    public async Task ExternalDependencyRejectsDropWithoutResidue()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(
+            """
+            CREATE VIEW public.sgq_external_dependency AS
+            SELECT *
+            FROM fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+            """);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("2BP01", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_constraint
+                WHERE conrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_default'
+                            ::regclass
+                  AND conname =
+                        'ck_sgq_default_1005_0123456789ab'
+                """));
+    }
+
+    [Theory]
+    [InlineData(
+        """
+        CREATE TABLE public.sgq_inbound_fk (
+            snapshot_id BIGINT NOT NULL,
+            song_id TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            CONSTRAINT sgq_inbound_fk_target
+                FOREIGN KEY (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id)
+                REFERENCES
+                    fst_snapshot_quarantine.sgq_pc_1005_0123456789ab (
+                        snapshot_id,
+                        song_id,
+                        instrument,
+                        account_id)
+        )
+        """)]
+    [InlineData(
+        """
+        ALTER TABLE
+            fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+            ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY sgq_policy
+            ON fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+            USING (TRUE)
+        """)]
+    [InlineData(
+        """
+        CREATE TRIGGER sgq_unexpected_trigger
+            BEFORE INSERT ON
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+            FOR EACH STATEMENT EXECUTE FUNCTION
+                fst_reject_snapshot_generation_quarantine_relation_mutation()
+        """)]
+    [InlineData(
+        """
+        CREATE RULE sgq_unexpected_rule AS
+            ON UPDATE TO
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+            DO ALSO NOTHING
+        """)]
+    [InlineData(
+        """
+        CREATE PUBLICATION sgq_unexpected_publication
+            FOR TABLE
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+        """)]
+    public async Task HiddenDependencyOrPolicyRejectsDrop(
+        string dependencySql)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(dependencySql);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("2BP01", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Fact]
+    public async Task DropLockRejectsConcurrentQuarantineExecutor()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+
+        await using var blocker =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using (var acquire = blocker.CreateCommand())
+        {
+            acquire.CommandText =
+                "SELECT pg_advisory_lock(@key)";
+            acquire.Parameters.AddWithValue(
+                "key",
+                SnapshotGenerationQuarantineContract
+                    .ExecutorAdvisoryLockKey);
+            await acquire.ExecuteNonQueryAsync();
+        }
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT fst_lock_snapshot_generation_for_drop(
+                    @operationId,
+                    @childOid,
+                    @childRelfilenode)
+                """,
+                command =>
+                {
+                    command.Parameters.AddWithValue(
+                        "operationId",
+                        OperationId);
+                    command.Parameters.AddWithValue(
+                        "childOid",
+                        identity.ChildOid);
+                    command.Parameters.AddWithValue(
+                        "childRelfilenode",
+                        identity.ChildRelfilenode);
+                }));
+
+        Assert.Equal("55P03", failure.SqlState);
+    }
+
+    [Fact]
+    public async Task DropFunctionRejectsBypassingLockedPreflight()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        var start = DropSql.IndexOf(
+            "SELECT fst_drop_quarantined",
+            StringComparison.Ordinal);
+        var end = DropSql.LastIndexOf(
+            "FROM locked",
+            StringComparison.Ordinal);
+        var unlockedSql = DropSql[start..end];
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                unlockedSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Contains(
+            "not locked",
+            failure.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DropLockTimeoutLeavesPrivateChildUnchanged()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        await using var blocker =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using var blockerTransaction =
+            await blocker.BeginTransactionAsync();
+        await using (var acquire = blocker.CreateCommand())
+        {
+            acquire.Transaction = blockerTransaction;
+            acquire.CommandText = """
+                LOCK TABLE
+                    fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+                    IN ACCESS SHARE MODE
+                """;
+            await acquire.ExecuteNonQueryAsync();
+        }
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT fst_lock_snapshot_generation_for_drop(
+                    @operationId,
+                    @childOid,
+                    @childRelfilenode)
+                """,
+                command =>
+                {
+                    command.Parameters.AddWithValue(
+                        "operationId",
+                        OperationId);
+                    command.Parameters.AddWithValue(
+                        "childOid",
+                        identity.ChildOid);
+                    command.Parameters.AddWithValue(
+                        "childRelfilenode",
+                        identity.ChildRelfilenode);
+                }));
+
+        Assert.Equal(
+            PostgresErrorCodes.LockNotAvailable,
+            failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        await blockerTransaction.RollbackAsync();
+    }
+
+    [Fact]
+    public async Task RecreatedPrivateRelationOidRejectsDrop()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(
+            """
+            DROP TABLE
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab;
+            CREATE TABLE
+                fst_snapshot_quarantine.sgq_pc_1005_0123456789ab
+                (
+                    LIKE
+                        public.leaderboard_entries_snapshot_pro_cymbals
+                    INCLUDING ALL
+                );
+            """);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Theory]
+    [InlineData(
+        """
+        INSERT INTO scrape_writer_failures (
+            scrape_id,
+            writer_kind,
+            instrument,
+            song_id,
+            page_count,
+            row_count,
+            exception_type,
+            error_message,
+            occurred_at)
+        VALUES (
+            1005,
+            'online',
+            'Solo_PeripheralCymbals',
+            'failed-song',
+            1,
+            0,
+            'InjectedFailure',
+            'drop must fail closed',
+            now())
+        """)]
+    [InlineData(
+        """
+        INSERT INTO snapshot_generation_retention_holds (
+            instrument,
+            snapshot_id,
+            hold_kind,
+            reason,
+            created_by)
+        VALUES (
+            'Solo_PeripheralCymbals',
+            1005,
+            'operator',
+            'additional hold',
+            'test')
+        """)]
+    [InlineData(
+        """
+        UPDATE snapshot_generation_retention_holds
+        SET released_at = now(),
+            released_by = 'test',
+            release_reason = 'test'
+        WHERE instrument = 'Solo_PeripheralCymbals'
+          AND snapshot_id = 1005
+          AND hold_kind = 'retention_in_flight'
+          AND released_at IS NULL
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET public_reads_frozen = TRUE,
+            public_reads_frozen_at = now(),
+            public_reads_frozen_scrape_id = 1005,
+            public_reads_frozen_reason = 'test'
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET working_publication_id = 2004
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET current_publication_id = 2004,
+            published_scrape_id = 1004,
+            improvement_notifications_scrape_id = 1004,
+            improvement_notifications_projection_scrape_id = 1004
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET publication_commit_intent_started_at = now(),
+            publication_commit_intent_heartbeat_at = now(),
+            publication_commit_intent_owner = 'test'
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET max_score_mutation_gate_token = 'test',
+            max_score_mutation_gate_publication_id = 2005,
+            max_score_mutation_gate_backend_pid = pg_backend_pid(),
+            max_score_mutation_gate_backend_start = now(),
+            max_score_mutation_gate_acquired_at = now()
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        UPDATE scrape_publication_state
+        SET improvement_notifications_status = 'pending',
+            improvement_notifications_completed_at = NULL
+        WHERE id = TRUE
+        """)]
+    [InlineData(
+        """
+        INSERT INTO scrape_log (
+            id,
+            started_at,
+            status)
+        VALUES (
+            1010,
+            now(),
+            'running')
+        """)]
+    [InlineData(
+        """
+        UPDATE service_worker_status
+        SET status = 'running',
+            current_operation_json = '{}'::jsonb
+        WHERE worker_key = 'scraper'
+        """)]
+    [InlineData(
+        """
+        ALTER TABLE
+            public.leaderboard_entries_snapshot_pro_cymbals_default
+            DROP CONSTRAINT
+                ck_sgq_default_1005_0123456789ab
+        """)]
+    [InlineData(
+        """
+        INSERT INTO scrape_log (
+            id,
+            started_at,
+            completed_at,
+            status)
+        VALUES (
+            9999,
+            now() - interval '2 minutes',
+            now() - interval '1 minute',
+            'completed');
+        INSERT INTO
+            public.leaderboard_entries_snapshot_pro_cymbals_default (
+                snapshot_id,
+                song_id,
+                instrument,
+                account_id,
+                score,
+                source,
+                first_seen_at,
+                last_updated_at)
+        VALUES (
+            9999,
+            'default-row',
+            'Solo_PeripheralCymbals',
+            'default-row',
+            1,
+            'scrape',
+            now(),
+            now())
+        """)]
+    [InlineData(
+        """
+        UPDATE pg_index
+        SET indisvalid = FALSE
+        WHERE indexrelid = (
+            SELECT index_row.indexrelid
+            FROM pg_index index_row
+            WHERE index_row.indrelid =
+                    'fst_snapshot_quarantine.sgq_pc_1005_0123456789ab'
+                        ::regclass
+            ORDER BY index_row.indisprimary DESC
+            LIMIT 1)
+        """)]
+    [InlineData(
+        """
+        INSERT INTO leaderboard_snapshot_state (
+            song_id,
+            instrument,
+            active_snapshot_id,
+            scrape_id,
+            is_finalized,
+            updated_at)
+        VALUES (
+            'drop-live-root',
+            'Solo_PeripheralCymbals',
+            1005,
+            1005,
+            TRUE,
+            now())
+        """)]
+    [InlineData(
+        """
+        INSERT INTO solo_current_projection_scope (
+            song_id,
+            instrument,
+            projection_generation,
+            row_count,
+            source_snapshot_id,
+            source_kind,
+            status,
+            updated_at)
+        VALUES (
+            'drop-live-projection',
+            'Solo_PeripheralCymbals',
+            1,
+            1,
+            1005,
+            'snapshot',
+            'ready',
+            now())
+        """)]
+    [InlineData(
+        """
+        INSERT INTO leaderboard_published_scope_source (
+            published_scrape_id,
+            song_id,
+            instrument,
+            scope_kind,
+            source_kind,
+            source_snapshot_id,
+            source_scrape_id,
+            row_count,
+            content_fingerprint,
+            coverage_fingerprint,
+            reported_total_entries,
+            reported_total_pages,
+            is_complete,
+            created_at,
+            validated_at)
+        VALUES (
+            1005,
+            'drop-live-published',
+            'Solo_PeripheralCymbals',
+            'alltime',
+            'snapshot',
+            1005,
+            1005,
+            1,
+            repeat('a', 64),
+            repeat('b', 64),
+            1,
+            1,
+            TRUE,
+            now(),
+            now())
+        """)]
+    [InlineData(
+        """
+        SET session_replication_role = replica;
+        UPDATE snapshot_generation_retention_observations
+        SET classification = 'protected',
+            blocker_codes = ARRAY['tampered_candidate']
+        WHERE observation_id = 3005;
+        SET session_replication_role = origin
+        """)]
+    public async Task CurrentSafetyFenceRejectsDrop(
+        string mutationSql)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(mutationSql);
+
+        Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Fact]
+    public async Task AdvancedPlannerCycleRejectsDropWithoutResidue()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        Execute(
+            """
+            INSERT INTO snapshot_generation_retention_cycles (
+                cycle_id,
+                trigger_scrape_id,
+                trigger_publication_id,
+                safe_point_kind,
+                safe_point_at,
+                planner_version,
+                config_version,
+                report_only,
+                status,
+                oracle_agreement,
+                candidate_identity_hash,
+                observation_hash,
+                planner_child_set,
+                planner_live_set,
+                planner_candidate_set,
+                oracle_child_set,
+                oracle_live_set,
+                oracle_candidate_set,
+                candidate_count,
+                protected_count,
+                blocked_count,
+                candidate_bytes,
+                global_blockers,
+                anomalies,
+                created_at)
+            VALUES (
+                3006,
+                1006,
+                2006,
+                'terminal_worker_post_publication',
+                now(),
+                3,
+                1,
+                TRUE,
+                'observed',
+                TRUE,
+                repeat('a', 64),
+                repeat('b', 64),
+                '[]',
+                '[]',
+                '[]',
+                '[]',
+                '[]',
+                '[]',
+                0,
+                0,
+                0,
+                0,
+                '[]',
+                '[]',
+                now());
+            """);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.Contains(
+            "latest accepted cycle",
+            failure.Message,
+            StringComparison.Ordinal);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Theory]
+    [InlineData("q1-no-rotation")]
+    [InlineData("q2-short-soak")]
+    [InlineData("q1-identity-drift")]
+    public async Task DropRejectsInvalidRehearsalAndSoakEvidence(
+        string mutation)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        var mutationStatement = mutation switch
+        {
+            "q1-no-rotation" => """
+                UPDATE
+                    snapshot_generation_quarantine_attestations
+                SET publication_id = 2005,
+                    published_scrape_id = 1005
+                WHERE attestation_id = 9102
+                """,
+            "q2-short-soak" => """
+                UPDATE
+                    snapshot_generation_quarantine_operations
+                SET quarantined_at =
+                        now() - interval '5 minutes'
+                WHERE operation_id =
+                    '0123456789abcdef0123456789abcdef'
+                """,
+            _ => """
+                UPDATE
+                    snapshot_generation_quarantine_operations
+                SET child_oid = child_oid + 1
+                WHERE operation_id = repeat('b', 32)
+                """,
+        };
+        Execute(
+            $"""
+            SET session_replication_role = replica;
+            {mutationStatement};
+            SET session_replication_role = origin;
+            """);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(command, identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+    }
+
+    [Fact]
+    public async Task DropRejectsInsufficientHealthSamples()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(
+                    command,
+                    identity,
+                    healthSampleCount: 59)));
+
+        Assert.Equal("22023", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+    }
+
+    [Theory]
+    [InlineData(54, true, true, 0)]
+    [InlineData(55, false, true, 0)]
+    [InlineData(55, true, false, 0)]
+    [InlineData(55, true, true, 1)]
+    public async Task DropRejectsAssertedPreDropParity(
+        int routeCount,
+        bool statusParity,
+        bool semanticJsonParity,
+        int differenceCount)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                DropSql,
+                command => ConfigureDrop(
+                    command,
+                    identity,
+                    preDropRouteCount: routeCount,
+                    preDropStatusParity: statusParity,
+                    preDropSemanticJsonParity:
+                        semanticJsonParity,
+                    preDropDifferenceCount:
+                        differenceCount)));
+
+        Assert.Equal("22023", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Fact]
+    public async Task DropRejectsHealthWindowThatPredatesQ2()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        var staleHealthSql = DropSql.Replace(
+            "now() - interval '31 minutes'",
+            "now() - interval '40 minutes'",
+            StringComparison.Ordinal);
+
+        var failure = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                staleHealthSql,
+                command => ConfigureDrop(
+                    command,
+                    identity)));
+
+        Assert.Equal("55000", failure.SqlState);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelation));
+    }
+
+    [Fact]
+    public async Task DroppedChildCanBeLogicallyRestoredWithNewIdentity()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var original = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                original,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, original));
+        ExecuteScalar<long>(
+            """
+            SELECT fst_record_snapshot_generation_drop_attestation(
+                'fedcba9876543210fedcba9876543210',
+                'dropped',
+                2005,
+                1005,
+                55,
+                repeat('b', 64),
+                repeat('c', 64),
+                '{}'::jsonb,
+                repeat('d', 64),
+                'drop-operator')
+            """);
+        ExecuteScalar<long>(
+            """
+            SELECT fst_record_snapshot_generation_drop_attestation(
+                'fedcba9876543210fedcba9876543210',
+                'dropped',
+                2005,
+                1005,
+                55,
+                repeat('b', 64),
+                repeat('c', 64),
+                '{}'::jsonb,
+                repeat('d', 64),
+                'drop-operator')
+            """);
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_attestations
+                WHERE drop_operation_id =
+                    'fedcba9876543210fedcba9876543210'
+                """));
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_evidence
+                WHERE drop_operation_id =
+                    'fedcba9876543210fedcba9876543210'
+                """));
+
+        Execute(
+            """
+            CREATE TABLE public.restore_name_collision (
+                id INTEGER NOT NULL,
+                score INTEGER NOT NULL);
+            CREATE UNIQUE INDEX archived_pk
+                ON public.restore_name_collision (id);
+            CREATE INDEX archived_score
+                ON public.restore_name_collision (score);
+            """);
+        var unrelatedPkOid =
+            RelationOid("public", "archived_pk");
+        var unrelatedScoreOid =
+            RelationOid("public", "archived_score");
+        Execute(
+            """
+            CREATE TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                (
+                    LIKE
+                        public.leaderboard_entries_snapshot_pro_cymbals
+                    INCLUDING DEFAULTS
+                    INCLUDING STORAGE
+                    INCLUDING COMPRESSION
+                );
+            INSERT INTO
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005 (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+            VALUES (
+                1005,
+                'song-test',
+                'Solo_PeripheralCymbals',
+                'account-test',
+                123456,
+                'scrape',
+                now(),
+                now());
+            ALTER TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                ADD CONSTRAINT ck_sgr_1005_aaaaaaaaaaaa
+                CHECK (
+                    snapshot_id = 1005
+                    AND instrument =
+                        'Solo_PeripheralCymbals');
+            CREATE TRIGGER trg_sgr_1005_aaaaaaaaaaaa
+                BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+                ON
+                    public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                FOR EACH STATEMENT EXECUTE FUNCTION
+                    fst_reject_snapshot_generation_quarantine_relation_mutation();
+            """);
+        var restoredOid =
+            RelationOid("public", OriginalRelation);
+        var restoredRelfilenode =
+            RelationRelfilenode("public", OriginalRelation);
+        Assert.NotEqual(original.ChildOid, restoredOid);
+
+        var reusedApproval = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                RestoreSql.Replace(
+                    "'restore-approval'",
+                    "'drop-approval'",
+                    StringComparison.Ordinal),
+                command => ConfigureRestore(
+                    command,
+                    restoredOid,
+                    restoredRelfilenode)));
+        Assert.Equal("55000", reusedApproval.SqlState);
+
+        Execute(
+            """
+            CREATE VIEW public.restore_staging_dependency AS
+            SELECT *
+            FROM
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+            """);
+        var dependencyFailure =
+            Assert.Throws<PostgresException>(
+                () => ExecuteScalar<string>(
+                    RestoreSql,
+                    command => ConfigureRestore(
+                        command,
+                        restoredOid,
+                        restoredRelfilenode)));
+        Assert.Equal("55000", dependencyFailure.SqlState);
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_operations
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_inherits
+                WHERE inhrelid =
+                    'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                        ::regclass
+                """));
+        Execute("DROP VIEW public.restore_staging_dependency");
+
+        var result = ExecuteScalar<string>(
+            RestoreSql,
+            command => ConfigureRestore(
+                command,
+                restoredOid,
+                restoredRelfilenode));
+
+        Assert.Equal(new string('a', 32), result);
+        Assert.Equal(
+            unrelatedPkOid,
+            RelationOid("public", "archived_pk"));
+        Assert.Equal(
+            unrelatedScoreOid,
+            RelationOid("public", "archived_score"));
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_class
+                WHERE oid IN (
+                    @pkOid::OID,
+                    @scoreOid::OID)
+                  AND relname IN (
+                    'archived_pk',
+                    'archived_score')
+                """,
+                command =>
+                {
+                    command.Parameters.AddWithValue(
+                        "pkOid",
+                        unrelatedPkOid);
+                    command.Parameters.AddWithValue(
+                        "scoreOid",
+                        unrelatedScoreOid);
+                }));
+        Assert.Equal(
+            Scalar<long>(
+                """
+                SELECT
+                    'public.leaderboard_entries_snapshot_pro_cymbals'
+                        ::regclass::OID::BIGINT
+                """),
+            Scalar<long>(
+                """
+                SELECT inhparent::BIGINT
+                FROM pg_inherits
+                WHERE inhrelid =
+                    'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                        ::regclass
+                """));
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_index child_index
+                JOIN pg_inherits child_inheritance
+                  ON child_inheritance.inhrelid =
+                        child_index.indexrelid
+                WHERE child_index.indrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                            ::regclass
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_constraint
+                WHERE conrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_default'
+                            ::regclass
+                  AND conname =
+                        'ck_sgq_default_1005_0123456789ab'
+                """));
+        var protectedRestore =
+            Assert.Throws<PostgresException>(
+                () => ExecuteScalar<string>(
+                    """
+                    SELECT
+                        ensure_leaderboard_snapshot_generation_partition(
+                            'Solo_PeripheralCymbals',
+                            1005)
+                    """));
+        Assert.Equal("55000", protectedRestore.SqlState);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                            ::regclass
+                  AND tgname = 'trg_sgr_1005_aaaaaaaaaaaa'
+                  AND NOT tgisinternal
+                  AND tgenabled = 'O'
+                """));
+        var directWrite =
+            Assert.Throws<PostgresException>(
+                () => Execute(
+                    """
+                    INSERT INTO
+                        public.leaderboard_entries_snapshot_pro_cymbals_s1005 (
+                            snapshot_id,
+                            song_id,
+                            instrument,
+                            account_id,
+                            score,
+                            source,
+                            first_seen_at,
+                            last_updated_at)
+                    VALUES (
+                        1005,
+                        'guard-test',
+                        'Solo_PeripheralCymbals',
+                        'guard-test',
+                        1,
+                        'scrape',
+                        now(),
+                        now())
+                    """));
+        Assert.Equal("55000", directWrite.SqlState);
+
+        ExecuteScalar<string>(
+            """
+            SELECT
+                fst_record_snapshot_generation_restore_attestation(
+                    repeat('a', 32),
+                    2005,
+                    1005,
+                    55,
+                    repeat('c', 64),
+                    repeat('2', 64),
+                    '{}'::jsonb,
+                    repeat('3', 64),
+                    'restore-operator')
+            """);
+        ExecuteScalar<string>(
+            """
+            SELECT
+                fst_record_snapshot_generation_restore_attestation(
+                    repeat('a', 32),
+                    2005,
+                    1005,
+                    55,
+                    repeat('c', 64),
+                    repeat('2', 64),
+                    '{}'::jsonb,
+                    repeat('3', 64),
+                    'restore-operator')
+            """);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_attestations
+                WHERE restore_operation_id = repeat('a', 32)
+                """));
+        Execute(
+            """
+            UPDATE service_worker_status
+            SET status = 'running',
+                current_operation_json = '{}'::jsonb
+            WHERE worker_key = 'scraper'
+            """);
+        var unsafeFinalize =
+            Assert.Throws<PostgresException>(
+                () => ExecuteScalar<string>(
+                    """
+                    SELECT fst_finalize_snapshot_generation_restore(
+                        repeat('a', 32),
+                        'restore-operator',
+                        'restore-complete',
+                        '{}'::jsonb)
+                    """));
+        Assert.Equal("55000", unsafeFinalize.SqlState);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_retention_holds hold_row
+                JOIN snapshot_generation_restore_operations
+                    restore_row
+                  ON restore_row.hold_id = hold_row.hold_id
+                WHERE restore_row.restore_operation_id =
+                        repeat('a', 32)
+                  AND hold_row.released_at IS NULL
+                """));
+        Execute(
+            """
+            UPDATE service_worker_status
+            SET status = 'offline',
+                current_operation_json = NULL
+            WHERE worker_key = 'scraper'
+            """);
+        ExecuteScalar<string>(
+            """
+            SELECT fst_finalize_snapshot_generation_restore(
+                repeat('a', 32),
+                'restore-operator',
+                'restore-complete',
+                '{}'::jsonb)
+            """);
+        ExecuteScalar<string>(
+            """
+            SELECT fst_finalize_snapshot_generation_restore(
+                repeat('a', 32),
+                'restore-operator',
+                'restore-complete',
+                '{}'::jsonb)
+            """);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_retention_holds hold_row
+                JOIN snapshot_generation_drop_operations drop_row
+                  ON drop_row.hold_id = hold_row.hold_id
+                WHERE drop_row.drop_operation_id =
+                        'fedcba9876543210fedcba9876543210'
+                  AND hold_row.released_at IS NOT NULL
+                """));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_finalizations
+                WHERE restore_operation_id = repeat('a', 32)
+                """));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                            ::regclass
+                  AND tgname = 'trg_sgr_1005_aaaaaaaaaaaa'
+                  AND NOT tgisinternal
+                """));
+        Assert.Equal(
+            OriginalRelation,
+            ExecuteScalar<string>(
+                """
+                SELECT
+                    ensure_leaderboard_snapshot_generation_partition(
+                        'Solo_PeripheralCymbals',
+                        1005)
+                """));
+        Execute(
+            """
+            SET session_replication_role = replica;
+            UPDATE snapshot_generation_restore_operations
+            SET restored_child_relfilenode =
+                    restored_child_relfilenode + 1
+            WHERE restore_operation_id = repeat('a', 32);
+            SET session_replication_role = origin
+            """);
+        Assert.Equal(
+            restoredOid,
+            RelationOid("public", OriginalRelation));
+        Assert.Equal(
+            OriginalRelation,
+            ExecuteScalar<string>(
+                """
+                SELECT
+                    ensure_leaderboard_snapshot_generation_partition(
+                        'Solo_PeripheralCymbals',
+                        1005)
+                """));
+
+        Execute(
+            """
+            SET session_replication_role = replica;
+            UPDATE snapshot_generation_restore_operations
+            SET restored_child_oid = restored_child_oid + 1
+            WHERE restore_operation_id = repeat('a', 32);
+            SET session_replication_role = origin
+            """);
+        var wrongOid = Assert.Throws<PostgresException>(
+            () => ExecuteScalar<string>(
+                """
+                SELECT
+                    ensure_leaderboard_snapshot_generation_partition(
+                        'Solo_PeripheralCymbals',
+                        1005)
+                """));
+        Assert.Equal("55000", wrongOid.SqlState);
     }
 
     [Fact]
@@ -471,6 +3166,921 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 CandidateManifestSha256 =
                     new('a', 64),
             });
+    }
+
+    [Fact]
+    public async Task ReattachIndexRenamesDoNotStrongLockUnrelatedObjects()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        await using var database =
+            QuarantineDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var (plan, parity) =
+            await BuildExecutorPlanAsync(
+                database,
+                identity);
+        await database.QuarantineAsync(
+            plan,
+            "test-operator",
+            "test-approval");
+        var attestationParity = parity with
+        {
+            BaselineManifestPath =
+                parity.CandidateManifestPath,
+            BaselineManifestSha256 =
+                parity.CandidateManifestSha256,
+            CandidateManifestPath =
+                "/evidence/routes/post-quarantine/manifest.json",
+            CandidateManifestSha256 = new('8', 64),
+        };
+        await database.RecordAttestationAsync(
+            plan,
+            "quarantined",
+            "test-operator",
+            attestationParity);
+        await database.RecordAttestationAsync(
+            plan,
+            "soak",
+            "test-operator",
+            attestationParity with
+            {
+                BaselineManifestSha256 =
+                    new('8', 64),
+                CandidateManifestSha256 =
+                    new('9', 64),
+            });
+        Execute(
+            """
+            CREATE TABLE public.unrelated_reattach_lock (
+                value INTEGER NOT NULL);
+            CREATE INDEX unrelated_reattach_lock_idx
+                ON public.unrelated_reattach_lock (value);
+            """);
+        var unrelatedTableOid = RelationOid(
+            "public",
+            "unrelated_reattach_lock");
+        var unrelatedIndexOid = RelationOid(
+            "public",
+            "unrelated_reattach_lock_idx");
+        var targetIndexOids = new[]
+        {
+            Scalar<long>(
+                $"""
+                SELECT index_oid
+                FROM snapshot_generation_quarantine_index_renames
+                WHERE operation_id =
+                        '{plan.OperationId}'
+                  AND index_role = 'pk'
+                """),
+            Scalar<long>(
+                $"""
+                SELECT index_oid
+                FROM snapshot_generation_quarantine_index_renames
+                WHERE operation_id =
+                        '{plan.OperationId}'
+                  AND index_role = 'score'
+                """),
+        };
+        var reached = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim(false);
+        QuarantineDatabase.ReattachTestHook =
+            point =>
+            {
+                if (point !=
+                    "after-reattach-before-commit")
+                {
+                    return;
+                }
+                reached.TrySetResult();
+                if (!release.Wait(
+                        TimeSpan.FromSeconds(30)))
+                {
+                    throw new TimeoutException(
+                        "Reattach lock inspection was not released.");
+                }
+            };
+        IReadOnlyList<(long Oid, string Mode)> locks =
+            [];
+        var reattachTask = database.ReattachAsync(
+            plan,
+            "test-operator",
+            "lock-observation");
+        try
+        {
+            await reached.Task.WaitAsync(
+                TimeSpan.FromSeconds(30));
+            await using var connection =
+                await _fixture.DataSource
+                    .OpenConnectionAsync();
+            await using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    lock_row.relation::BIGINT,
+                    lock_row.mode
+                FROM pg_locks lock_row
+                JOIN pg_stat_activity activity
+                  ON activity.pid = lock_row.pid
+                WHERE lock_row.locktype = 'relation'
+                  AND lock_row.granted
+                  AND activity.datname =
+                        current_database()
+                  AND activity.application_name =
+                        'fst-snapshot-generation-quarantine'
+                  AND activity.state =
+                        'idle in transaction'
+                  AND lock_row.relation =
+                        ANY(@relationOids)
+                ORDER BY
+                    lock_row.relation,
+                    lock_row.mode
+                """;
+            command.Parameters.AddWithValue(
+                "relationOids",
+                targetIndexOids
+                    .Concat(
+                    [
+                        unrelatedTableOid,
+                        unrelatedIndexOid,
+                    ])
+                    .ToArray());
+            var observed =
+                new List<(long Oid, string Mode)>();
+            await using var reader =
+                await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                observed.Add(
+                    (reader.GetInt64(0),
+                     reader.GetString(1)));
+            }
+            locks = observed;
+            release.Set();
+            await reattachTask;
+        }
+        finally
+        {
+            release.Set();
+            QuarantineDatabase.ReattachTestHook =
+                null;
+        }
+
+        Assert.All(
+            targetIndexOids,
+            oid => Assert.Contains(
+                locks,
+                item => item.Oid == oid));
+        Assert.DoesNotContain(
+            locks,
+            item =>
+                item.Oid is var oid
+                && (oid == unrelatedTableOid
+                    || oid == unrelatedIndexOid)
+                && item.Mode is
+                    "ShareUpdateExclusiveLock"
+                    or "ShareLock"
+                    or "AccessExclusiveLock");
+    }
+
+    [Fact]
+    public async Task PythonAcceptsCSharpCanonicalDropPlanBytes()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var plan = await PrepareDropPlanAsync(identity);
+        var fixture = (plan with
+        {
+            GeneratedAtUtc = new DateTimeOffset(
+                2026,
+                8,
+                31,
+                14,
+                0,
+                0,
+                TimeSpan.Zero),
+            RecoveryBundlePath =
+                "/evidence/C++/operator's <bundle>&",
+            BinaryPath =
+                "/evidence/drop+operator's.dll",
+            ActiveQuarantineReport =
+                plan.ActiveQuarantineReport with
+                {
+                    Reference =
+                        "approval+operator's <reference>&",
+                    ReportSha256 = null,
+                },
+            PlanDigest = null,
+            DropOperationId = null,
+        }).Seal();
+        fixture.Validate();
+        var planPath = Path.Combine(
+            AppContext.BaseDirectory,
+            $"drop-plan-canonical-{Guid.NewGuid():N}.json");
+        var repository = FindRepositoryRoot();
+        try
+        {
+            FstSnapshotGenerationDrop
+                .DropEvidenceValidator.WriteNewCanonical(
+                    planPath,
+                    fixture);
+            var raw = File.ReadAllText(planPath);
+            Assert.Contains("\\u002B", raw);
+            Assert.Contains("\\u0027", raw);
+            Assert.Contains(
+                "14:00:00\\u002B00:00",
+                raw);
+            Assert.DoesNotContain(
+                "\"reportSha256\":null",
+                raw,
+                StringComparison.Ordinal);
+
+            var start = new ProcessStartInfo(
+                "python3")
+            {
+                WorkingDirectory = repository,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.Environment[
+                "PYTHONDONTWRITEBYTECODE"] = "1";
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(
+                """
+                import importlib.util
+                import pathlib
+                import sys
+                spec = importlib.util.spec_from_file_location(
+                    "restore_tool", sys.argv[1])
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                plan = module.validate_drop_plan(
+                    pathlib.Path(sys.argv[2]),
+                    sys.argv[3],
+                    sys.argv[4])
+                print(plan["dropOperationId"])
+                """);
+            start.ArgumentList.Add(
+                Path.Combine(
+                    repository,
+                    "tools",
+                    "postgres-snapshot-generation-restore.py"));
+            start.ArgumentList.Add(planPath);
+            start.ArgumentList.Add(fixture.PlanDigest!);
+            start.ArgumentList.Add(
+                fixture.DropOperationId!);
+            using var process = Process.Start(start)
+                ?? throw new InvalidOperationException(
+                    "Python restore validator did not start.");
+            var standardOutput =
+                await process.StandardOutput.ReadToEndAsync();
+            var standardError =
+                await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.True(
+                process.ExitCode == 0,
+                standardError);
+            Assert.Equal(
+                fixture.DropOperationId,
+                standardOutput.Trim());
+        }
+        finally
+        {
+            if (File.Exists(planPath))
+                File.Delete(planPath);
+        }
+    }
+
+    [Fact]
+    public async Task DropExecutorReadsExactPrivateCandidateState()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        await using var quarantineDatabase =
+            QuarantineDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var (quarantinePlan, _) =
+            await BuildExecutorPlanAsync(
+                quarantineDatabase,
+                identity);
+        await quarantineDatabase.QuarantineAsync(
+            quarantinePlan,
+            "test-operator",
+            "test-approval");
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+
+        var snapshot = await dropDatabase.ReadSnapshotAsync(
+            quarantinePlan);
+
+        Assert.True(snapshot.PrivateRelationExists);
+        Assert.True(snapshot.OriginalRelationAbsent);
+        Assert.True(snapshot.Detached);
+        Assert.True(snapshot.ExactHoldActive);
+        Assert.True(snapshot.DefaultIdentityValid);
+        Assert.True(snapshot.DefaultExclusionPresent);
+        Assert.Equal(0, snapshot.DefaultRowCount);
+        Assert.Equal(identity.ChildOid, snapshot.CurrentChildOid);
+        Assert.Equal(
+            identity.ChildRelfilenode,
+            snapshot.CurrentChildRelfilenode);
+        Assert.Equal(1, snapshot.CurrentRowCount);
+        Assert.Equal(2, snapshot.ChildIndexCount);
+    }
+
+    [Fact]
+    public async Task DropCanarySelectionUsesCurrentPhysicalBytes()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        await using var database =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+
+        var candidate = await database.SelectCanaryAsync();
+
+        Assert.Equal(
+            "Solo_PeripheralCymbals",
+            candidate.Instrument);
+        Assert.Equal(1005, candidate.SnapshotId);
+        Assert.Equal(identity.ChildOid, candidate.ChildOid);
+        Assert.True(candidate.TotalBytes > 0);
+        Assert.Equal(1, candidate.RowCount);
+    }
+
+    [Fact]
+    public async Task DropExecutorCommitsAndConfirmsExactOperation()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        await using var quarantineDatabase =
+            QuarantineDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var (activePlan, parity) =
+            await BuildExecutorPlanAsync(
+                quarantineDatabase,
+                identity);
+        var activeReport =
+            await quarantineDatabase.QuarantineAsync(
+                activePlan,
+                "q2-operator",
+                "q2-approval");
+        var rehearsalPlan = (activePlan with
+        {
+            GeneratedAtUtc =
+                activePlan.GeneratedAtUtc.AddMinutes(-60),
+            PlanDigest = null,
+            OperationId = null,
+        }).Seal();
+        SeedDropPrerequisites(
+            activePlan.OperationId!,
+            rehearsalPlan.OperationId!,
+            rehearsalPlan.PlanDigest!);
+
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var snapshot = await dropDatabase.ReadSnapshotAsync(
+            activePlan);
+        var started =
+            DateTimeOffset.UtcNow.AddMinutes(-31);
+        var health =
+            new FstSnapshotGenerationDrop
+                .SnapshotGenerationHealthEvidence(
+                    1,
+                    "fst.snapshot-generation-drop-health.v1",
+                    started,
+                    started.AddMinutes(30),
+                    30,
+                    60,
+                    2005,
+                    1005,
+                    true,
+                    Enumerable.Range(0, 60)
+                        .Select(index =>
+                            new FstSnapshotGenerationDrop
+                                .SnapshotGenerationHealthSample(
+                                    started.AddSeconds(
+                                        index * 30),
+                                    2005,
+                                    1005,
+                                    true,
+                                    true,
+                                    false,
+                                    0,
+                                    0))
+                        .ToArray(),
+                    null).Seal();
+        var q1Quarantined = BuildAttestationReport(
+            rehearsalPlan,
+            9101,
+            "quarantined",
+            parity);
+        var q1Soak = BuildAttestationReport(
+            rehearsalPlan,
+            9102,
+            "soak",
+            parity with
+            {
+                PublicationId = 2006,
+                PublishedScrapeId = 1006,
+            });
+        var q1Reattached = BuildAttestationReport(
+            rehearsalPlan,
+            9103,
+            "reattached",
+            parity with
+            {
+                PublicationId = 2006,
+                PublishedScrapeId = 1006,
+            });
+        var q2Quarantined = BuildAttestationReport(
+            activePlan,
+            9201,
+            "quarantined",
+            parity);
+        var q2Soak = BuildAttestationReport(
+            activePlan,
+            9202,
+            "soak",
+            parity);
+        var rehearsalQuarantine = BuildExecutionReport(
+            rehearsalPlan,
+            "quarantine",
+            "quarantined",
+            "q1-operator",
+            "q1-approval");
+        var rehearsalReattach = BuildExecutionReport(
+            rehearsalPlan,
+            "reattach",
+            "reattached",
+            "q1-operator",
+            "q1-reattach");
+        var semanticEvidence =
+            BuildSemanticEvidence(
+                identity,
+                activePlan.OperationId!);
+        var plan =
+            new FstSnapshotGenerationDrop
+                .SnapshotGenerationDropPlan(
+                    1,
+                    SnapshotGenerationDropContract.ToolId,
+                    DateTimeOffset.UtcNow,
+                    true,
+                    rehearsalPlan,
+                    activePlan,
+                    rehearsalQuarantine,
+                    rehearsalReattach,
+                    activeReport,
+                    q1Quarantined,
+                    q1Soak,
+                    q1Reattached,
+                    q2Quarantined,
+                    q2Soak,
+                    semanticEvidence,
+                    semanticEvidence,
+                    parity,
+                    health,
+                    snapshot,
+                    "/evidence/recovery",
+                    new('1', 64),
+                    2L * 1024 * 1024 * 1024,
+                    0,
+                    "/evidence/drop.dll",
+                    new('2', 64),
+                    "/evidence/restore.py",
+                    new('3', 64),
+                    new('4', 64),
+                    new('5', 40),
+                    "/evidence/archive/fresh-proof.json",
+                    new('6', 64),
+                    DateTimeOffset.UtcNow,
+                    null,
+                    null).Seal();
+        Assert.Throws<InvalidDataException>(
+            () => (plan with
+            {
+                CapacityReserveBytes = 1,
+            }).Validate());
+
+        await dropDatabase.ValidateQuarantineChainAsync(
+            plan);
+        var report = await dropDatabase.DropAsync(
+            plan,
+            "drop-operator",
+            "drop-approval");
+        var repeated = await dropDatabase.DropAsync(
+            plan,
+            "confirming-operator",
+            "confirming-reference");
+
+        Assert.Equal("dropped", report.Status);
+        Assert.Equal("committed", report.CommitOutcome);
+        Assert.Equal(
+            "already-committed",
+            repeated.CommitOutcome);
+        Assert.Equal("drop-operator", repeated.Actor);
+        Assert.Equal("drop-approval", repeated.Reference);
+        var attestation =
+            await dropDatabase.RecordAttestationAsync(
+                plan,
+                "dropped",
+                "drop-operator",
+                parity with
+                {
+                    BaselineManifestSha256 =
+                        plan.PreDropParity
+                            .CandidateManifestSha256,
+                    CandidateManifestSha256 =
+                        new('9', 64),
+                });
+        Assert.True(attestation.AttestationId > 0);
+        Assert.False(RelationExists(
+            SnapshotGenerationQuarantineContract
+                .QuarantineSchema,
+            QuarantineRelationFor(
+                activePlan.OperationId!)));
+    }
+
+    [Fact]
+    public async Task DropExecutorRejectsCatalogDriftAfterPlan()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var plan = await PrepareDropPlanAsync(identity);
+        var privateRelation =
+            QuarantineRelationFor(
+                plan.ActivePlan.OperationId!);
+        Execute(
+            $"""
+            ALTER TABLE
+                fst_snapshot_quarantine.{privateRelation}
+                ADD COLUMN unexpected_catalog_drift INTEGER
+            """);
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+
+        var failure =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                () => dropDatabase.DropAsync(
+                    plan,
+                    "drop-operator",
+                    "drop-approval"));
+
+        Assert.Contains(
+            "topology",
+            failure.Message,
+            StringComparison.Ordinal);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                privateRelation));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Theory]
+    [InlineData("after-drop-before-commit", false)]
+    [InlineData("after-commit", true)]
+    public async Task DropExecutorReconcilesCommitBoundaryFailure(
+        string failurePoint,
+        bool committed)
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var plan = await PrepareDropPlanAsync(identity);
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        FstSnapshotGenerationDrop.DropDatabase.DropTestHook =
+            point =>
+            {
+                if (point == failurePoint)
+                    throw new IOException(
+                        $"Injected {failurePoint} failure.");
+            };
+        try
+        {
+            if (committed)
+            {
+                var report = await dropDatabase.DropAsync(
+                    plan,
+                    "drop-operator",
+                    "drop-approval");
+                Assert.Equal(
+                    "reconciled-committed",
+                    report.CommitOutcome);
+                Assert.False(
+                    RelationExists(
+                        SnapshotGenerationQuarantineContract
+                            .QuarantineSchema,
+                        QuarantineRelationFor(
+                            plan.ActivePlan.OperationId!)));
+            }
+            else
+            {
+                await Assert.ThrowsAsync<IOException>(
+                    () => dropDatabase.DropAsync(
+                        plan,
+                        "drop-operator",
+                        "drop-approval"));
+                Assert.True(
+                    RelationExists(
+                        SnapshotGenerationQuarantineContract
+                            .QuarantineSchema,
+                        QuarantineRelationFor(
+                            plan.ActivePlan.OperationId!)));
+                Assert.Equal(
+                    0,
+                    Scalar<int>(
+                        """
+                        SELECT COUNT(*)::INTEGER
+                        FROM snapshot_generation_drop_operations
+                        """));
+            }
+        }
+        finally
+        {
+            FstSnapshotGenerationDrop.DropDatabase
+                .DropTestHook = null;
+        }
+    }
+
+    [Fact]
+    public async Task DropExecutorHoldsOnlyExactPrivateAndDefaultRelations()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            """
+            SELECT ensure_leaderboard_snapshot_generation_partition(
+                'Solo_PeripheralCymbals',
+                1004)
+            """);
+        var topOid = Scalar<long>(
+            """
+            SELECT
+                'public.leaderboard_entries_snapshot'
+                    ::regclass::OID::BIGINT
+            """);
+        var defaultOid = RelationOid(
+            "public",
+            "leaderboard_entries_snapshot_pro_cymbals_default");
+        var siblingOid = RelationOid(
+            "public",
+            "leaderboard_entries_snapshot_pro_cymbals_s1004");
+        var plan = await PrepareDropPlanAsync(identity);
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var reached = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim(false);
+        FstSnapshotGenerationDrop.DropDatabase.DropTestHook =
+            point =>
+            {
+                if (point != "after-drop-before-commit")
+                    return;
+                reached.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(30)))
+                {
+                    throw new TimeoutException(
+                        "DROP lock inspection was not released.");
+                }
+            };
+        IReadOnlyList<(long RelationOid, string Mode)> locks =
+            [];
+        var dropTask = dropDatabase.DropAsync(
+            plan,
+            "drop-operator",
+            "drop-approval");
+        try
+        {
+            await reached.Task.WaitAsync(
+                TimeSpan.FromSeconds(30));
+            await using var connection =
+                await _fixture.DataSource
+                    .OpenConnectionAsync();
+            await using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    lock_row.relation::BIGINT,
+                    lock_row.mode
+                FROM pg_locks lock_row
+                JOIN pg_stat_activity activity
+                  ON activity.pid = lock_row.pid
+                WHERE lock_row.locktype = 'relation'
+                  AND lock_row.granted
+                  AND activity.datname = current_database()
+                  AND activity.application_name =
+                        'fst-snapshot-generation-drop'
+                  AND activity.state = 'idle in transaction'
+                  AND lock_row.relation = ANY(@relationOids)
+                ORDER BY
+                    lock_row.relation,
+                    lock_row.mode
+                """;
+            command.Parameters.AddWithValue(
+                "relationOids",
+                new[]
+                {
+                    topOid,
+                    identity.RootOid,
+                    defaultOid,
+                    siblingOid,
+                    identity.ChildOid,
+                });
+            var observed =
+                new List<(long RelationOid, string Mode)>();
+            await using var reader =
+                await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                observed.Add(
+                    (reader.GetInt64(0),
+                     reader.GetString(1)));
+            }
+            locks = observed;
+            release.Set();
+            await dropTask;
+        }
+        finally
+        {
+            release.Set();
+            FstSnapshotGenerationDrop.DropDatabase
+                .DropTestHook = null;
+        }
+
+        Assert.Contains(
+            (identity.ChildOid, "AccessExclusiveLock"),
+            locks);
+        Assert.Contains(
+            (defaultOid, "ShareLock"),
+            locks);
+        Assert.DoesNotContain(
+            (defaultOid, "AccessExclusiveLock"),
+            locks);
+        Assert.DoesNotContain(
+            locks,
+            item => item.RelationOid == topOid
+                && item.Mode is
+                    "ShareLock"
+                    or "AccessExclusiveLock");
+        Assert.DoesNotContain(
+            locks,
+            item => item.RelationOid == identity.RootOid
+                && item.Mode is
+                    "ShareLock"
+                    or "AccessExclusiveLock");
+        Assert.DoesNotContain(
+            locks,
+            item => item.RelationOid == siblingOid
+                && item.Mode is
+                    "ShareLock"
+                    or "AccessExclusiveLock");
+        Assert.Equal(
+            [identity.ChildOid],
+            locks
+                .Where(item =>
+                    item.Mode == "AccessExclusiveLock")
+                .Select(item => item.RelationOid)
+                .Distinct()
+                .ToArray());
+    }
+
+    [Fact]
+    public async Task DropExecutorTakesSnapshotAfterWaitingForLockChain()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var plan = await PrepareDropPlanAsync(identity);
+        await using var blocker =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using (var acquire = blocker.CreateCommand())
+        {
+            acquire.CommandText =
+                "SELECT pg_advisory_lock(@key)";
+            acquire.Parameters.AddWithValue(
+                "key",
+                SnapshotGenerationQuarantineContract
+                    .PublicationAdvisoryLockKey);
+            await acquire.ExecuteNonQueryAsync();
+        }
+        await using var database =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var task = database.DropAsync(
+            plan,
+            "drop-operator",
+            "drop-approval");
+        await Task.Delay(250);
+        await using (var mutate = blocker.CreateCommand())
+        {
+            mutate.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = 1005,
+                    public_reads_frozen_reason = 'test'
+                WHERE id = TRUE
+                """;
+            await mutate.ExecuteNonQueryAsync();
+        }
+        await using (var release = blocker.CreateCommand())
+        {
+            release.CommandText =
+                "SELECT pg_advisory_unlock(@key)";
+            release.Parameters.AddWithValue(
+                "key",
+                SnapshotGenerationQuarantineContract
+                    .PublicationAdvisoryLockKey);
+            Assert.True(
+                (bool)(await release.ExecuteScalarAsync())!);
+        }
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => task);
+        Assert.True(
+            RelationExists(
+                SnapshotGenerationQuarantineContract
+                    .QuarantineSchema,
+                QuarantineRelationFor(
+                    plan.ActivePlan.OperationId!)));
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
+    }
+
+    [Fact]
+    public async Task DropConfirmRejectsMixedCommittedState()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        var plan = await PrepareDropPlanAsync(identity);
+        await using var database =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        await database.DropAsync(
+            plan,
+            "drop-operator",
+            "drop-approval");
+        Execute(
+            """
+            CREATE TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                (
+                    LIKE
+                        public.leaderboard_entries_snapshot_pro_cymbals
+                    INCLUDING ALL
+                )
+            """);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => database.DropAsync(
+                plan,
+                "drop-operator",
+                "drop-approval"));
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_drop_operations
+                """));
     }
 
     [Fact]
@@ -638,6 +4248,370 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             parity);
     }
 
+    private static SnapshotGenerationQuarantineExecutionReport
+        BuildExecutionReport(
+            SnapshotGenerationQuarantinePlan plan,
+            string action,
+            string status,
+            string actor,
+            string reference) =>
+        new SnapshotGenerationQuarantineExecutionReport(
+            1,
+            SnapshotGenerationQuarantineContract.ToolId,
+            action,
+            plan.OperationId!,
+            plan.PlanDigest!,
+            status,
+            DateTimeOffset.UtcNow,
+            actor,
+            reference,
+            plan.Database.DatabaseName,
+            plan.Database.SystemIdentifier,
+            plan.Archive.TriggerPublicationId,
+            plan.Archive.TriggerScrapeId,
+            plan.Archive.Instrument,
+            plan.Archive.SnapshotId,
+            plan.Archive.ChildRelation,
+            status == "quarantined"
+                ? $"{SnapshotGenerationQuarantineContract.QuarantineSchema}.{QuarantineRelationFor(plan.OperationId!)}"
+                : null,
+            plan.Archive.ChildOid,
+            plan.Archive.ChildRelfilenode,
+            plan.Archive.RowCount,
+            plan.Archive.RowFingerprintSha256,
+            JsonDocument.Parse("{}").RootElement.Clone())
+        .Seal();
+
+    private FstSnapshotGenerationDrop
+        .SnapshotGenerationArchiveSemanticEvidence
+        BuildSemanticEvidence(
+            CandidateIdentity identity,
+            string operationId)
+    {
+        var physicalIndexes = new Dictionary<
+            string,
+            (long Oid,
+             long Relfilenode,
+             long ParentRootOid,
+             long ParentTopOid)>(
+                StringComparer.Ordinal);
+        using (var connection =
+               _fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT
+                    index_role,
+                    index_oid,
+                    index_relfilenode,
+                    (
+                        semantic_before #>>
+                            '{expectedParentIndexOid}'
+                        )::BIGINT,
+                    (
+                        semantic_before #>>
+                            '{expectedTopIndexOid}'
+                        )::BIGINT
+                FROM
+                    snapshot_generation_quarantine_index_renames
+                WHERE operation_id = @operationId
+                ORDER BY index_role
+                """;
+            command.Parameters.AddWithValue(
+                "operationId",
+                operationId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                physicalIndexes[reader.GetString(0)] =
+                    (reader.GetInt64(1),
+                     reader.GetInt64(2),
+                     reader.GetInt64(3),
+                     reader.GetInt64(4));
+            }
+        }
+        var indexes = new[]
+        {
+            new FstSnapshotGenerationDrop
+                .SnapshotGenerationSemanticIndexEvidence(
+                    "pk",
+                    physicalIndexes["pk"].Oid,
+                    physicalIndexes["pk"]
+                        .Relfilenode,
+                    true,
+                    true,
+                    true,
+                    true,
+                    "btree",
+                    "pg_default",
+                    [
+                        "snapshot_id",
+                        "song_id",
+                        "instrument",
+                        "account_id",
+                    ],
+                    ["asc", "asc", "asc", "asc"],
+                    ["last", "last", "last", "last"],
+                    ["default", "default", "default", "default"],
+                    ["default", "default", "default", "default"],
+                    null,
+                    null,
+                    physicalIndexes["pk"]
+                        .ParentRootOid,
+                    physicalIndexes["pk"]
+                        .ParentTopOid,
+                    "pk"),
+            new FstSnapshotGenerationDrop
+                .SnapshotGenerationSemanticIndexEvidence(
+                    "score",
+                    physicalIndexes["score"].Oid,
+                    physicalIndexes["score"]
+                        .Relfilenode,
+                    false,
+                    false,
+                    true,
+                    true,
+                    "btree",
+                    "pg_default",
+                    [
+                        "snapshot_id",
+                        "song_id",
+                        "instrument",
+                        "score",
+                    ],
+                    ["asc", "asc", "asc", "desc"],
+                    ["last", "last", "last", "first"],
+                    ["default", "default", "default", "default"],
+                    ["default", "default", "default", "default"],
+                    null,
+                    null,
+                    physicalIndexes["score"]
+                        .ParentRootOid,
+                    physicalIndexes["score"]
+                        .ParentTopOid,
+                    "score"),
+        };
+        return new FstSnapshotGenerationDrop
+            .SnapshotGenerationArchiveSemanticEvidence(
+                1,
+                new string('a', 64),
+                new string('b', 64),
+                new string('c', 64),
+                new string('d', 64),
+                indexes);
+    }
+
+    private async Task<
+        FstSnapshotGenerationDrop.SnapshotGenerationDropPlan>
+        PrepareDropPlanAsync(CandidateIdentity identity)
+    {
+        await using var quarantineDatabase =
+            QuarantineDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var (activePlan, parity) =
+            await BuildExecutorPlanAsync(
+                quarantineDatabase,
+                identity);
+        var activeReport =
+            await quarantineDatabase.QuarantineAsync(
+                activePlan,
+                "q2-operator",
+                "q2-approval");
+        var rehearsalPlan = (activePlan with
+        {
+            GeneratedAtUtc =
+                activePlan.GeneratedAtUtc.AddMinutes(-60),
+            PlanDigest = null,
+            OperationId = null,
+        }).Seal();
+        SeedDropPrerequisites(
+            activePlan.OperationId!,
+            rehearsalPlan.OperationId!,
+            rehearsalPlan.PlanDigest!);
+        await using var dropDatabase =
+            FstSnapshotGenerationDrop.DropDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var snapshot = await dropDatabase.ReadSnapshotAsync(
+            activePlan);
+        var started =
+            DateTimeOffset.UtcNow.AddMinutes(-31);
+        var health =
+            new FstSnapshotGenerationDrop
+                .SnapshotGenerationHealthEvidence(
+                    1,
+                    "fst.snapshot-generation-drop-health.v1",
+                    started,
+                    started.AddMinutes(30),
+                    30,
+                    60,
+                    2005,
+                    1005,
+                    true,
+                    Enumerable.Range(0, 60)
+                        .Select(index =>
+                            new FstSnapshotGenerationDrop
+                                .SnapshotGenerationHealthSample(
+                                    started.AddSeconds(
+                                        index * 30),
+                                    2005,
+                                    1005,
+                                    true,
+                                    true,
+                                    false,
+                                    0,
+                                    0))
+                        .ToArray(),
+                    null).Seal();
+        var semanticEvidence =
+            BuildSemanticEvidence(
+                identity,
+                activePlan.OperationId!);
+        return new FstSnapshotGenerationDrop
+            .SnapshotGenerationDropPlan(
+                1,
+                SnapshotGenerationDropContract.ToolId,
+                DateTimeOffset.UtcNow,
+                true,
+                rehearsalPlan,
+                activePlan,
+                BuildExecutionReport(
+                    rehearsalPlan,
+                    "quarantine",
+                    "quarantined",
+                    "q1-operator",
+                    "q1-approval"),
+                BuildExecutionReport(
+                    rehearsalPlan,
+                    "reattach",
+                    "reattached",
+                    "q1-operator",
+                    "q1-reattach"),
+                activeReport,
+                BuildAttestationReport(
+                    rehearsalPlan,
+                    9101,
+                    "quarantined",
+                    parity),
+                BuildAttestationReport(
+                    rehearsalPlan,
+                    9102,
+                    "soak",
+                    parity with
+                    {
+                        PublicationId = 2006,
+                        PublishedScrapeId = 1006,
+                    }),
+                BuildAttestationReport(
+                    rehearsalPlan,
+                    9103,
+                    "reattached",
+                    parity with
+                    {
+                        PublicationId = 2006,
+                        PublishedScrapeId = 1006,
+                    }),
+                BuildAttestationReport(
+                    activePlan,
+                    9201,
+                    "quarantined",
+                    parity),
+                BuildAttestationReport(
+                    activePlan,
+                    9202,
+                    "soak",
+                    parity),
+                semanticEvidence,
+                semanticEvidence,
+                parity,
+                health,
+                snapshot,
+                "/evidence/recovery",
+                new('1', 64),
+                2L * 1024 * 1024 * 1024,
+                0,
+                "/evidence/drop.dll",
+                new('2', 64),
+                "/evidence/restore.py",
+                new('3', 64),
+                new('4', 64),
+                new('5', 40),
+                "/evidence/archive/fresh-proof.json",
+                new('6', 64),
+                DateTimeOffset.UtcNow,
+                null,
+                null).Seal();
+    }
+
+    private static SnapshotGenerationQuarantineAttestationReport
+        BuildAttestationReport(
+            SnapshotGenerationQuarantinePlan plan,
+            long id,
+            string stage,
+            RouteParityEvidence parity)
+    {
+        var evidenceCharacter = id switch
+        {
+            9101 => '3',
+            9102 => '4',
+            9103 => '5',
+            9201 => '7',
+            9202 => '8',
+            _ => 'f',
+        };
+        var effectiveParity = id switch
+        {
+            9101 => parity with
+            {
+                BaselineManifestSha256 = new('1', 64),
+                CandidateManifestSha256 = new('2', 64),
+            },
+            9102 => parity with
+            {
+                PublicationId = 2006,
+                PublishedScrapeId = 1006,
+                BaselineManifestSha256 = new('2', 64),
+                CandidateManifestSha256 = new('3', 64),
+            },
+            9103 => parity with
+            {
+                PublicationId = 2006,
+                PublishedScrapeId = 1006,
+                BaselineManifestSha256 = new('3', 64),
+                CandidateManifestSha256 = new('4', 64),
+            },
+            9201 => parity with
+            {
+                BaselineManifestSha256 = new('5', 64),
+                CandidateManifestSha256 = new('6', 64),
+            },
+            9202 => parity with
+            {
+                BaselineManifestSha256 = new('6', 64),
+                CandidateManifestSha256 = new('7', 64),
+            },
+            _ => parity,
+        };
+        return new SnapshotGenerationQuarantineAttestationReport(
+                1,
+                SnapshotGenerationQuarantineContract.ToolId,
+                plan.OperationId!,
+                plan.PlanDigest!,
+                stage,
+                id,
+                DateTimeOffset.UtcNow,
+                "test-operator",
+                effectiveParity,
+                JsonDocument.Parse("{}")
+                    .RootElement.Clone(),
+                new string(evidenceCharacter, 64))
+            .Seal();
+    }
+
+    private static string QuarantineRelationFor(
+        string operationId) =>
+        $"sgq_pc_1005_{operationId[..12]}";
+
     private void RotatePublicationForRollbackTest()
     {
         Execute(
@@ -763,6 +4737,24 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 improvement_notifications_projection_scrape_id = 1005,
                 updated_at = now()
             WHERE id = TRUE;
+
+            INSERT INTO service_worker_status (
+                worker_key,
+                status,
+                last_status_change_at,
+                current_operation_json,
+                updated_at)
+            VALUES (
+                'scraper',
+                'offline',
+                now(),
+                NULL,
+                now())
+            ON CONFLICT (worker_key) DO UPDATE
+            SET status = 'offline',
+                current_operation_json = NULL,
+                last_status_change_at = now(),
+                updated_at = now();
 
             INSERT INTO snapshot_generation_retention_cycles (
                 cycle_id,
@@ -986,12 +4978,252 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             expectedRowCount);
     }
 
-    private void RecordAttestation(
+    private static void ConfigureDrop(
+        NpgsqlCommand command,
+        CandidateIdentity identity,
+        int healthSampleCount = 60,
+        int preDropRouteCount = 55,
+        bool preDropStatusParity = true,
+        bool preDropSemanticJsonParity = true,
+        int preDropDifferenceCount = 0)
+    {
+        command.Parameters.AddWithValue(
+            "childOid",
+            identity.ChildOid);
+        command.Parameters.AddWithValue(
+            "childRelfilenode",
+            identity.ChildRelfilenode);
+        command.Parameters.AddWithValue(
+            "healthSampleCount",
+            healthSampleCount);
+        command.Parameters.AddWithValue(
+            "preDropRouteCount",
+            preDropRouteCount);
+        command.Parameters.AddWithValue(
+            "preDropStatusParity",
+            preDropStatusParity);
+        command.Parameters.AddWithValue(
+            "preDropSemanticJsonParity",
+            preDropSemanticJsonParity);
+        command.Parameters.AddWithValue(
+            "preDropDifferenceCount",
+            preDropDifferenceCount);
+    }
+
+    private void AssertPrivateIndexDrift(
+        string scenario,
+        CandidateIdentity identity)
+    {
+        if (scenario is "extra-index" or "missing-index")
+        {
+            Assert.Equal(
+                scenario == "extra-index" ? 3 : 1,
+                Scalar<int>(
+                    $"""
+                    SELECT COUNT(*)::INTEGER
+                    FROM pg_index
+                    WHERE indrelid =
+                        'fst_snapshot_quarantine.{QuarantineRelation}'
+                            ::regclass
+                    """));
+            return;
+        }
+
+        var mismatchCount = ExecuteScalar<int>(
+            """
+            WITH inventory AS (
+                SELECT
+                    item.key AS index_role,
+                    item.value AS index_data
+                FROM jsonb_each(
+                    fst_snapshot_generation_index_inventory(
+                        @childOid,
+                        @rootOid,
+                        FALSE))
+                    item
+            )
+            SELECT COUNT(*)::INTEGER
+            FROM inventory
+            JOIN snapshot_generation_quarantine_index_renames
+                rename_row
+              ON rename_row.operation_id =
+                    '0123456789abcdef0123456789abcdef'
+             AND rename_row.index_role =
+                    inventory.index_role
+            WHERE rename_row.index_oid <>
+                    (
+                        inventory.index_data
+                        ->> 'indexOid')::BIGINT
+               OR rename_row.index_relfilenode <>
+                    (
+                        inventory.index_data
+                        ->> 'indexRelfilenode')::BIGINT
+               OR rename_row.new_index_name <>
+                    inventory.index_data
+                        ->> 'indexName'
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue(
+                    "childOid",
+                    identity.ChildOid);
+                command.Parameters.AddWithValue(
+                    "rootOid",
+                    identity.RootOid);
+            });
+        Assert.Equal(
+            scenario == "wrong-role" ? 2 : 1,
+            mismatchCount);
+    }
+
+    private static void ConfigureRestore(
+        NpgsqlCommand command,
+        long restoredOid,
+        long restoredRelfilenode,
+        string? authorizationId = null,
+        string? executingToolSha256 = null,
+        string? validatorBaseToolSha256 = null,
+        string? archiveHelperSha256 = null,
+        string? repairPackageManifestSha256 = null)
+    {
+        command.Parameters.AddWithValue(
+            "childOid",
+            restoredOid);
+        command.Parameters.AddWithValue(
+            "childRelfilenode",
+            restoredRelfilenode);
+        command.Parameters.Add(
+            "authorizationId",
+            NpgsqlDbType.Text).Value =
+            (object?)authorizationId
+            ?? DBNull.Value;
+        command.Parameters.AddWithValue(
+            "executingToolSha256",
+            executingToolSha256
+            ?? new string('f', 64));
+        command.Parameters.Add(
+            "validatorBaseToolSha256",
+            NpgsqlDbType.Text).Value =
+            (object?)validatorBaseToolSha256
+            ?? DBNull.Value;
+        command.Parameters.Add(
+            "archiveHelperSha256",
+            NpgsqlDbType.Text).Value =
+            (object?)archiveHelperSha256
+            ?? DBNull.Value;
+        command.Parameters.Add(
+            "repairPackageManifestSha256",
+            NpgsqlDbType.Text).Value =
+            (object?)repairPackageManifestSha256
+            ?? DBNull.Value;
+    }
+
+    private static RestoreToolAuthorizationRequest
+        BuildAuthorizationRequest() =>
+        new(
+            "fedcba9876543210fedcba9876543210",
+            new string('0', 64),
+            new string('9', 64),
+            new string('f', 64),
+            RestoreToolAuthorizationContract
+                .ValidatorBaseToolSha256,
+            new string('a', 64),
+            new string('b', 64),
+            new string('c', 64),
+            new string('d', 64),
+            new string('1', 40),
+            new string('2', 40),
+            new string('e', 64),
+            new string('3', 64),
+            new string('4', 64),
+            new string('5', 64),
+            "pinned_restore_validator_defect",
+            "Authorize the reviewed canonical-byte restore validator.",
+            "repair-operator",
+            "independent-reviewer",
+            "repair-authorization-reference",
+            JsonDocument.Parse(
+                """
+                {
+                  "packageValidated": true,
+                  "testsValidated": true
+                }
+                """).RootElement.Clone());
+
+    private string DbCanonicalEvidenceSha256(
+        JsonElement evidence) =>
+        ExecuteScalar<string>(
+            """
+            SELECT encode(
+                digest(
+                    convert_to(
+                        @evidence::JSONB::TEXT,
+                        'UTF8'),
+                    'sha256'),
+                'hex')
+            """,
+            command =>
+            {
+                command.Parameters.Add(
+                    "evidence",
+                    NpgsqlDbType.Jsonb).Value =
+                    evidence.GetRawText();
+            });
+
+    private void CreateRestoreStagingRelation()
+    {
+        Execute(
+            """
+            CREATE TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                (
+                    LIKE
+                        public.leaderboard_entries_snapshot_pro_cymbals
+                    INCLUDING DEFAULTS
+                    INCLUDING STORAGE
+                    INCLUDING COMPRESSION
+                );
+            INSERT INTO
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005 (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+            VALUES (
+                1005,
+                'song-test',
+                'Solo_PeripheralCymbals',
+                'account-test',
+                123456,
+                'scrape',
+                now(),
+                now());
+            ALTER TABLE
+                public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                ADD CONSTRAINT ck_sgr_1005_aaaaaaaaaaaa
+                CHECK (
+                    snapshot_id = 1005
+                    AND instrument =
+                        'Solo_PeripheralCymbals');
+            CREATE TRIGGER trg_sgr_1005_aaaaaaaaaaaa
+                BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+                ON
+                    public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                FOR EACH STATEMENT EXECUTE FUNCTION
+                    fst_reject_snapshot_generation_quarantine_relation_mutation();
+            """);
+    }
+
+    private long RecordAttestation(
         string stage,
         char baselineHashCharacter,
         char candidateHashCharacter)
     {
-        ExecuteScalar<long>(
+        return ExecuteScalar<long>(
             """
             SELECT
                 fst_record_snapshot_generation_quarantine_attestation(
@@ -1021,6 +5253,330 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 command.Parameters.AddWithValue(
                     "candidateHashCharacter",
                     candidateHashCharacter.ToString());
+            });
+    }
+
+    private void SeedDropPrerequisites(
+        string activeOperationId = OperationId,
+        string rehearsalOperationId =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        string rehearsalPlanDigest =
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                status)
+            VALUES (
+                1006,
+                now() - interval '70 minutes',
+                now() - interval '60 minutes',
+                'completed')
+            ON CONFLICT (id) DO NOTHING;
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                created_at)
+            VALUES (
+                2006,
+                1006,
+                'retained',
+                now() - interval '60 minutes')
+            ON CONFLICT (publication_id) DO NOTHING;
+
+            SET session_replication_role = replica;
+            UPDATE snapshot_generation_quarantine_operations
+            SET quarantined_at =
+                    now() - interval '35 minutes'
+            WHERE operation_id = @activeOperationId;
+            SET session_replication_role = origin;
+
+            WITH rehearsal_hold AS (
+                INSERT INTO snapshot_generation_retention_holds (
+                    instrument,
+                    snapshot_id,
+                    hold_kind,
+                    reason,
+                    created_by,
+                    released_by,
+                    released_at,
+                    release_reason)
+                VALUES (
+                    'Solo_PeripheralCymbals',
+                    1005,
+                    'retention_in_flight',
+                    'Q1 rehearsal',
+                    'q1-operator',
+                    'q1-operator',
+                    now() - interval '40 minutes',
+                    'reattached')
+                RETURNING hold_id
+            )
+            INSERT INTO snapshot_generation_quarantine_operations (
+                operation_id,
+                schema_version,
+                tool_id,
+                plan_digest,
+                archive_manifest_sha256,
+                archive_proof_manifest_sha256,
+                source_evidence_manifest_sha256,
+                baseline_route_manifest_sha256,
+                candidate_route_manifest_sha256,
+                cycle_id,
+                observation_id,
+                trigger_scrape_id,
+                trigger_publication_id,
+                instrument,
+                snapshot_id,
+                root_schema,
+                root_relation,
+                root_oid,
+                child_schema,
+                child_relation,
+                child_oid,
+                child_relfilenode,
+                quarantine_schema,
+                quarantine_relation,
+                snapshot_check_constraint,
+                mutation_guard_trigger,
+                default_partition_schema,
+                default_partition_relation,
+                default_partition_oid,
+                default_exclusion_constraint,
+                stable_child_identity_hash,
+                stable_config_schema_hash,
+                row_count,
+                row_fingerprint_sha256,
+                logical_catalog_sha256,
+                total_bytes,
+                hold_id,
+                approved_by,
+                approval_reference,
+                preflight_evidence,
+                quarantine_evidence,
+                quarantined_at)
+            SELECT
+                @rehearsalOperationId,
+                operation.schema_version,
+                operation.tool_id,
+                @rehearsalPlanDigest,
+                operation.archive_manifest_sha256,
+                operation.archive_proof_manifest_sha256,
+                operation.source_evidence_manifest_sha256,
+                operation.baseline_route_manifest_sha256,
+                operation.candidate_route_manifest_sha256,
+                operation.cycle_id,
+                operation.observation_id,
+                operation.trigger_scrape_id,
+                operation.trigger_publication_id,
+                operation.instrument,
+                operation.snapshot_id,
+                operation.root_schema,
+                operation.root_relation,
+                operation.root_oid,
+                operation.child_schema,
+                operation.child_relation,
+                operation.child_oid,
+                operation.child_relfilenode,
+                operation.quarantine_schema,
+                'sgq_pc_1005_bbbbbbbbbbbb',
+                'ck_sgq_1005_bbbbbbbbbbbb',
+                'trg_sgq_1005_bbbbbbbbbbbb',
+                operation.default_partition_schema,
+                operation.default_partition_relation,
+                operation.default_partition_oid,
+                'ck_sgq_default_1005_bbbbbbbbbbbb',
+                operation.stable_child_identity_hash,
+                operation.stable_config_schema_hash,
+                operation.row_count,
+                operation.row_fingerprint_sha256,
+                operation.logical_catalog_sha256,
+                operation.total_bytes,
+                rehearsal_hold.hold_id,
+                'q1-operator',
+                'q1-approval',
+                '{}',
+                '{}',
+                now() - interval '2 hours'
+            FROM snapshot_generation_quarantine_operations
+                operation,
+                rehearsal_hold
+            WHERE operation.operation_id =
+                    @activeOperationId;
+
+            INSERT INTO
+                snapshot_generation_quarantine_index_renames (
+                    operation_id,
+                    index_role,
+                    index_oid,
+                    index_relfilenode,
+                    old_index_name,
+                    new_index_name,
+                    old_constraint_name,
+                    new_constraint_name,
+                    source_phase,
+                    semantic_before,
+                    semantic_after,
+                    semantic_before_sha256,
+                    semantic_after_sha256,
+                    backend_pid,
+                    transaction_id)
+            SELECT
+                @rehearsalOperationId,
+                rename_row.index_role,
+                rename_row.index_oid,
+                rename_row.index_relfilenode,
+                rename_row.old_index_name,
+                'sgqi_' || @rehearsalOperationId || '_' ||
+                    rename_row.index_role,
+                rename_row.old_constraint_name,
+                CASE
+                    WHEN rename_row.index_role = 'pk'
+                        THEN 'sgqi_' ||
+                            @rehearsalOperationId ||
+                            '_pk'
+                    ELSE NULL
+                END,
+                'quarantine',
+                rename_row.semantic_before,
+                rename_row.semantic_after,
+                rename_row.semantic_before_sha256,
+                rename_row.semantic_after_sha256,
+                pg_backend_pid(),
+                pg_current_xact_id()::TEXT
+            FROM
+                snapshot_generation_quarantine_index_renames
+                    rename_row
+            WHERE rename_row.operation_id =
+                    @activeOperationId;
+
+            INSERT INTO
+                snapshot_generation_quarantine_reattachments (
+                    operation_id,
+                    reattached_by,
+                    reattach_reference,
+                    reattach_evidence,
+                    reattached_at)
+            VALUES (
+                @rehearsalOperationId,
+                'q1-operator',
+                'q1-reattach',
+                '{}',
+                now() - interval '40 minutes');
+
+            INSERT INTO snapshot_generation_quarantine_attestations (
+                attestation_id,
+                operation_id,
+                stage,
+                publication_id,
+                published_scrape_id,
+                route_count,
+                status_parity,
+                semantic_json_parity,
+                difference_count,
+                baseline_route_manifest_sha256,
+                candidate_route_manifest_sha256,
+                database_evidence,
+                evidence_sha256,
+                attested_by,
+                attested_at)
+            VALUES
+                (
+                    9101,
+                    @rehearsalOperationId,
+                    'quarantined',
+                    2005,
+                    1005,
+                    55,
+                    TRUE,
+                    TRUE,
+                    0,
+                    repeat('1', 64),
+                    repeat('2', 64),
+                    '{}',
+                    repeat('3', 64),
+                    'q1-operator',
+                    now() - interval '110 minutes'),
+                (
+                    9102,
+                    @rehearsalOperationId,
+                    'soak',
+                    2006,
+                    1006,
+                    55,
+                    TRUE,
+                    TRUE,
+                    0,
+                    repeat('2', 64),
+                    repeat('3', 64),
+                    '{}',
+                    repeat('4', 64),
+                    'q1-operator',
+                    now() - interval '50 minutes'),
+                (
+                    9103,
+                    @rehearsalOperationId,
+                    'reattached',
+                    2006,
+                    1006,
+                    55,
+                    TRUE,
+                    TRUE,
+                    0,
+                    repeat('3', 64),
+                    repeat('4', 64),
+                    '{}',
+                    repeat('5', 64),
+                    'q1-operator',
+                    now() - interval '39 minutes'),
+                (
+                    9201,
+                    @activeOperationId,
+                    'quarantined',
+                    2005,
+                    1005,
+                    55,
+                    TRUE,
+                    TRUE,
+                    0,
+                    repeat('5', 64),
+                    repeat('6', 64),
+                    '{}',
+                    repeat('7', 64),
+                    'q2-operator',
+                    now() - interval '34 minutes'),
+                (
+                    9202,
+                    @activeOperationId,
+                    'soak',
+                    2005,
+                    1005,
+                    55,
+                    TRUE,
+                    TRUE,
+                    0,
+                    repeat('6', 64),
+                    repeat('7', 64),
+                    '{}',
+                    repeat('8', 64),
+                    'q2-operator',
+                    now());
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue(
+                    "activeOperationId",
+                    activeOperationId);
+                command.Parameters.AddWithValue(
+                    "rehearsalOperationId",
+                    rehearsalOperationId);
+                command.Parameters.AddWithValue(
+                    "rehearsalPlanDigest",
+                    rehearsalPlanDigest);
             });
     }
 
@@ -1107,10 +5663,208 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             typeof(T));
     }
 
+    private int MissingDropSemanticColumnCount() =>
+        Scalar<int>(
+            """
+            SELECT COUNT(*)::INTEGER
+            FROM unnest(ARRAY[
+                'semantic_projection_version',
+                'rehearsal_catalog_sha256',
+                'catalog_sha256',
+                'rehearsal_semantic_catalog_sha256',
+                'semantic_catalog_sha256',
+                'rehearsal_logical_index_shape_sha256',
+                'logical_index_shape_sha256',
+                'rehearsal_physical_index_inventory_sha256',
+                'physical_index_inventory_sha256'
+            ]) required(column_name)
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM pg_attribute attribute
+                WHERE attribute.attrelid =
+                        'snapshot_generation_drop_operations'
+                            ::regclass
+                  AND attribute.attname =
+                        required.column_name
+                  AND attribute.attnum > 0
+                  AND NOT attribute.attisdropped)
+            """);
+
+    private int MissingRestoreSemanticColumnCount() =>
+        Scalar<int>(
+            """
+            SELECT COUNT(*)::INTEGER
+            FROM unnest(ARRAY[
+                'semantic_catalog_sha256',
+                'logical_index_shape_sha256',
+                'archived_index_names',
+                'restored_index_evidence',
+                'pinned_tool_sha256',
+                'executing_tool_sha256',
+                'authorization_id'
+            ]) required(column_name)
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM pg_attribute attribute
+                WHERE attribute.attrelid =
+                        'snapshot_generation_restore_operations'
+                            ::regclass
+                  AND attribute.attname =
+                        required.column_name
+                  AND attribute.attnum > 0
+                  AND NOT attribute.attisdropped)
+            """);
+
     private sealed record CandidateIdentity(
         long RootOid,
         long ChildOid,
         long ChildRelfilenode);
+
+    private sealed record IndexIdentity(
+        string Role,
+        long Oid,
+        long Relfilenode,
+        string Name);
+
+    private IReadOnlyList<IndexIdentity>
+        LoadIndexIdentity(
+            string schema,
+            string relation)
+    {
+        using var connection =
+            _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                CASE
+                    WHEN index_row.indisprimary
+                        THEN 'pk'
+                    ELSE 'score'
+                END,
+                index_relation.oid::BIGINT,
+                index_relation.relfilenode::BIGINT,
+                index_relation.relname
+            FROM pg_index index_row
+            JOIN pg_class index_relation
+              ON index_relation.oid =
+                    index_row.indexrelid
+            JOIN pg_class table_relation
+              ON table_relation.oid =
+                    index_row.indrelid
+            JOIN pg_namespace namespace
+              ON namespace.oid =
+                    table_relation.relnamespace
+            WHERE namespace.nspname = @schema
+              AND table_relation.relname = @relation
+            ORDER BY 1
+            """;
+        command.Parameters.AddWithValue(
+            "schema",
+            schema);
+        command.Parameters.AddWithValue(
+            "relation",
+            relation);
+        using var reader = command.ExecuteReader();
+        var result = new List<IndexIdentity>();
+        while (reader.Read())
+        {
+            result.Add(
+                new IndexIdentity(
+                    reader.GetString(0),
+                    reader.GetInt64(1),
+                    reader.GetInt64(2),
+                    reader.GetString(3)));
+        }
+        return result;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var current =
+            new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(
+                    Path.Combine(
+                        current.FullName,
+                        "FortniteFestivalLeaderboardScraper.sln")))
+            {
+                return current.FullName;
+            }
+            current = current.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "Repository root was not found.");
+    }
+
+    private const string
+        DowngradeDropOperationsToPreSemanticSql =
+        """
+        ALTER TABLE snapshot_generation_drop_operations
+            DROP CONSTRAINT
+                ck_snapshot_generation_drop_hashes,
+            DROP CONSTRAINT
+                ck_snapshot_generation_drop_identity,
+            DROP COLUMN semantic_projection_version,
+            DROP COLUMN rehearsal_catalog_sha256,
+            DROP COLUMN catalog_sha256,
+            DROP COLUMN rehearsal_semantic_catalog_sha256,
+            DROP COLUMN semantic_catalog_sha256,
+            DROP COLUMN rehearsal_logical_index_shape_sha256,
+            DROP COLUMN logical_index_shape_sha256,
+            DROP COLUMN
+                rehearsal_physical_index_inventory_sha256,
+            DROP COLUMN physical_index_inventory_sha256;
+        ALTER TABLE snapshot_generation_drop_operations
+            ADD CONSTRAINT
+                ck_snapshot_generation_drop_hashes
+                CHECK (
+                    plan_digest ~ '^[0-9a-f]{64}$'
+                    AND archive_sha256
+                        ~ '^[0-9a-f]{64}$'),
+            ADD CONSTRAINT
+                ck_snapshot_generation_drop_identity
+                CHECK (
+                    cycle_id > 0
+                    AND child_oid > 0
+                    AND child_relfilenode > 0);
+        """;
+
+    private const string
+        DowngradeRestoreOperationsToPreSemanticSql =
+        """
+        ALTER TABLE snapshot_generation_restore_operations
+            DROP CONSTRAINT
+                ck_snapshot_generation_restore_hashes,
+            DROP CONSTRAINT
+                ck_snapshot_generation_restore_identity,
+            DROP CONSTRAINT
+                fk_snapshot_generation_restore_tool_authorization,
+            DROP CONSTRAINT
+                ux_snapshot_generation_restore_tool_authorization_consumption,
+            DROP COLUMN semantic_catalog_sha256,
+            DROP COLUMN logical_index_shape_sha256,
+            DROP COLUMN archived_index_names,
+            DROP COLUMN restored_index_evidence,
+            DROP COLUMN pinned_tool_sha256,
+            DROP COLUMN executing_tool_sha256,
+            DROP COLUMN authorization_id;
+        ALTER TABLE snapshot_generation_restore_operations
+            ADD CONSTRAINT
+                ck_snapshot_generation_restore_hashes
+                CHECK (
+                    plan_digest ~ '^[0-9a-f]{64}$'
+                    AND archive_sha256
+                        ~ '^[0-9a-f]{64}$'),
+            ADD CONSTRAINT
+                ck_snapshot_generation_restore_identity
+                CHECK (
+                    snapshot_id > 0
+                    AND restored_child_oid > 0
+                    AND restored_child_relfilenode > 0
+                    AND jsonb_typeof(restore_evidence) =
+                        'object');
+        """;
 
     private const string QuarantineSql = """
         SELECT fst_quarantine_snapshot_generation(
@@ -1130,6 +5884,103 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             repeat('7', 64),
             'test-operator',
             'test-approval',
+            '{}'::jsonb)
+        """;
+
+    private const string DropSql = """
+        WITH locked AS MATERIALIZED (
+            SELECT fst_lock_snapshot_generation_for_drop(
+                '0123456789abcdef0123456789abcdef',
+                @childOid,
+                @childRelfilenode) AS relation_name
+        )
+        SELECT fst_drop_quarantined_snapshot_generation(
+            'fedcba9876543210fedcba9876543210',
+            repeat('0', 64),
+            repeat('b', 32),
+            '0123456789abcdef0123456789abcdef',
+            9101,
+            9102,
+            9103,
+            9201,
+            9202,
+            repeat('8', 64),
+            repeat('7', 64),
+            repeat('9', 64),
+            1,
+            repeat('a', 64),
+            repeat('b', 64),
+            repeat('c', 64),
+            repeat('c', 64),
+            repeat('d', 64),
+            repeat('d', 64),
+            repeat('e', 64),
+            repeat('e', 64),
+            repeat('a', 64),
+            repeat('b', 64),
+            @preDropRouteCount,
+            @preDropStatusParity,
+            @preDropSemanticJsonParity,
+            @preDropDifferenceCount,
+            repeat('c', 64),
+            repeat('d', 64),
+            repeat('e', 64),
+            repeat('f', 64),
+            repeat('0', 64),
+            repeat('1', 40),
+            '[]'::jsonb,
+            repeat('2', 64),
+            '{}'::jsonb,
+            repeat('3', 64),
+            '{}'::jsonb,
+            repeat('4', 64),
+            current_database(),
+            (
+                SELECT oid::BIGINT
+                FROM pg_database
+                WHERE datname = current_database()),
+            (
+                SELECT system_identifier::TEXT
+                FROM pg_control_system()),
+            current_setting('server_version_num')::INTEGER,
+            now() - interval '31 minutes',
+            now() - interval '1 minute',
+            @healthSampleCount,
+            30,
+            now(),
+            'drop-operator',
+            'drop-approval',
+            '{}'::jsonb,
+            repeat('5', 64),
+            '{}'::jsonb)
+        FROM locked
+        WHERE relation_name =
+            'sgq_pc_1005_0123456789ab'
+        """;
+
+    private const string RestoreSql = """
+        SELECT fst_restore_snapshot_generation(
+            repeat('a', 32),
+            repeat('b', 64),
+            'fedcba9876543210fedcba9876543210',
+            @childOid,
+            @childRelfilenode,
+            1,
+            repeat('6', 64),
+            repeat('7', 64),
+            repeat('c', 64),
+            repeat('d', 64),
+            @authorizationId,
+            @executingToolSha256,
+            @validatorBaseToolSha256,
+            @archiveHelperSha256,
+            @repairPackageManifestSha256,
+            '{"pk":"archived_pk","score":"archived_score"}'
+                ::jsonb,
+            'ck_sgr_1005_aaaaaaaaaaaa',
+            'trg_sgr_1005_aaaaaaaaaaaa',
+            'restore-operator',
+            'restore-approval',
             '{}'::jsonb)
         """;
 }

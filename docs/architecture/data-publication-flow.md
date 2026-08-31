@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-28
-last_verified_commit: c35b7f47
+last_verified_commit: 21d7193c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -96,6 +96,14 @@ diagnostic or replay data without becoming the published generation.
 5. **Network and writer phases**
    - `ScrapeOrchestrator` performs enabled solo/band work and persists candidate
      results through disk-spool or bounded online writers.
+   - Before a snapshot write, generation creation takes the shared
+     partition-DDL advisory lock. An active retention/restore hold blocks both
+     returning and creating the exact generation; committed DROP evidence also
+     blocks an absent/recreated generation unless it is the finalized logical
+     restore. The write path therefore fails closed through quarantine, DROP,
+     restore validation, and finalization. Optional hold/drop tables are read
+     through `to_regclass`-gated dynamic SQL for rolling startup safety.
+     Finalized restore identity uses the stable relation OID, not relfilenode.
    - Authentication failure, escaped CDN block, cancellation, or writer failure
      prevents normal derived publication work.
 6. **Post-processing**
@@ -216,6 +224,26 @@ diagnostic or replay data without becoming the published generation.
     - The observer persists immutable per-child evidence only. It is not part
       of pre-publication cleanup and cannot create archive, detach, drop, or
       delete work.
+    - Official scrape `1333` completed cleanly and produced accepted immutable
+      cycle `13` for then-current publication `157`; production then continued into
+      scrape `1334`. This satisfies the confirmation prerequisite but does not
+      live-accept or automate the separate DROP tier.
+    - Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` later passed the
+      scrape-1335/publication-159-to-162 rotation and cycle-15/route gates. Its
+      first reattach failed closed when a new public child reused a leaf-index
+      name. The target remained exact and private with no committed residue at
+      that incident boundary.
+      Operation-scoped leaf-index normalization now prevents both quarantine-
+      and reattach-direction name collisions. Later live progression reached
+      an approved DROP function call, which failed before DDL on the empty
+      pre-semantic operation schema; no child was dropped in that attempt.
+      After the schema upgrade, operation
+      `333ba4b9fb69dbc098d127f0008ec709` committed. Recovery is now the
+      operator-only logical restore; the first restore-plan validation stopped
+      before mutation.
+      A separate immutable repair-tool authorization now binds the exact
+      committed DROP and final tool without changing publication flow or any
+      route/data/catalog gate.
     - Metadata TTL shares the centralized service-maintenance lock, so TTL and
       generation observation cannot race.
 
