@@ -892,6 +892,34 @@ coercing counts, options, or key attnums. Exact live Q2 catalog/TOC fixtures
 cover the authorized plan path. H3 and H4 authorizations remain immutable and
 unused; a third H5 authorization can coexist without a schema change.
 
+H5 subsequently committed restore operation
+`da07c4ce4d07b9692a45a1498313f8b3` with new child OID/relfilenode
+`321906645`, exact rows/fingerprint/bound/semantic hashes, and two attached
+index chains. Its route attestation stopped before database write because the
+Python restore tool compared raw ZIP export hashes. The raw captures remain
+authenticated; their differences are limited to generated XLSX names, Office
+core-property relationships, and random core-property part names. The shared
+C# canonical ZIP validator proves identical band/player export semantics.
+
+Post-restore acceptance is therefore a separate storage/control-plane tier.
+`snapshot_generation_restore_continuation_authorizations` immutably binds one
+restore row and predecessor restore-tool authorization to one
+continuation-only C# tool, evidence assembly, package, route pair, repository
+diff, and dual approval. Empty restore-attestation/finalization tables gain
+the continuation tool/authorization FKs; attestation also stores semantic
+binary parity, the fixed canonical-ZIP algorithm ID, and route semantic
+evidence hash. No column or update touches the committed restore row.
+
+`FstSnapshotGenerationRestoreContinuation` exposes only confirm, attest, and
+finalize over direct Npgsql. It references the shared
+`FstSnapshotGenerationEvidence` assembly and calls the existing
+`QuarantineEvidenceValidator`; no Python ZIP port exists. The package
+references immutable H5 and route evidence by hashes and contains no archive,
+route body, export workbook, Docker helper, or physical restore executable.
+Finalization requires the exact same continuation authorization recorded by
+attestation before atomically removing the mutation trigger and releasing the
+hold.
+
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the
 21-argument authorization-aware signature. The authorization row stores both

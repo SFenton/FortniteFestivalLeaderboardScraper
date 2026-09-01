@@ -67,15 +67,30 @@ One shared authorization resolver serves plan, restore, confirm, attest, and
 finalize. Its generated SQL uses the explicit `auth_row` table alias. The
 first authorized H3 plan lookup failed before output or mutation because the
 former alias `authorization` is a PostgreSQL keyword in that context. The H3
-authorization remains immutable and unused; H4 requires a separate package
-and authorization for the same DROP. No schema change is required.
+authorization remains immutable and unused; H4 used a separate package and
+authorization for the same DROP. No schema change was required.
 H4 then failed at a later read-only boundary because the Q2 archive's
 opclass/collation OID arrays use canonical decimal strings. H5 applies the
 same strict integer-or-canonical-string parser as the reviewed C# evidence
 path, normalizes only those arrays for fixed-value and attachment-chain
 comparison, and leaves all other numeric fields number-only. H4 remains
-immutable unused evidence; H5 requires a third authorization, still without a
+immutable unused evidence; H5 used a third authorization, still without a
 schema change.
+
+H5 later committed the exact mandatory restore, but its Python route
+attestation compared volatile ZIP bytes and stopped before evidence insertion.
+Post-restore acceptance is now a separate continuation-only C# tier. It calls
+the already accepted shared `QuarantineEvidenceValidator`, stores detailed
+semantic binary evidence, and has no plan/load/attach/restore surface. A new
+immutable authorization links the exact restore and predecessor H5
+authorization to one continuation package/tool/evidence assembly and route
+pair. Attestation and finalization both store that identity, and finalization
+requires the same authorization before releasing the hold and trigger.
+
+This separation is preferred over relaxing the pre-restore authorization or
+adding continuation behavior to Python: lifecycle authorization remains
+one-way, ZIP behavior is shared by construction, and the evidence tool is
+structurally unable to repeat physical restore.
 
 Quarantine structurally classifies the existing PK and score indexes and
 renames those same OIDs to

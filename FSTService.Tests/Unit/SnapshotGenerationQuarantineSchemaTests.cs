@@ -4,6 +4,7 @@ using FSTService.Persistence.Maintenance;
 using FSTService.Tests.Helpers;
 using FstSnapshotGenerationQuarantine;
 using FstSnapshotGenerationRestoreAuthorization;
+using FstSnapshotGenerationRestoreContinuation;
 using Npgsql;
 using NpgsqlTypes;
 using System.Text.Json;
@@ -1356,8 +1357,19 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                  AND authorization_row.authorization_id =
                         restore_row.authorization_id
                 """));
+        var continuationRequest =
+            BuildContinuationAuthorizationRequest(
+                authorization.AuthorizationId,
+                request);
+        await using var continuationDatabase =
+            ContinuationAuthorizationDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var continuationAuthorization =
+            await continuationDatabase.AuthorizeAsync(
+                continuationRequest);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT
                 fst_record_snapshot_generation_restore_attestation(
                     repeat('a', 32),
@@ -1366,17 +1378,22 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     55,
                     repeat('b', 64),
                     repeat('2', 64),
+                    '{{continuationRequest.RouteParityPreflightSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
-                    'restore-operator')
+                    'restore-attestor',
+                    '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                    '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT fst_finalize_snapshot_generation_restore(
                 repeat('a', 32),
                 'restore-operator',
                 'authorized-restore-complete',
-                '{}'::jsonb)
+                '{}'::jsonb,
+                '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         Assert.Equal(
             1,
@@ -1390,6 +1407,32 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                   ON restore_row.hold_id =
                         hold_row.hold_id
                 WHERE hold_row.released_at IS NOT NULL
+                """));
+        Assert.Equal(
+            $"{continuationRequest.AuthorizedContinuationToolSha256}|"
+            + continuationAuthorization
+                .ContinuationAuthorizationId,
+            Scalar<string>(
+                """
+                SELECT
+                    attestation.evidence_tool_sha256
+                    || '|' ||
+                    attestation.continuation_authorization_id
+                FROM snapshot_generation_restore_attestations
+                    attestation
+                """));
+        Assert.Equal(
+            $"{continuationRequest.AuthorizedContinuationToolSha256}|"
+            + continuationAuthorization
+                .ContinuationAuthorizationId,
+            Scalar<string>(
+                """
+                SELECT
+                    finalization.evidence_tool_sha256
+                    || '|' ||
+                    finalization.continuation_authorization_id
+                FROM snapshot_generation_restore_finalizations
+                    finalization
                 """));
         Assert.Equal(
             1,
@@ -1711,6 +1754,360 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                         'ck_snapshot_generation_restore_identity'
                 """),
             StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("attestation")]
+    [InlineData("finalization")]
+    public async Task NonemptyLegacyRestoreEvidenceBlocksContinuationUpgrade(
+        string relation)
+    {
+        await SeedAuthorizedRestoreAsync();
+        if (relation == "attestation")
+        {
+            Execute(
+                """
+                ALTER TABLE
+                    snapshot_generation_restore_attestations
+                    DROP CONSTRAINT
+                        fk_snapshot_generation_restore_attestation_continuation,
+                    DROP CONSTRAINT
+                        ck_snapshot_generation_restore_attestation,
+                    DROP COLUMN semantic_binary_parity,
+                    DROP COLUMN route_parity_algorithm_id,
+                    DROP COLUMN route_semantic_evidence_sha256,
+                    DROP COLUMN evidence_tool_sha256,
+                    DROP COLUMN continuation_authorization_id;
+                ALTER TABLE
+                    snapshot_generation_restore_attestations
+                    ADD CONSTRAINT
+                        ck_snapshot_generation_restore_attestation
+                        CHECK (
+                            publication_id > 0
+                            AND published_scrape_id > 0
+                            AND route_count = 55
+                            AND status_parity
+                            AND semantic_json_parity
+                            AND difference_count = 0
+                            AND baseline_route_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND candidate_route_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND attested_by <> ''
+                            AND jsonb_typeof(
+                                database_evidence) =
+                                'object');
+                INSERT INTO
+                    snapshot_generation_restore_attestations (
+                        restore_operation_id,
+                        publication_id,
+                        published_scrape_id,
+                        route_count,
+                        baseline_route_manifest_sha256,
+                        candidate_route_manifest_sha256,
+                        status_parity,
+                        semantic_json_parity,
+                        difference_count,
+                        database_evidence,
+                        evidence_sha256,
+                        attested_by)
+                VALUES (
+                    repeat('a', 32),
+                    2005,
+                    1005,
+                    55,
+                    repeat('b', 64),
+                    repeat('2', 64),
+                    TRUE,
+                    TRUE,
+                    0,
+                    '{}'::jsonb,
+                    repeat('3', 64),
+                    'legacy-attestor')
+                """);
+        }
+        else
+        {
+            Execute(
+                """
+                ALTER TABLE
+                    snapshot_generation_restore_finalizations
+                    DROP CONSTRAINT
+                        fk_snapshot_generation_restore_finalization_continuation,
+                    DROP CONSTRAINT
+                        ck_snapshot_generation_restore_finalize,
+                    DROP COLUMN evidence_tool_sha256,
+                    DROP COLUMN continuation_authorization_id;
+                ALTER TABLE
+                    snapshot_generation_restore_finalizations
+                    ADD CONSTRAINT
+                        ck_snapshot_generation_restore_finalize
+                        CHECK (
+                            finalized_by <> ''
+                            AND finalize_reference <> ''
+                            AND jsonb_typeof(
+                                finalization_evidence) =
+                                'object');
+                INSERT INTO
+                    snapshot_generation_restore_finalizations (
+                        restore_operation_id,
+                        finalized_by,
+                        finalize_reference,
+                        finalization_evidence)
+                VALUES (
+                    repeat('a', 32),
+                    'legacy-finalizer',
+                    'legacy-reference',
+                    '{}'::jsonb)
+                """);
+        }
+
+        var error =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => DatabaseInitializer
+                    .EnsureSchemaAsync(
+                        _fixture.DataSource));
+
+        Assert.Equal("55000", error.SqlState);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                $"""
+                SELECT COUNT(*)::INTEGER
+                FROM snapshot_generation_restore_{relation}s
+                """));
+        Assert.False(
+            Scalar<bool>(
+                $"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name =
+                            'snapshot_generation_restore_{relation}s'
+                      AND column_name =
+                            'continuation_authorization_id')
+                """));
+    }
+
+    [Fact]
+    public async Task ContinuationAuthorizationIsExactImmutableAndIdempotent()
+    {
+        var seeded =
+            await SeedAuthorizedRestoreAsync();
+        var request =
+            BuildContinuationAuthorizationRequest(
+                seeded.Authorization.AuthorizationId,
+                seeded.Request);
+        await using var database =
+            ContinuationAuthorizationDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+
+        var first =
+            await database.AuthorizeAsync(request);
+        var repeated =
+            await database.AuthorizeAsync(request);
+        var confirmed = await database.ReadAsync(
+            request.RestoreOperationId,
+            first.ContinuationAuthorizationId);
+
+        Assert.Equal(
+            first.ContinuationAuthorizationId,
+            repeated.ContinuationAuthorizationId);
+        Assert.Equal(
+            first.ContinuationAuthorizationId,
+            confirmed.ContinuationAuthorizationId);
+        Assert.Equal(
+            RestoreContinuationContract
+                .DeriveAuthorizationId(
+                    request,
+                    first.CanonicalEvidenceDbSha256),
+            first.ContinuationAuthorizationId);
+        Assert.Equal(
+            1,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM
+                    snapshot_generation_restore_continuation_authorizations
+                """));
+        var mutation =
+            Assert.Throws<PostgresException>(
+                () => Execute(
+                    """
+                    UPDATE
+                        snapshot_generation_restore_continuation_authorizations
+                    SET reason_text = 'tampered'
+                    """));
+        Assert.Equal("55000", mutation.SqlState);
+        var conflict = request with
+        {
+            CandidateRouteManifestSha256 =
+                new string('f', 64),
+        };
+        var conflictError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    conflict));
+        Assert.Equal("55000", conflictError.SqlState);
+        var wrongPredecessor = request with
+        {
+            PredecessorAuthorizationId =
+                new string('1', 32),
+        };
+        var predecessorError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    wrongPredecessor));
+        Assert.Equal("P0002", predecessorError.SqlState);
+        var sameActor = request with
+        {
+            ApprovedBy = "restore-operator",
+            AuthorizedContinuationToolSha256 =
+                new string('5', 64),
+        };
+        var actorError =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.AuthorizeAsync(
+                    sameActor));
+        Assert.Equal("55000", actorError.SqlState);
+    }
+
+    [Fact]
+    public async Task ContinuationDatabaseAttestsAndFinalizesExactRestore()
+    {
+        var seeded =
+            await SeedAuthorizedRestoreAsync();
+        var request =
+            BuildContinuationAuthorizationRequest(
+                seeded.Authorization.AuthorizationId,
+                seeded.Request);
+        await using var authorizationDatabase =
+            ContinuationAuthorizationDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var authorization =
+            await authorizationDatabase.AuthorizeAsync(
+                request);
+        var otherRequest = request with
+        {
+            AuthorizedContinuationToolSha256 =
+                new string('5', 64),
+            ContinuationPackageManifestSha256 =
+                new string('4', 64),
+            ReasonText =
+                "Authorize another reviewed continuation tool.",
+            ApprovalReference =
+                "other-continuation-authorization-reference",
+            CanonicalEvidence =
+                JsonDocument.Parse(
+                    """{"packageValidated":true,"tool":"other"}""")
+                    .RootElement.Clone(),
+        };
+        var otherAuthorization =
+            await authorizationDatabase.AuthorizeAsync(
+                otherRequest);
+        var manifest =
+            BuildContinuationManifest(request);
+        var otherManifest =
+            BuildContinuationManifest(otherRequest);
+        var parity =
+            new DetailedRouteParityEvidence(
+                new RouteParityEvidence(
+                    "/evidence/baseline/manifest.json",
+                    request.BaselineRouteManifestSha256,
+                    "/evidence/candidate/manifest.json",
+                    request.CandidateRouteManifestSha256,
+                    request.PublicationId,
+                    request.PublishedScrapeId,
+                    55,
+                    true,
+                    true,
+                    0),
+                QuarantineEvidenceValidator
+                    .RouteParityAlgorithmId,
+                true,
+                new string('f', 64),
+                []);
+        await using var database =
+            ContinuationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+
+        var attestation = await database.AttestAsync(
+            manifest,
+            authorization.ContinuationAuthorizationId,
+            parity,
+            "restore-attestor");
+        var before = await database.ReadStateAsync(
+            manifest.RestoreOperationId,
+            authorization.ContinuationAuthorizationId);
+        Assert.Equal(1, attestation.Fingerprint.RowCount);
+        Assert.True(
+            before.GetProperty("attested")
+                .GetBoolean());
+        Assert.True(
+            before.GetProperty("holdActive")
+                .GetBoolean());
+
+        var wrongAuthorization =
+            await Assert.ThrowsAsync<PostgresException>(
+                () => database.FinalizeAsync(
+                    otherManifest,
+                    otherAuthorization
+                        .ContinuationAuthorizationId,
+                    "restore-finalizer",
+                    "wrong-continuation",
+                    JsonDocument.Parse(
+                        """{"confirmed":true}""")
+                        .RootElement.Clone()));
+        Assert.Equal("P0002", wrongAuthorization.SqlState);
+        Assert.True(
+            Scalar<bool>(
+                """
+                SELECT hold_row.released_at IS NULL
+                FROM snapshot_generation_retention_holds
+                    hold_row
+                JOIN snapshot_generation_restore_operations
+                    restore_row
+                  ON restore_row.hold_id =
+                        hold_row.hold_id
+                WHERE restore_row.restore_operation_id =
+                        repeat('a', 32)
+                """));
+        await database.FinalizeAsync(
+            manifest,
+            authorization.ContinuationAuthorizationId,
+            "restore-finalizer",
+            "restore-finalized",
+            JsonDocument.Parse(
+                """{"confirmed":true}""")
+                .RootElement.Clone());
+        var after = await database.ReadStateAsync(
+            manifest.RestoreOperationId,
+            authorization.ContinuationAuthorizationId);
+
+        Assert.True(
+            after.GetProperty("finalized")
+                .GetBoolean());
+        Assert.False(
+            after.GetProperty("holdActive")
+                .GetBoolean());
+        Assert.Equal(
+            0,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'public.leaderboard_entries_snapshot_pro_cymbals_s1005'
+                            ::regclass
+                  AND tgname =
+                        'trg_sgr_1005_aaaaaaaaaaaa'
+                  AND NOT tgisinternal
+                """));
     }
 
     [Theory]
@@ -2773,6 +3170,14 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 WHERE drop_operation_id =
                     'fedcba9876543210fedcba9876543210'
                 """));
+        var predecessorRequest =
+            BuildAuthorizationRequest();
+        await using var predecessorDatabase =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var predecessorAuthorization =
+            await predecessorDatabase.AuthorizeAsync(
+                predecessorRequest);
 
         Execute(
             """
@@ -2847,7 +3252,17 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 command => ConfigureRestore(
                     command,
                     restoredOid,
-                    restoredRelfilenode)));
+                    restoredRelfilenode,
+                    predecessorAuthorization
+                        .AuthorizationId,
+                    predecessorRequest
+                        .AuthorizedRestoreToolSha256,
+                    predecessorRequest
+                        .ValidatorBaseToolSha256,
+                    predecessorRequest
+                        .AuthorizedArchiveHelperSha256,
+                    predecessorRequest
+                        .RepairPackageManifestSha256)));
         Assert.Equal("55000", reusedApproval.SqlState);
 
         Execute(
@@ -2864,7 +3279,17 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     command => ConfigureRestore(
                         command,
                         restoredOid,
-                        restoredRelfilenode)));
+                        restoredRelfilenode,
+                        predecessorAuthorization
+                            .AuthorizationId,
+                        predecessorRequest
+                            .AuthorizedRestoreToolSha256,
+                        predecessorRequest
+                            .ValidatorBaseToolSha256,
+                        predecessorRequest
+                            .AuthorizedArchiveHelperSha256,
+                        predecessorRequest
+                            .RepairPackageManifestSha256)));
         Assert.Equal("55000", dependencyFailure.SqlState);
         Assert.Equal(
             0,
@@ -2890,7 +3315,17 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             command => ConfigureRestore(
                 command,
                 restoredOid,
-                restoredRelfilenode));
+                restoredRelfilenode,
+                predecessorAuthorization
+                    .AuthorizationId,
+                predecessorRequest
+                    .AuthorizedRestoreToolSha256,
+                predecessorRequest
+                    .ValidatorBaseToolSha256,
+                predecessorRequest
+                    .AuthorizedArchiveHelperSha256,
+                predecessorRequest
+                    .RepairPackageManifestSha256));
 
         Assert.Equal(new string('a', 32), result);
         Assert.Equal(
@@ -3010,8 +3445,23 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     """));
         Assert.Equal("55000", directWrite.SqlState);
 
+        var continuationRequest =
+            BuildContinuationAuthorizationRequest(
+                predecessorAuthorization.AuthorizationId,
+                predecessorRequest) with
+            {
+                BaselineRouteManifestSha256 =
+                    new string('c', 64),
+            };
+        await using var continuationDatabase =
+            ContinuationAuthorizationDatabase
+                .FromConnectionString(
+                    _fixture.DataSource.ConnectionString);
+        var continuationAuthorization =
+            await continuationDatabase.AuthorizeAsync(
+                continuationRequest);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT
                 fst_record_snapshot_generation_restore_attestation(
                     repeat('a', 32),
@@ -3020,12 +3470,15 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     55,
                     repeat('c', 64),
                     repeat('2', 64),
+                    '{{continuationRequest.RouteParityPreflightSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
-                    'restore-operator')
+                    'restore-attestor',
+                    '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                    '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT
                 fst_record_snapshot_generation_restore_attestation(
                     repeat('a', 32),
@@ -3034,9 +3487,12 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     55,
                     repeat('c', 64),
                     repeat('2', 64),
+                    '{{continuationRequest.RouteParityPreflightSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
-                    'restore-operator')
+                    'restore-attestor',
+                    '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                    '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         Assert.Equal(
             1,
@@ -3056,12 +3512,14 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
         var unsafeFinalize =
             Assert.Throws<PostgresException>(
                 () => ExecuteScalar<string>(
-                    """
+                    $$"""
                     SELECT fst_finalize_snapshot_generation_restore(
                         repeat('a', 32),
                         'restore-operator',
                         'restore-complete',
-                        '{}'::jsonb)
+                        '{}'::jsonb,
+                        '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                        '{{continuationAuthorization.ContinuationAuthorizationId}}')
                     """));
         Assert.Equal("55000", unsafeFinalize.SqlState);
         Assert.Equal(
@@ -3085,20 +3543,24 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             WHERE worker_key = 'scraper'
             """);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT fst_finalize_snapshot_generation_restore(
                 repeat('a', 32),
                 'restore-operator',
                 'restore-complete',
-                '{}'::jsonb)
+                '{}'::jsonb,
+                '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         ExecuteScalar<string>(
-            """
+            $$"""
             SELECT fst_finalize_snapshot_generation_restore(
                 repeat('a', 32),
                 'restore-operator',
                 'restore-complete',
-                '{}'::jsonb)
+                '{}'::jsonb,
+                '{{continuationRequest.AuthorizedContinuationToolSha256}}',
+                '{{continuationAuthorization.ContinuationAuthorizationId}}')
             """);
         Assert.Equal(
             1,
@@ -4987,8 +5449,8 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 'account-test',
                 123456,
                 'scrape',
-                now(),
-                now());
+                '2026-01-01T00:00:00Z',
+                '2026-01-01T00:00:00Z');
 
             INSERT INTO snapshot_generation_retention_observations (
                 observation_id,
@@ -5269,6 +5731,72 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             ?? DBNull.Value;
     }
 
+    private async Task<(
+        RestoreToolAuthorizationRequest Request,
+        RestoreToolAuthorizationRecord Authorization)>
+        SeedAuthorizedRestoreAsync()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var original = SeedAcceptedCandidate();
+        var fingerprint =
+            Scalar<string>(
+                """
+                SELECT encode(
+                    digest(
+                        convert_to(
+                            to_jsonb(row_value)::TEXT
+                            || E'\n',
+                            'UTF8'),
+                        'sha256'),
+                    'hex')
+                FROM ONLY
+                    public.leaderboard_entries_snapshot_pro_cymbals_s1005
+                        row_value
+                """);
+        ExecuteScalar<string>(
+            QuarantineSql.Replace(
+                "repeat('6', 64)",
+                $"'{fingerprint}'",
+                StringComparison.Ordinal),
+            command => ConfigureQuarantine(
+                command,
+                original,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, original));
+        var request = BuildAuthorizationRequest();
+        await using var database =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var authorization =
+            await database.AuthorizeAsync(request);
+        CreateRestoreStagingRelation();
+        var restoredOid =
+            RelationOid("public", OriginalRelation);
+        var restoredRelfilenode =
+            RelationRelfilenode(
+                "public",
+                OriginalRelation);
+        ExecuteScalar<string>(
+            RestoreSql.Replace(
+                "repeat('6', 64)",
+                $"'{fingerprint}'",
+                StringComparison.Ordinal),
+            command => ConfigureRestore(
+                command,
+                restoredOid,
+                restoredRelfilenode,
+                authorization.AuthorizationId,
+                request.AuthorizedRestoreToolSha256,
+                request.ValidatorBaseToolSha256,
+                request.AuthorizedArchiveHelperSha256,
+                request.RepairPackageManifestSha256));
+        return (request, authorization);
+    }
+
     private static RestoreToolAuthorizationRequest
         BuildAuthorizationRequest() =>
         new(
@@ -5300,6 +5828,96 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                   "testsValidated": true
                 }
                 """).RootElement.Clone());
+
+    private static RestoreContinuationAuthorizationRequest
+        BuildContinuationAuthorizationRequest(
+            string predecessorAuthorizationId,
+            RestoreToolAuthorizationRequest predecessor) =>
+        new(
+            new string('a', 32),
+            predecessor.DropOperationId,
+            predecessorAuthorizationId,
+            new string('b', 64),
+            new string('8', 64),
+            new string('9', 64),
+            predecessor.AuthorizedRestoreToolSha256,
+            predecessor.RepairPackageManifestSha256,
+            predecessor.OriginalBundleManifestSha256,
+            new string('6', 64),
+            new string('7', 64),
+            new string('8', 64),
+            new string('9', 64),
+            new string('a', 64),
+            QuarantineEvidenceValidator
+                .RouteParityAlgorithmId,
+            new string('c', 64),
+            new string('b', 64),
+            new string('d', 64),
+            new string('2', 64),
+            new string('e', 64),
+            2005,
+            1005,
+            new string('4', 40),
+            new string('5', 40),
+            new string('f', 64),
+            new string('6', 64),
+            new string('7', 64),
+            "post_restore_route_parity",
+            "Authorize the reviewed continuation-only evidence tool.",
+            "continuation-operator",
+            "continuation-reviewer",
+            "continuation-authorization-reference",
+            JsonDocument.Parse(
+                """
+                {
+                  "packageValidated": true,
+                  "routeParityValidated": true
+                }
+                """).RootElement.Clone());
+
+    private static RestoreContinuationPackageManifest
+        BuildContinuationManifest(
+            RestoreContinuationAuthorizationRequest request) =>
+        new(
+            RestoreContinuationContract.SchemaVersion,
+            RestoreContinuationContract.PackageToolId,
+            "accepted",
+            DateTimeOffset.UtcNow,
+            request.RestoreOperationId,
+            request.DropOperationId,
+            request.RestorePlanDigest,
+            "/evidence/restore-plan.json",
+            request.RestorePlanFileSha256,
+            "/evidence/restore-report.json",
+            request.RestoreReportSha256,
+            request.PredecessorAuthorizationId,
+            request.PredecessorRestoreToolSha256,
+            "/evidence/repair-package-v5",
+            request
+                .PredecessorRepairPackageManifestSha256,
+            "/evidence/recovery-bundle-v2",
+            request.RecoveryBundleManifestSha256,
+            request.AuthorizedContinuationToolSha256,
+            request.AuthorizedEvidenceAssemblySha256,
+            request.RouteParityReferenceSourceSha256,
+            request.AuthorizerBinarySha256,
+            request.RepositoryCommit,
+            request.RepositoryTreeId,
+            request
+                .PredecessorToContinuationDiffSha256,
+            request.SourceManifestSha256,
+            request.TestEvidenceManifestSha256,
+            request.RouteParityAlgorithmId,
+            request.RouteParityPreflightSha256,
+            "/evidence/baseline/manifest.json",
+            request.BaselineRouteManifestSha256,
+            request.BaselineRouteChecksumsSha256,
+            "/evidence/candidate/manifest.json",
+            request.CandidateRouteManifestSha256,
+            request.CandidateRouteChecksumsSha256,
+            request.PublicationId,
+            request.PublishedScrapeId,
+            []);
 
     private string DbCanonicalEvidenceSha256(
         JsonElement evidence) =>
@@ -5351,8 +5969,8 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 'account-test',
                 123456,
                 'scrape',
-                now(),
-                now());
+                '2026-01-01T00:00:00Z',
+                '2026-01-01T00:00:00Z');
             ALTER TABLE
                 public.leaderboard_entries_snapshot_pro_cymbals_s1005
                 ADD CONSTRAINT ck_sgr_1005_aaaaaaaaaaaa

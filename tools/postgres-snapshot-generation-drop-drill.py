@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 
 
-TOOL_ID = "fst.snapshot-generation-drop-drill.v3"
+TOOL_ID = "fst.snapshot-generation-drop-drill.v4"
 REQUIRED_ROOT = pathlib.Path("/mnt/docker-storage")
 COLLISION_REGRESSIONS = (
     "ReattachSurvivesFreedIndexNameReuse",
@@ -30,6 +30,14 @@ COLLISION_REGRESSIONS = (
     "EmptyRestoreIdentityUpgradeAllowsCommittedDrop",
     "PythonAcceptsCSharpCanonicalDropPlanBytes",
     "RepairPackageRequiresExactReadOnlyFileSet",
+    "ContinuationAuthorizationIsExactImmutableAndIdempotent",
+    "ContinuationDatabaseAttestsAndFinalizesExactRestore",
+    "UpgradeReplacesLegacyRestoreEvidenceFunctions",
+    "NonemptyLegacyRestoreEvidenceBlocksContinuationUpgrade",
+    "RouteParityNormalizesOfficeExportVolatilityAndReturnsDetails",
+    "RouteParityHandlesMultiWorkbookPlayerExport",
+    "ContinuationToolHasOnlyEvidenceSurface",
+    "ContinuationPackageRequiresExactReadOnlySet",
 )
 
 
@@ -136,6 +144,10 @@ def main(argv=None):
                     "SnapshotGenerationPartitionTests"
                     "|FullyQualifiedName~"
                     "SnapshotGenerationRestoreAuthorizationTests"
+                    "|FullyQualifiedName~"
+                    "SnapshotGenerationRestoreContinuationTests"
+                    "|FullyQualifiedName~"
+                    "SnapshotGenerationQuarantineToolTests"
                 ),
             ],
             cwd=repository,
@@ -159,6 +171,18 @@ def main(argv=None):
             / "FSTService.Tests"
             / "Unit"
             / "SnapshotGenerationRestoreAuthorizationTests.cs",
+            repository
+            / "FSTService.Tests"
+            / "Unit"
+            / "SnapshotGenerationDropSchemaTests.cs",
+            repository
+            / "FSTService.Tests"
+            / "Unit"
+            / "SnapshotGenerationQuarantineToolTests.cs",
+            repository
+            / "FSTService.Tests"
+            / "Unit"
+            / "SnapshotGenerationRestoreContinuationTests.cs",
         ]
         schema_test_text = "\n".join(
             source.read_text(encoding="utf-8")
@@ -214,8 +238,32 @@ def main(argv=None):
             raise DrillError(
                 "restore authorizer dependency graph is not isolated"
             )
+        continuation_dependency_graph = (
+            repository
+            / "tools"
+            / "FstSnapshotGenerationRestoreContinuation"
+            / "bin"
+            / "Release"
+            / "net9.0"
+            / "FstSnapshotGenerationRestoreContinuation.deps.json"
+        )
+        continuation_dependency_text = (
+            continuation_dependency_graph.read_text(
+                encoding="utf-8")
+        )
+        if (
+            "Docker.DotNet" in
+                continuation_dependency_text
+            or '"FSTService/' in
+                continuation_dependency_text
+            or '"FstSnapshotGenerationDrop/' in
+                continuation_dependency_text
+        ):
+            raise DrillError(
+                "restore continuation dependency graph is not isolated"
+            )
         report = {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "toolId": TOOL_ID,
             "status": "accepted",
             "startedAtUtc": started,
@@ -265,6 +313,10 @@ def main(argv=None):
                     "TABLE and TABLE DATA logical restore",
                     "fixed-index restore with archived-name collision",
                     "authorized attach, attestation, and finalization",
+                    "volatile-only ZIP/XLSX regeneration",
+                    "continuation-only authorization and confirmation",
+                    "shared C# semantic route attestation",
+                    "H6-bound finalization and hold release",
                 ],
             },
             "dropDependencyGraphSha256":
@@ -272,6 +324,9 @@ def main(argv=None):
             "authorizerDependencyGraphSha256":
                 sha256_path(
                     authorizer_dependency_graph),
+            "continuationDependencyGraphSha256":
+                sha256_path(
+                    continuation_dependency_graph),
             "productionTouched": False,
         }
         report_path = work_root / "report.json"
@@ -292,7 +347,7 @@ def main(argv=None):
         return 0
     except Exception as error:
         rejection = {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "toolId": TOOL_ID,
             "status": "rejected",
             "startedAtUtc": started,

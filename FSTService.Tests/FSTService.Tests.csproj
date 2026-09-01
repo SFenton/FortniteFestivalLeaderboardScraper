@@ -29,6 +29,7 @@
     <ProjectReference Include="..\tools\FstSnapshotGenerationQuarantine\FstSnapshotGenerationQuarantine.csproj" />
     <ProjectReference Include="..\tools\FstSnapshotGenerationDrop\FstSnapshotGenerationDrop.csproj" />
     <ProjectReference Include="..\tools\FstSnapshotGenerationRestoreAuthorization\FstSnapshotGenerationRestoreAuthorization.csproj" />
+    <ProjectReference Include="..\tools\FstSnapshotGenerationRestoreContinuation\FstSnapshotGenerationRestoreContinuation.csproj" />
   </ItemGroup>
 
   <ItemGroup>

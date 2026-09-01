@@ -11,5 +11,6 @@
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <ProjectReference Include="..\FstSnapshotGenerationDrop\FstSnapshotGenerationDrop.csproj" />
+    <ProjectReference Include="..\FstSnapshotGenerationRestoreContinuation\FstSnapshotGenerationRestoreContinuation.csproj" />
   </ItemGroup>
 </Project>

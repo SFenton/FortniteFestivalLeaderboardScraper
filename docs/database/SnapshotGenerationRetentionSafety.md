@@ -938,6 +938,23 @@ the safe `auth_row` alias, but its now-unused authorization is also immutable
 historical evidence. H5 strictly normalizes only supported OID arrays and must
 receive a third exact-DROP authorization. The existing schema already
 supports this and needs no migration.
+
+H5 subsequently committed the mandatory logical restore at new
+OID/relfilenode `321906645`, preserving all `8,627` rows, their fingerprint,
+bound, semantic hashes, and both index chains. Its route attestation failed
+before database write because Python compared raw ZIP exports. Exact shared
+C# normalization proves equal band/player export semantics; no export body is
+committed as a fixture.
+
+The corrective post-restore tier is a distinct
+`FstSnapshotGenerationRestoreContinuation` C# tool with only
+confirm/attest/finalize commands. An immutable continuation authorization
+links the restore row, predecessor H5 authorization, exact plan/report/package,
+shared evidence assembly, route manifests/checksum trees, repository
+diff/source/tests, and independent approval. Empty downstream tables add the
+evidence-tool/authorization FKs; finalization must use the same authorization
+as attestation. The H5 restore row, plan, package, authorization, and DROP
+evidence are never updated.
 Automatic bounded retirement and sparse-child compaction remain unimplemented.
 
 Rollback for this slice is to keep

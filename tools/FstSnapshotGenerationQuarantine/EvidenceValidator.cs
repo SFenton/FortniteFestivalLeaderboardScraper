@@ -151,6 +151,9 @@ public sealed class QuarantineEvidencePaths
 
 public static class QuarantineEvidenceValidator
 {
+    public const string RouteParityAlgorithmId =
+        "fst.route-parity.canonical-zip.v1";
+
     private static readonly Regex ChecksumLine = new(
         @"^(?<hash>[0-9a-f]{64})  (?<path>[A-Za-z0-9][A-Za-z0-9._/-]*)$",
         RegexOptions.CultureInvariant
@@ -660,7 +663,15 @@ public static class QuarantineEvidenceValidator
 
     public static RouteParityEvidence ValidateRouteParity(
         string baselineManifestPath,
-        string candidateManifestPath)
+        string candidateManifestPath) =>
+        ValidateDetailedRouteParity(
+            baselineManifestPath,
+            candidateManifestPath).Parity;
+
+    public static DetailedRouteParityEvidence
+        ValidateDetailedRouteParity(
+            string baselineManifestPath,
+            string candidateManifestPath)
     {
         var baselinePath = Path.GetFullPath(
             baselineManifestPath);
@@ -695,6 +706,8 @@ public static class QuarantineEvidenceValidator
         }
 
         var differences = new List<string>();
+        var semanticEvidence =
+            new List<RouteSemanticComparisonEvidence>();
         foreach (var name in left.Entries.Keys
                      .Order(StringComparer.Ordinal))
         {
@@ -766,6 +779,20 @@ public static class QuarantineEvidenceValidator
                     differences.Add(
                         $"{name}:semantic-binary");
                 }
+                semanticEvidence.Add(
+                    new RouteSemanticComparisonEvidence(
+                        name,
+                        UsesCanonicalZip(
+                            name,
+                            baselineEntry.ContentType)
+                            ? "zip-canonical"
+                            : "raw",
+                        baselineBody.LongLength,
+                        candidateBody.LongLength,
+                        baselineEntry.RawSha256,
+                        candidateEntry.RawSha256,
+                        baselineSemantic,
+                        candidateSemantic));
                 continue;
             }
 
@@ -784,6 +811,16 @@ public static class QuarantineEvidenceValidator
             {
                 differences.Add($"{name}:semantic-json");
             }
+            semanticEvidence.Add(
+                new RouteSemanticComparisonEvidence(
+                    name,
+                    "json-normalized",
+                    baselineBody.LongLength,
+                    candidateBody.LongLength,
+                    baselineEntry.RawSha256,
+                    candidateEntry.RawSha256,
+                    Sha256Bytes(baselineJson),
+                    Sha256Bytes(candidateJson)));
         }
 
         if (differences.Count > 0)
@@ -793,7 +830,7 @@ public static class QuarantineEvidenceValidator
                 + string.Join(", ", differences));
         }
 
-        return new RouteParityEvidence(
+        var parity = new RouteParityEvidence(
             BaselineManifestPath: baselinePath,
             BaselineManifestSha256:
                 Sha256File(baselinePath),
@@ -807,6 +844,12 @@ public static class QuarantineEvidenceValidator
             StatusParity: true,
             SemanticJsonParity: true,
             DifferenceCount: 0);
+        return new DetailedRouteParityEvidence(
+            parity,
+            RouteParityAlgorithmId,
+            true,
+            QuarantineJson.Sha256(semanticEvidence),
+            semanticEvidence);
     }
 
     public static string Sha256File(string path)
@@ -1026,18 +1069,23 @@ public static class QuarantineEvidenceValidator
         string contentType,
         byte[] body)
     {
-        if (!name.EndsWith(
-                "-export",
-                StringComparison.Ordinal)
-            && !contentType.Contains(
-                "zip",
-                StringComparison.OrdinalIgnoreCase))
+        if (!UsesCanonicalZip(name, contentType))
         {
             return Sha256Bytes(body);
         }
 
         return CanonicalZipHash(body, depth: 0);
     }
+
+    private static bool UsesCanonicalZip(
+        string name,
+        string contentType) =>
+        name.EndsWith(
+            "-export",
+            StringComparison.Ordinal)
+        || contentType.Contains(
+            "zip",
+            StringComparison.OrdinalIgnoreCase);
 
     private static string CanonicalZipHash(
         byte[] body,

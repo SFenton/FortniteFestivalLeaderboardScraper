@@ -278,6 +278,37 @@ shape and reaches plan/list emission without production access. PostgreSQL
 coverage also proves three unused replacement-tool authorizations can coexist
 for the exact DROP.
 
+Post-restore continuation coverage proves the separate C# evidence tool has
+only confirm/attest/finalize commands and a dependency graph containing no
+physical restore/drop host, FST service, or Docker library. Package tests
+enforce the exact read-only runtime/evidence/diff/source/test/preflight file
+set and reject symlinks or extras. PostgreSQL tests cover deterministic
+continuation authorization IDs, DB-computed canonical-evidence hashes,
+idempotency, conflicting predecessor/tool/route/actor evidence, immutability,
+same-authorization attestation/finalization, rollback-preserved hold/trigger,
+and unknown-commit confirmation.
+
+The empty-only rolling migration test downgrades restore attestations and
+finalizations, restores their old 9- and 4-argument functions, initializes
+twice, and proves only the 12- and 6-argument authorization-aware signatures
+remain with stable OIDs and `PUBLIC` revoked. Nonempty legacy downstream
+evidence raises `55000` without adding columns.
+
+Python restore tests assert `attest` and `finalize` are absent from the parser,
+the old restore-attestation/finalization SQL function names do not occur in
+the source, and both legacy command words return the continuation-wrapper
+message before parser construction, route validation, evidence output, or
+database mutation.
+
+Shared route-parity tests prove the existing aggregate API is behaviorally
+unchanged while detailed evidence records per-route raw/semantic hashes.
+Synthetic ZIP/XLSX tests cover generated outer timestamps, random Office core
+parts/root relationships, multi-workbook player exports, worksheet tampering,
+nested-depth and normalized-name collisions, empty/>10,000-entry archives,
+and raw tampering before semantic comparison. The committed live fixture
+contains hashes/counts/categories only—no export body, workbook entry name, or
+player content.
+
 A downgrade/upgrade regression creates both the observed live 13-argument and
 intermediate 16-argument restore overloads, reruns initialization twice, and
 proves only the 21-argument signature remains with stable OID and `PUBLIC`

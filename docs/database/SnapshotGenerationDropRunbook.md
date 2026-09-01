@@ -9,9 +9,11 @@ sources:
   - tools/FstSnapshotGenerationEvidence/
   - tools/FstSnapshotGenerationDrop/
   - tools/FstSnapshotGenerationRestoreAuthorization/
+  - tools/FstSnapshotGenerationRestoreContinuation/
   - tools/postgres-snapshot-generation-drop.sh
   - tools/postgres-snapshot-generation-restore-authorize.sh
   - tools/postgres-snapshot-generation-restore.py
+  - tools/postgres-snapshot-generation-restore-continuation.sh
   - tools/postgres-snapshot-generation-restore.sh
   - tools/capture-snapshot-generation-drop-health.py
   - tools/postgres-snapshot-generation-drop-drill.py
@@ -67,6 +69,21 @@ arrays. Preserve the unused H4 authorization too. H5 strictly normalizes only
 those PostgreSQL OID arrays before supported-shape and attachment-chain
 comparison. It requires a third package and authorization for the same DROP;
 no database schema migration is needed.
+
+H5 authorization `b20cf7aa76fc8648172db08df58c7ee7` then restored the exact
+child successfully. Restore operation `da07c4ce4d07b9692a45a1498313f8b3`
+committed with new OID/relfilenode `321906645`, all `8,627` rows and their
+ordered SHA-256, exact bound/semantic hashes, and both index chains. The hold
+and mutation trigger remain active. Its first route attestation failed before
+database write because Python compared raw ZIP bytes for `band-export`.
+Authenticated captures differ only in volatile Office package metadata. The
+accepted C# canonical ZIP algorithm proves identical semantic hashes for
+`band-export`
+(`6e84def5c11574cfbfee8803fd61ea13cad160e62d61f216b66b64c611bc966d`)
+and `player-export`
+(`b2ce01a0f0f5e9e60e844d485622ff8862bb41ba34551813f04a8e9d4ca0f04b`).
+Do not modify or rerun H5. H6 is a separate continuation-only C# evidence
+tool; it cannot plan, load, attach, or restore.
 
 ## Boundaries
 
@@ -482,7 +499,7 @@ The authorization is re-read during planning, immediately before
 `pg_restore`, and immediately before SQL attach. The immutable restore row
 stores pinned/executing hashes and the consumed authorization FK.
 
-Current local corrective build identities, not yet live-authorized:
+Historical restore build identities:
 
 - validator base: `acb358604d9f642da3d4809581328f76118cb912c32765353b8594cc68a1522d`;
 - historical H3 whose immutable authorization failed during read-only
@@ -496,8 +513,7 @@ Current local corrective build identities, not yet live-authorized:
   `f1d9f9169169d60ff16b703fce7dca79784fc50fcf211374e1a63e46c08c3eeb`;
 - authoritative H4 clean-commit authorizer DLL:
   `fb7b0fb77fc2fe17fb781432dd6cd707d24126320d78976d40ac3a72b5da819e`.
-  H5 must rebuild and repin the authorizer from its final clean commit before
-  package preparation.
+  H5 restore authorization and execution are now immutable committed evidence.
 
 Generate a restore plan from the committed drop and pinned bundle:
 
@@ -582,16 +598,87 @@ hold-protected and can be revalidated and resumed; it is never broadly cleaned
 or overwritten. The labelled client container is removed and its absence is
 verified after success, failure, or an uncertain client exit.
 
-After exact same-publication route parity, record an attestation and finalize:
+After a committed restore, evidence acceptance is owned by the separate
+continuation tool. The physical restore plan/report/package and predecessor
+authorization remain unchanged. Prepare a clean-commit continuation package:
 
 ```bash
-tools/postgres-snapshot-generation-restore.sh attest ...
-tools/postgres-snapshot-generation-restore.sh finalize ...
+tools/postgres-snapshot-generation-restore-authorize.sh \
+  prepare-continuation-package \
+  --restore-plan <restore-plan-v5.json> \
+  --restore-report <restore-report-v5.json> \
+  --predecessor-repair-package <repair-package-v5> \
+  --recovery-bundle <recovery-bundle-v2> \
+  --baseline-route-manifest <routes-post-drop/manifest.json> \
+  --post-restore-route-manifest <routes-post-restore/manifest.json> \
+  --candidate-route-manifest <routes-post-restore-repeat/manifest.json> \
+  --predecessor-to-continuation-diff <reviewed-repository.diff> \
+  --source-manifest <source-manifest.json> \
+  --test-evidence-manifest <test-evidence-manifest.json> \
+  --test-results <test-evidence-results.json> \
+  --expected-plan-digest <149b...12e0> \
+  --expected-operation-id <da07...f8b3> \
+  --output <new-continuation-package>
 ```
 
-Finalization alone releases the retained hold. If restore acknowledgement is
-lost, run `confirm`; never rerun the archive load until current catalog state
-has been classified.
+The authorizer validates both route checksum trees with
+`QuarantineEvidenceValidator`, writes a hash-only parity preflight, and copies
+only the continuation runtime/evidence assembly plus source, diff, and test
+evidence. It never copies route/export bodies, the archive, or the H5 package.
+Authorize and confirm with a new approval:
+
+```bash
+tools/postgres-snapshot-generation-restore-authorize.sh \
+  authorize-continuation-tool \
+  --restore-plan <restore-plan-v5.json> \
+  --restore-report <restore-report-v5.json> \
+  --continuation-package <continuation-package> \
+  --expected-continuation-package-manifest-sha256 <sha256> \
+  --expected-plan-digest <149b...12e0> \
+  --expected-operation-id <da07...f8b3> \
+  --reason-code post_restore_route_parity \
+  --reason-text <reviewed-reason> \
+  --approved-by <operator> \
+  --reviewed-by <independent-reviewer> \
+  --approval-reference <new-reference> \
+  --output <authorization-report.json>
+
+tools/postgres-snapshot-generation-restore-authorize.sh \
+  confirm-continuation-tool \
+  --restore-plan <restore-plan-v5.json> \
+  --continuation-package <continuation-package> \
+  --expected-continuation-package-manifest-sha256 <sha256> \
+  --expected-plan-digest <149b...12e0> \
+  --expected-operation-id <da07...f8b3> \
+  --continuation-authorization-id <id> \
+  --output <authorization-confirm.json>
+```
+
+Then export the direct connection and reviewed binary hash and run:
+
+```bash
+export FST_SNAPSHOT_RESTORE_CONTINUATION_CONNECTION_STRING=<direct-connection>
+export FST_SNAPSHOT_RESTORE_CONTINUATION_BINARY_SHA256=<reviewed-H6-sha256>
+
+tools/postgres-snapshot-generation-restore-continuation.sh confirm ...
+tools/postgres-snapshot-generation-restore-continuation.sh attest ...
+tools/postgres-snapshot-generation-restore-continuation.sh finalize  ...
+```
+
+All three commands require the exact package, original plan/report identities,
+and one continuation authorization. Route paths are package-pinned rather
+than accepted from the continuation CLI. Attestation records semantic binary
+parity, algorithm ID, route semantic evidence hash, H6 tool hash, and
+authorization ID. Finalization must use the same tool/authorization; only its
+transaction removes the trigger and releases the hold. Unknown commits are
+reconciled with `confirm`, never by rerunning physical restore.
+
+The Python physical-restore tool no longer owns evidence acceptance. Invoking
+its legacy `attest` or `finalize` command fails immediately with a deterministic
+redirect to `tools/postgres-snapshot-generation-restore-continuation.sh`.
+Those redirects run before argument parsing, route reads, output creation, or
+database access; the old 9-/4-argument SQL function names are absent from the
+Python source.
 
 ## Acceptance and rollback
 

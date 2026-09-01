@@ -89,6 +89,23 @@ public sealed record RouteParityEvidence(
     bool SemanticJsonParity,
     int DifferenceCount);
 
+public sealed record RouteSemanticComparisonEvidence(
+    string Name,
+    string ComparisonMode,
+    long BaselineBytes,
+    long CandidateBytes,
+    string BaselineRawSha256,
+    string CandidateRawSha256,
+    string BaselineSemanticSha256,
+    string CandidateSemanticSha256);
+
+public sealed record DetailedRouteParityEvidence(
+    RouteParityEvidence Parity,
+    string AlgorithmId,
+    bool SemanticBinaryParity,
+    string RouteSemanticEvidenceSha256,
+    IReadOnlyList<RouteSemanticComparisonEvidence> Routes);
+
 public sealed record QuarantineDatabaseSnapshot(
     DateTimeOffset CapturedAtUtc,
     string DatabaseName,

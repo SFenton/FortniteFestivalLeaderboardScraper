@@ -35,6 +35,9 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'public.snapshot_generation_restore_operations')
                         IS NOT NULL
                     AND to_regclass(
+                        'public.snapshot_generation_restore_continuation_authorizations')
+                        IS NOT NULL
+                    AND to_regclass(
                         'public.snapshot_generation_restore_attestations')
                         IS NOT NULL
                     AND to_regclass(
@@ -63,7 +66,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             SnapshotGenerationDropSchema.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
-            2,
+            4,
             CountOccurrences(
                 SnapshotGenerationDropSchema.Sql,
                 "DROP FUNCTION IF EXISTS"));
@@ -76,7 +79,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             SnapshotGenerationDropSchema.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
-            8,
+            10,
             CountOccurrences(
                 SnapshotGenerationDropSchema.Sql,
                 "SECURITY INVOKER"));
@@ -110,7 +113,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             StringComparison.Ordinal);
 
         Assert.Equal(
-            7,
+            8,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER
@@ -124,6 +127,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             ::regclass,
                         'snapshot_generation_restore_operations'
                             ::regclass,
+                        'snapshot_generation_restore_continuation_authorizations'
+                            ::regclass,
                         'snapshot_generation_restore_attestations'
                             ::regclass,
                         'snapshot_generation_restore_finalizations'
@@ -134,13 +139,15 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         trigger_row.tgname LIKE
                             'trg_reject_snapshot_generation_%_mutation'
                         OR trigger_row.tgname =
-                            'trg_reject_sgr_tool_authorization_mutation')
+                            'trg_reject_sgr_tool_authorization_mutation'
+                        OR trigger_row.tgname =
+                            'trg_reject_sgr_continuation_authorization_mutation')
                   AND NOT trigger_row.tgisinternal
                 """));
         Assert.True(
             Scalar<bool>(
                 """
-                SELECT COUNT(*) = 8
+                SELECT COUNT(*) = 10
                     AND NOT bool_or(function_row.prosecdef)
                 FROM pg_proc function_row
                 JOIN pg_namespace namespace
@@ -150,6 +157,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'fst_lock_snapshot_generation_for_drop',
                         'fst_authorize_snapshot_generation_restore_tool',
                         'fst_confirm_snapshot_generation_restore_tool_authorization',
+                        'fst_authorize_snapshot_generation_restore_continuation',
+                        'fst_confirm_snapshot_generation_restore_continuation_authorization',
                         'fst_drop_quarantined_snapshot_generation',
                         'fst_record_snapshot_generation_drop_attestation',
                         'fst_restore_snapshot_generation',
@@ -164,10 +173,18 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                     'snapshot_generation_restore_tool_authorizations',
                     'SELECT, INSERT, UPDATE, DELETE')
                 """));
+        Assert.False(
+            Scalar<bool>(
+                """
+                SELECT has_table_privilege(
+                    'public',
+                    'snapshot_generation_restore_continuation_authorizations',
+                    'SELECT, INSERT, UPDATE, DELETE')
+                """));
         Assert.True(
             Scalar<bool>(
                 """
-                SELECT COUNT(*) = 8
+                SELECT COUNT(*) = 10
                     AND bool_and(
                         NOT has_function_privilege(
                             'public',
@@ -182,6 +199,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'fst_lock_snapshot_generation_for_drop',
                         'fst_authorize_snapshot_generation_restore_tool',
                         'fst_confirm_snapshot_generation_restore_tool_authorization',
+                        'fst_authorize_snapshot_generation_restore_continuation',
+                        'fst_confirm_snapshot_generation_restore_continuation_authorization',
                         'fst_drop_quarantined_snapshot_generation',
                         'fst_record_snapshot_generation_drop_attestation',
                         'fst_restore_snapshot_generation',
@@ -328,6 +347,168 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task UpgradeReplacesLegacyRestoreEvidenceFunctions()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        Execute(
+            """
+            DROP FUNCTION
+                fst_record_snapshot_generation_restore_attestation(
+                    TEXT,
+                    BIGINT,
+                    BIGINT,
+                    INTEGER,
+                    TEXT,
+                    TEXT,
+                    TEXT,
+                    JSONB,
+                    TEXT,
+                    TEXT,
+                    TEXT,
+                    TEXT);
+            DROP FUNCTION
+                fst_finalize_snapshot_generation_restore(
+                    TEXT,
+                    TEXT,
+                    TEXT,
+                    JSONB,
+                    TEXT,
+                    TEXT);
+            CREATE FUNCTION
+                fst_record_snapshot_generation_restore_attestation(
+                    TEXT,
+                    BIGINT,
+                    BIGINT,
+                    INTEGER,
+                    TEXT,
+                    TEXT,
+                    JSONB,
+                    TEXT,
+                    TEXT)
+            RETURNS TEXT
+            LANGUAGE sql
+            AS 'SELECT ''legacy-attestation''::TEXT';
+            CREATE FUNCTION
+                fst_finalize_snapshot_generation_restore(
+                    TEXT,
+                    TEXT,
+                    TEXT,
+                    JSONB)
+            RETURNS TEXT
+            LANGUAGE sql
+            AS 'SELECT ''legacy-finalization''::TEXT'
+            """);
+
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var attestationOid = Scalar<long>(
+            """
+            SELECT function_row.oid::BIGINT
+            FROM pg_proc function_row
+            JOIN pg_namespace namespace
+              ON namespace.oid =
+                    function_row.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND function_row.proname =
+                    'fst_record_snapshot_generation_restore_attestation'
+              AND function_row.pronargs = 12
+            """);
+        var finalizationOid = Scalar<long>(
+            """
+            SELECT function_row.oid::BIGINT
+            FROM pg_proc function_row
+            JOIN pg_namespace namespace
+              ON namespace.oid =
+                    function_row.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND function_row.proname =
+                    'fst_finalize_snapshot_generation_restore'
+              AND function_row.pronargs = 6
+            """);
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+
+        Assert.Equal(
+            "12",
+            Scalar<string>(
+                """
+                SELECT string_agg(
+                    function_row.pronargs::TEXT,
+                    ','
+                    ORDER BY function_row.pronargs)
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname =
+                        'fst_record_snapshot_generation_restore_attestation'
+                """));
+        Assert.Equal(
+            "6",
+            Scalar<string>(
+                """
+                SELECT string_agg(
+                    function_row.pronargs::TEXT,
+                    ','
+                    ORDER BY function_row.pronargs)
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname =
+                        'fst_finalize_snapshot_generation_restore'
+                """));
+        Assert.Equal(
+            attestationOid,
+            Scalar<long>(
+                """
+                SELECT function_row.oid::BIGINT
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname =
+                        'fst_record_snapshot_generation_restore_attestation'
+                  AND function_row.pronargs = 12
+                """));
+        Assert.Equal(
+            finalizationOid,
+            Scalar<long>(
+                """
+                SELECT function_row.oid::BIGINT
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname =
+                        'fst_finalize_snapshot_generation_restore'
+                  AND function_row.pronargs = 6
+                """));
+        Assert.True(
+            Scalar<bool>(
+                """
+                SELECT bool_and(
+                    NOT has_function_privilege(
+                        'public',
+                        function_row.oid,
+                        'EXECUTE'))
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname IN (
+                        'fst_record_snapshot_generation_restore_attestation',
+                        'fst_finalize_snapshot_generation_restore')
+                """));
+    }
+
+    [Fact]
     public async Task EmptyInitialSchemaUpgradesToCurrentShapeIdempotently()
     {
         await DatabaseInitializer.EnsureSchemaAsync(
@@ -467,10 +648,62 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         AND restore_reference <> ''
                         AND jsonb_typeof(restore_evidence) =
                             'object');
+
+            ALTER TABLE
+                snapshot_generation_restore_attestations
+                DROP CONSTRAINT
+                    fk_snapshot_generation_restore_attestation_continuation,
+                DROP CONSTRAINT
+                    ck_snapshot_generation_restore_attestation,
+                DROP COLUMN semantic_binary_parity,
+                DROP COLUMN route_parity_algorithm_id,
+                DROP COLUMN route_semantic_evidence_sha256,
+                DROP COLUMN evidence_tool_sha256,
+                DROP COLUMN continuation_authorization_id;
+            ALTER TABLE
+                snapshot_generation_restore_attestations
+                ADD CONSTRAINT
+                    ck_snapshot_generation_restore_attestation
+                    CHECK (
+                        publication_id > 0
+                        AND published_scrape_id > 0
+                        AND route_count = 55
+                        AND status_parity
+                        AND semantic_json_parity
+                        AND difference_count = 0
+                        AND baseline_route_manifest_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND candidate_route_manifest_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND attested_by <> ''
+                        AND jsonb_typeof(
+                            database_evidence) =
+                            'object');
+
+            ALTER TABLE
+                snapshot_generation_restore_finalizations
+                DROP CONSTRAINT
+                    fk_snapshot_generation_restore_finalization_continuation,
+                DROP CONSTRAINT
+                    ck_snapshot_generation_restore_finalize,
+                DROP COLUMN evidence_tool_sha256,
+                DROP COLUMN continuation_authorization_id;
+            ALTER TABLE
+                snapshot_generation_restore_finalizations
+                ADD CONSTRAINT
+                    ck_snapshot_generation_restore_finalize
+                    CHECK (
+                        finalized_by <> ''
+                        AND finalize_reference <> ''
+                        AND jsonb_typeof(
+                            finalization_evidence) =
+                            'object');
             """);
 
         Assert.Equal(
-            16,
+            23,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER
@@ -499,6 +732,23 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'authorization_id'
                     ]),
                     'snapshot_generation_restore_operations'
+                        ::regclass
+                    UNION ALL
+                    SELECT unnest(ARRAY[
+                        'semantic_binary_parity',
+                        'route_parity_algorithm_id',
+                        'route_semantic_evidence_sha256',
+                        'evidence_tool_sha256',
+                        'continuation_authorization_id'
+                    ]),
+                    'snapshot_generation_restore_attestations'
+                        ::regclass
+                    UNION ALL
+                    SELECT unnest(ARRAY[
+                        'evidence_tool_sha256',
+                        'continuation_authorization_id'
+                    ]),
+                    'snapshot_generation_restore_finalizations'
                         ::regclass
                 ) expected
                 WHERE NOT EXISTS (
@@ -540,6 +790,20 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'ck_snapshot_generation_restore_identity',
                             'fk_snapshot_generation_restore_tool_authorization',
                             'ux_snapshot_generation_restore_tool_authorization_consumption'))
+                   OR (
+                        constraint_row.conrelid =
+                            'snapshot_generation_restore_attestations'
+                                ::regclass
+                        AND constraint_row.conname IN (
+                            'ck_snapshot_generation_restore_attestation',
+                            'fk_snapshot_generation_restore_attestation_continuation'))
+                   OR (
+                        constraint_row.conrelid =
+                            'snapshot_generation_restore_finalizations'
+                                ::regclass
+                        AND constraint_row.conname IN (
+                            'ck_snapshot_generation_restore_finalize',
+                            'fk_snapshot_generation_restore_finalization_continuation'))
                 """);
         await DatabaseInitializer.EnsureSchemaAsync(
             _fixture.DataSource);
@@ -570,6 +834,20 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'ck_snapshot_generation_restore_identity',
                             'fk_snapshot_generation_restore_tool_authorization',
                             'ux_snapshot_generation_restore_tool_authorization_consumption'))
+                   OR (
+                        constraint_row.conrelid =
+                            'snapshot_generation_restore_attestations'
+                                ::regclass
+                        AND constraint_row.conname IN (
+                            'ck_snapshot_generation_restore_attestation',
+                            'fk_snapshot_generation_restore_attestation_continuation'))
+                   OR (
+                        constraint_row.conrelid =
+                            'snapshot_generation_restore_finalizations'
+                                ::regclass
+                        AND constraint_row.conname IN (
+                            'ck_snapshot_generation_restore_finalize',
+                            'fk_snapshot_generation_restore_finalization_continuation'))
                 """));
 
         Assert.Equal(
@@ -705,9 +983,14 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'candidate_route_manifest_sha256',
                             'status_parity',
                             'semantic_json_parity',
+                            'semantic_binary_parity',
                             'difference_count',
+                            'route_parity_algorithm_id',
+                            'route_semantic_evidence_sha256',
                             'database_evidence',
                             'evidence_sha256',
+                            'evidence_tool_sha256',
+                            'continuation_authorization_id',
                             'attested_by',
                             'attested_at',
                             'finalized_at'
@@ -720,6 +1003,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'finalized_by',
                             'finalize_reference',
                             'finalization_evidence',
+                            'evidence_tool_sha256',
+                            'continuation_authorization_id',
                             'finalized_at'
                         ])
                     UNION ALL
@@ -785,7 +1070,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'ux_snapshot_generation_restore_tool_authorization_consumption'))
                 """));
         Assert.Equal(
-            9,
+            11,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER
@@ -806,13 +1091,19 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                                 'snapshot_generation_restore_attestations'
                                     ::regclass
                             AND constraint_row.conname =
-                                'ck_snapshot_generation_restore_attestation')
+                                ANY (ARRAY[
+                                    'ck_snapshot_generation_restore_attestation',
+                                    'fk_snapshot_generation_restore_attestation_continuation'
+                                ]))
                         OR (
                             constraint_row.conrelid =
                                 'snapshot_generation_restore_finalizations'
                                     ::regclass
                             AND constraint_row.conname =
-                                'ck_snapshot_generation_restore_finalize')
+                                ANY (ARRAY[
+                                    'ck_snapshot_generation_restore_finalize',
+                                    'fk_snapshot_generation_restore_finalization_continuation'
+                                ]))
                         OR (
                             constraint_row.conrelid =
                                 'snapshot_generation_drop_evidence'
@@ -927,7 +1218,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'ck_snapshot_generation_restore_identity'
                 """));
         Assert.Equal(
-            8,
+            10,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER
@@ -940,6 +1231,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'fst_lock_snapshot_generation_for_drop',
                         'fst_authorize_snapshot_generation_restore_tool',
                         'fst_confirm_snapshot_generation_restore_tool_authorization',
+                        'fst_authorize_snapshot_generation_restore_continuation',
+                        'fst_confirm_snapshot_generation_restore_continuation_authorization',
                         'fst_drop_quarantined_snapshot_generation',
                         'fst_record_snapshot_generation_drop_attestation',
                         'fst_restore_snapshot_generation',
@@ -959,6 +1252,8 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                        FROM snapshot_generation_restore_tool_authorizations)
                     + (SELECT COUNT(*)
                        FROM snapshot_generation_restore_operations)
+                    + (SELECT COUNT(*)
+                       FROM snapshot_generation_restore_continuation_authorizations)
                     + (SELECT COUNT(*)
                        FROM snapshot_generation_restore_attestations)
                     + (SELECT COUNT(*)

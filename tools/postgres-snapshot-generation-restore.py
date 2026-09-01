@@ -2699,179 +2699,31 @@ def confirm_restore(args, plan):
     return state
 
 
-def attest_restore(args, plan):
-    validate_actor(args.attested_by, "attested-by")
-    parity = validate_route_pair(
-        validate_path(args.baseline_route_manifest),
-        validate_path(args.candidate_route_manifest),
-    )
-    state = confirm_restore(args, plan)
-    target = plan["target"]
-    catalog = ARCHIVE.capture_catalog(
-        args.source_container,
-        args.pg_user,
-        args.pg_database,
-        "public",
-        (
-            "leaderboard_entries_snapshot",
-            target["rootRelation"],
-            target["childRelation"],
-        ),
-    )
-    fingerprint = ARCHIVE.stream_fingerprint(
-        args.source_container,
-        args.pg_user,
-        args.pg_database,
-        "public",
-        target["childRelation"],
-        timeout_seconds=args.timeout_seconds,
-    )
-    logical_catalog_sha256 = ARCHIVE.stable_hash(
-        ARCHIVE.logical_catalog(catalog)
-    )
-    package = (
-        pathlib.Path(plan["recoveryBundlePath"])
-        / "archive"
-    )
-    source_manifest, source_catalog, _ = (
-        load_pinned_archive(package)
-    )
-    source_child = child_catalog(
-        source_manifest,
-        source_catalog,
-    )
-    final_child = next(
-        (
-            relation
-            for relation in catalog
-            if relation.get("name")
-            == target["childRelation"]
-        ),
-        None,
-    )
-    final_root = next(
-        (
-            relation
-            for relation in catalog
-            if relation.get("name")
-            == target["rootRelation"]
-        ),
-        None,
-    )
-    final_top = next(
-        (
-            relation
-            for relation in catalog
-            if relation.get("name")
-            == "leaderboard_entries_snapshot"
-        ),
-        None,
-    )
-    if (
-        final_child is None
-        or final_root is None
-        or final_top is None
-    ):
-        raise RestoreError(
-            "restored attestation catalog is incomplete"
-        )
-    final_index_shape_sha256 = (
-        logical_index_shape_sha256(
-            final_child,
-            final_root,
-            final_top,
-        )
-    )
-    if (
-        fingerprint["rowCount"] != int(target["rowCount"])
-        or fingerprint["sha256"]
-        != target["rowFingerprintSha256"]
-        or detached_base_relation(final_child)
-        != detached_base_relation(source_child)
-        or final_index_shape_sha256
-        != plan["logicalIndexShapeSha256"]
-        or int(state["newOid"]) == int(target["childOid"])
-    ):
-        raise RestoreError(
-            "restored attestation data or semantic topology changed"
-        )
-    state = {
-        **state,
-        "rowFingerprint": fingerprint,
-        "logicalCatalogSha256": logical_catalog_sha256,
-        "archivedLogicalCatalogSha256":
-            target["logicalCatalogSha256"],
-        "semanticCatalogSha256":
-            plan["semanticCatalogSha256"],
-        "logicalIndexShapeSha256":
-            final_index_shape_sha256,
-        "baseRelationSemanticMatch": True,
-        "catalog": catalog,
-    }
-    evidence_hash = stable_hash(
-        {"parity": parity, "database": state}
-    )
-    sql = f"""
-        SELECT fst_record_snapshot_generation_restore_attestation(
-            {ARCHIVE.sql_literal(plan["restoreOperationId"])},
-            {int(parity["publicationId"])},
-            {int(parity["publishedScrapeId"])},
-            55,
-            {ARCHIVE.sql_literal(parity["baselineManifestSha256"])},
-            {ARCHIVE.sql_literal(parity["candidateManifestSha256"])},
-            {ARCHIVE.sql_literal(json.dumps(state, sort_keys=True))}::jsonb,
-            {ARCHIVE.sql_literal(evidence_hash)},
-            {ARCHIVE.sql_literal(args.attested_by)})
-    """
-    psql_mutation(args, sql)
-    return {
-        "schemaVersion": SCHEMA_VERSION,
-        "toolId": TOOL_ID,
-        "action": "attest",
-        "status": "accepted",
-        "restoreOperationId": plan["restoreOperationId"],
-        "completedAtUtc": utc_now(),
-        "actor": args.attested_by,
-        "parity": parity,
-        "databaseEvidence": state,
-        "evidenceSha256": evidence_hash,
-    }
+LEGACY_CONTINUATION_COMMANDS = {
+    "attest",
+    "finalize",
+}
 
 
-def finalize_restore(args, plan):
-    validate_actor(args.finalized_by, "finalized-by")
-    validate_actor(
-        args.finalize_reference,
-        "finalize-reference",
+def reject_legacy_continuation_command(command):
+    if command not in LEGACY_CONTINUATION_COMMANDS:
+        raise RestoreError(
+            "legacy continuation command is invalid"
+        )
+    raise RestoreError(
+        f"restore '{command}' moved to "
+        "tools/postgres-snapshot-generation-restore-continuation.sh; "
+        "the Python restore tool cannot attest or finalize"
     )
-    state = confirm_restore(args, plan)
-    evidence = {
-        "confirmedRestore": state,
-        "finalizedAtUtc": utc_now(),
-    }
-    sql = f"""
-        SELECT fst_finalize_snapshot_generation_restore(
-            {ARCHIVE.sql_literal(plan["restoreOperationId"])},
-            {ARCHIVE.sql_literal(args.finalized_by)},
-            {ARCHIVE.sql_literal(args.finalize_reference)},
-            {ARCHIVE.sql_literal(json.dumps(evidence, sort_keys=True))}::jsonb)
-    """
-    psql_mutation(args, sql)
-    return {
-        "schemaVersion": SCHEMA_VERSION,
-        "toolId": TOOL_ID,
-        "action": "finalize",
-        "status": "finalized",
-        "restoreOperationId": plan["restoreOperationId"],
-        "completedAtUtc": utc_now(),
-        "actor": args.finalized_by,
-        "reference": args.finalize_reference,
-    }
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Exact snapshot-generation logical restore"
+        description="Exact snapshot-generation logical restore",
+        epilog=(
+            "Post-restore attest/finalize commands moved to "
+            "tools/postgres-snapshot-generation-restore-continuation.sh"
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2907,39 +2759,24 @@ def build_parser():
     restore.add_argument("--restored-by", required=True)
     restore.add_argument("--restore-reference", required=True)
 
-    attest = subparsers.add_parser("attest")
-    attest.add_argument("--plan", required=True)
-    attest.add_argument("--expected-plan-digest", required=True)
-    attest.add_argument("--expected-operation-id", required=True)
-    attest.add_argument("--baseline-route-manifest", required=True)
-    attest.add_argument("--candidate-route-manifest", required=True)
-    attest.add_argument("--attested-by", required=True)
-    attest.add_argument("--output", required=True)
-    attest.add_argument("--source-container", default="fst-postgres")
-    attest.add_argument("--pg-user", default="fst")
-    attest.add_argument("--pg-database", default="fstservice")
-    attest.add_argument(
-        "--timeout-seconds",
-        type=int,
-        default=7200,
-    )
-
-    finalize = subparsers.add_parser("finalize")
-    finalize.add_argument("--plan", required=True)
-    finalize.add_argument("--expected-plan-digest", required=True)
-    finalize.add_argument("--expected-operation-id", required=True)
-    finalize.add_argument("--finalized-by", required=True)
-    finalize.add_argument("--finalize-reference", required=True)
-    finalize.add_argument("--output", required=True)
-    finalize.add_argument("--source-container", default="fst-postgres")
-    finalize.add_argument("--pg-user", default="fst")
-    finalize.add_argument("--pg-database", default="fstservice")
     return parser
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    arguments = list(
+        sys.argv[1:]
+        if argv is None
+        else argv
+    )
     try:
+        if (
+            arguments
+            and arguments[0]
+                in LEGACY_CONTINUATION_COMMANDS
+        ):
+            reject_legacy_continuation_command(
+                arguments[0])
+        args = build_parser().parse_args(arguments)
         if (
             hasattr(args, "timeout_seconds")
             and args.timeout_seconds <= 0
@@ -2964,7 +2801,7 @@ def main(argv=None):
                 if not args.postgres_image:
                     raise RestoreError("restore requires --postgres-image")
                 result = execute_restore(args, plan)
-            elif args.command == "confirm":
+            else:
                 result = {
                     "schemaVersion": SCHEMA_VERSION,
                     "toolId": TOOL_ID,
@@ -2974,10 +2811,6 @@ def main(argv=None):
                     "completedAtUtc": utc_now(),
                     "databaseEvidence": confirm_restore(args, plan),
                 }
-            elif args.command == "attest":
-                result = attest_restore(args, plan)
-            else:
-                result = finalize_restore(args, plan)
             result = seal_report(result)
             write_new_json(output, result)
         print(json.dumps(result, sort_keys=True))

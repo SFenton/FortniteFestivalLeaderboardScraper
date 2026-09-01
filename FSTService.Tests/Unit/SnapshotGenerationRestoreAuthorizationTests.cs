@@ -71,6 +71,15 @@ public sealed class SnapshotGenerationRestoreAuthorizationTests
         Assert.Contains(
             "\"confirm-repair-tool\"",
             source);
+        Assert.Contains(
+            "\"prepare-continuation-package\"",
+            source);
+        Assert.Contains(
+            "\"authorize-continuation-tool\"",
+            source);
+        Assert.Contains(
+            "\"confirm-continuation-tool\"",
+            source);
         Assert.DoesNotContain(
             "\"restore\" =>",
             source,
@@ -105,6 +114,22 @@ public sealed class SnapshotGenerationRestoreAuthorizationTests
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "\"final-tool\"",
+            source,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "authorized-continuation-tool-sha",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"FstSnapshotGenerationRestoreContinuation\"",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"status\"",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"--porcelain\"",
             source,
             StringComparison.Ordinal);
         Assert.DoesNotContain(

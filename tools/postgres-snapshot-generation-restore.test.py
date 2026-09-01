@@ -1416,6 +1416,16 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
             parser._subparsers._group_actions[0]
                 .choices,
         )
+        self.assertNotIn(
+            "attest",
+            parser._subparsers._group_actions[0]
+                .choices,
+        )
+        self.assertNotIn(
+            "finalize",
+            parser._subparsers._group_actions[0]
+                .choices,
+        )
 
     def test_restore_tool_authorization_resolver_is_exact(self):
         drop_plan = {
@@ -1696,124 +1706,63 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
                     plan,
                 )
 
-    def test_restore_attestation_uses_semantics_not_raw_index_names(self):
-        target = {
-            "childRelation": "child",
-            "rootRelation": "root",
-            "childOid": 10,
-            "rowCount": 1,
-            "rowFingerprintSha256": "1" * 64,
-            "logicalCatalogSha256": "2" * 64,
-        }
-        plan = {
-            "restoreOperationId": "a" * 32,
-            "recoveryBundlePath": "/unused",
-            "semanticCatalogSha256": "3" * 64,
-            "logicalIndexShapeSha256": "4" * 64,
-            "target": target,
-        }
-        args = types.SimpleNamespace(
-            attested_by="operator",
-            baseline_route_manifest="baseline",
-            candidate_route_manifest="candidate",
-            source_container="container",
-            pg_user="fst",
-            pg_database="fst",
-            timeout_seconds=30,
-        )
-        final_catalog = [
-            {"name": "leaderboard_entries_snapshot"},
-            {"name": "root"},
-            {"name": "child", "indexName": "sgri_new"},
-        ]
-        source_catalog = {
-            "physicalCatalog": [
-                {"name": "child", "indexName": "archived_old"},
-            ],
-        }
-        parity = {
-            "publicationId": 1,
-            "publishedScrapeId": 1,
-            "baselineManifestSha256": "5" * 64,
-            "candidateManifestSha256": "6" * 64,
-        }
-        with (
-            mock.patch.object(
-                tool,
-                "validate_path",
-                side_effect=lambda value, **_: pathlib.Path(value),
-            ),
-            mock.patch.object(
-                tool,
-                "validate_route_pair",
-                return_value=parity,
-            ),
-            mock.patch.object(
-                tool,
-                "confirm_restore",
-                return_value={"newOid": 11},
-            ),
-            mock.patch.object(
-                tool.ARCHIVE,
-                "capture_catalog",
-                return_value=final_catalog,
-            ),
-            mock.patch.object(
-                tool.ARCHIVE,
-                "stream_fingerprint",
-                return_value={
-                    "rowCount": 1,
-                    "sha256": "1" * 64,
-                },
-            ),
-            mock.patch.object(
-                tool.ARCHIVE,
-                "logical_catalog",
-                return_value=[{"raw": "renamed"}],
-            ),
-            mock.patch.object(
-                tool.ARCHIVE,
-                "stable_hash",
-                return_value="7" * 64,
-            ),
-            mock.patch.object(
-                tool,
-                "load_pinned_archive",
-                return_value=(
-                    {"target": {"childRelation": "child"}},
-                    source_catalog,
-                    {},
-                ),
-            ),
-            mock.patch.object(
-                tool,
-                "detached_base_relation",
-                return_value={"base": "same"},
-            ),
-            mock.patch.object(
-                tool,
-                "logical_index_shape_sha256",
-                return_value="4" * 64,
-            ),
-            mock.patch.object(
-                tool,
-                "psql_mutation",
-            ),
-        ):
-            report = tool.attest_restore(args, plan)
+    def test_legacy_evidence_commands_redirect_before_io(self):
+        for command in ("attest", "finalize"):
+            with self.subTest(command=command):
+                error = io.StringIO()
+                with (
+                    mock.patch.object(
+                        tool,
+                        "build_parser",
+                        side_effect=AssertionError(
+                            "parser must not run"),
+                    ),
+                    mock.patch.object(
+                        tool,
+                        "psql_mutation",
+                        side_effect=AssertionError(
+                            "database mutation must not run"),
+                    ),
+                    mock.patch.object(
+                        tool,
+                        "validate_route_pair",
+                        side_effect=AssertionError(
+                            "route validation must not run"),
+                    ),
+                    mock.patch.object(
+                        tool,
+                        "write_new_json",
+                        side_effect=AssertionError(
+                            "evidence output must not run"),
+                    ),
+                    contextlib.redirect_stderr(error),
+                ):
+                    result = tool.main(
+                        [command, "--plan", "unused"])
 
-        self.assertEqual("accepted", report["status"])
-        evidence = report["databaseEvidence"]
-        self.assertEqual(
-            "7" * 64,
-            evidence["logicalCatalogSha256"],
+                self.assertEqual(1, result)
+                self.assertIn(
+                    "postgres-snapshot-generation-restore-continuation.sh",
+                    error.getvalue(),
+                )
+
+    def test_restore_source_has_no_legacy_evidence_sql(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "fst_record_snapshot_generation_restore_attestation",
+            source,
         )
-        self.assertEqual(
-            "2" * 64,
-            evidence["archivedLogicalCatalogSha256"],
+        self.assertNotIn(
+            "fst_finalize_snapshot_generation_restore",
+            source,
         )
-        self.assertTrue(
-            evidence["baseRelationSemanticMatch"]
+        self.assertNotIn(
+            "def attest_restore",
+            source,
+        )
+        self.assertNotIn(
+            "def finalize_restore",
+            source,
         )
 
 

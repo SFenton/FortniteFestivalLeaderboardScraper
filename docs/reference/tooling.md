@@ -555,6 +555,28 @@ remain number-only. H3/H4 authorizations are not reusable for H5, and the
 existing schema admits a third exact-DROP authorization while no restore row
 exists.
 
+`tools/postgres-snapshot-generation-restore-continuation.sh` invokes the
+hash-pinned `FstSnapshotGenerationRestoreContinuation` assembly. Commands are
+exactly `confirm`, `attest`, and `finalize`. It has no physical restore,
+staging, attach, Docker, authorization, arbitrary SQL, or database-object
+selection surface. Connectivity is direct Npgsql through
+`FST_SNAPSHOT_RESTORE_CONTINUATION_CONNECTION_STRING`; the wrapper also
+requires `FST_SNAPSHOT_RESTORE_CONTINUATION_BINARY_SHA256`.
+Legacy `attest` and `finalize` invocations against
+`postgres-snapshot-generation-restore.py` are deterministic redirects only.
+They fail before parser construction or any route, output, Docker, or database
+operation and identify the continuation wrapper.
+
+The existing restore authorizer additionally exposes
+`prepare-continuation-package`, `authorize-continuation-tool`, and
+`confirm-continuation-tool`. Preparation derives tool/evidence hashes from
+fixed Release outputs, requires a clean committed tree, validates the original
+H5 plan/report/package/bundle and both authenticated route checksum trees, and
+creates a hash-only semantic preflight. The package contains only the
+framework-dependent continuation runtime, exact shared evidence assembly,
+repository diff, source/tests, preflight, manifest, and checksums. Route paths
+come from the sealed package; no export body is copied.
+
 DROP plan/report validation reads the original C# canonical UTF-8 bytes.
 Python object reserialization is not authoritative. The scanner requires
 unique ordinal-sorted top-level properties, canonical key encoding, no

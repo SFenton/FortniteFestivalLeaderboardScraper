@@ -307,10 +307,30 @@ run H4. The failure occurred before plan/list output and before any restore
 row or mutation. H4 corrected the alias and passed the authorization lookup,
 but its plan also stopped before output or mutation because it did not
 normalize the live Q2 catalog's canonical decimal-string opclass/collation OID
-arrays. Preserve both unused authorizations. Prepare and review a new H5
-package, insert and confirm a third exact-DROP authorization, then use that
-authorization ID consistently through plan, restore, confirm, attest, and
-finalize. The H5 parser correction requires no production schema migration.
+arrays. Preserve both unused authorizations. H5 later used its own separately
+reviewed package/authorization and completed physical restore; that
+authorization is now consumed and cannot authorize a continuation tool.
+
+H5 restore operation `da07c4ce4d07b9692a45a1498313f8b3` is now committed and
+must never be rerun. Its child is attached at OID/relfilenode `321906645`
+with exact data/topology while hold 3 and the mutation trigger remain active.
+The failed H5 route attestation wrote no database row. Keep those protections
+until the continuation-only tier records semantic route parity and
+finalization.
+
+H6 preparation and authorization are separate from physical restore. The
+continuation package references the exact H5 plan/report/package/bundle and
+authenticated route captures but contains no export bodies. The C# tool has
+only confirm/attest/finalize and must use the package-pinned post-DROP and
+repeated post-restore routes. Before authorization and every command, require
+publication `165`/scrape `1336`, worker offline, no running scrape, exact
+restored OID/rows/two index chains, active hold/trigger, absent old OID,
+absent DEFAULT fence, and an empty DEFAULT child. Any publication rotation is
+a halt condition. Finalize only after an H6-bound attestation and use the same
+authorization ID; its transaction must preserve the hold/trigger on failure.
+H6 is repository-only until its clean-commit binaries, package, authorization,
+and confirmation are independently reviewed; this implementation is not live
+authorization.
 Before deploying, verify initialization removes both known old restore
 overloads (the observed live 13-argument OID and intermediate 16-argument
 shape) and leaves only the 21-argument function. Any additional overload is a

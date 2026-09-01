@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FstSnapshotGenerationDrop;
+using FstSnapshotGenerationRestoreContinuation;
 
 namespace FstSnapshotGenerationRestoreAuthorization;
 
@@ -70,6 +71,59 @@ public static class Program
                                 "expected-drop-plan-digest",
                                 "expected-drop-operation-id",
                                 "repair-package",
+                                "output",
+                            ]),
+                        cancellation.Token),
+                "prepare-continuation-package" =>
+                    PrepareContinuation(
+                        AuthorizationArguments.Parse(
+                            args.Skip(1),
+                            [
+                                "restore-plan",
+                                "restore-report",
+                                "predecessor-repair-package",
+                                "recovery-bundle",
+                                "baseline-route-manifest",
+                                "post-restore-route-manifest",
+                                "candidate-route-manifest",
+                                "predecessor-to-continuation-diff",
+                                "source-manifest",
+                                "test-evidence-manifest",
+                                "test-results",
+                                "expected-plan-digest",
+                                "expected-operation-id",
+                                "output",
+                            ])),
+                "authorize-continuation-tool" =>
+                    await AuthorizeContinuationAsync(
+                        AuthorizationArguments.Parse(
+                            args.Skip(1),
+                            [
+                                "restore-plan",
+                                "restore-report",
+                                "continuation-package",
+                                "expected-continuation-package-manifest-sha256",
+                                "expected-plan-digest",
+                                "expected-operation-id",
+                                "reason-code",
+                                "reason-text",
+                                "approved-by",
+                                "reviewed-by",
+                                "approval-reference",
+                                "output",
+                            ]),
+                        cancellation.Token),
+                "confirm-continuation-tool" =>
+                    await ConfirmContinuationAsync(
+                        AuthorizationArguments.Parse(
+                            args.Skip(1),
+                            [
+                                "restore-plan",
+                                "continuation-package",
+                                "expected-continuation-package-manifest-sha256",
+                                "expected-plan-digest",
+                                "expected-operation-id",
+                                "continuation-authorization-id",
                                 "output",
                             ]),
                         cancellation.Token),
@@ -374,6 +428,372 @@ public static class Program
         return 0;
     }
 
+    private static int PrepareContinuation(
+        AuthorizationArguments options)
+    {
+        var paths = Paths();
+        var output = paths.ResolveNewDirectory(
+            options.Require("output"));
+        var manifest =
+            ContinuationAuthorizationPackage.Prepare(
+                paths.ResolveInputFile(
+                    options.Require("restore-plan")),
+                paths.ResolveInputFile(
+                    options.Require("restore-report")),
+                paths.ResolveInputDirectory(
+                    options.Require(
+                        "predecessor-repair-package")),
+                paths.ResolveInputDirectory(
+                    options.Require("recovery-bundle")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "baseline-route-manifest")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "post-restore-route-manifest")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "candidate-route-manifest")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "predecessor-to-continuation-diff")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "source-manifest")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "test-evidence-manifest")),
+                paths.ResolveInputFile(
+                    options.Require("test-results")),
+                options.Require(
+                    "expected-plan-digest"),
+                options.Require(
+                    "expected-operation-id"),
+                output);
+        var manifestPath = Path.Combine(
+            output,
+            "continuation-manifest.json");
+        Console.WriteLine(
+            $"package={output} "
+            + $"manifestSha256={ContinuationPackage.Sha256File(manifestPath)} "
+            + $"continuationToolSha256={manifest.AuthorizedContinuationToolSha256} "
+            + $"evidenceAssemblySha256={manifest.AuthorizedEvidenceAssemblySha256}");
+        return 0;
+    }
+
+    private static async Task<int>
+        AuthorizeContinuationAsync(
+            AuthorizationArguments options,
+            CancellationToken ct)
+    {
+        var paths = Paths();
+        var planPath = paths.ResolveInputFile(
+            options.Require("restore-plan"));
+        var reportPath = paths.ResolveInputFile(
+            options.Require("restore-report"));
+        var package = paths.ResolveInputDirectory(
+            options.Require(
+                "continuation-package"));
+        var output = paths.ResolveNewFile(
+            options.Require("output"));
+        var manifest =
+            ContinuationPackage.Validate(package);
+        ValidateContinuationInputs(
+            options,
+            manifest,
+            planPath,
+            reportPath,
+            package);
+        var approvedBy = ValidateActor(
+            options.Require("approved-by"),
+            "approved-by");
+        var reviewedBy = ValidateActor(
+            options.Require("reviewed-by"),
+            "reviewed-by");
+        var approvalReference = ValidateActor(
+            options.Require(
+                "approval-reference"),
+            "approval-reference");
+        var reasonCode =
+            options.Require("reason-code");
+        var reasonText = ValidateActor(
+            options.Require("reason-text"),
+            "reason-text");
+        var packageManifestPath = Path.Combine(
+            package,
+            "continuation-manifest.json");
+        var canonicalEvidence =
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    RestorePlanPath = planPath,
+                    RestorePlanFileSha256 =
+                        ContinuationPackage
+                            .Sha256File(planPath),
+                    RestoreReportPath = reportPath,
+                    RestoreReportSha256 =
+                        ContinuationPackage
+                            .Sha256File(reportPath),
+                    ContinuationPackagePath =
+                        package,
+                    ContinuationPackageManifestSha256 =
+                        ContinuationPackage.Sha256File(
+                            packageManifestPath),
+                    Manifest = manifest,
+                });
+        var request =
+            new RestoreContinuationAuthorizationRequest(
+                manifest.RestoreOperationId,
+                manifest.DropOperationId,
+                manifest.PredecessorAuthorizationId,
+                manifest.RestorePlanDigest,
+                manifest.RestorePlanFileSha256,
+                manifest.RestoreReportSha256,
+                manifest.PredecessorRestoreToolSha256,
+                manifest
+                    .PredecessorRepairPackageManifestSha256,
+                manifest.RecoveryBundleManifestSha256,
+                manifest
+                    .AuthorizedContinuationToolSha256,
+                manifest
+                    .AuthorizedEvidenceAssemblySha256,
+                manifest
+                    .RouteParityReferenceSourceSha256,
+                manifest.AuthorizerBinarySha256,
+                ContinuationPackage.Sha256File(
+                    packageManifestPath),
+                manifest.RouteParityAlgorithmId,
+                manifest.RouteParityPreflightSha256,
+                manifest.BaselineRouteManifestSha256,
+                manifest.BaselineRouteChecksumsSha256,
+                manifest.CandidateRouteManifestSha256,
+                manifest.CandidateRouteChecksumsSha256,
+                manifest.PublicationId,
+                manifest.PublishedScrapeId,
+                manifest.RepositoryCommit,
+                manifest.RepositoryTreeId,
+                manifest
+                    .PredecessorToContinuationDiffSha256,
+                manifest.SourceManifestSha256,
+                manifest.TestEvidenceManifestSha256,
+                reasonCode,
+                reasonText,
+                approvedBy,
+                reviewedBy,
+                approvalReference,
+                canonicalEvidence);
+        await using var database =
+            ContinuationAuthorizationDatabase
+                .FromEnvironment();
+        var record = await database.AuthorizeAsync(
+            request,
+            ct);
+        var report =
+            new RestoreContinuationAuthorizationReport(
+                RestoreContinuationContract
+                    .SchemaVersion,
+                RestoreContinuationContract
+                    .AuthorizerToolId,
+                "authorize-continuation-tool",
+                "authorized",
+                DateTimeOffset.UtcNow,
+                record.ContinuationAuthorizationId,
+                request,
+                record).Seal();
+        ContinuationPackage.WriteNewCanonical(
+            output,
+            report);
+        Console.WriteLine(
+            $"authorization={record.ContinuationAuthorizationId} "
+            + $"output={output}");
+        return 0;
+    }
+
+    private static async Task<int>
+        ConfirmContinuationAsync(
+            AuthorizationArguments options,
+            CancellationToken ct)
+    {
+        var paths = Paths();
+        var planPath = paths.ResolveInputFile(
+            options.Require("restore-plan"));
+        var package = paths.ResolveInputDirectory(
+            options.Require(
+                "continuation-package"));
+        var output = paths.ResolveNewFile(
+            options.Require("output"));
+        var manifest =
+            ContinuationPackage.Validate(package);
+        using var plan =
+            ContinuationPackage.ReadJson(planPath);
+        var packageManifestSha256 =
+            ContinuationPackage.Sha256File(
+                Path.Combine(
+                    package,
+                    "continuation-manifest.json"));
+        if (packageManifestSha256 !=
+                options.Require(
+                    "expected-continuation-package-manifest-sha256")
+            || manifest.AuthorizerBinarySha256 !=
+                AuthorizationPackage.AuthorizerSha256()
+            || manifest.RestorePlanFileSha256 !=
+                ContinuationPackage.Sha256File(
+                    planPath)
+            || manifest.RestoreOperationId !=
+                options.Require(
+                    "expected-operation-id")
+            || manifest.RestorePlanDigest !=
+                options.Require(
+                    "expected-plan-digest")
+            || ContinuationDatabase.RequireString(
+                    plan.RootElement,
+                    "restoreOperationId") !=
+                manifest.RestoreOperationId)
+        {
+            throw new InvalidDataException(
+                "Continuation confirmation inputs differ.");
+        }
+        var authorizationId = options.Require(
+            "continuation-authorization-id");
+        await using var database =
+            ContinuationAuthorizationDatabase
+                .FromEnvironment();
+        var record = await database.ReadAsync(
+            manifest.RestoreOperationId,
+            authorizationId,
+            ct);
+        var request =
+            RequestFromRecord(record);
+        if (record.ContinuationPackageManifestSha256 !=
+                packageManifestSha256
+            || record.AuthorizedContinuationToolSha256 !=
+                manifest.AuthorizedContinuationToolSha256
+            || record.AuthorizedEvidenceAssemblySha256 !=
+                manifest.AuthorizedEvidenceAssemblySha256
+            || record.RouteParityPreflightSha256 !=
+                manifest.RouteParityPreflightSha256
+            || request.EvidenceSha256 !=
+                record.EvidenceSha256
+            || RestoreContinuationContract
+                    .DeriveAuthorizationId(
+                        request,
+                        record
+                            .CanonicalEvidenceDbSha256) !=
+                record.ContinuationAuthorizationId)
+        {
+            throw new InvalidDataException(
+                "Continuation authorization differs from its package.");
+        }
+        var report =
+            new RestoreContinuationAuthorizationReport(
+                RestoreContinuationContract
+                    .SchemaVersion,
+                RestoreContinuationContract
+                    .AuthorizerToolId,
+                "confirm-continuation-tool",
+                "confirmed",
+                DateTimeOffset.UtcNow,
+                record.ContinuationAuthorizationId,
+                request,
+                record).Seal();
+        ContinuationPackage.WriteNewCanonical(
+            output,
+            report);
+        Console.WriteLine(
+            $"authorization={record.ContinuationAuthorizationId} "
+            + $"output={output}");
+        return 0;
+    }
+
+    private static void ValidateContinuationInputs(
+        AuthorizationArguments options,
+        RestoreContinuationPackageManifest manifest,
+        string planPath,
+        string reportPath,
+        string package)
+    {
+        var packageManifestSha256 =
+            ContinuationPackage.Sha256File(
+                Path.Combine(
+                    package,
+                    "continuation-manifest.json"));
+        if (manifest.RestorePlanDigest !=
+                options.Require(
+                    "expected-plan-digest")
+            || manifest.RestoreOperationId !=
+                options.Require(
+                    "expected-operation-id")
+            || packageManifestSha256 !=
+                options.Require(
+                    "expected-continuation-package-manifest-sha256")
+            || manifest.RestorePlanFileSha256 !=
+                ContinuationPackage.Sha256File(
+                    planPath)
+            || manifest.RestoreReportSha256 !=
+                ContinuationPackage.Sha256File(
+                    reportPath)
+            || manifest.AuthorizerBinarySha256 !=
+                AuthorizationPackage
+                    .AuthorizerSha256()
+            || manifest.AuthorizedContinuationToolSha256 !=
+                ContinuationPackage.Sha256File(
+                    Path.Combine(
+                        package,
+                        "runtime",
+                        "FstSnapshotGenerationRestoreContinuation.dll"))
+            || manifest.AuthorizedEvidenceAssemblySha256 !=
+                ContinuationPackage.Sha256File(
+                    Path.Combine(
+                        package,
+                        "runtime",
+                        "FstSnapshotGenerationEvidence.dll")))
+        {
+            throw new InvalidDataException(
+                "Continuation package differs from immutable restore evidence.");
+        }
+    }
+
+    private static
+        RestoreContinuationAuthorizationRequest
+        RequestFromRecord(
+            RestoreContinuationAuthorizationRecord record) =>
+        new(
+            record.RestoreOperationId,
+            record.DropOperationId,
+            record.PredecessorAuthorizationId,
+            record.RestorePlanDigest,
+            record.RestorePlanFileSha256,
+            record.RestoreReportSha256,
+            record.PredecessorRestoreToolSha256,
+            record
+                .PredecessorRepairPackageManifestSha256,
+            record.RecoveryBundleManifestSha256,
+            record.AuthorizedContinuationToolSha256,
+            record.AuthorizedEvidenceAssemblySha256,
+            record.RouteParityReferenceSourceSha256,
+            record.AuthorizerBinarySha256,
+            record.ContinuationPackageManifestSha256,
+            record.RouteParityAlgorithmId,
+            record.RouteParityPreflightSha256,
+            record.BaselineRouteManifestSha256,
+            record.BaselineRouteChecksumsSha256,
+            record.CandidateRouteManifestSha256,
+            record.CandidateRouteChecksumsSha256,
+            record.PublicationId,
+            record.PublishedScrapeId,
+            record.RepositoryCommit,
+            record.RepositoryTreeId,
+            record
+                .PredecessorToContinuationDiffSha256,
+            record.SourceManifestSha256,
+            record.TestEvidenceManifestSha256,
+            record.ReasonCode,
+            record.ReasonText,
+            record.ApprovedBy,
+            record.ReviewedBy,
+            record.ApprovalReference,
+            record.CanonicalEvidence);
+
     private static void ValidateExpectedPlan(
         AuthorizationArguments options,
         SnapshotGenerationDropPlan plan)
@@ -492,6 +912,12 @@ public static class Program
               prepare-repair-package  Build a sealed tool-only repair package.
               authorize-repair-tool   Insert one exact immutable authorization.
               confirm-repair-tool     Confirm an authorization after uncertain commit.
+              prepare-continuation-package
+                                      Build a continuation-only evidence package.
+              authorize-continuation-tool
+                                      Insert one exact post-restore authorization.
+              confirm-continuation-tool
+                                      Confirm post-restore authorization after uncertainty.
 
             This tool has no Docker, restore, relation, schema, SQL, or automatic target surface.
             """);
