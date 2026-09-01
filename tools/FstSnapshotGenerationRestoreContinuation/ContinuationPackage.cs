@@ -20,7 +20,10 @@ public static class ContinuationPackage
         "runtime/Microsoft.Extensions.Logging.Abstractions.dll",
         "runtime/Npgsql.dll",
         "predecessor-to-continuation.diff",
+        "historical-service-build-evidence.json",
         "source-manifest.json",
+        "service-runtime-isolation.json",
+        "stabilized-service-build-evidence.json",
         "test-evidence/manifest.json",
         "test-evidence/results.json",
         "route-parity-preflight.json",
@@ -115,6 +118,18 @@ public static class ContinuationPackage
             || manifest.RouteParityAlgorithmId !=
                 QuarantineEvidenceValidator
                     .RouteParityAlgorithmId
+            || manifest.TemporalBridgePredicateId !=
+                RestoreContinuationContract
+                    .TemporalBridgePredicateId
+            || manifest
+                    .StabilizedRouteSemanticEvidenceSha256
+                    .Length != 64
+            || manifest
+                .StabilizedRouteSemanticEvidenceSha256
+                .Any(character =>
+                    character is not (
+                        >= '0' and <= '9'
+                        or >= 'a' and <= 'f'))
             || manifest.AuthorizedContinuationToolSha256 !=
                 expected[
                     "runtime/FstSnapshotGenerationRestoreContinuation.dll"]
@@ -126,6 +141,9 @@ public static class ContinuationPackage
                     "predecessor-to-continuation.diff"]
             || manifest.SourceManifestSha256 !=
                 expected["source-manifest.json"]
+            || manifest.ServiceRuntimeIsolationEvidenceSha256 !=
+                expected[
+                    "service-runtime-isolation.json"]
             || manifest.TestEvidenceManifestSha256 !=
                 expected["test-evidence/manifest.json"]
             || manifest.RouteParityPreflightSha256 !=
@@ -148,6 +166,10 @@ public static class ContinuationPackage
             throw new InvalidDataException(
                 "Continuation package manifest is invalid.");
         }
+        ValidateRuntimeEvidenceLinks(
+            root,
+            manifest,
+            expected);
         return manifest;
     }
 
@@ -160,6 +182,14 @@ public static class ContinuationPackage
                ?? throw new InvalidDataException(
                    $"JSON file is empty: {path}");
     }
+
+    public static T ReadStrict<T>(
+        ReadOnlySpan<byte> bytes) =>
+        JsonSerializer.Deserialize<T>(
+            bytes,
+            Strict)
+        ?? throw new InvalidDataException(
+            "JSON bytes are empty.");
 
     public static JsonDocument ReadJson(string path) =>
         JsonDocument.Parse(
@@ -179,6 +209,12 @@ public static class ContinuationPackage
                 SHA256.HashData(stream))
             .ToLowerInvariant();
     }
+
+    public static string Sha256Bytes(
+        ReadOnlySpan<byte> bytes) =>
+        Convert.ToHexString(
+                SHA256.HashData(bytes))
+            .ToLowerInvariant();
 
     public static string CurrentToolSha256() =>
         Sha256File(
@@ -203,6 +239,19 @@ public static class ContinuationPackage
             FileShare.None);
         stream.Write(bytes);
         stream.WriteByte((byte)'\n');
+        stream.Flush(flushToDisk: true);
+    }
+
+    public static void WriteNewBytes(
+        string path,
+        ReadOnlySpan<byte> bytes)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None);
+        stream.Write(bytes);
         stream.Flush(flushToDisk: true);
     }
 
@@ -271,6 +320,142 @@ public static class ContinuationPackage
             UnmappedMemberHandling =
                 JsonUnmappedMemberHandling.Disallow,
         };
+
+    private static void ValidateRuntimeEvidenceLinks(
+        string root,
+        RestoreContinuationPackageManifest manifest,
+        IReadOnlyDictionary<string, string> checksums)
+    {
+        var runtime =
+            ReadStrict<ServiceRuntimeIsolationEvidence>(
+                Path.Combine(
+                    root,
+                    "service-runtime-isolation.json"));
+        var historicalBuild =
+            ReadStrict<ServiceImageBuildEvidence>(
+                Path.Combine(
+                    root,
+                    "historical-service-build-evidence.json"));
+        var stabilizedBuild =
+            ReadStrict<ServiceImageBuildEvidence>(
+                Path.Combine(
+                    root,
+                    "stabilized-service-build-evidence.json"));
+        var sources = runtime.ShopSourceFiles
+            .ToDictionary(
+                item => item.Path,
+                item => item.Sha256,
+                StringComparer.Ordinal);
+        if (runtime.SchemaVersion != 1
+            || runtime.ToolId !=
+                RestoreContinuationContract
+                    .ServiceRuntimeIsolationToolId
+            || runtime.Status != "accepted"
+            || runtime.CompletedAtUtc.Offset !=
+                TimeSpan.Zero
+            || runtime
+                    .HistoricalServiceIdentityConfirmedAtUtc
+                    .Offset != TimeSpan.Zero
+            || runtime
+                    .StabilizedServiceIdentityConfirmedAtUtc
+                    .Offset != TimeSpan.Zero
+            || runtime.EvidenceSha256 is null
+            || runtime.Seal().EvidenceSha256 !=
+                runtime.EvidenceSha256
+            || runtime
+                    .HistoricalBaselineRouteManifestSha256 !=
+                manifest
+                    .HistoricalBaselineRouteManifestSha256
+            || runtime
+                    .StabilizedBaselineRouteManifestSha256 !=
+                manifest.BaselineRouteManifestSha256
+            || runtime.HistoricalBuildEvidenceSha256 !=
+                checksums[
+                    "historical-service-build-evidence.json"]
+            || runtime.StabilizedBuildEvidenceSha256 !=
+                checksums[
+                    "stabilized-service-build-evidence.json"]
+            || runtime.RestoreWritesItemShopState
+            || runtime
+                .ShopReadsLeaderboardSnapshotState
+            || sources.Count != 5
+            || sources.Any(item =>
+                !IsLowerHex(item.Value, 64))
+            || historicalBuild.SchemaVersion != 1
+            || historicalBuild.ToolId !=
+                RestoreContinuationContract
+                    .ServiceImageBuildEvidenceToolId
+            || historicalBuild.Status != "accepted"
+            || historicalBuild.Role !=
+                "historical-baseline"
+            || historicalBuild.ImageSha256 !=
+                runtime.HistoricalServiceImageSha256
+            || historicalBuild.ServiceDllSha256 !=
+                runtime.HistoricalServiceDllSha256
+            || historicalBuild.RepositoryBaseCommit !=
+                runtime
+                    .HistoricalShopSourceRepositoryCommit
+            || historicalBuild.RepositoryCommit is not null
+            || historicalBuild.WorktreeClean
+            || historicalBuild.BuiltAtUtc.Offset !=
+                TimeSpan.Zero
+            || historicalBuild.BuiltAtUtc >
+                runtime
+                    .HistoricalServiceIdentityConfirmedAtUtc
+            || stabilizedBuild.SchemaVersion != 1
+            || stabilizedBuild.ToolId !=
+                RestoreContinuationContract
+                    .ServiceImageBuildEvidenceToolId
+            || stabilizedBuild.Status != "accepted"
+            || stabilizedBuild.Role != "stabilized"
+            || stabilizedBuild.ImageSha256 !=
+                runtime.StabilizedServiceImageSha256
+            || stabilizedBuild.ServiceDllSha256 !=
+                runtime.StabilizedServiceDllSha256
+            || stabilizedBuild.RepositoryBaseCommit !=
+                runtime
+                    .HistoricalShopSourceRepositoryCommit
+            || stabilizedBuild.RepositoryCommit !=
+                runtime.StabilizedRepositoryCommit
+            || !stabilizedBuild.WorktreeClean
+            || stabilizedBuild.BuiltAtUtc.Offset !=
+                TimeSpan.Zero
+            || stabilizedBuild.BuiltAtUtc >
+                runtime
+                    .StabilizedServiceIdentityConfirmedAtUtc
+            || !IsLowerHex(
+                runtime
+                    .HistoricalShopSourceRepositoryCommit,
+                40)
+            || !IsLowerHex(
+                runtime.StabilizedRepositoryCommit,
+                40)
+            || !IsLowerHex(
+                historicalBuild.BuildRequestSha256,
+                64)
+            || !IsLowerHex(
+                historicalBuild.BuildResultSha256,
+                64)
+            || !IsLowerHex(
+                stabilizedBuild.BuildRequestSha256,
+                64)
+            || !IsLowerHex(
+                stabilizedBuild.BuildResultSha256,
+                64))
+        {
+            throw new InvalidDataException(
+                "Continuation package runtime evidence links are invalid.");
+        }
+    }
+
+    private static bool IsLowerHex(
+        string value,
+        int length) =>
+        value.Length == length
+        && value.All(character =>
+            character is (
+                >= '0' and <= '9'
+                or >= 'a' and <= 'f'));
 
     private static void RequireNoSymlink(
         string path,

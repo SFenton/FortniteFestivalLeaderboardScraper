@@ -125,6 +125,13 @@ public static class Program
         var attestedBy = ValidateActor(
             options.Require("attested-by"),
             "attested-by");
+        var historicalBridge =
+            QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    context.Manifest
+                        .HistoricalBaselineRouteManifestPath,
+                    context.Manifest
+                        .BaselineRouteManifestPath);
         var detailed =
             QuarantineEvidenceValidator
                 .ValidateDetailedRouteParity(
@@ -132,7 +139,18 @@ public static class Program
                         .BaselineRouteManifestPath,
                     context.Manifest
                         .CandidateRouteManifestPath);
-        ValidateParity(context, detailed);
+        QuarantineEvidenceValidator
+            .ValidateStabilizedShopRefresh(
+                context.Manifest
+                    .BaselineRouteManifestPath,
+                context.Manifest
+                    .CandidateRouteManifestPath,
+                historicalBridge
+                    .StabilizedShopLastUpdatedUtc);
+        ValidateParity(
+            context,
+            historicalBridge,
+            detailed);
         await using var database =
             ContinuationDatabase.FromEnvironment();
         var current = await database.ReadStateAsync(
@@ -157,7 +175,8 @@ public static class Program
                     context.Manifest
                         .AuthorizedContinuationToolSha256,
                     current,
-                    detailed).Seal();
+                    detailed,
+                    historicalBridge).Seal();
             ContinuationPackage.WriteNewCanonical(
                 context.Output,
                 confirmed);
@@ -166,6 +185,7 @@ public static class Program
         var result = await database.AttestAsync(
             context.Manifest,
             context.AuthorizationId,
+            historicalBridge,
             detailed,
             attestedBy,
             ct);
@@ -190,7 +210,8 @@ public static class Program
                 context.Manifest
                     .AuthorizedContinuationToolSha256,
                 databaseEvidence,
-                detailed).Seal();
+                detailed,
+                historicalBridge).Seal();
         ContinuationPackage.WriteNewCanonical(
             context.Output,
             report);
@@ -334,9 +355,23 @@ public static class Program
         var baselineManifest =
             paths.ResolveInputFile(
                 manifest.BaselineRouteManifestPath);
+        var historicalBaselineManifest =
+            paths.ResolveInputFile(
+                manifest
+                    .HistoricalBaselineRouteManifestPath);
         var candidateManifest =
             paths.ResolveInputFile(
                 manifest.CandidateRouteManifestPath);
+        var serviceRuntimeIsolation =
+            paths.ResolveInputFile(
+                manifest
+                    .ServiceRuntimeIsolationEvidencePath);
+        var historicalBaselineChecksums =
+            paths.ResolveInputFile(
+                Path.Combine(
+                    Path.GetDirectoryName(
+                        historicalBaselineManifest)!,
+                    "SHA256SUMS"));
         var baselineChecksums =
             paths.ResolveInputFile(
                 Path.Combine(
@@ -395,7 +430,19 @@ public static class Program
                 manifest.CandidateRouteManifestSha256
             || ContinuationPackage.Sha256File(
                     candidateChecksums) !=
-                manifest.CandidateRouteChecksumsSha256)
+                manifest.CandidateRouteChecksumsSha256
+            || ContinuationPackage.Sha256File(
+                    historicalBaselineManifest) !=
+                manifest
+                    .HistoricalBaselineRouteManifestSha256
+            || ContinuationPackage.Sha256File(
+                    historicalBaselineChecksums) !=
+                manifest
+                    .HistoricalBaselineRouteChecksumsSha256
+            || ContinuationPackage.Sha256File(
+                    serviceRuntimeIsolation) !=
+                manifest
+                    .ServiceRuntimeIsolationEvidenceSha256)
         {
             throw new InvalidDataException(
                 "Continuation command inputs differ from the sealed package.");
@@ -419,19 +466,45 @@ public static class Program
                 manifest.RouteParityReferenceSourceSha256
             || preflight.EvidenceAssemblySha256 !=
                 manifest.AuthorizedEvidenceAssemblySha256
-            || preflight.RepeatedPostRestore
+            || preflight.HistoricalTemporalBridge
+                    .HistoricalBaselineManifestSha256 !=
+                manifest
+                    .HistoricalBaselineRouteManifestSha256
+            || preflight.StabilizedParity
+                    .RouteSemanticEvidenceSha256 !=
+                manifest
+                    .StabilizedRouteSemanticEvidenceSha256
+            || preflight.HistoricalTemporalBridge
+                    .HistoricalCandidateManifestSha256 !=
+                manifest.BaselineRouteManifestSha256
+            || preflight.HistoricalTemporalBridge
+                    .PredicateId !=
+                manifest.TemporalBridgePredicateId
+            || QuarantineJson.Sha256(
+                    preflight
+                        .HistoricalTemporalBridge) !=
+                manifest.TemporalBridgeEvidenceSha256
+            || preflight.RestoreScopeIsolation
+                    .EvidenceSha256 !=
+                manifest
+                    .RestoreScopeIsolationEvidenceSha256
+            || preflight
+                    .ServiceRuntimeIsolationEvidenceSha256 !=
+                manifest
+                    .ServiceRuntimeIsolationEvidenceSha256
+            || preflight.StabilizedParity
                     .Parity
                     .BaselineManifestSha256 !=
                 manifest.BaselineRouteManifestSha256
-            || preflight.RepeatedPostRestore
+            || preflight.StabilizedParity
                     .Parity
                     .CandidateManifestSha256 !=
                 manifest.CandidateRouteManifestSha256
-            || preflight.RepeatedPostRestore
+            || preflight.StabilizedParity
                     .Parity
                     .PublicationId !=
                 manifest.PublicationId
-            || preflight.RepeatedPostRestore
+            || preflight.StabilizedParity
                     .Parity
                     .PublishedScrapeId !=
                 manifest.PublishedScrapeId)
@@ -560,7 +633,43 @@ public static class Program
                 ContinuationPackage.Sha256File(
                     Path.Combine(
                         context.Package,
-                        "continuation-manifest.json")))
+                        "continuation-manifest.json"))
+            || ContinuationDatabase.RequireString(
+                state,
+                "stabilizedRouteSemanticEvidenceSha256") !=
+                manifest
+                    .StabilizedRouteSemanticEvidenceSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "temporalBridgePredicateId") !=
+                manifest.TemporalBridgePredicateId
+            || ContinuationDatabase.RequireString(
+                state,
+                "temporalBridgeEvidenceSha256") !=
+                manifest.TemporalBridgeEvidenceSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "restoreScopeIsolationEvidenceSha256") !=
+                manifest
+                    .RestoreScopeIsolationEvidenceSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "serviceRuntimeIsolationEvidenceSha256") !=
+                manifest
+                    .ServiceRuntimeIsolationEvidenceSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "historicalBaselineRouteManifestSha256") !=
+                manifest
+                    .HistoricalBaselineRouteManifestSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "baselineRouteManifestSha256") !=
+                manifest.BaselineRouteManifestSha256
+            || ContinuationDatabase.RequireString(
+                state,
+                "candidateRouteManifestSha256") !=
+                manifest.CandidateRouteManifestSha256)
         {
             throw new InvalidDataException(
                 "Continuation database state differs from sealed evidence.");
@@ -661,6 +770,7 @@ public static class Program
 
     private static void ValidateParity(
         ContinuationContext context,
+        ShopDailyInventoryRolloverEvidence bridge,
         DetailedRouteParityEvidence detailed)
     {
         var manifest = context.Manifest;
@@ -677,11 +787,31 @@ public static class Program
             || detailed.Parity.CandidateManifestSha256 !=
                 manifest.CandidateRouteManifestSha256
             || detailed.RouteSemanticEvidenceSha256 !=
-                preflight.RepeatedPostRestore
-                    .RouteSemanticEvidenceSha256)
+                preflight.StabilizedParity
+                    .RouteSemanticEvidenceSha256
+            || detailed.RouteSemanticEvidenceSha256 !=
+                manifest
+                    .StabilizedRouteSemanticEvidenceSha256)
         {
             throw new InvalidDataException(
                 "Current route parity differs from the authorized preflight.");
+        }
+        if (bridge.PredicateId !=
+                manifest.TemporalBridgePredicateId
+            || bridge
+                    .HistoricalBaselineManifestSha256 !=
+                manifest
+                    .HistoricalBaselineRouteManifestSha256
+            || bridge
+                    .HistoricalCandidateManifestSha256 !=
+                manifest.BaselineRouteManifestSha256
+            || QuarantineJson.Sha256(bridge) !=
+                manifest.TemporalBridgeEvidenceSha256
+            || bridge !=
+                preflight.HistoricalTemporalBridge)
+        {
+            throw new InvalidDataException(
+                "Historical temporal bridge differs from the authorized preflight.");
         }
         var band = detailed.Routes.Single(
             route => route.Name == "band-export");

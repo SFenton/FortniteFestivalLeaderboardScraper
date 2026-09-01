@@ -321,8 +321,21 @@ finalization.
 H6 preparation and authorization are separate from physical restore. The
 continuation package references the exact H5 plan/report/package/bundle and
 authenticated route captures but contains no export bodies. The C# tool has
-only confirm/attest/finalize and must use the package-pinned post-DROP and
-repeated post-restore routes. Before authorization and every command, require
+only confirm/attest/finalize. It must bind the package-pinned historical
+post-DROP capture, post-restore stabilized baseline, repeated post-restore
+candidate, exact H5 write scope, and both service runtime identities. The
+historical pair may differ only through the fixed, exact-hash midnight shop
+rollover proof; the stabilized pair must pass unmodified zero-difference
+55-route parity. Require the shop refresh timestamp to cross that midnight and
+then stabilize, and require both service-image build records plus identical
+reviewed shop-source hashes at the historical base and stabilized commit.
+Never record the historical pair as equal, conflate the stabilized semantic
+hash with the preflight-file hash, add a configurable route exception, or omit
+the shop/catalog census. The stabilized captures must be distinct and
+chronologically increasing. Build/runtime inputs must be byte-snapshotted
+before validation and their packaged copies must pass independent identity
+cross-checks; mode or checksum sealing alone is insufficient. Before authorization and
+every command, require
 publication `165`/scrape `1336`, worker offline, no running scrape, exact
 restored OID/rows/two index chains, active hold/trigger, absent old OID,
 absent DEFAULT fence, and an empty DEFAULT child. Any publication rotation is

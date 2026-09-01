@@ -278,6 +278,337 @@ public sealed class SnapshotGenerationQuarantineToolTests
     }
 
     [Fact]
+    public void ShopRolloverBridgeAcceptsExactMidnightInventoryReplacement()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-accepted",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+
+        var evidence =
+            QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate);
+
+        Assert.Equal(
+            QuarantineEvidenceValidator
+                .ShopDailyInventoryRolloverPredicateId,
+            evidence.PredicateId);
+        Assert.Equal(117, evidence.HistoricalCount);
+        Assert.Equal(117, evidence.StabilizedCount);
+        Assert.Equal(100, evidence.AddedCount);
+        Assert.Equal(100, evidence.RemovedCount);
+        Assert.Equal(17, evidence.OverlapCount);
+        Assert.Equal(
+            "shop:semantic-json",
+            evidence.HistoricalDifference);
+        Assert.Equal(
+            0,
+            evidence.CatalogMetadataDifferenceCount);
+        Assert.Equal(
+            0,
+            evidence.ShopUrlDifferenceCount);
+        Assert.True(
+            evidence.HistoricalShopLastUpdatedUtc <
+            evidence.StabilizedShopLastUpdatedUtc);
+        Assert.Matches(
+            "^[0-9a-f]{64}$",
+            QuarantineJson.Sha256(evidence));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsAnySecondRouteDifference()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-second-route",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        ReplaceRouteWithJson(
+            candidate,
+            "route-17",
+            "route-17",
+            "/api/test/17",
+            new { value = 999 });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsDuplicateSongIds()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-duplicate",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                {
+                    var songs =
+                        candidateShop["songs"]!
+                            .AsArray();
+                    songs[^1]!["songId"] =
+                        songs[0]!["songId"]!
+                            .GetValue<string>();
+                });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsUnannouncedDeparture()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-unannounced",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (baselineShop, _, _, _) =>
+                    baselineShop["songs"]!
+                        .AsArray()[0]!
+                        ["leavingTomorrow"] = false);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsCatalogOrOverlapDrift()
+    {
+        var (catalogBaseline, catalogCandidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-catalog-drift",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[17]!
+                        ["title"] = "Changed arrival");
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    catalogBaseline,
+                    catalogCandidate));
+
+        var (overlapBaseline, overlapCandidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-overlap-drift",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[0]!
+                        ["isNew"] = true);
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    overlapBaseline,
+                    overlapCandidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsNewLeavingFlag()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-new-leaving",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[17]!
+                        ["leavingTomorrow"] = true);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsDifferentCardinality()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-cardinality",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                {
+                    var songs =
+                        candidateShop["songs"]!
+                            .AsArray();
+                    songs.RemoveAt(songs.Count - 1);
+                    candidateShop["count"] =
+                        songs.Count;
+                });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Theory]
+    [InlineData("2026-08-31T21:18:02Z")]
+    [InlineData("2026-08-31T23:59:59Z")]
+    [InlineData("2026-09-01T02:00:00Z")]
+    public void ShopRolloverBridgeRejectsUnattributedRefreshTimestamp(
+        string candidateLastUpdated)
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                $"shop-rollover-refresh-{Guid.NewGuid():N}",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["lastUpdated"] =
+                        candidateLastUpdated);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void StabilizedShopRefreshRejectsTimestampDrift()
+    {
+        var (_, baseline) =
+            CreateShopRolloverCaptures(
+                "shop-stable-baseline",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        var (_, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-stable-candidate",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:32:32Z");
+        var expected =
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z");
+
+        QuarantineEvidenceValidator
+            .ValidateDetailedRouteParity(
+                baseline,
+                candidate);
+        QuarantineEvidenceValidator
+            .ValidateStabilizedShopRefresh(
+                baseline,
+                candidate,
+                expected);
+
+        var (_, changed) =
+            CreateShopRolloverCaptures(
+                "shop-stable-changed",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:33:32Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["lastUpdated"] =
+                        "2026-09-01T00:04:44Z");
+        QuarantineEvidenceValidator
+            .ValidateDetailedRouteParity(
+                baseline,
+                changed);
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    changed,
+                    expected));
+    }
+
+    [Fact]
+    public void StabilizedShopRefreshRequiresDistinctIncreasingCaptures()
+    {
+        var (_, baseline) =
+            CreateShopRolloverCaptures(
+                "shop-stable-order-baseline",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:32:32Z");
+        var (_, earlier) =
+            CreateShopRolloverCaptures(
+                "shop-stable-order-earlier",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        var expected =
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z");
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    baseline,
+                    expected));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    earlier,
+                    expected));
+
+        var root = JsonNode.Parse(
+            File.ReadAllText(earlier))!
+            .AsObject();
+        root.Remove("capturedAtUtc");
+        File.WriteAllText(
+            earlier,
+            root.ToJsonString(
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }),
+            new UTF8Encoding(false));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    earlier,
+                    expected));
+    }
+
+    [Theory]
+    [InlineData(
+        "2026-08-31T20:00:00Z",
+        "2026-08-31T21:00:00Z")]
+    [InlineData(
+        "2026-08-30T20:00:00Z",
+        "2026-09-01T01:00:00Z")]
+    public void ShopRolloverBridgeRequiresExactlyOneUtcMidnight(
+        string baselineCapturedAt,
+        string candidateCapturedAt)
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                $"shop-rollover-time-{Guid.NewGuid():N}",
+                baselineCapturedAt,
+                candidateCapturedAt);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
     public void RouteParityComparesZipEntryContents()
     {
         var baseline = CreateRouteCapture(
@@ -935,12 +1266,213 @@ public sealed class SnapshotGenerationQuarantineToolTests
             manifest,
             new
             {
+                capturedAtUtc = generatedAt,
                 publicationId = 500L,
                 publishedScrapeId = 1400L,
                 routeCount = 55,
                 entries,
             });
         return manifest;
+    }
+
+    private (string Baseline, string Candidate)
+        CreateShopRolloverCaptures(
+            string name,
+            string baselineCapturedAt,
+            string candidateCapturedAt,
+            Action<
+                JsonObject,
+                JsonObject,
+                JsonObject,
+                JsonObject>? mutate = null)
+    {
+        var baseline = CreateRouteCapture(
+            $"{name}-baseline",
+            baselineCapturedAt);
+        var candidate = CreateRouteCapture(
+            $"{name}-candidate",
+            candidateCapturedAt);
+        var baselineShop = CreateShopPayload(
+            Enumerable.Range(0, 117),
+            leavingTomorrow:
+                Enumerable.Range(0, 100)
+                    .ToHashSet(),
+            lastUpdated:
+                "2026-08-31T21:18:02Z");
+        var candidateShop = CreateShopPayload(
+            Enumerable.Range(100, 117),
+            leavingTomorrow: new HashSet<int>(),
+            lastUpdated:
+                "2026-09-01T00:03:44Z");
+        var baselineCatalog =
+            CreateSongCatalogPayload();
+        var candidateCatalog =
+            CreateSongCatalogPayload();
+        mutate?.Invoke(
+            baselineShop,
+            candidateShop,
+            baselineCatalog,
+            candidateCatalog);
+        ReplaceRouteWithJson(
+            baseline,
+            "route-54",
+            "songs",
+            "/api/songs",
+            baselineCatalog);
+        ReplaceRouteWithJson(
+            candidate,
+            "route-54",
+            "songs",
+            "/api/songs",
+            candidateCatalog);
+        ReplaceRouteWithJson(
+            baseline,
+            "route-55",
+            "shop",
+            "/api/shop",
+            baselineShop);
+        ReplaceRouteWithJson(
+            candidate,
+            "route-55",
+            "shop",
+            "/api/shop",
+            candidateShop);
+        return (baseline, candidate);
+    }
+
+    private static JsonObject CreateSongCatalogPayload()
+    {
+        var songs = new JsonArray();
+        foreach (var index in Enumerable.Range(0, 217))
+        {
+            songs.Add(
+                new JsonObject
+                {
+                    ["albumArt"] =
+                        $"album-{index:D3}.jpg",
+                    ["artist"] =
+                        $"Artist {index:D3}",
+                    ["songId"] = SongId(index),
+                    ["title"] = $"Song {index:D3}",
+                    ["year"] = 2000 + index % 25,
+                });
+        }
+        return new JsonObject
+        {
+            ["count"] = songs.Count,
+            ["currentSeason"] = 1,
+            ["songs"] = songs,
+        };
+    }
+
+    private static JsonObject CreateShopPayload(
+        IEnumerable<int> indexes,
+        IReadOnlySet<int> leavingTomorrow,
+        string lastUpdated)
+    {
+        var songs = new JsonArray();
+        foreach (var index in indexes)
+        {
+            var songId = SongId(index);
+            songs.Add(
+                new JsonObject
+                {
+                    ["albumArt"] =
+                        $"album-{index:D3}.jpg",
+                    ["artist"] =
+                        $"Artist {index:D3}",
+                    ["isNew"] = false,
+                    ["leavingTomorrow"] =
+                        leavingTomorrow.Contains(index),
+                    ["shopUrl"] =
+                        $"https://www.fortnite.com/item-shop/jam-tracks/song-{index:D3}-{songId.Replace("-", "", StringComparison.Ordinal)[^12..]}",
+                    ["songId"] = songId,
+                    ["title"] = $"Song {index:D3}",
+                    ["year"] = 2000 + index % 25,
+                });
+        }
+        return new JsonObject
+        {
+            ["count"] = songs.Count,
+            ["lastUpdated"] = lastUpdated,
+            ["newSongs"] = new JsonArray(),
+            ["songs"] = songs,
+        };
+    }
+
+    private static string SongId(int index) =>
+        $"00000000-0000-0000-0000-{index:x12}";
+
+    private static void ReplaceRouteWithJson(
+        string manifestPath,
+        string oldRouteName,
+        string routeName,
+        string routePath,
+        object content)
+    {
+        var directory =
+            Path.GetDirectoryName(manifestPath)!;
+        var rawDirectory = Path.Combine(
+            directory,
+            "raw");
+        var normalizedDirectory = Path.Combine(
+            directory,
+            "normalized");
+        var oldRawPath = Path.Combine(
+            rawDirectory,
+            $"{oldRouteName}.body");
+        var oldNormalizedPath = Path.Combine(
+            normalizedDirectory,
+            $"{oldRouteName}.json");
+        var rawPath = Path.Combine(
+            rawDirectory,
+            $"{routeName}.body");
+        var normalizedPath = Path.Combine(
+            normalizedDirectory,
+            $"{routeName}.json");
+        if (!string.Equals(
+                oldRawPath,
+                rawPath,
+                StringComparison.Ordinal))
+        {
+            File.Delete(oldRawPath);
+        }
+        if (!string.Equals(
+                oldNormalizedPath,
+                normalizedPath,
+                StringComparison.Ordinal))
+        {
+            File.Delete(oldNormalizedPath);
+        }
+        WriteJson(rawPath, content);
+        WriteJson(normalizedPath, content);
+        var root = JsonNode.Parse(
+            File.ReadAllText(manifestPath))!
+            .AsObject();
+        var entry = root["entries"]!
+            .AsArray()
+            .Select(node => node!.AsObject())
+            .Single(node =>
+                node["name"]!.GetValue<string>()
+                    == oldRouteName);
+        entry["name"] = routeName;
+        entry["path"] = routePath;
+        entry["isJson"] = true;
+        entry["semanticSha256"] =
+            Sha256(normalizedPath);
+        entry["rawSha256"] = Sha256(rawPath);
+        entry["bytes"] =
+            new FileInfo(rawPath).Length;
+        entry["contentType"] =
+            "application/json; charset=utf-8";
+        File.WriteAllText(
+            manifestPath,
+            root.ToJsonString(
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }),
+            new UTF8Encoding(false));
     }
 
     private static void ReplaceRouteWithZip(

@@ -66,7 +66,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             SnapshotGenerationDropSchema.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
-            4,
+            6,
             CountOccurrences(
                 SnapshotGenerationDropSchema.Sql,
                 "DROP FUNCTION IF EXISTS"));
@@ -206,6 +206,53 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                         'fst_restore_snapshot_generation',
                         'fst_record_snapshot_generation_restore_attestation',
                         'fst_finalize_snapshot_generation_restore')
+                """));
+        Assert.Equal(
+            "fst_authorize_snapshot_generation_restore_continuation:40,"
+            + "fst_finalize_snapshot_generation_restore:6,"
+            + "fst_record_snapshot_generation_restore_attestation:13,"
+            + "fst_restore_snapshot_generation:21",
+            Scalar<string>(
+                """
+                SELECT string_agg(
+                    function_row.proname || ':' ||
+                        function_row.pronargs::TEXT,
+                    ','
+                    ORDER BY function_row.proname)
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname IN (
+                        'fst_authorize_snapshot_generation_restore_continuation',
+                        'fst_finalize_snapshot_generation_restore',
+                        'fst_record_snapshot_generation_restore_attestation',
+                        'fst_restore_snapshot_generation')
+                """));
+        Assert.True(
+            Scalar<bool>(
+                """
+                SELECT COUNT(*) = 8
+                FROM information_schema.columns column_row
+                WHERE column_row.table_schema = 'public'
+                  AND (
+                        (
+                            column_row.table_name =
+                                'snapshot_generation_restore_continuation_authorizations'
+                            AND column_row.column_name IN (
+                                'temporal_bridge_predicate_id',
+                                'stabilized_route_semantic_evidence_sha256',
+                                'temporal_bridge_evidence_sha256',
+                                'restore_scope_isolation_evidence_sha256',
+                                'service_runtime_isolation_evidence_sha256',
+                                'historical_baseline_route_manifest_sha256',
+                                'historical_baseline_route_checksums_sha256'))
+                        OR (
+                            column_row.table_name =
+                                'snapshot_generation_restore_attestations'
+                            AND column_row.column_name =
+                                'temporal_bridge_evidence_sha256'))
                 """));
     }
 
@@ -362,6 +409,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                     TEXT,
                     TEXT,
                     TEXT,
+                    TEXT,
                     JSONB,
                     TEXT,
                     TEXT,
@@ -412,7 +460,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             WHERE namespace.nspname = 'public'
               AND function_row.proname =
                     'fst_record_snapshot_generation_restore_attestation'
-              AND function_row.pronargs = 12
+              AND function_row.pronargs = 13
             """);
         var finalizationOid = Scalar<long>(
             """
@@ -430,7 +478,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             _fixture.DataSource);
 
         Assert.Equal(
-            "12",
+            "13",
             Scalar<string>(
                 """
                 SELECT string_agg(
@@ -473,7 +521,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                 WHERE namespace.nspname = 'public'
                   AND function_row.proname =
                         'fst_record_snapshot_generation_restore_attestation'
-                  AND function_row.pronargs = 12
+                  AND function_row.pronargs = 13
                 """));
         Assert.Equal(
             finalizationOid,
@@ -987,6 +1035,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
                             'difference_count',
                             'route_parity_algorithm_id',
                             'route_semantic_evidence_sha256',
+                            'temporal_bridge_evidence_sha256',
                             'database_evidence',
                             'evidence_sha256',
                             'evidence_tool_sha256',

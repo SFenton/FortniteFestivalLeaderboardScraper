@@ -82,9 +82,12 @@ update_triggers:
   H3 failed read-only on a reserved PostgreSQL alias. H4 passed that lookup
   but failed before output or mutation on canonical decimal-string
   opclass/collation OID arrays. H5 then committed the mandatory exact restore;
-  its raw-ZIP route attestation failed before database write. Review/package
-  and authorize the continuation-only C# evidence tool, then attest/finalize
-  with the same authorization before promotion.
+  its raw-ZIP route attestation failed before database write. H6-prime now
+  keeps the strict post-restore parity validator and adds a separate
+  exact-manifest-pinned midnight shop rollover attribution for the sole
+  historical route difference. Review/package and authorize that
+  continuation-only C# evidence tool, then attest the stabilized pair and
+  finalize with the same bridge-bound authorization before promotion.
   Sparse compaction remains a separate unresolved iteration.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
@@ -888,6 +891,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
   H3 authorization failed read-only on a reserved SQL alias; H4 authorization
   passed that lookup but failed read-only on string-serialized OID arrays. H5
   restored the child exactly, but route attestation stopped on volatile ZIP
-  bytes. Continuation package review, authorization, attestation, and
-  finalization remain.
+  bytes. H6-prime's hash-only midnight shop bridge and strict stabilized pair
+  are locally implemented; clean-build package review, live authorization,
+  attestation, and finalization remain.
   Automatic retention is still a later parity- and capacity-gated task.

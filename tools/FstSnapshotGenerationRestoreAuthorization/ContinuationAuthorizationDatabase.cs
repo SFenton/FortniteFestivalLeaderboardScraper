@@ -99,6 +99,13 @@ public sealed class ContinuationAuthorizationDatabase
                     @authorizerBinarySha256,
                     @continuationPackageManifestSha256,
                     @routeParityPreflightSha256,
+                    @stabilizedRouteSemanticEvidenceSha256,
+                    @temporalBridgePredicateId,
+                    @temporalBridgeEvidenceSha256,
+                    @restoreScopeIsolationEvidenceSha256,
+                    @serviceRuntimeIsolationEvidenceSha256,
+                    @historicalBaselineRouteManifestSha256,
+                    @historicalBaselineRouteChecksumsSha256,
                     @baselineRouteManifestSha256,
                     @baselineRouteChecksumsSha256,
                     @candidateRouteManifestSha256,
@@ -169,6 +176,13 @@ public sealed class ContinuationAuthorizationDatabase
                 continuation_package_manifest_sha256,
                 route_parity_algorithm_id,
                 route_parity_preflight_sha256,
+                stabilized_route_semantic_evidence_sha256,
+                temporal_bridge_predicate_id,
+                temporal_bridge_evidence_sha256,
+                restore_scope_isolation_evidence_sha256,
+                service_runtime_isolation_evidence_sha256,
+                historical_baseline_route_manifest_sha256,
+                historical_baseline_route_checksums_sha256,
                 baseline_route_manifest_sha256,
                 baseline_route_checksums_sha256,
                 candidate_route_manifest_sha256,
@@ -234,27 +248,34 @@ public sealed class ContinuationAuthorizationDatabase
             reader.GetString(18),
             reader.GetString(19),
             reader.GetString(20),
-            reader.GetInt64(21),
-            reader.GetInt64(22),
+            reader.GetString(21),
+            reader.GetString(22),
             reader.GetString(23),
             reader.GetString(24),
             reader.GetString(25),
             reader.GetString(26),
             reader.GetString(27),
-            reader.GetString(28),
-            reader.GetString(29),
+            reader.GetInt64(28),
+            reader.GetInt64(29),
             reader.GetString(30),
             reader.GetString(31),
             reader.GetString(32),
-            JsonDocument.Parse(
-                reader.GetFieldValue<string>(33))
-                .RootElement.Clone(),
+            reader.GetString(33),
             reader.GetString(34),
             reader.GetString(35),
             reader.GetString(36),
-            reader.GetInt32(37),
+            reader.GetString(37),
             reader.GetString(38),
-            reader.GetFieldValue<DateTimeOffset>(39));
+            reader.GetString(39),
+            JsonDocument.Parse(
+                reader.GetFieldValue<string>(40))
+                .RootElement.Clone(),
+            reader.GetString(41),
+            reader.GetString(42),
+            reader.GetString(43),
+            reader.GetInt32(44),
+            reader.GetString(45),
+            reader.GetFieldValue<DateTimeOffset>(46));
     }
 
     public async ValueTask DisposeAsync() =>
@@ -309,6 +330,28 @@ public sealed class ContinuationAuthorizationDatabase
         command.Parameters.AddWithValue(
             "routeParityPreflightSha256",
             request.RouteParityPreflightSha256);
+        command.Parameters.AddWithValue(
+            "stabilizedRouteSemanticEvidenceSha256",
+            request
+                .StabilizedRouteSemanticEvidenceSha256);
+        command.Parameters.AddWithValue(
+            "temporalBridgePredicateId",
+            request.TemporalBridgePredicateId);
+        command.Parameters.AddWithValue(
+            "temporalBridgeEvidenceSha256",
+            request.TemporalBridgeEvidenceSha256);
+        command.Parameters.AddWithValue(
+            "restoreScopeIsolationEvidenceSha256",
+            request.RestoreScopeIsolationEvidenceSha256);
+        command.Parameters.AddWithValue(
+            "serviceRuntimeIsolationEvidenceSha256",
+            request.ServiceRuntimeIsolationEvidenceSha256);
+        command.Parameters.AddWithValue(
+            "historicalBaselineRouteManifestSha256",
+            request.HistoricalBaselineRouteManifestSha256);
+        command.Parameters.AddWithValue(
+            "historicalBaselineRouteChecksumsSha256",
+            request.HistoricalBaselineRouteChecksumsSha256);
         command.Parameters.AddWithValue(
             "baselineRouteManifestSha256",
             request.BaselineRouteManifestSha256);

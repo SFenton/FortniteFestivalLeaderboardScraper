@@ -153,6 +153,8 @@ public static class QuarantineEvidenceValidator
 {
     public const string RouteParityAlgorithmId =
         "fst.route-parity.canonical-zip.v1";
+    public const string ShopDailyInventoryRolloverPredicateId =
+        "fst.shop-daily-inventory-rollover.v1";
 
     private static readonly Regex ChecksumLine = new(
         @"^(?<hash>[0-9a-f]{64})  (?<path>[A-Za-z0-9][A-Za-z0-9._/-]*)$",
@@ -673,6 +675,514 @@ public static class QuarantineEvidenceValidator
             string baselineManifestPath,
             string candidateManifestPath)
     {
+        var comparison = CompareDetailedRouteCaptures(
+            baselineManifestPath,
+            candidateManifestPath);
+        if (comparison.Differences.Count > 0)
+        {
+            throw new InvalidDataException(
+                "Route parity differs: "
+                + string.Join(
+                    ", ",
+                    comparison.Differences));
+        }
+
+        var parity = new RouteParityEvidence(
+            BaselineManifestPath:
+                comparison.BaselineManifestPath,
+            BaselineManifestSha256:
+                Sha256File(
+                    comparison.BaselineManifestPath),
+            CandidateManifestPath:
+                comparison.CandidateManifestPath,
+            CandidateManifestSha256:
+                Sha256File(
+                    comparison.CandidateManifestPath),
+            PublicationId:
+                comparison.Baseline.PublicationId,
+            PublishedScrapeId:
+                comparison.Baseline.PublishedScrapeId,
+            RouteCount: 55,
+            StatusParity: true,
+            SemanticJsonParity: true,
+            DifferenceCount: 0);
+        return new DetailedRouteParityEvidence(
+            parity,
+            RouteParityAlgorithmId,
+            true,
+            QuarantineJson.Sha256(
+                comparison.SemanticEvidence),
+            comparison.SemanticEvidence);
+    }
+
+    public static ShopDailyInventoryRolloverEvidence
+        ValidateShopDailyInventoryRolloverBridge(
+            string historicalBaselineManifestPath,
+            string historicalCandidateManifestPath)
+    {
+        var comparison = CompareDetailedRouteCaptures(
+            historicalBaselineManifestPath,
+            historicalCandidateManifestPath);
+        if (comparison.Differences.Count != 1
+            || comparison.Differences[0] !=
+                "shop:semantic-json")
+        {
+            throw new InvalidDataException(
+                "Historical route evidence must differ only on shop:semantic-json.");
+        }
+        var baselineCapturedAt =
+            comparison.Baseline.CapturedAtUtc
+            ?? throw new InvalidDataException(
+                "Historical baseline capture has no capturedAtUtc.");
+        var candidateCapturedAt =
+            comparison.Candidate.CapturedAtUtc
+            ?? throw new InvalidDataException(
+                "Historical candidate capture has no capturedAtUtc.");
+        if (candidateCapturedAt <= baselineCapturedAt
+            || candidateCapturedAt.UtcDateTime.Date !=
+                baselineCapturedAt.UtcDateTime.Date
+                    .AddDays(1))
+        {
+            throw new InvalidDataException(
+                "Historical shop captures must cross exactly one UTC midnight.");
+        }
+
+        using var baselineShop =
+            ReadRawRouteDocument(
+                comparison.Baseline,
+                comparison.BaselineManifestPath,
+                "shop");
+        using var candidateShop =
+            ReadRawRouteDocument(
+                comparison.Candidate,
+                comparison.CandidateManifestPath,
+                "shop");
+        using var catalog =
+            ReadNormalizedRouteDocument(
+                comparison.Baseline,
+                comparison.BaselineManifestPath,
+                "songs");
+        var baselineSongs = ReadShopSongs(
+            baselineShop.RootElement,
+            "historical baseline");
+        var candidateSongs = ReadShopSongs(
+            candidateShop.RootElement,
+            "historical candidate");
+        var baselineLastUpdated =
+            ReadRequiredDateTimeOffset(
+                baselineShop.RootElement,
+                "lastUpdated");
+        var candidateLastUpdated =
+            ReadRequiredDateTimeOffset(
+                candidateShop.RootElement,
+                "lastUpdated");
+        var midnight = new DateTimeOffset(
+            candidateCapturedAt.UtcDateTime.Date,
+            TimeSpan.Zero);
+        var catalogSongs = ReadCatalogSongs(
+            catalog.RootElement);
+        var baselineIds = baselineSongs.Keys.ToHashSet(
+            StringComparer.Ordinal);
+        var candidateIds = candidateSongs.Keys.ToHashSet(
+            StringComparer.Ordinal);
+        var added = candidateIds
+            .Except(
+                baselineIds,
+                StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+        var removed = baselineIds
+            .Except(
+                candidateIds,
+                StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+        var overlap = baselineIds
+            .Intersect(
+                candidateIds,
+                StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+        var baselineLeaving = baselineSongs
+            .Where(item =>
+                RequireBoolean(
+                    item.Value,
+                    "leavingTomorrow"))
+            .Select(item => item.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var candidateLeaving = candidateSongs
+            .Where(item =>
+                RequireBoolean(
+                    item.Value,
+                    "leavingTomorrow"))
+            .Select(item => item.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var baselineNewSongs =
+            ReadStringSet(
+                baselineShop.RootElement,
+                "newSongs");
+        var candidateNewSongs =
+            ReadStringSet(
+                candidateShop.RootElement,
+                "newSongs");
+        var overlapDifferenceCount = overlap.Count(
+            songId => !JsonElement.DeepEquals(
+                baselineSongs[songId],
+                candidateSongs[songId]));
+        var isNewDifferenceCount = overlap.Count(
+            songId => RequireBoolean(
+                    baselineSongs[songId],
+                    "isNew")
+                != RequireBoolean(
+                    candidateSongs[songId],
+                    "isNew"));
+        var catalogMetadataDifferenceCount = 0;
+        var shopUrlDifferenceCount = 0;
+        foreach (var item in baselineSongs.Values
+                     .Concat(candidateSongs.Values))
+        {
+            var songId = RequireString(
+                item,
+                "songId");
+            if (!catalogSongs.TryGetValue(
+                    songId,
+                    out var catalogSong))
+            {
+                catalogMetadataDifferenceCount++;
+                continue;
+            }
+            if (!ShopMetadataMatchesCatalog(
+                    item,
+                    catalogSong))
+            {
+                catalogMetadataDifferenceCount++;
+            }
+            if (RequireString(
+                    item,
+                    "shopUrl")
+                != ComputeShopUrl(
+                    songId,
+                    RequireString(
+                        catalogSong,
+                        "title")))
+            {
+                shopUrlDifferenceCount++;
+            }
+        }
+
+        if (baselineSongs.Count != 117
+            || candidateSongs.Count != 117
+            || added.Count != 100
+            || removed.Count != 100
+            || overlap.Count != 17
+            || baselineLeaving.Count != 100
+            || candidateLeaving.Count != 0
+            || !removed.SetEquals(baselineLeaving)
+            || !overlap.SetEquals(
+                baselineIds.Except(
+                    baselineLeaving,
+                    StringComparer.Ordinal))
+            || baselineNewSongs.Count != 0
+            || candidateNewSongs.Count != 0
+            || baselineLastUpdated >
+                baselineCapturedAt
+            || candidateLastUpdated >
+                candidateCapturedAt
+            || baselineLastUpdated >= midnight
+            || candidateLastUpdated < midnight
+            || baselineLastUpdated ==
+                candidateLastUpdated
+            || baselineSongs.Values.Any(song =>
+                RequireBoolean(song, "isNew"))
+            || candidateSongs.Values.Any(song =>
+                RequireBoolean(song, "isNew"))
+            || candidateSongs
+                .Where(item => added.Contains(item.Key))
+                .Any(item =>
+                    RequireBoolean(
+                        item.Value,
+                        "leavingTomorrow"))
+            || overlapDifferenceCount != 0
+            || isNewDifferenceCount != 0
+            || catalogMetadataDifferenceCount != 0
+            || shopUrlDifferenceCount != 0)
+        {
+            throw new InvalidDataException(
+                "Historical shop rollover does not match the sealed daily inventory transition.");
+        }
+
+        var shop = comparison.SemanticEvidence.Single(
+            route => route.Name == "shop");
+        var songs = comparison.SemanticEvidence.Single(
+            route => route.Name == "songs");
+        if (songs.BaselineSemanticSha256 !=
+            songs.CandidateSemanticSha256)
+        {
+            throw new InvalidDataException(
+                "Historical song catalog changed across the shop rollover.");
+        }
+        return new ShopDailyInventoryRolloverEvidence(
+            ShopDailyInventoryRolloverPredicateId,
+            comparison.BaselineManifestPath,
+            Sha256File(
+                comparison.BaselineManifestPath),
+            comparison.CandidateManifestPath,
+            Sha256File(
+                comparison.CandidateManifestPath),
+            baselineCapturedAt,
+            candidateCapturedAt,
+            baselineLastUpdated,
+            candidateLastUpdated,
+            comparison.Baseline.PublicationId,
+            comparison.Baseline.PublishedScrapeId,
+            55,
+            1,
+            "shop:semantic-json",
+            QuarantineJson.Sha256(
+                comparison.SemanticEvidence),
+            songs.BaselineSemanticSha256,
+            shop.BaselineSemanticSha256,
+            shop.CandidateSemanticSha256,
+            HashStringSet(baselineIds),
+            HashStringSet(candidateIds),
+            HashStringSet(added),
+            HashStringSet(removed),
+            HashStringSet(overlap),
+            baselineSongs.Count,
+            candidateSongs.Count,
+            added.Count,
+            removed.Count,
+            overlap.Count,
+            baselineLeaving.Count,
+            candidateLeaving.Count,
+            baselineNewSongs.Count,
+            candidateNewSongs.Count,
+            isNewDifferenceCount,
+            overlapDifferenceCount,
+            catalogSongs.Count,
+            baselineIds
+                .Union(
+                    candidateIds,
+                    StringComparer.Ordinal)
+                .Count(),
+            catalogMetadataDifferenceCount,
+            shopUrlDifferenceCount);
+    }
+
+    public static void ValidateStabilizedShopRefresh(
+        string stabilizedBaselineManifestPath,
+        string stabilizedCandidateManifestPath,
+        DateTimeOffset expectedLastUpdatedUtc)
+    {
+        var baselinePath = Path.GetFullPath(
+            stabilizedBaselineManifestPath);
+        var candidatePath = Path.GetFullPath(
+            stabilizedCandidateManifestPath);
+        if (baselinePath == candidatePath
+            || Sha256File(baselinePath) ==
+                Sha256File(candidatePath))
+        {
+            throw new InvalidDataException(
+                "Stabilized route captures must be distinct.");
+        }
+        using var baselineManifest = JsonDocument.Parse(
+            File.ReadAllBytes(
+                baselinePath));
+        using var candidateManifest = JsonDocument.Parse(
+            File.ReadAllBytes(
+                candidatePath));
+        var baseline = ReadRouteCapture(
+            baselineManifest.RootElement,
+            baselinePath);
+        var candidate = ReadRouteCapture(
+            candidateManifest.RootElement,
+            candidatePath);
+        var baselineCapturedAt =
+            baseline.CapturedAtUtc
+            ?? throw new InvalidDataException(
+                "Stabilized baseline capture has no capturedAtUtc.");
+        var candidateCapturedAt =
+            candidate.CapturedAtUtc
+            ?? throw new InvalidDataException(
+                "Stabilized candidate capture has no capturedAtUtc.");
+        using var baselineShop =
+            ReadRawRouteDocument(
+                baseline,
+                baselinePath,
+                "shop");
+        using var candidateShop =
+            ReadRawRouteDocument(
+                candidate,
+                candidatePath,
+                "shop");
+        var baselineLastUpdated =
+            ReadRequiredDateTimeOffset(
+                baselineShop.RootElement,
+                "lastUpdated");
+        var candidateLastUpdated =
+            ReadRequiredDateTimeOffset(
+                candidateShop.RootElement,
+                "lastUpdated");
+        if (baseline.PublicationId !=
+                candidate.PublicationId
+            || baseline.PublishedScrapeId !=
+                candidate.PublishedScrapeId
+            || candidateCapturedAt <=
+                baselineCapturedAt
+            || baselineLastUpdated !=
+                expectedLastUpdatedUtc
+            || candidateLastUpdated !=
+                expectedLastUpdatedUtc
+            || baselineLastUpdated >
+                baselineCapturedAt
+            || candidateLastUpdated >
+                candidateCapturedAt)
+        {
+            throw new InvalidDataException(
+                "Stabilized shop refresh identity changed.");
+        }
+    }
+
+    public static string Sha256File(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+        return Convert.ToHexString(
+                SHA256.HashData(stream))
+            .ToLowerInvariant();
+    }
+
+    private static IReadOnlyDictionary<string, string>
+        ValidateChecksumFile(
+            string directory,
+            string checksumPath,
+            IReadOnlyCollection<string> requiredNames)
+    {
+        if (!File.Exists(checksumPath))
+        {
+            throw new FileNotFoundException(
+                "SHA256SUMS was not found.",
+                checksumPath);
+        }
+
+        var checksums = new Dictionary<string, string>(
+            StringComparer.Ordinal);
+        foreach (var line in File.ReadLines(checksumPath))
+        {
+            var match = ChecksumLine.Match(line);
+            if (!match.Success)
+            {
+                throw new InvalidDataException(
+                    $"Invalid checksum line: {line}");
+            }
+            var relative = match.Groups["path"].Value;
+            ValidateRelativePath(relative);
+            if (!checksums.TryAdd(
+                    relative,
+                    match.Groups["hash"].Value))
+            {
+                throw new InvalidDataException(
+                    $"Duplicate checksum path: {relative}");
+            }
+        }
+
+        if (!checksums.Keys.ToHashSet(
+                StringComparer.Ordinal)
+            .SetEquals(requiredNames))
+        {
+            throw new InvalidDataException(
+                "Checksum inventory differs from the required package files.");
+        }
+
+        foreach (var (relative, expected) in checksums)
+        {
+            var path = Path.GetFullPath(
+                Path.Combine(directory, relative));
+            EnsurePathBelow(
+                path,
+                directory,
+                "Checksummed file");
+            if (!File.Exists(path))
+            {
+                throw new FileNotFoundException(
+                    "Checksummed file was not found.",
+                    path);
+            }
+            RequireRegularFileWithoutSymlinks(
+                path,
+                directory);
+            if (!string.Equals(
+                    expected,
+                    Sha256File(path),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"Checksum mismatch: {relative}");
+            }
+        }
+
+        return checksums;
+    }
+
+    private static RouteCapture ReadRouteCapture(
+        JsonElement root,
+        string path)
+    {
+        var publicationId = RequireInt64(
+            root,
+            "publicationId");
+        var publishedScrapeId = RequireInt64(
+            root,
+            "publishedScrapeId");
+        RequireInt32(root, "routeCount", 55);
+        var entries = new Dictionary<string, RouteEntry>(
+            StringComparer.Ordinal);
+        foreach (var entry in RequireArray(
+                     root,
+                     "entries").EnumerateArray())
+        {
+            var name = RequireString(entry, "name");
+            if (!entries.TryAdd(
+                    name,
+                    new RouteEntry(
+                        RequireString(entry, "method"),
+                        RequireString(entry, "path"),
+                        RequireInt32(entry, "status"),
+                        RequireInt32(entry, "curlExit"),
+                        RequireBoolean(entry, "isJson"),
+                        GetOptionalString(
+                            entry,
+                            "semanticSha256"),
+                        RequireSha256(entry, "rawSha256"),
+                        RequireInt64(entry, "bytes"),
+                        GetOptionalString(
+                            entry,
+                            "contentType") ?? "")))
+            {
+                throw new InvalidDataException(
+                    $"Route capture has duplicate entry {name}: {path}");
+            }
+        }
+
+        if (entries.Count != 55)
+        {
+            throw new InvalidDataException(
+                $"Route capture does not have 55 unique entries: {path}");
+        }
+        return new RouteCapture(
+            publicationId,
+            publishedScrapeId,
+            ReadOptionalDateTimeOffset(
+                root,
+                "capturedAtUtc"),
+            entries);
+    }
+
+    private static DetailedRouteComparison
+        CompareDetailedRouteCaptures(
+            string baselineManifestPath,
+            string candidateManifestPath)
+    {
         var baselinePath = Path.GetFullPath(
             baselineManifestPath);
         var candidatePath = Path.GetFullPath(
@@ -822,170 +1332,286 @@ public static class QuarantineEvidenceValidator
                     Sha256Bytes(baselineJson),
                     Sha256Bytes(candidateJson)));
         }
-
-        if (differences.Count > 0)
-        {
-            throw new InvalidDataException(
-                "Route parity differs: "
-                + string.Join(", ", differences));
-        }
-
-        var parity = new RouteParityEvidence(
-            BaselineManifestPath: baselinePath,
-            BaselineManifestSha256:
-                Sha256File(baselinePath),
-            CandidateManifestPath: candidatePath,
-            CandidateManifestSha256:
-                Sha256File(candidatePath),
-            PublicationId: left.PublicationId,
-            PublishedScrapeId:
-                left.PublishedScrapeId,
-            RouteCount: 55,
-            StatusParity: true,
-            SemanticJsonParity: true,
-            DifferenceCount: 0);
-        return new DetailedRouteParityEvidence(
-            parity,
-            RouteParityAlgorithmId,
-            true,
-            QuarantineJson.Sha256(semanticEvidence),
+        return new DetailedRouteComparison(
+            baselinePath,
+            candidatePath,
+            left,
+            right,
+            differences,
             semanticEvidence);
     }
 
-    public static string Sha256File(string path)
+    private static JsonDocument ReadNormalizedRouteDocument(
+        RouteCapture capture,
+        string manifestPath,
+        string routeName)
     {
-        using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read);
-        return Convert.ToHexString(
-                SHA256.HashData(stream))
-            .ToLowerInvariant();
-    }
-
-    private static IReadOnlyDictionary<string, string>
-        ValidateChecksumFile(
-            string directory,
-            string checksumPath,
-            IReadOnlyCollection<string> requiredNames)
-    {
-        if (!File.Exists(checksumPath))
-        {
-            throw new FileNotFoundException(
-                "SHA256SUMS was not found.",
-                checksumPath);
-        }
-
-        var checksums = new Dictionary<string, string>(
-            StringComparer.Ordinal);
-        foreach (var line in File.ReadLines(checksumPath))
-        {
-            var match = ChecksumLine.Match(line);
-            if (!match.Success)
-            {
-                throw new InvalidDataException(
-                    $"Invalid checksum line: {line}");
-            }
-            var relative = match.Groups["path"].Value;
-            ValidateRelativePath(relative);
-            if (!checksums.TryAdd(
-                    relative,
-                    match.Groups["hash"].Value))
-            {
-                throw new InvalidDataException(
-                    $"Duplicate checksum path: {relative}");
-            }
-        }
-
-        if (!checksums.Keys.ToHashSet(
-                StringComparer.Ordinal)
-            .SetEquals(requiredNames))
+        if (!capture.Entries.TryGetValue(
+                routeName,
+                out var entry)
+            || !entry.IsJson)
         {
             throw new InvalidDataException(
-                "Checksum inventory differs from the required package files.");
+                $"Required JSON route is missing: {routeName}");
         }
-
-        foreach (var (relative, expected) in checksums)
-        {
-            var path = Path.GetFullPath(
-                Path.Combine(directory, relative));
-            EnsurePathBelow(
-                path,
+        var directory =
+            Path.GetDirectoryName(manifestPath)!;
+        var body = LoadRouteBody(
+            directory,
+            routeName,
+            entry);
+        return JsonDocument.Parse(
+            NormalizedRouteJson(
                 directory,
-                "Checksummed file");
-            if (!File.Exists(path))
-            {
-                throw new FileNotFoundException(
-                    "Checksummed file was not found.",
-                    path);
-            }
-            RequireRegularFileWithoutSymlinks(
-                path,
-                directory);
-            if (!string.Equals(
-                    expected,
-                    Sha256File(path),
-                    StringComparison.Ordinal))
-            {
-                throw new InvalidDataException(
-                    $"Checksum mismatch: {relative}");
-            }
-        }
-
-        return checksums;
+                routeName,
+                entry.SemanticSha256,
+                body));
     }
 
-    private static RouteCapture ReadRouteCapture(
-        JsonElement root,
-        string path)
+    private static JsonDocument ReadRawRouteDocument(
+        RouteCapture capture,
+        string manifestPath,
+        string routeName)
     {
-        var publicationId = RequireInt64(
-            root,
-            "publicationId");
-        var publishedScrapeId = RequireInt64(
-            root,
-            "publishedScrapeId");
-        RequireInt32(root, "routeCount", 55);
-        var entries = new Dictionary<string, RouteEntry>(
-            StringComparer.Ordinal);
-        foreach (var entry in RequireArray(
-                     root,
-                     "entries").EnumerateArray())
-        {
-            var name = RequireString(entry, "name");
-            if (!entries.TryAdd(
-                    name,
-                    new RouteEntry(
-                        RequireString(entry, "method"),
-                        RequireString(entry, "path"),
-                        RequireInt32(entry, "status"),
-                        RequireInt32(entry, "curlExit"),
-                        RequireBoolean(entry, "isJson"),
-                        GetOptionalString(
-                            entry,
-                            "semanticSha256"),
-                        RequireSha256(entry, "rawSha256"),
-                        RequireInt64(entry, "bytes"),
-                        GetOptionalString(
-                            entry,
-                            "contentType") ?? "")))
-            {
-                throw new InvalidDataException(
-                    $"Route capture has duplicate entry {name}: {path}");
-            }
-        }
-
-        if (entries.Count != 55)
+        if (!capture.Entries.TryGetValue(
+                routeName,
+                out var entry)
+            || !entry.IsJson)
         {
             throw new InvalidDataException(
-                $"Route capture does not have 55 unique entries: {path}");
+                $"Required JSON route is missing: {routeName}");
         }
-        return new RouteCapture(
-            publicationId,
-            publishedScrapeId,
-            entries);
+        return JsonDocument.Parse(
+            LoadRouteBody(
+                Path.GetDirectoryName(
+                    manifestPath)!,
+                routeName,
+                entry));
     }
+
+    private static IReadOnlyDictionary<string, JsonElement>
+        ReadShopSongs(
+            JsonElement root,
+            string label)
+    {
+        var expectedProperties = new HashSet<string>(
+            [
+                "count",
+                "lastUpdated",
+                "newSongs",
+                "songs",
+            ],
+            StringComparer.Ordinal);
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.EnumerateObject()
+                .Select(property => property.Name)
+                .ToHashSet(StringComparer.Ordinal)
+                .SetEquals(expectedProperties))
+        {
+            throw new InvalidDataException(
+                $"{label} shop payload shape is invalid.");
+        }
+        var songs = RequireArray(root, "songs");
+        if (RequireInt32(root, "count") !=
+            songs.GetArrayLength())
+        {
+            throw new InvalidDataException(
+                $"{label} shop count differs from its songs array.");
+        }
+        var expectedSongProperties =
+            new HashSet<string>(
+                [
+                    "albumArt",
+                    "artist",
+                    "isNew",
+                    "leavingTomorrow",
+                    "shopUrl",
+                    "songId",
+                    "title",
+                    "year",
+                ],
+                StringComparer.Ordinal);
+        var result =
+            new Dictionary<string, JsonElement>(
+                StringComparer.Ordinal);
+        foreach (var song in songs.EnumerateArray())
+        {
+            if (song.ValueKind != JsonValueKind.Object
+                || !song.EnumerateObject()
+                    .Select(property => property.Name)
+                    .ToHashSet(StringComparer.Ordinal)
+                    .SetEquals(expectedSongProperties))
+            {
+                throw new InvalidDataException(
+                    $"{label} shop song shape is invalid.");
+            }
+            var songId = RequireString(
+                song,
+                "songId");
+            _ = RequireString(song, "albumArt");
+            _ = RequireString(song, "artist");
+            _ = RequireBoolean(song, "isNew");
+            _ = RequireBoolean(
+                song,
+                "leavingTomorrow");
+            _ = RequireString(song, "shopUrl");
+            _ = RequireString(song, "title");
+            _ = RequireInt32(song, "year");
+            if (!result.TryAdd(
+                    songId,
+                    song.Clone()))
+            {
+                throw new InvalidDataException(
+                    $"{label} shop contains duplicate song IDs.");
+            }
+        }
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement>
+        ReadCatalogSongs(JsonElement root)
+    {
+        var songs = RequireArray(root, "songs");
+        if (RequireInt32(root, "count") !=
+            songs.GetArrayLength())
+        {
+            throw new InvalidDataException(
+                "Song catalog count differs from its songs array.");
+        }
+        var result =
+            new Dictionary<string, JsonElement>(
+                StringComparer.Ordinal);
+        foreach (var song in songs.EnumerateArray())
+        {
+            var songId = RequireString(
+                song,
+                "songId");
+            if (!result.TryAdd(
+                    songId,
+                    song.Clone()))
+            {
+                throw new InvalidDataException(
+                    "Song catalog contains duplicate song IDs.");
+            }
+        }
+        return result;
+    }
+
+    private static IReadOnlySet<string> ReadStringSet(
+        JsonElement root,
+        string propertyName)
+    {
+        var result =
+            new HashSet<string>(
+                StringComparer.Ordinal);
+        foreach (var item in RequireArray(
+                     root,
+                     propertyName).EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(
+                    item.GetString())
+                || !result.Add(item.GetString()!))
+            {
+                throw new InvalidDataException(
+                    $"{propertyName} is not a unique string set.");
+            }
+        }
+        return result;
+    }
+
+    private static bool ShopMetadataMatchesCatalog(
+        JsonElement shop,
+        JsonElement catalog) =>
+        JsonElement.DeepEquals(
+            shop.GetProperty("albumArt"),
+            catalog.GetProperty("albumArt"))
+        && JsonElement.DeepEquals(
+            shop.GetProperty("artist"),
+            catalog.GetProperty("artist"))
+        && JsonElement.DeepEquals(
+            shop.GetProperty("title"),
+            catalog.GetProperty("title"))
+        && JsonElement.DeepEquals(
+            shop.GetProperty("year"),
+            catalog.GetProperty("year"));
+
+    private static string ComputeShopUrl(
+        string songId,
+        string title)
+    {
+        var slug = new StringBuilder(title.Length);
+        var previousHyphen = false;
+        foreach (var character in title)
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                slug.Append(
+                    char.ToLowerInvariant(character));
+                previousHyphen = false;
+            }
+            else if (character is ' ' or '_'
+                     && !previousHyphen)
+            {
+                slug.Append('-');
+                previousHyphen = true;
+            }
+        }
+        var normalizedSlug =
+            slug.ToString().TrimStart('-');
+        var compactSongId =
+            songId.Replace(
+                "-",
+                "",
+                StringComparison.Ordinal);
+        var suffix = compactSongId.Length >= 12
+            ? compactSongId[^12..]
+            : compactSongId;
+        return "https://www.fortnite.com/item-shop/jam-tracks/"
+            + normalizedSlug
+            + "-"
+            + suffix;
+    }
+
+    private static string HashStringSet(
+        IEnumerable<string> values) =>
+        Sha256Bytes(
+            Encoding.UTF8.GetBytes(
+                string.Join(
+                    "\n",
+                    values.Order(
+                        StringComparer.Ordinal))));
+
+    private static DateTimeOffset? ReadOptionalDateTimeOffset(
+        JsonElement parent,
+        string name)
+    {
+        if (!parent.TryGetProperty(
+                name,
+                out var value))
+        {
+            return null;
+        }
+        if (value.ValueKind != JsonValueKind.String
+            || !DateTimeOffset.TryParse(
+                value.GetString(),
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind,
+                out var parsed)
+            || parsed.Offset != TimeSpan.Zero)
+        {
+            throw new InvalidDataException(
+                $"JSON value {name} is not a UTC timestamp.");
+        }
+        return parsed;
+    }
+
+    private static DateTimeOffset ReadRequiredDateTimeOffset(
+        JsonElement parent,
+        string name) =>
+        ReadOptionalDateTimeOffset(parent, name)
+        ?? throw new InvalidDataException(
+            $"Required UTC timestamp is missing: {name}");
 
     private static byte[] NormalizedRouteJson(
         string captureDirectory,
@@ -1597,7 +2223,17 @@ public static class QuarantineEvidenceValidator
     private sealed record RouteCapture(
         long PublicationId,
         long PublishedScrapeId,
+        DateTimeOffset? CapturedAtUtc,
         IReadOnlyDictionary<string, RouteEntry> Entries);
+
+    private sealed record DetailedRouteComparison(
+        string BaselineManifestPath,
+        string CandidateManifestPath,
+        RouteCapture Baseline,
+        RouteCapture Candidate,
+        IReadOnlyList<string> Differences,
+        IReadOnlyList<RouteSemanticComparisonEvidence>
+            SemanticEvidence);
 
     private sealed record RouteEntry(
         string Method,

@@ -950,11 +950,20 @@ The corrective post-restore tier is a distinct
 `FstSnapshotGenerationRestoreContinuation` C# tool with only
 confirm/attest/finalize commands. An immutable continuation authorization
 links the restore row, predecessor H5 authorization, exact plan/report/package,
-shared evidence assembly, route manifests/checksum trees, repository
-diff/source/tests, and independent approval. Empty downstream tables add the
-evidence-tool/authorization FKs; finalization must use the same authorization
-as attestation. The H5 restore row, plan, package, authorization, and DROP
-evidence are never updated.
+shared evidence assembly, three route manifests/checksum trees, exact restore
+scope, both service runtime identities, repository diff/source/tests, and
+independent approval. The historical post-DROP pair is not treated as equal:
+exactly 54 routes match, while `/api/shop` is accepted only through the fixed,
+hash-pinned daily-inventory bridge. The bridge proves one UTC midnight,
+`117 -> 117` songs, the exact `100` announced departures, `100`
+catalog-consistent arrivals, `17` unchanged overlaps, and no new-song or
+other-field drift. Its authenticated `lastUpdated` must cross the same UTC
+midnight and then remain unchanged. A separate post-restore-to-repeat pair must pass the
+unchanged strict 55-route validator. Empty downstream tables add the
+evidence-tool/authorization FKs and temporal-bridge hash; finalization must use
+the same authorization and bridge as attestation. No route exception is a CLI,
+configuration, environment, or database collection. The H5 restore row, plan,
+package, authorization, and DROP evidence are never updated.
 Automatic bounded retirement and sparse-child compaction remain unimplemented.
 
 Rollback for this slice is to keep

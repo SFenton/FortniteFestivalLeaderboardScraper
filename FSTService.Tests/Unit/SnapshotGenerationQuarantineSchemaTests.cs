@@ -1378,7 +1378,8 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     55,
                     repeat('b', 64),
                     repeat('2', 64),
-                    '{{continuationRequest.RouteParityPreflightSha256}}',
+                    '{{continuationRequest.StabilizedRouteSemanticEvidenceSha256}}',
+                    '{{continuationRequest.TemporalBridgeEvidenceSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
                     'restore-attestor',
@@ -1776,6 +1777,7 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     DROP COLUMN semantic_binary_parity,
                     DROP COLUMN route_parity_algorithm_id,
                     DROP COLUMN route_semantic_evidence_sha256,
+                    DROP COLUMN temporal_bridge_evidence_sha256,
                     DROP COLUMN evidence_tool_sha256,
                     DROP COLUMN continuation_authorization_id;
                 ALTER TABLE
@@ -2039,6 +2041,7 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
         var attestation = await database.AttestAsync(
             manifest,
             authorization.ContinuationAuthorizationId,
+            BuildTemporalBridge(request),
             parity,
             "restore-attestor");
         var before = await database.ReadStateAsync(
@@ -3450,7 +3453,7 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 predecessorAuthorization.AuthorizationId,
                 predecessorRequest) with
             {
-                BaselineRouteManifestSha256 =
+                HistoricalBaselineRouteManifestSha256 =
                     new string('c', 64),
             };
         await using var continuationDatabase =
@@ -3468,9 +3471,10 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     2005,
                     1005,
                     55,
-                    repeat('c', 64),
+                    '{{continuationRequest.BaselineRouteManifestSha256}}',
                     repeat('2', 64),
-                    '{{continuationRequest.RouteParityPreflightSha256}}',
+                    '{{continuationRequest.StabilizedRouteSemanticEvidenceSha256}}',
+                    '{{continuationRequest.TemporalBridgeEvidenceSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
                     'restore-attestor',
@@ -3485,9 +3489,10 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                     2005,
                     1005,
                     55,
-                    repeat('c', 64),
+                    '{{continuationRequest.BaselineRouteManifestSha256}}',
                     repeat('2', 64),
-                    '{{continuationRequest.RouteParityPreflightSha256}}',
+                    '{{continuationRequest.StabilizedRouteSemanticEvidenceSha256}}',
+                    '{{continuationRequest.TemporalBridgeEvidenceSha256}}',
                     '{}'::jsonb,
                     repeat('3', 64),
                     'restore-attestor',
@@ -5851,6 +5856,14 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             QuarantineEvidenceValidator
                 .RouteParityAlgorithmId,
             new string('c', 64),
+            new string('f', 64),
+            RestoreContinuationContract
+                .TemporalBridgePredicateId,
+            new string('0', 64),
+            new string('1', 64),
+            new string('2', 64),
+            new string('b', 64),
+            new string('3', 64),
             new string('b', 64),
             new string('d', 64),
             new string('2', 64),
@@ -5909,6 +5922,20 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             request.TestEvidenceManifestSha256,
             request.RouteParityAlgorithmId,
             request.RouteParityPreflightSha256,
+            request
+                .StabilizedRouteSemanticEvidenceSha256,
+            request.TemporalBridgePredicateId,
+            request.TemporalBridgeEvidenceSha256,
+            request
+                .RestoreScopeIsolationEvidenceSha256,
+            "/evidence/service-runtime-isolation.json",
+            request
+                .ServiceRuntimeIsolationEvidenceSha256,
+            "/evidence/historical/manifest.json",
+            request
+                .HistoricalBaselineRouteManifestSha256,
+            request
+                .HistoricalBaselineRouteChecksumsSha256,
             "/evidence/baseline/manifest.json",
             request.BaselineRouteManifestSha256,
             request.BaselineRouteChecksumsSha256,
@@ -5918,6 +5945,55 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
             request.PublicationId,
             request.PublishedScrapeId,
             []);
+
+    private static ShopDailyInventoryRolloverEvidence
+        BuildTemporalBridge(
+            RestoreContinuationAuthorizationRequest request) =>
+        new(
+            RestoreContinuationContract
+                .TemporalBridgePredicateId,
+            "/evidence/historical/manifest.json",
+            request
+                .HistoricalBaselineRouteManifestSha256,
+            "/evidence/baseline/manifest.json",
+            request.BaselineRouteManifestSha256,
+            DateTimeOffset.Parse(
+                "2026-08-31T21:20:46Z"),
+            DateTimeOffset.Parse(
+                "2026-09-01T01:31:36Z"),
+            DateTimeOffset.Parse(
+                "2026-08-31T21:18:02Z"),
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z"),
+            request.PublicationId,
+            request.PublishedScrapeId,
+            55,
+            1,
+            "shop:semantic-json",
+            new string('4', 64),
+            new string('5', 64),
+            new string('6', 64),
+            new string('7', 64),
+            new string('8', 64),
+            new string('9', 64),
+            new string('a', 64),
+            new string('b', 64),
+            new string('c', 64),
+            117,
+            117,
+            100,
+            100,
+            17,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            710,
+            217,
+            0,
+            0);
 
     private string DbCanonicalEvidenceSha256(
         JsonElement evidence) =>

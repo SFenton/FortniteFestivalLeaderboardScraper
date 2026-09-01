@@ -102,6 +102,8 @@ public sealed class ContinuationDatabase
         AttestAsync(
             RestoreContinuationPackageManifest manifest,
             string continuationAuthorizationId,
+            ShopDailyInventoryRolloverEvidence
+                historicalBridge,
             DetailedRouteParityEvidence parity,
             string attestedBy,
             CancellationToken ct = default)
@@ -164,6 +166,8 @@ public sealed class ContinuationDatabase
             RestoreContinuationContract.Sha256(
                 new
                 {
+                    HistoricalTemporalBridge =
+                        historicalBridge,
                     Parity = parity,
                     Database = databaseEvidence,
                 });
@@ -180,6 +184,7 @@ public sealed class ContinuationDatabase
                     @baselineRouteManifestSha256,
                     @candidateRouteManifestSha256,
                     @routeSemanticEvidenceSha256,
+                    @temporalBridgeEvidenceSha256,
                     @databaseEvidence::jsonb,
                     @evidenceSha256,
                     @attestedBy,
@@ -203,7 +208,10 @@ public sealed class ContinuationDatabase
             manifest.CandidateRouteManifestSha256);
         command.Parameters.AddWithValue(
             "routeSemanticEvidenceSha256",
-            manifest.RouteParityPreflightSha256);
+            parity.RouteSemanticEvidenceSha256);
+        command.Parameters.AddWithValue(
+            "temporalBridgeEvidenceSha256",
+            manifest.TemporalBridgeEvidenceSha256);
         command.Parameters.AddWithValue(
             "databaseEvidence",
             databaseEvidence.GetRawText());
@@ -479,6 +487,18 @@ public sealed class ContinuationDatabase
                     authorization_row.route_parity_algorithm_id,
                 'routeParityPreflightSha256',
                     authorization_row.route_parity_preflight_sha256,
+                'stabilizedRouteSemanticEvidenceSha256',
+                    authorization_row.stabilized_route_semantic_evidence_sha256,
+                'temporalBridgePredicateId',
+                    authorization_row.temporal_bridge_predicate_id,
+                'temporalBridgeEvidenceSha256',
+                    authorization_row.temporal_bridge_evidence_sha256,
+                'restoreScopeIsolationEvidenceSha256',
+                    authorization_row.restore_scope_isolation_evidence_sha256,
+                'serviceRuntimeIsolationEvidenceSha256',
+                    authorization_row.service_runtime_isolation_evidence_sha256,
+                'historicalBaselineRouteManifestSha256',
+                    authorization_row.historical_baseline_route_manifest_sha256,
                 'baselineRouteManifestSha256',
                     authorization_row.baseline_route_manifest_sha256,
                 'candidateRouteManifestSha256',
@@ -708,6 +728,39 @@ public sealed class ContinuationDatabase
                 state,
                 "authorizedEvidenceAssemblySha256") !=
                 manifest.AuthorizedEvidenceAssemblySha256
+            || RequireString(
+                state,
+                "stabilizedRouteSemanticEvidenceSha256") !=
+                manifest
+                    .StabilizedRouteSemanticEvidenceSha256
+            || RequireString(
+                state,
+                "temporalBridgePredicateId") !=
+                manifest.TemporalBridgePredicateId
+            || RequireString(
+                state,
+                "temporalBridgeEvidenceSha256") !=
+                manifest.TemporalBridgeEvidenceSha256
+            || RequireString(
+                state,
+                "restoreScopeIsolationEvidenceSha256") !=
+                manifest.RestoreScopeIsolationEvidenceSha256
+            || RequireString(
+                state,
+                "serviceRuntimeIsolationEvidenceSha256") !=
+                manifest.ServiceRuntimeIsolationEvidenceSha256
+            || RequireString(
+                state,
+                "historicalBaselineRouteManifestSha256") !=
+                manifest.HistoricalBaselineRouteManifestSha256
+            || RequireString(
+                state,
+                "baselineRouteManifestSha256") !=
+                manifest.BaselineRouteManifestSha256
+            || RequireString(
+                state,
+                "candidateRouteManifestSha256") !=
+                manifest.CandidateRouteManifestSha256
             || state.GetProperty("holdActive")
                     .GetBoolean() is not true)
         {

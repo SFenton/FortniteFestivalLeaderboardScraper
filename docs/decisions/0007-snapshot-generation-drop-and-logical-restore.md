@@ -84,13 +84,24 @@ the already accepted shared `QuarantineEvidenceValidator`, stores detailed
 semantic binary evidence, and has no plan/load/attach/restore surface. A new
 immutable authorization links the exact restore and predecessor H5
 authorization to one continuation package/tool/evidence assembly and route
-pair. Attestation and finalization both store that identity, and finalization
-requires the same authorization before releasing the hold and trigger.
+evidence set. The post-DROP historical pair may differ only on `/api/shop`
+through the exact-manifest-pinned daily inventory rollover predicate; its
+hash-only census proves the announced departures, catalog-consistent
+arrivals, unchanged overlaps, one UTC midnight, and an authenticated shop
+refresh timestamp that moves across that boundary. A distinct post-restore
+pair must remain strict zero-difference 55-route parity. Attestation records
+the stabilized pair plus its own semantic-evidence hash and the historical
+bridge hash; the preflight-file hash remains separate. Both service identities
+are supported by immutable build records and matching reviewed shop-source
+hashes. Finalization requires
+the same authorization and bridge before releasing the hold and trigger.
 
 This separation is preferred over relaxing the pre-restore authorization or
 adding continuation behavior to Python: lifecycle authorization remains
 one-way, ZIP behavior is shared by construction, and the evidence tool is
-structurally unable to repeat physical restore.
+structurally unable to repeat physical restore. The bridge is not a general
+route-exception mechanism: route, predicate, census, captures, restore scope,
+and runtime identities are fixed and hash-bound.
 
 Quarantine structurally classifies the existing PK and score indexes and
 renames those same OIDs to

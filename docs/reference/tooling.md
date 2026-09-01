@@ -571,11 +571,33 @@ The existing restore authorizer additionally exposes
 `prepare-continuation-package`, `authorize-continuation-tool`, and
 `confirm-continuation-tool`. Preparation derives tool/evidence hashes from
 fixed Release outputs, requires a clean committed tree, validates the original
-H5 plan/report/package/bundle and both authenticated route checksum trees, and
-creates a hash-only semantic preflight. The package contains only the
-framework-dependent continuation runtime, exact shared evidence assembly,
-repository diff, source/tests, preflight, manifest, and checksums. Route paths
-come from the sealed package; no export body is copied.
+H5 plan/report/package/bundle and all three authenticated route checksum trees,
+and creates a hash-only semantic preflight. `--baseline-route-manifest` is the
+historical post-DROP capture, `--post-restore-route-manifest` is both the
+historical candidate and stabilized baseline, and
+`--candidate-route-manifest` is the repeated stabilized candidate.
+`--service-runtime-isolation-evidence` supplies the reviewed image/DLL/source
+identity record. The separate
+`--historical-service-build-evidence` and
+`--stabilized-service-build-evidence` files bind those identities to the
+observed builds; the authorizer verifies the shop-source hashes at both named
+commits and the current tree and statically bounds the shop endpoint/cache/
+persistence dependency. Historical comparison permits only the compile-time
+`fst.shop-daily-inventory-rollover.v1` predicate with exact fixed census and
+catalog checks, including the pre-/post-midnight `lastUpdated` transition; the
+stabilized comparison remains strict 55-route parity with the same refresh
+timestamp. The stabilized route-semantic hash and preflight-file hash remain
+separate authorization fields.
+The package contains only the framework-dependent continuation runtime, exact
+shared evidence assembly, runtime-isolation record, repository diff,
+source/tests, preflight, manifest, and checksums. Route paths come from the
+sealed package; no export body or song identifier is copied.
+
+The preparer snapshots each build/runtime evidence input once and packages
+those validated bytes. `ContinuationPackage.Validate` then independently
+cross-links the packaged build files to the sealed runtime record. Rewriting a
+build record and recomputing the package manifest/checksums therefore still
+fails validation.
 
 DROP plan/report validation reads the original C# canonical UTF-8 bytes.
 Python object reserialization is not authoritative. The scanner requires

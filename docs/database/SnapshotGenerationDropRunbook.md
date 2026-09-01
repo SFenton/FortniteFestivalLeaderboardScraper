@@ -612,6 +612,9 @@ tools/postgres-snapshot-generation-restore-authorize.sh \
   --baseline-route-manifest <routes-post-drop/manifest.json> \
   --post-restore-route-manifest <routes-post-restore/manifest.json> \
   --candidate-route-manifest <routes-post-restore-repeat/manifest.json> \
+  --service-runtime-isolation-evidence <service-runtime-isolation.json> \
+  --historical-service-build-evidence <historical-service-build-evidence.json> \
+  --stabilized-service-build-evidence <stabilized-service-build-evidence.json> \
   --predecessor-to-continuation-diff <reviewed-repository.diff> \
   --source-manifest <source-manifest.json> \
   --test-evidence-manifest <test-evidence-manifest.json> \
@@ -621,10 +624,51 @@ tools/postgres-snapshot-generation-restore-authorize.sh \
   --output <new-continuation-package>
 ```
 
-The authorizer validates both route checksum trees with
-`QuarantineEvidenceValidator`, writes a hash-only parity preflight, and copies
-only the continuation runtime/evidence assembly plus source, diff, and test
-evidence. It never copies route/export bodies, the archive, or the H5 package.
+The authorizer validates all three route checksum trees with
+`QuarantineEvidenceValidator`. The post-restore and repeated post-restore
+captures must still pass the unmodified strict 55-route validator with zero
+differences. The historical post-DROP to post-restore pair may use only the
+fixed `fst.shop-daily-inventory-rollover.v1` bridge. That bridge is accepted
+only when:
+
+- publication and published scrape remain exact;
+- exactly one UTC midnight is crossed;
+- the authenticated shop `lastUpdated` moves from before that midnight to
+  after it, remains no later than its capture, and is unchanged in the
+  stabilized pair;
+- `shop:semantic-json` is the only historical route difference;
+- the shop count remains `117`, with exactly `100` removals, `100` additions,
+  and `17` overlapping songs;
+- the removed set exactly equals the baseline `leavingTomorrow` set;
+- all overlapping entries are identical;
+- all arrivals and departures exist with matching public metadata in the
+  unchanged `/api/songs` catalog;
+- shop URLs reproduce from the catalog title and song identifier;
+- `newSongs` is empty and `isNew` is false throughout; and
+- the post-restore repeat remains strict zero-difference parity.
+- the stabilized baseline and candidate are distinct manifests with increasing
+  `capturedAtUtc`, and both authenticate the same shop refresh timestamp no
+  later than their own capture.
+
+The package binds the exact historical and stabilized manifest/checksum
+hashes, the hash-only rollover census, an exact restore-write-scope proof
+derived from the H5 plan/report, two immutable service-image build records,
+and a sealed service-runtime isolation file. The runtime file identifies both
+service images and DLLs, binds the historical and stabilized source commits,
+and hashes the reviewed shop source files at both commits and the current
+tree. The authorizer derives the no-snapshot dependency from those fixed
+sources instead of trusting an operator assertion. No route, field, count, or exception is
+operator-configurable. A future temporal exception requires a new reviewed
+implementation and authorization; changing either capture invalidates this
+authorization. The package contains no route/export body, song identifier,
+archive, or H5 executable.
+
+Build/runtime evidence inputs are read into memory once before validation.
+Those exact bytes, not a later path re-read, are written to the package.
+Package validation independently parses the packaged build records and runtime
+record and rejects any mismatched image, DLL, commit, worktree state, timing,
+or build-file hash even if an attacker recomputes the outer package
+checksums.
 Authorize and confirm with a new approval:
 
 ```bash
@@ -667,11 +711,16 @@ tools/postgres-snapshot-generation-restore-continuation.sh finalize  ...
 
 All three commands require the exact package, original plan/report identities,
 and one continuation authorization. Route paths are package-pinned rather
-than accepted from the continuation CLI. Attestation records semantic binary
-parity, algorithm ID, route semantic evidence hash, H6 tool hash, and
-authorization ID. Finalization must use the same tool/authorization; only its
-transaction removes the trigger and releases the hold. Unknown commits are
-reconciled with `confirm`, never by rerunning physical restore.
+than accepted from the continuation CLI. Attestation records the strict
+post-restore-to-repeat pair, semantic binary parity, algorithm ID, route
+semantic evidence hash, temporal-bridge evidence hash, H6 tool hash, and
+authorization ID. The stabilized semantic-evidence hash is distinct from the
+preflight file hash and both are authorization-bound. The historical pair is
+attribution evidence and is never
+recorded as zero-difference parity. Finalization must use the same
+tool/authorization and matching temporal-bridge hash; only its transaction
+removes the trigger and releases the hold. Unknown commits are reconciled
+with `confirm`, never by rerunning physical restore.
 
 The Python physical-restore tool no longer owns evidence acceptance. Invoking
 its legacy `attest` or `finalize` command fails immediately with a deterministic
@@ -691,7 +740,9 @@ of successful post-DROP monitoring. Acceptance requires:
   hashes retained as provenance;
 - exact original schema/name/bound and both index chains, with a new physical
   OID/relfilenode;
-- zero-difference 55-route attestations;
+- 54 unchanged historical routes plus the exact hash-pinned midnight shop
+  rollover attribution above;
+- a separate zero-difference 55-route post-restore stabilization attestation;
 - no service readiness, lock, resource, notification, or publication
   regression;
 - a later successful official scrape and exact planner/oracle cycle.

@@ -1346,6 +1346,18 @@ public static class SnapshotGenerationDropSchema
                                                TEXT NOT NULL,
                 route_parity_algorithm_id      TEXT NOT NULL,
                 route_parity_preflight_sha256  TEXT NOT NULL,
+                stabilized_route_semantic_evidence_sha256
+                                               TEXT NOT NULL,
+                temporal_bridge_predicate_id   TEXT NOT NULL,
+                temporal_bridge_evidence_sha256 TEXT NOT NULL,
+                restore_scope_isolation_evidence_sha256
+                                               TEXT NOT NULL,
+                service_runtime_isolation_evidence_sha256
+                                               TEXT NOT NULL,
+                historical_baseline_route_manifest_sha256
+                                               TEXT NOT NULL,
+                historical_baseline_route_checksums_sha256
+                                               TEXT NOT NULL,
                 baseline_route_manifest_sha256 TEXT NOT NULL,
                 baseline_route_checksums_sha256 TEXT NOT NULL,
                 candidate_route_manifest_sha256 TEXT NOT NULL,
@@ -1405,7 +1417,9 @@ public static class SnapshotGenerationDropSchema
                         AND authorization_scope =
                             'confirm_attest_finalize'
                         AND route_parity_algorithm_id =
-                            'fst.route-parity.canonical-zip.v1'),
+                            'fst.route-parity.canonical-zip.v1'
+                        AND temporal_bridge_predicate_id =
+                            'fst.shop-daily-inventory-rollover.v1'),
                 CONSTRAINT
                     ck_snapshot_generation_restore_continuation_authorization_hashes
                     CHECK (
@@ -1432,6 +1446,18 @@ public static class SnapshotGenerationDropSchema
                         AND continuation_package_manifest_sha256
                             ~ '^[0-9a-f]{64}$'
                         AND route_parity_preflight_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND stabilized_route_semantic_evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND temporal_bridge_evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND restore_scope_isolation_evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND service_runtime_isolation_evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND historical_baseline_route_manifest_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND historical_baseline_route_checksums_sha256
                             ~ '^[0-9a-f]{64}$'
                         AND baseline_route_manifest_sha256
                             ~ '^[0-9a-f]{64}$'
@@ -1519,6 +1545,13 @@ public static class SnapshotGenerationDropSchema
                                             continuation_package_manifest_sha256 || ':' ||
                                             route_parity_algorithm_id || ':' ||
                                             route_parity_preflight_sha256 || ':' ||
+                                            stabilized_route_semantic_evidence_sha256 || ':' ||
+                                            temporal_bridge_predicate_id || ':' ||
+                                            temporal_bridge_evidence_sha256 || ':' ||
+                                            restore_scope_isolation_evidence_sha256 || ':' ||
+                                            service_runtime_isolation_evidence_sha256 || ':' ||
+                                            historical_baseline_route_manifest_sha256 || ':' ||
+                                            historical_baseline_route_checksums_sha256 || ':' ||
                                             baseline_route_manifest_sha256 || ':' ||
                                             baseline_route_checksums_sha256 || ':' ||
                                             candidate_route_manifest_sha256 || ':' ||
@@ -1538,6 +1571,209 @@ public static class SnapshotGenerationDropSchema
                                 32))
             );
 
+        DO $restore_continuation_authorization_upgrade$
+        DECLARE
+            missing_columns BOOLEAN;
+        BEGIN
+            SELECT EXISTS (
+                SELECT 1
+                FROM unnest(ARRAY[
+                    'temporal_bridge_predicate_id',
+                    'stabilized_route_semantic_evidence_sha256',
+                    'temporal_bridge_evidence_sha256',
+                    'restore_scope_isolation_evidence_sha256',
+                    'service_runtime_isolation_evidence_sha256',
+                    'historical_baseline_route_manifest_sha256',
+                    'historical_baseline_route_checksums_sha256'
+                ]) expected(column_name)
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns column_row
+                    WHERE column_row.table_schema = 'public'
+                      AND column_row.table_name =
+                            'snapshot_generation_restore_continuation_authorizations'
+                      AND column_row.column_name =
+                            expected.column_name))
+            INTO missing_columns;
+
+            IF missing_columns
+               AND EXISTS (
+                    SELECT 1
+                    FROM
+                        snapshot_generation_restore_continuation_authorizations)
+            THEN
+                RAISE EXCEPTION
+                    'Cannot add temporal bridge identity to nonempty snapshot-generation restore continuation authorizations.'
+                    USING ERRCODE = '55000';
+            END IF;
+
+            IF missing_columns THEN
+                ALTER TABLE
+                    snapshot_generation_restore_continuation_authorizations
+                    ADD COLUMN IF NOT EXISTS
+                        stabilized_route_semantic_evidence_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        temporal_bridge_predicate_id
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        temporal_bridge_evidence_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        restore_scope_isolation_evidence_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        service_runtime_isolation_evidence_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        historical_baseline_route_manifest_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
+                        historical_baseline_route_checksums_sha256
+                            TEXT NOT NULL;
+
+                ALTER TABLE
+                    snapshot_generation_restore_continuation_authorizations
+                    DROP CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_contract,
+                    DROP CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_hashes,
+                    DROP CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_database_evidence;
+
+                ALTER TABLE
+                    snapshot_generation_restore_continuation_authorizations
+                    ADD CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_contract
+                        CHECK (
+                            schema_version = 1
+                            AND tool_id =
+                                'fst.snapshot-generation-restore-continuation-authorization.v1'
+                            AND authorization_scope =
+                                'confirm_attest_finalize'
+                            AND route_parity_algorithm_id =
+                                'fst.route-parity.canonical-zip.v1'
+                            AND temporal_bridge_predicate_id =
+                                'fst.shop-daily-inventory-rollover.v1'),
+                    ADD CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_hashes
+                        CHECK (
+                            restore_plan_digest
+                                ~ '^[0-9a-f]{64}$'
+                            AND restore_plan_file_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND restore_report_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND predecessor_restore_tool_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND predecessor_repair_package_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND recovery_bundle_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND authorized_continuation_tool_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND authorized_evidence_assembly_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND route_parity_reference_source_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND authorizer_binary_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND continuation_package_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND route_parity_preflight_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND stabilized_route_semantic_evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND temporal_bridge_evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND restore_scope_isolation_evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND service_runtime_isolation_evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND historical_baseline_route_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND historical_baseline_route_checksums_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND baseline_route_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND baseline_route_checksums_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND candidate_route_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND candidate_route_checksums_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND predecessor_to_continuation_diff_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND source_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND test_evidence_manifest_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND canonical_evidence_db_sha256
+                                ~ '^[0-9a-f]{64}$'),
+                    ADD CONSTRAINT
+                        ck_snapshot_generation_restore_continuation_authorization_database_evidence
+                        CHECK (
+                            canonical_evidence_db_sha256 =
+                                encode(
+                                    digest(
+                                        convert_to(
+                                            canonical_evidence::TEXT,
+                                            'UTF8'),
+                                        'sha256'),
+                                    'hex')
+                            AND continuation_authorization_id =
+                                left(
+                                    encode(
+                                        digest(
+                                            convert_to(
+                                                tool_id || ':' ||
+                                                authorization_scope || ':' ||
+                                                restore_operation_id || ':' ||
+                                                drop_operation_id || ':' ||
+                                                predecessor_authorization_id || ':' ||
+                                                restore_plan_digest || ':' ||
+                                                restore_plan_file_sha256 || ':' ||
+                                                restore_report_sha256 || ':' ||
+                                                predecessor_restore_tool_sha256 || ':' ||
+                                                predecessor_repair_package_manifest_sha256 || ':' ||
+                                                recovery_bundle_manifest_sha256 || ':' ||
+                                                authorized_continuation_tool_sha256 || ':' ||
+                                                authorized_evidence_assembly_sha256 || ':' ||
+                                                route_parity_reference_source_sha256 || ':' ||
+                                                authorizer_binary_sha256 || ':' ||
+                                                continuation_package_manifest_sha256 || ':' ||
+                                                route_parity_algorithm_id || ':' ||
+                                                route_parity_preflight_sha256 || ':' ||
+                                                stabilized_route_semantic_evidence_sha256 || ':' ||
+                                                temporal_bridge_predicate_id || ':' ||
+                                                temporal_bridge_evidence_sha256 || ':' ||
+                                                restore_scope_isolation_evidence_sha256 || ':' ||
+                                                service_runtime_isolation_evidence_sha256 || ':' ||
+                                                historical_baseline_route_manifest_sha256 || ':' ||
+                                                historical_baseline_route_checksums_sha256 || ':' ||
+                                                baseline_route_manifest_sha256 || ':' ||
+                                                baseline_route_checksums_sha256 || ':' ||
+                                                candidate_route_manifest_sha256 || ':' ||
+                                                candidate_route_checksums_sha256 || ':' ||
+                                                publication_id::TEXT || ':' ||
+                                                published_scrape_id::TEXT || ':' ||
+                                                repository_commit || ':' ||
+                                                repository_tree_id || ':' ||
+                                                predecessor_to_continuation_diff_sha256 || ':' ||
+                                                source_manifest_sha256 || ':' ||
+                                                test_evidence_manifest_sha256 || ':' ||
+                                                evidence_sha256 || ':' ||
+                                                canonical_evidence_db_sha256,
+                                                'UTF8'),
+                                            'sha256'),
+                                        'hex'),
+                                    32));
+            END IF;
+        END
+        $restore_continuation_authorization_upgrade$;
+
         CREATE TABLE IF NOT EXISTS
             snapshot_generation_restore_attestations (
                 restore_operation_id           TEXT PRIMARY KEY
@@ -1556,6 +1792,7 @@ public static class SnapshotGenerationDropSchema
                 difference_count               INTEGER NOT NULL,
                 route_parity_algorithm_id      TEXT NOT NULL,
                 route_semantic_evidence_sha256 TEXT NOT NULL,
+                temporal_bridge_evidence_sha256 TEXT NOT NULL,
                 database_evidence              JSONB NOT NULL,
                 evidence_sha256                TEXT NOT NULL,
                 evidence_tool_sha256           TEXT NOT NULL,
@@ -1581,6 +1818,8 @@ public static class SnapshotGenerationDropSchema
                         AND candidate_route_manifest_sha256
                             ~ '^[0-9a-f]{64}$'
                         AND route_semantic_evidence_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND temporal_bridge_evidence_sha256
                             ~ '^[0-9a-f]{64}$'
                         AND evidence_sha256 ~ '^[0-9a-f]{64}$'
                         AND evidence_tool_sha256
@@ -1654,6 +1893,7 @@ public static class SnapshotGenerationDropSchema
                     'semantic_binary_parity',
                     'route_parity_algorithm_id',
                     'route_semantic_evidence_sha256',
+                    'temporal_bridge_evidence_sha256',
                     'evidence_tool_sha256',
                     'continuation_authorization_id'
                 ]) expected(column_name)
@@ -1677,6 +1917,11 @@ public static class SnapshotGenerationDropSchema
                 AND bool_and(
                     position(
                         'route_parity_algorithm_id'
+                        IN pg_get_constraintdef(
+                            constraint_row.oid)) > 0)
+                AND bool_and(
+                    position(
+                        'temporal_bridge_evidence_sha256'
                         IN pg_get_constraintdef(
                             constraint_row.oid)) > 0)
             INTO attestation_check_current
@@ -1729,6 +1974,9 @@ public static class SnapshotGenerationDropSchema
                         route_semantic_evidence_sha256
                             TEXT NOT NULL,
                     ADD COLUMN IF NOT EXISTS
+                        temporal_bridge_evidence_sha256
+                            TEXT NOT NULL,
+                    ADD COLUMN IF NOT EXISTS
                         evidence_tool_sha256
                             TEXT NOT NULL,
                     ADD COLUMN IF NOT EXISTS
@@ -1767,6 +2015,8 @@ public static class SnapshotGenerationDropSchema
                             AND candidate_route_manifest_sha256
                                 ~ '^[0-9a-f]{64}$'
                             AND route_semantic_evidence_sha256
+                                ~ '^[0-9a-f]{64}$'
+                            AND temporal_bridge_evidence_sha256
                                 ~ '^[0-9a-f]{64}$'
                             AND evidence_sha256
                                 ~ '^[0-9a-f]{64}$'
@@ -2522,6 +2772,43 @@ public static class SnapshotGenerationDropSchema
                     p_authorization_id
         $restore_tool_confirm$;
 
+        DROP FUNCTION IF EXISTS
+            fst_authorize_snapshot_generation_restore_continuation(
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                BIGINT,
+                BIGINT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                JSONB,
+                TEXT)
+            RESTRICT;
+
         CREATE OR REPLACE FUNCTION
             fst_authorize_snapshot_generation_restore_continuation(
                 p_restore_operation_id TEXT,
@@ -2539,6 +2826,13 @@ public static class SnapshotGenerationDropSchema
                 p_authorizer_binary_sha256 TEXT,
                 p_continuation_package_manifest_sha256 TEXT,
                 p_route_parity_preflight_sha256 TEXT,
+                p_stabilized_route_semantic_evidence_sha256 TEXT,
+                p_temporal_bridge_predicate_id TEXT,
+                p_temporal_bridge_evidence_sha256 TEXT,
+                p_restore_scope_isolation_evidence_sha256 TEXT,
+                p_service_runtime_isolation_evidence_sha256 TEXT,
+                p_historical_baseline_route_manifest_sha256 TEXT,
+                p_historical_baseline_route_checksums_sha256 TEXT,
                 p_baseline_route_manifest_sha256 TEXT,
                 p_baseline_route_checksums_sha256 TEXT,
                 p_candidate_route_manifest_sha256 TEXT,
@@ -2639,6 +2933,20 @@ public static class SnapshotGenerationDropSchema
                OR p_continuation_package_manifest_sha256
                     !~ '^[0-9a-f]{64}$'
                OR p_route_parity_preflight_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_stabilized_route_semantic_evidence_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_temporal_bridge_predicate_id <>
+                    'fst.shop-daily-inventory-rollover.v1'
+               OR p_temporal_bridge_evidence_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_restore_scope_isolation_evidence_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_service_runtime_isolation_evidence_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_historical_baseline_route_manifest_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_historical_baseline_route_checksums_sha256
                     !~ '^[0-9a-f]{64}$'
                OR p_baseline_route_manifest_sha256
                     !~ '^[0-9a-f]{64}$'
@@ -2908,7 +3216,7 @@ public static class SnapshotGenerationDropSchema
                             drop_row.durable_default_exclusion_constraint)
                OR default_row_count <> 0
                OR latest_drop_candidate_sha256 IS DISTINCT FROM
-                    p_baseline_route_manifest_sha256
+                    p_historical_baseline_route_manifest_sha256
                OR state_row.current_publication_id IS DISTINCT FROM
                     p_publication_id
                OR state_row.published_scrape_id IS DISTINCT FROM
@@ -2991,6 +3299,20 @@ public static class SnapshotGenerationDropSchema
                                 || ':' ||
                                 p_route_parity_preflight_sha256
                                 || ':' ||
+                                p_stabilized_route_semantic_evidence_sha256
+                                || ':' ||
+                                p_temporal_bridge_predicate_id
+                                || ':' ||
+                                p_temporal_bridge_evidence_sha256
+                                || ':' ||
+                                p_restore_scope_isolation_evidence_sha256
+                                || ':' ||
+                                p_service_runtime_isolation_evidence_sha256
+                                || ':' ||
+                                p_historical_baseline_route_manifest_sha256
+                                || ':' ||
+                                p_historical_baseline_route_checksums_sha256
+                                || ':' ||
                                 p_baseline_route_manifest_sha256
                                 || ':' ||
                                 p_baseline_route_checksums_sha256
@@ -3059,6 +3381,20 @@ public static class SnapshotGenerationDropSchema
                         p_continuation_package_manifest_sha256
                    AND existing.route_parity_preflight_sha256 =
                         p_route_parity_preflight_sha256
+                   AND existing.stabilized_route_semantic_evidence_sha256 =
+                        p_stabilized_route_semantic_evidence_sha256
+                   AND existing.temporal_bridge_predicate_id =
+                        p_temporal_bridge_predicate_id
+                   AND existing.temporal_bridge_evidence_sha256 =
+                        p_temporal_bridge_evidence_sha256
+                   AND existing.restore_scope_isolation_evidence_sha256 =
+                        p_restore_scope_isolation_evidence_sha256
+                   AND existing.service_runtime_isolation_evidence_sha256 =
+                        p_service_runtime_isolation_evidence_sha256
+                   AND existing.historical_baseline_route_manifest_sha256 =
+                        p_historical_baseline_route_manifest_sha256
+                   AND existing.historical_baseline_route_checksums_sha256 =
+                        p_historical_baseline_route_checksums_sha256
                    AND existing.baseline_route_manifest_sha256 =
                         p_baseline_route_manifest_sha256
                    AND existing.baseline_route_checksums_sha256 =
@@ -3145,6 +3481,13 @@ public static class SnapshotGenerationDropSchema
                     continuation_package_manifest_sha256,
                     route_parity_algorithm_id,
                     route_parity_preflight_sha256,
+                    stabilized_route_semantic_evidence_sha256,
+                    temporal_bridge_predicate_id,
+                    temporal_bridge_evidence_sha256,
+                    restore_scope_isolation_evidence_sha256,
+                    service_runtime_isolation_evidence_sha256,
+                    historical_baseline_route_manifest_sha256,
+                    historical_baseline_route_checksums_sha256,
                     baseline_route_manifest_sha256,
                     baseline_route_checksums_sha256,
                     candidate_route_manifest_sha256,
@@ -3188,6 +3531,13 @@ public static class SnapshotGenerationDropSchema
                 p_continuation_package_manifest_sha256,
                 'fst.route-parity.canonical-zip.v1',
                 p_route_parity_preflight_sha256,
+                p_stabilized_route_semantic_evidence_sha256,
+                p_temporal_bridge_predicate_id,
+                p_temporal_bridge_evidence_sha256,
+                p_restore_scope_isolation_evidence_sha256,
+                p_service_runtime_isolation_evidence_sha256,
+                p_historical_baseline_route_manifest_sha256,
+                p_historical_baseline_route_checksums_sha256,
                 p_baseline_route_manifest_sha256,
                 p_baseline_route_checksums_sha256,
                 p_candidate_route_manifest_sha256,
@@ -5593,6 +5943,22 @@ public static class SnapshotGenerationDropSchema
                 TEXT)
             RESTRICT;
 
+        DROP FUNCTION IF EXISTS
+            fst_record_snapshot_generation_restore_attestation(
+                TEXT,
+                BIGINT,
+                BIGINT,
+                INTEGER,
+                TEXT,
+                TEXT,
+                TEXT,
+                JSONB,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT)
+            RESTRICT;
+
         CREATE OR REPLACE FUNCTION
             fst_record_snapshot_generation_restore_attestation(
                 p_restore_operation_id TEXT,
@@ -5602,6 +5968,7 @@ public static class SnapshotGenerationDropSchema
                 p_baseline_route_manifest_sha256 TEXT,
                 p_candidate_route_manifest_sha256 TEXT,
                 p_route_semantic_evidence_sha256 TEXT,
+                p_temporal_bridge_evidence_sha256 TEXT,
                 p_database_evidence JSONB,
                 p_evidence_sha256 TEXT,
                 p_attested_by TEXT,
@@ -5648,6 +6015,8 @@ public static class SnapshotGenerationDropSchema
                OR p_candidate_route_manifest_sha256
                     !~ '^[0-9a-f]{64}$'
                OR p_route_semantic_evidence_sha256
+                    !~ '^[0-9a-f]{64}$'
+               OR p_temporal_bridge_evidence_sha256
                     !~ '^[0-9a-f]{64}$'
                OR p_evidence_sha256 !~ '^[0-9a-f]{64}$'
                OR p_evidence_tool_sha256
@@ -5696,8 +6065,10 @@ public static class SnapshotGenerationDropSchema
                     restore_row.executing_tool_sha256
               AND continuation_auth.recovery_bundle_manifest_sha256 =
                     restore_row.recovery_bundle_manifest_sha256
-              AND continuation_auth.route_parity_preflight_sha256 =
+              AND continuation_auth.stabilized_route_semantic_evidence_sha256 =
                     p_route_semantic_evidence_sha256
+              AND continuation_auth.temporal_bridge_evidence_sha256 =
+                    p_temporal_bridge_evidence_sha256
               AND continuation_auth.baseline_route_manifest_sha256 =
                     p_baseline_route_manifest_sha256
               AND continuation_auth.candidate_route_manifest_sha256 =
@@ -5722,6 +6093,8 @@ public static class SnapshotGenerationDropSchema
                         p_candidate_route_manifest_sha256
                   AND attestation.route_semantic_evidence_sha256 =
                         p_route_semantic_evidence_sha256
+                  AND attestation.temporal_bridge_evidence_sha256 =
+                        p_temporal_bridge_evidence_sha256
                   AND attestation.evidence_sha256 =
                         p_evidence_sha256
                   AND attestation.evidence_tool_sha256 =
@@ -5840,7 +6213,8 @@ public static class SnapshotGenerationDropSchema
                OR state_row.max_score_mutation_gate_token
                     IS NOT NULL
                OR latest_drop_candidate_sha256 IS NULL
-               OR p_baseline_route_manifest_sha256 <>
+               OR authorization_row
+                        .historical_baseline_route_manifest_sha256 <>
                     latest_drop_candidate_sha256
                OR EXISTS (
                     SELECT 1
@@ -5944,6 +6318,7 @@ public static class SnapshotGenerationDropSchema
                 difference_count,
                 route_parity_algorithm_id,
                 route_semantic_evidence_sha256,
+                temporal_bridge_evidence_sha256,
                 database_evidence,
                 evidence_sha256,
                 evidence_tool_sha256,
@@ -5962,6 +6337,7 @@ public static class SnapshotGenerationDropSchema
                 0,
                 'fst.route-parity.canonical-zip.v1',
                 p_route_semantic_evidence_sha256,
+                p_temporal_bridge_evidence_sha256,
                 p_database_evidence,
                 p_evidence_sha256,
                 p_evidence_tool_sha256,
@@ -6069,7 +6445,13 @@ public static class SnapshotGenerationDropSchema
               AND continuation_auth.predecessor_authorization_id =
                     restore_row.authorization_id
               AND continuation_auth.predecessor_restore_tool_sha256 =
-                    restore_row.executing_tool_sha256;
+                    restore_row.executing_tool_sha256
+              AND continuation_auth.temporal_bridge_evidence_sha256 =
+                    attestation_row.temporal_bridge_evidence_sha256
+              AND continuation_auth.baseline_route_manifest_sha256 =
+                    attestation_row.baseline_route_manifest_sha256
+              AND continuation_auth.candidate_route_manifest_sha256 =
+                    attestation_row.candidate_route_manifest_sha256;
             IF p_finalize_reference IN (
                     restore_row.restore_reference,
                     authorization_row.approval_reference)
@@ -6440,6 +6822,7 @@ public static class SnapshotGenerationDropSchema
                 BIGINT,
                 BIGINT,
                 INTEGER,
+                TEXT,
                 TEXT,
                 TEXT,
                 TEXT,

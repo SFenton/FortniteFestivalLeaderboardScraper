@@ -21,6 +21,13 @@ public static class RestoreContinuationContract
         "fst.snapshot-generation-restore-continuation-package.v1";
     public const string Scope =
         "confirm_attest_finalize";
+    public const string ServiceRuntimeIsolationToolId =
+        "fst.snapshot-generation-shop-runtime-isolation.v1";
+    public const string ServiceImageBuildEvidenceToolId =
+        "fst.snapshot-generation-service-image-build.v1";
+    public const string TemporalBridgePredicateId =
+        QuarantineEvidenceValidator
+            .ShopDailyInventoryRolloverPredicateId;
 
     public static string Sha256<T>(T value) =>
         Convert.ToHexString(
@@ -28,6 +35,25 @@ public static class RestoreContinuationContract
                     SnapshotGenerationCanonicalJson.Serialize(
                         value)))
             .ToLowerInvariant();
+
+    public static void ValidateSharedMiddleCapture(
+        ShopDailyInventoryRolloverEvidence
+            historicalBridge,
+        DetailedRouteParityEvidence stabilized)
+    {
+        if (historicalBridge.PublicationId !=
+                stabilized.Parity.PublicationId
+            || historicalBridge.PublishedScrapeId !=
+                stabilized.Parity.PublishedScrapeId
+            || historicalBridge
+                    .HistoricalCandidateManifestSha256 !=
+                stabilized.Parity
+                    .BaselineManifestSha256)
+        {
+            throw new InvalidDataException(
+                "Historical candidate is not the stabilized baseline.");
+        }
+    }
 
     public static string DeriveAuthorizationId(
         RestoreContinuationAuthorizationRequest request,
@@ -55,6 +81,13 @@ public static class RestoreContinuationContract
                             request.ContinuationPackageManifestSha256,
                             request.RouteParityAlgorithmId,
                             request.RouteParityPreflightSha256,
+                            request.StabilizedRouteSemanticEvidenceSha256,
+                            request.TemporalBridgePredicateId,
+                            request.TemporalBridgeEvidenceSha256,
+                            request.RestoreScopeIsolationEvidenceSha256,
+                            request.ServiceRuntimeIsolationEvidenceSha256,
+                            request.HistoricalBaselineRouteManifestSha256,
+                            request.HistoricalBaselineRouteChecksumsSha256,
                             request.BaselineRouteManifestSha256,
                             request.BaselineRouteChecksumsSha256,
                             request.CandidateRouteManifestSha256,
@@ -107,6 +140,15 @@ public sealed record RestoreContinuationPackageManifest(
     string TestEvidenceManifestSha256,
     string RouteParityAlgorithmId,
     string RouteParityPreflightSha256,
+    string StabilizedRouteSemanticEvidenceSha256,
+    string TemporalBridgePredicateId,
+    string TemporalBridgeEvidenceSha256,
+    string RestoreScopeIsolationEvidenceSha256,
+    string ServiceRuntimeIsolationEvidencePath,
+    string ServiceRuntimeIsolationEvidenceSha256,
+    string HistoricalBaselineRouteManifestPath,
+    string HistoricalBaselineRouteManifestSha256,
+    string HistoricalBaselineRouteChecksumsSha256,
     string BaselineRouteManifestPath,
     string BaselineRouteManifestSha256,
     string BaselineRouteChecksumsSha256,
@@ -134,6 +176,13 @@ public sealed record RestoreContinuationAuthorizationRequest(
     string ContinuationPackageManifestSha256,
     string RouteParityAlgorithmId,
     string RouteParityPreflightSha256,
+    string StabilizedRouteSemanticEvidenceSha256,
+    string TemporalBridgePredicateId,
+    string TemporalBridgeEvidenceSha256,
+    string RestoreScopeIsolationEvidenceSha256,
+    string ServiceRuntimeIsolationEvidenceSha256,
+    string HistoricalBaselineRouteManifestSha256,
+    string HistoricalBaselineRouteChecksumsSha256,
     string BaselineRouteManifestSha256,
     string BaselineRouteChecksumsSha256,
     string CandidateRouteManifestSha256,
@@ -175,6 +224,13 @@ public sealed record RestoreContinuationAuthorizationRecord(
     string ContinuationPackageManifestSha256,
     string RouteParityAlgorithmId,
     string RouteParityPreflightSha256,
+    string StabilizedRouteSemanticEvidenceSha256,
+    string TemporalBridgePredicateId,
+    string TemporalBridgeEvidenceSha256,
+    string RestoreScopeIsolationEvidenceSha256,
+    string ServiceRuntimeIsolationEvidenceSha256,
+    string HistoricalBaselineRouteManifestSha256,
+    string HistoricalBaselineRouteChecksumsSha256,
     string BaselineRouteManifestSha256,
     string BaselineRouteChecksumsSha256,
     string CandidateRouteManifestSha256,
@@ -227,8 +283,12 @@ public sealed record RestoreContinuationPreflightReport(
     string RouteParityAlgorithmId,
     string RouteParityReferenceSourceSha256,
     string EvidenceAssemblySha256,
-    DetailedRouteParityEvidence PostRestore,
-    DetailedRouteParityEvidence RepeatedPostRestore,
+    ShopDailyInventoryRolloverEvidence
+        HistoricalTemporalBridge,
+    DetailedRouteParityEvidence StabilizedParity,
+    RestoreScopeIsolationEvidence
+        RestoreScopeIsolation,
+    string ServiceRuntimeIsolationEvidenceSha256,
     string BandExportSemanticSha256,
     string PlayerExportSemanticSha256,
     string? ReportSha256 = null)
@@ -253,6 +313,8 @@ public sealed record RestoreContinuationCommandReport(
     string EvidenceToolSha256,
     JsonElement DatabaseEvidence,
     DetailedRouteParityEvidence? RouteParity = null,
+    ShopDailyInventoryRolloverEvidence?
+        HistoricalTemporalBridge = null,
     string? ReportSha256 = null)
 {
     public RestoreContinuationCommandReport Seal() =>
@@ -263,3 +325,82 @@ public sealed record RestoreContinuationCommandReport(
                     this with { ReportSha256 = null }),
         };
 }
+
+public sealed record RestoreScopeIsolationEvidence(
+    string RestoreOperationId,
+    string DropOperationId,
+    string RestorePlanDigest,
+    string RestorePlanFileSha256,
+    string RestoreReportSha256,
+    string ChildSchema,
+    string ChildRelation,
+    string Instrument,
+    long SnapshotId,
+    long RowCount,
+    string RowFingerprintSha256,
+    int SelectedTocEntryCount,
+    int ExecutedTocEntryCount,
+    string ExecutedTocEntriesSha256,
+    bool ExactTargetTableAndDataOnly,
+    bool RepositoryOwnedIndexesCreatedSeparately,
+    bool ItemShopStateOutsideRestoreScope,
+    string? EvidenceSha256 = null)
+{
+    public RestoreScopeIsolationEvidence Seal() =>
+        this with
+        {
+            EvidenceSha256 =
+                RestoreContinuationContract.Sha256(
+                    this with { EvidenceSha256 = null }),
+        };
+}
+
+public sealed record ServiceRuntimeSourceFile(
+    string Path,
+    string Sha256);
+
+public sealed record ServiceRuntimeIsolationEvidence(
+    int SchemaVersion,
+    string ToolId,
+    string Status,
+    DateTimeOffset CompletedAtUtc,
+    string HistoricalBaselineRouteManifestSha256,
+    string StabilizedBaselineRouteManifestSha256,
+    string HistoricalShopSourceRepositoryCommit,
+    string HistoricalServiceImageSha256,
+    string HistoricalServiceDllSha256,
+    string HistoricalBuildEvidenceSha256,
+    DateTimeOffset HistoricalServiceIdentityConfirmedAtUtc,
+    string StabilizedServiceImageSha256,
+    string StabilizedServiceDllSha256,
+    string StabilizedRepositoryCommit,
+    string StabilizedBuildEvidenceSha256,
+    DateTimeOffset StabilizedServiceIdentityConfirmedAtUtc,
+    IReadOnlyList<ServiceRuntimeSourceFile>
+        ShopSourceFiles,
+    bool RestoreWritesItemShopState,
+    bool ShopReadsLeaderboardSnapshotState,
+    string? EvidenceSha256 = null)
+{
+    public ServiceRuntimeIsolationEvidence Seal() =>
+        this with
+        {
+            EvidenceSha256 =
+                RestoreContinuationContract.Sha256(
+                    this with { EvidenceSha256 = null }),
+        };
+}
+
+public sealed record ServiceImageBuildEvidence(
+    int SchemaVersion,
+    string ToolId,
+    string Status,
+    string Role,
+    DateTimeOffset BuiltAtUtc,
+    string ImageSha256,
+    string ServiceDllSha256,
+    string RepositoryBaseCommit,
+    string? RepositoryCommit,
+    bool WorktreeClean,
+    string BuildRequestSha256,
+    string BuildResultSha256);

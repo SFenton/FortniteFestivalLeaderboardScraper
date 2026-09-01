@@ -904,11 +904,21 @@ C# canonical ZIP validator proves identical band/player export semantics.
 Post-restore acceptance is therefore a separate storage/control-plane tier.
 `snapshot_generation_restore_continuation_authorizations` immutably binds one
 restore row and predecessor restore-tool authorization to one
-continuation-only C# tool, evidence assembly, package, route pair, repository
-diff, and dual approval. Empty restore-attestation/finalization tables gain
-the continuation tool/authorization FKs; attestation also stores semantic
-binary parity, the fixed canonical-ZIP algorithm ID, and route semantic
-evidence hash. No column or update touches the committed restore row.
+continuation-only C# tool, evidence assembly, package, historical route
+baseline, stabilized route pair, restore-scope proof, service-runtime
+isolation evidence, repository diff, and dual approval. The historical
+post-DROP pair may differ only on `/api/shop`, and only when the fixed
+daily-inventory rollover validator proves the exact midnight transition from
+hashes, counts, and authenticated pre-/post-midnight `lastUpdated` values
+without persisting song identifiers. The two runtime identities are backed by
+separate immutable build records and identical reviewed shop-source hashes at
+the historical base, stabilized commit, and continuation tree. The stabilized
+post-restore pair still uses strict zero-difference 55-route parity. Empty
+restore-attestation/finalization tables gain the continuation
+tool/authorization FKs; attestation also stores semantic binary parity, the
+fixed canonical-ZIP algorithm ID, stabilized route semantic evidence hash,
+preflight file hash, and temporal bridge hash. No column or update touches the
+committed restore row.
 
 `FstSnapshotGenerationRestoreContinuation` exposes only confirm, attest, and
 finalize over direct Npgsql. It references the shared
@@ -917,8 +927,8 @@ finalize over direct Npgsql. It references the shared
 references immutable H5 and route evidence by hashes and contains no archive,
 route body, export workbook, Docker helper, or physical restore executable.
 Finalization requires the exact same continuation authorization recorded by
-attestation before atomically removing the mutation trigger and releasing the
-hold.
+attestation, including the same temporal-bridge hash, before atomically
+removing the mutation trigger and releasing the hold.
 
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the

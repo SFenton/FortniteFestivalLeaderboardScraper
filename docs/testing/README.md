@@ -288,11 +288,29 @@ idempotency, conflicting predecessor/tool/route/actor evidence, immutability,
 same-authorization attestation/finalization, rollback-preserved hold/trigger,
 and unknown-commit confirmation.
 
+Temporal-bridge tests synthesize the exact `117/100/100/17` midnight shop
+rotation without committing production response bodies. They require removed
+songs to equal the baseline `leavingTomorrow` set, unchanged overlaps,
+catalog-derived arrival/departure metadata and URLs, empty new-song state, one
+UTC midnight, a matching pre-/post-midnight `lastUpdated` transition, exactly
+one historical route difference, and a separately strict stabilized pair
+whose shop refresh timestamp is unchanged. Negative cases cover duplicate
+IDs, a second route difference, changed cardinality, unannounced departures,
+catalog or overlap drift, new leaving flags, refresh timestamps outside the
+boundary, and zero or multiple UTC-midnight boundaries. Build-evidence tests
+reject image and worktree-state tampering; shared-middle tests reject a
+historical candidate that is not the stabilized baseline.
+Stabilization tests also reject the same manifest, missing capture time, and
+reversed capture order. Package tamper coverage changes a valid build identity,
+recomputes the outer package manifest and checksum tree, and still requires
+runtime/build cross-link validation to reject it.
+
 The empty-only rolling migration test downgrades restore attestations and
 finalizations, restores their old 9- and 4-argument functions, initializes
-twice, and proves only the 12- and 6-argument authorization-aware signatures
-remain with stable OIDs and `PUBLIC` revoked. Nonempty legacy downstream
-evidence raises `55000` without adding columns.
+twice, and proves only the 13- and 6-argument authorization-aware signatures
+remain with stable OIDs and `PUBLIC` revoked. The continuation authorizer has
+one 40-argument signature. Nonempty legacy downstream evidence raises `55000`
+without adding columns.
 
 Python restore tests assert `attest` and `finalize` are absent from the parser,
 the old restore-attestation/finalization SQL function names do not occur in

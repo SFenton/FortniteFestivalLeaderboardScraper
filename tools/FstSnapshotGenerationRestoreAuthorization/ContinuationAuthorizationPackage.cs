@@ -19,6 +19,9 @@ public static class ContinuationAuthorizationPackage
             string baselineRouteManifestPath,
             string postRestoreRouteManifestPath,
             string candidateRouteManifestPath,
+            string serviceRuntimeIsolationEvidencePath,
+            string historicalServiceBuildEvidencePath,
+            string stabilizedServiceBuildEvidencePath,
             string predecessorToContinuationDiffPath,
             string sourceManifestPath,
             string testEvidenceManifestPath,
@@ -139,27 +142,53 @@ public static class ContinuationAuthorizationPackage
             postRestoreRouteManifestPath);
         ValidateCaptureChecksums(
             candidateRouteManifestPath);
-        var postRestore =
+        var historicalBridge =
             QuarantineEvidenceValidator
-                .ValidateDetailedRouteParity(
+                .ValidateShopDailyInventoryRolloverBridge(
                     baselineRouteManifestPath,
                     postRestoreRouteManifestPath);
-        var repeated =
+        var stabilized =
             QuarantineEvidenceValidator
                 .ValidateDetailedRouteParity(
-                    baselineRouteManifestPath,
+                    postRestoreRouteManifestPath,
                     candidateRouteManifestPath);
-        if (postRestore.Parity.PublicationId !=
-                repeated.Parity.PublicationId
-            || postRestore.Parity.PublishedScrapeId !=
-                repeated.Parity.PublishedScrapeId)
-        {
-            throw new InvalidDataException(
-                "Continuation route captures use different publications.");
-        }
-        var band = repeated.Routes.Single(
+        QuarantineEvidenceValidator
+            .ValidateStabilizedShopRefresh(
+                postRestoreRouteManifestPath,
+                candidateRouteManifestPath,
+                historicalBridge
+                    .StabilizedShopLastUpdatedUtc);
+        RestoreContinuationContract
+            .ValidateSharedMiddleCapture(
+                historicalBridge,
+                stabilized);
+        var restoreScope =
+            BuildRestoreScopeIsolationEvidence(
+                planRoot,
+                reportRoot,
+                restorePlanPath,
+                restoreReportPath);
+        var serviceRuntimeIsolationEvidenceBytes =
+            ReadRegularInputBytes(
+                serviceRuntimeIsolationEvidencePath);
+        var historicalServiceBuildEvidenceBytes =
+            ReadRegularInputBytes(
+                historicalServiceBuildEvidencePath);
+        var stabilizedServiceBuildEvidenceBytes =
+            ReadRegularInputBytes(
+                stabilizedServiceBuildEvidencePath);
+        var serviceRuntimeIsolation =
+            ValidateServiceRuntimeIsolationEvidence(
+                repository,
+                serviceRuntimeIsolationEvidenceBytes,
+                historicalServiceBuildEvidenceBytes,
+                stabilizedServiceBuildEvidenceBytes,
+                historicalBridge,
+                stabilized,
+                restoreScope);
+        var band = stabilized.Routes.Single(
             route => route.Name == "band-export");
-        var player = repeated.Routes.Single(
+        var player = stabilized.Routes.Single(
             route => route.Name == "player-export");
         var continuationOutput = Path.GetFullPath(
             outputPath);
@@ -267,6 +296,26 @@ public static class ContinuationAuthorizationPackage
                         continuationOutput,
                         item.Key));
             }
+            ContinuationPackage.WriteNewBytes(
+                Path.Combine(
+                    continuationOutput,
+                    "historical-service-build-evidence.json"),
+                historicalServiceBuildEvidenceBytes);
+            ContinuationPackage.WriteNewBytes(
+                Path.Combine(
+                    continuationOutput,
+                    "stabilized-service-build-evidence.json"),
+                stabilizedServiceBuildEvidenceBytes);
+            ContinuationPackage.WriteNewCanonical(
+                Path.Combine(
+                    continuationOutput,
+                    "service-runtime-isolation.json"),
+                serviceRuntimeIsolation);
+            var serviceRuntimeIsolationFileSha256 =
+                ContinuationPackage.Sha256File(
+                    Path.Combine(
+                        continuationOutput,
+                        "service-runtime-isolation.json"));
             var preflight =
                 new RestoreContinuationPreflightReport(
                     RestoreContinuationContract
@@ -278,8 +327,10 @@ public static class ContinuationAuthorizationPackage
                         .RouteParityAlgorithmId,
                     routeParityReferenceSourceSha256,
                     evidenceAssemblySha256,
-                    postRestore,
-                    repeated,
+                    historicalBridge,
+                    stabilized,
+                    restoreScope,
+                    serviceRuntimeIsolationFileSha256,
                     band.BaselineSemanticSha256,
                     player.BaselineSemanticSha256)
                 .Seal();
@@ -347,6 +398,17 @@ public static class ContinuationAuthorizationPackage
                         .RouteParityAlgorithmId,
                     ContinuationPackage.Sha256File(
                         preflightPath),
+                    stabilized
+                        .RouteSemanticEvidenceSha256,
+                    RestoreContinuationContract
+                        .TemporalBridgePredicateId,
+                    QuarantineJson.Sha256(
+                        historicalBridge),
+                    restoreScope.EvidenceSha256!,
+                    Path.Combine(
+                        continuationOutput,
+                        "service-runtime-isolation.json"),
+                    serviceRuntimeIsolationFileSha256,
                     Path.GetFullPath(
                         baselineRouteManifestPath),
                     ContinuationPackage.Sha256File(
@@ -357,6 +419,15 @@ public static class ContinuationAuthorizationPackage
                                 baselineRouteManifestPath)!,
                             "SHA256SUMS")),
                     Path.GetFullPath(
+                        postRestoreRouteManifestPath),
+                    ContinuationPackage.Sha256File(
+                        postRestoreRouteManifestPath),
+                    ContinuationPackage.Sha256File(
+                        Path.Combine(
+                            Path.GetDirectoryName(
+                                postRestoreRouteManifestPath)!,
+                            "SHA256SUMS")),
+                    Path.GetFullPath(
                         candidateRouteManifestPath),
                     ContinuationPackage.Sha256File(
                         candidateRouteManifestPath),
@@ -365,8 +436,8 @@ public static class ContinuationAuthorizationPackage
                             Path.GetDirectoryName(
                                 candidateRouteManifestPath)!,
                             "SHA256SUMS")),
-                    repeated.Parity.PublicationId,
-                    repeated.Parity.PublishedScrapeId,
+                    stabilized.Parity.PublicationId,
+                    stabilized.Parity.PublishedScrapeId,
                     files);
             var manifestPath = Path.Combine(
                 continuationOutput,
@@ -488,6 +559,508 @@ public static class ContinuationAuthorizationPackage
         ?? throw new InvalidDataException(
             $"{propertyName} is null.");
 
+    private static RestoreScopeIsolationEvidence
+        BuildRestoreScopeIsolationEvidence(
+            JsonElement plan,
+            JsonElement report,
+            string planPath,
+            string reportPath)
+    {
+        var target = plan.GetProperty("target");
+        var childSchema = RequireString(
+            target,
+            "childSchema");
+        var childRelation = RequireString(
+            target,
+            "childRelation");
+        var selected = plan
+            .GetProperty("selectedTocEntries")
+            .EnumerateArray()
+            .Select(item =>
+                item.GetString()
+                ?? throw new InvalidDataException(
+                    "Selected TOC entry is null."))
+            .ToArray();
+        var executed = plan
+            .GetProperty("executedTocEntries")
+            .EnumerateArray()
+            .Select(item =>
+                item.GetString()
+                ?? throw new InvalidDataException(
+                    "Executed TOC entry is null."))
+            .ToArray();
+        var tableToken =
+            $" TABLE {childSchema} {childRelation} ";
+        var tableDataToken =
+            $" TABLE DATA {childSchema} {childRelation} ";
+        var exactTarget =
+            executed.Length == 2
+            && executed.Count(entry =>
+                entry.Contains(
+                    tableToken,
+                    StringComparison.Ordinal)) == 1
+            && executed.Count(entry =>
+                entry.Contains(
+                    tableDataToken,
+                    StringComparison.Ordinal)) == 1
+            && executed.All(entry =>
+                entry.Contains(
+                    childRelation,
+                    StringComparison.Ordinal))
+            && executed.All(entry =>
+                !entry.Contains(
+                    "item_shop",
+                    StringComparison.OrdinalIgnoreCase)
+                && !entry.Contains(
+                    "song_metadata",
+                    StringComparison.OrdinalIgnoreCase));
+        var repositoryIndexes =
+            selected.Length == 4
+            && executed.Length == 2
+            && selected.All(entry =>
+                entry.Contains(
+                    childRelation,
+                    StringComparison.Ordinal))
+            && selected.Except(
+                    executed,
+                    StringComparer.Ordinal)
+                .Count() == 2;
+        var rowFingerprint =
+            report.GetProperty("rowFingerprint");
+        var rowCount =
+            target.GetProperty("rowCount")
+                .GetInt64();
+        var rowFingerprintSha256 =
+            RequireString(
+                target,
+                "rowFingerprintSha256");
+        if (!exactTarget
+            || !repositoryIndexes
+            || RequireString(
+                    report,
+                    "status") != "restored"
+            || RequireString(
+                    report,
+                    "commitOutcome") != "committed"
+            || rowFingerprint
+                    .GetProperty("rowCount")
+                    .GetInt64() != rowCount
+            || RequireString(
+                    rowFingerprint,
+                    "sha256") !=
+                rowFingerprintSha256)
+        {
+            throw new InvalidDataException(
+                "Restore evidence does not prove the exact isolated child write scope.");
+        }
+        return new RestoreScopeIsolationEvidence(
+            RequireString(
+                plan,
+                "restoreOperationId"),
+            RequireString(
+                plan,
+                "dropOperationId"),
+            RequireString(
+                plan,
+                "planDigest"),
+            ContinuationPackage.Sha256File(
+                planPath),
+            ContinuationPackage.Sha256File(
+                reportPath),
+            childSchema,
+            childRelation,
+            RequireString(
+                target,
+                "instrument"),
+            target.GetProperty("snapshotId")
+                .GetInt64(),
+            rowCount,
+            rowFingerprintSha256,
+            selected.Length,
+            executed.Length,
+            RestoreContinuationContract.Sha256(
+                executed),
+            exactTarget,
+            repositoryIndexes,
+            true).Seal();
+    }
+
+    private static ServiceRuntimeIsolationEvidence
+        ValidateServiceRuntimeIsolationEvidence(
+            string repository,
+            ReadOnlySpan<byte> evidenceBytes,
+            ReadOnlySpan<byte>
+                historicalBuildEvidenceBytes,
+            ReadOnlySpan<byte>
+                stabilizedBuildEvidenceBytes,
+            ShopDailyInventoryRolloverEvidence
+                historicalBridge,
+            DetailedRouteParityEvidence stabilized,
+            RestoreScopeIsolationEvidence
+                restoreScope)
+    {
+        var evidence =
+            ContinuationPackage.ReadStrict<
+                ServiceRuntimeIsolationEvidence>(
+                evidenceBytes);
+        var historicalBuild =
+            ContinuationPackage.ReadStrict<
+                ServiceImageBuildEvidence>(
+                historicalBuildEvidenceBytes);
+        var stabilizedBuild =
+            ContinuationPackage.ReadStrict<
+                ServiceImageBuildEvidence>(
+                stabilizedBuildEvidenceBytes);
+        var expectedPaths = new[]
+        {
+            "FSTService/Api/ShopCacheService.cs",
+            "FSTService/Api/SongEndpoints.cs",
+            "FSTService/Persistence/MetaDatabase.cs",
+            "FSTService/Scraping/ItemShopService.cs",
+            "FSTService/Scraping/ShopUrlHelper.cs",
+        };
+        var sources = evidence.ShopSourceFiles
+            .ToDictionary(
+                item => item.Path,
+                item => item.Sha256,
+                StringComparer.Ordinal);
+        if (evidence.SchemaVersion != 1
+            || evidence.ToolId !=
+                RestoreContinuationContract
+                    .ServiceRuntimeIsolationToolId
+            || evidence.Status != "accepted"
+            || evidence.CompletedAtUtc.Offset !=
+                TimeSpan.Zero
+            || evidence
+                    .HistoricalServiceIdentityConfirmedAtUtc
+                    .Offset != TimeSpan.Zero
+            || evidence
+                    .StabilizedServiceIdentityConfirmedAtUtc
+                    .Offset != TimeSpan.Zero
+            || (evidence.EvidenceSha256 is not null
+                && evidence.Seal().EvidenceSha256 !=
+                    evidence.EvidenceSha256)
+            || evidence
+                    .HistoricalBaselineRouteManifestSha256 !=
+                historicalBridge
+                    .HistoricalBaselineManifestSha256
+            || evidence
+                    .StabilizedBaselineRouteManifestSha256 !=
+                stabilized.Parity
+                    .BaselineManifestSha256
+            || evidence.HistoricalBuildEvidenceSha256 !=
+                ContinuationPackage.Sha256Bytes(
+                    historicalBuildEvidenceBytes)
+            || evidence.StabilizedBuildEvidenceSha256 !=
+                ContinuationPackage.Sha256Bytes(
+                    stabilizedBuildEvidenceBytes)
+            || evidence.RestoreWritesItemShopState !=
+                !restoreScope
+                    .ItemShopStateOutsideRestoreScope
+            || evidence.ShopReadsLeaderboardSnapshotState
+            || sources.Count != expectedPaths.Length
+            || !sources.Keys
+                .Order(StringComparer.Ordinal)
+                .SequenceEqual(
+                    expectedPaths.Order(
+                        StringComparer.Ordinal)))
+        {
+            throw new InvalidDataException(
+                "Service runtime isolation evidence is invalid.");
+        }
+        ValidateHex(
+            evidence
+                .HistoricalShopSourceRepositoryCommit,
+            40,
+            "Historical shop source repository commit");
+        ValidateHex(
+            evidence.HistoricalServiceImageSha256,
+            64,
+            "Historical service image");
+        ValidateHex(
+            evidence.HistoricalServiceDllSha256,
+            64,
+            "Historical service DLL");
+        ValidateHex(
+            evidence.HistoricalBuildEvidenceSha256,
+            64,
+            "Historical build evidence");
+        ValidateHex(
+            evidence.StabilizedServiceImageSha256,
+            64,
+            "Stabilized service image");
+        ValidateHex(
+            evidence.StabilizedServiceDllSha256,
+            64,
+            "Stabilized service DLL");
+        ValidateHex(
+            evidence.StabilizedRepositoryCommit,
+            40,
+            "Stabilized repository commit");
+        ValidateHex(
+            evidence.StabilizedBuildEvidenceSha256,
+            64,
+            "Stabilized build evidence");
+        ValidateServiceImageBuildEvidence(
+            historicalBuild,
+            "historical-baseline",
+            evidence.HistoricalServiceImageSha256,
+            evidence.HistoricalServiceDllSha256,
+            evidence
+                .HistoricalShopSourceRepositoryCommit,
+            expectedRepositoryCommit: null,
+            expectedWorktreeClean: false);
+        ValidateServiceImageBuildEvidence(
+            stabilizedBuild,
+            "stabilized",
+            evidence.StabilizedServiceImageSha256,
+            evidence.StabilizedServiceDllSha256,
+            evidence
+                .HistoricalShopSourceRepositoryCommit,
+            evidence.StabilizedRepositoryCommit,
+            expectedWorktreeClean: true);
+        if (historicalBuild.BuiltAtUtc >=
+                historicalBridge
+                    .HistoricalBaselineCapturedAtUtc
+            || evidence
+                    .HistoricalServiceIdentityConfirmedAtUtc >=
+                historicalBridge
+                    .HistoricalBaselineCapturedAtUtc
+            || evidence
+                    .HistoricalServiceIdentityConfirmedAtUtc <
+                historicalBuild.BuiltAtUtc
+            || stabilizedBuild.BuiltAtUtc >=
+                historicalBridge
+                    .HistoricalCandidateCapturedAtUtc
+            || evidence
+                    .StabilizedServiceIdentityConfirmedAtUtc >=
+                historicalBridge
+                    .HistoricalCandidateCapturedAtUtc
+            || evidence
+                    .StabilizedServiceIdentityConfirmedAtUtc <
+                stabilizedBuild.BuiltAtUtc)
+        {
+            throw new InvalidDataException(
+                "Service runtime timing does not bracket the authenticated captures.");
+        }
+        foreach (var path in expectedPaths)
+        {
+            var expected = sources[path];
+            if (expected !=
+                    ContinuationPackage.Sha256File(
+                        Path.Combine(
+                            repository,
+                            path))
+                || expected !=
+                    Sha256GitFile(
+                        repository,
+                        evidence
+                            .HistoricalShopSourceRepositoryCommit,
+                        path)
+                || expected !=
+                    Sha256GitFile(
+                        repository,
+                        evidence
+                            .StabilizedRepositoryCommit,
+                        path))
+            {
+                throw new InvalidDataException(
+                    "Shop source evidence differs from the reviewed repository.");
+            }
+        }
+        ValidateShopSourceIsolation(repository);
+        return evidence.Seal();
+    }
+
+    public static void ValidateServiceImageBuildEvidence(
+        ServiceImageBuildEvidence evidence,
+        string expectedRole,
+        string expectedImageSha256,
+        string expectedServiceDllSha256,
+        string expectedRepositoryBaseCommit,
+        string? expectedRepositoryCommit,
+        bool expectedWorktreeClean)
+    {
+        if (evidence.SchemaVersion != 1
+            || evidence.ToolId !=
+                RestoreContinuationContract
+                    .ServiceImageBuildEvidenceToolId
+            || evidence.Status != "accepted"
+            || evidence.Role != expectedRole
+            || evidence.ImageSha256 !=
+                expectedImageSha256
+            || evidence.ServiceDllSha256 !=
+                expectedServiceDllSha256
+            || evidence.RepositoryBaseCommit !=
+                expectedRepositoryBaseCommit
+            || evidence.RepositoryCommit !=
+                expectedRepositoryCommit
+            || evidence.WorktreeClean !=
+                expectedWorktreeClean
+            || evidence.BuiltAtUtc.Offset !=
+                TimeSpan.Zero)
+        {
+            throw new InvalidDataException(
+                "Service image build evidence differs from runtime identity.");
+        }
+        ValidateHex(
+            evidence.ImageSha256,
+            64,
+            "Service build image");
+        ValidateHex(
+            evidence.ServiceDllSha256,
+            64,
+            "Service build DLL");
+        ValidateHex(
+            evidence.RepositoryBaseCommit,
+            40,
+            "Service build base commit");
+        if (evidence.RepositoryCommit is not null)
+        {
+            ValidateHex(
+                evidence.RepositoryCommit,
+                40,
+                "Service build commit");
+        }
+        ValidateHex(
+            evidence.BuildRequestSha256,
+            64,
+            "Service build request evidence");
+        ValidateHex(
+            evidence.BuildResultSha256,
+            64,
+            "Service build result evidence");
+    }
+
+    private static string Sha256GitFile(
+        string repository,
+        string commit,
+        string path)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repository,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("show");
+        start.ArgumentList.Add($"{commit}:{path}");
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException(
+                "Git did not start.");
+        using var output = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(output);
+        var error =
+            process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Git failed: {error}");
+        }
+        return Convert.ToHexString(
+                System.Security.Cryptography.SHA256
+                    .HashData(output.ToArray()))
+            .ToLowerInvariant();
+    }
+
+    private static void ValidateShopSourceIsolation(
+        string repository)
+    {
+        var cache = File.ReadAllText(
+            Path.Combine(
+                repository,
+                "FSTService/Api/ShopCacheService.cs"));
+        var service = File.ReadAllText(
+            Path.Combine(
+                repository,
+                "FSTService/Scraping/ItemShopService.cs"));
+        var helper = File.ReadAllText(
+            Path.Combine(
+                repository,
+                "FSTService/Scraping/ShopUrlHelper.cs"));
+        foreach (var source in new[]
+                 {
+                     cache,
+                     service,
+                     helper,
+                 })
+        {
+            if (source.Contains(
+                    "leaderboard_entries_snapshot",
+                    StringComparison.OrdinalIgnoreCase)
+                || source.Contains(
+                    "SnapshotGeneration",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Shop runtime source depends on snapshot-generation state.");
+            }
+        }
+
+        var endpoints = File.ReadAllText(
+            Path.Combine(
+                repository,
+                "FSTService/Api/SongEndpoints.cs"));
+        var endpointStart = endpoints.IndexOf(
+            "app.MapGet(\"/api/shop\"",
+            StringComparison.Ordinal);
+        var endpointEnd = endpoints.IndexOf(
+            "});",
+            endpointStart,
+            StringComparison.Ordinal);
+        if (endpointStart < 0
+            || endpointEnd < endpointStart
+            || endpoints[endpointStart..endpointEnd]
+                .Contains(
+                    "snapshot",
+                    StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "Shop endpoint source is not independently bounded.");
+        }
+
+        var database = File.ReadAllText(
+            Path.Combine(
+                repository,
+                "FSTService/Persistence/MetaDatabase.cs"));
+        var databaseStart = database.IndexOf(
+            "public void SaveItemShopTracks",
+            StringComparison.Ordinal);
+        var loadStart = databaseStart < 0
+            ? -1
+            : database.IndexOf(
+                "public (HashSet<string> InShop",
+                databaseStart,
+                StringComparison.Ordinal);
+        var databaseEnd = loadStart < 0
+            ? -1
+            : database.IndexOf(
+                "\n    public ",
+                loadStart,
+                StringComparison.Ordinal);
+        if (databaseStart < 0
+            || loadStart < databaseStart
+            || databaseEnd < databaseStart)
+        {
+            throw new InvalidDataException(
+                "Item-shop persistence source is not independently bounded.");
+        }
+        var databaseScope =
+            database[databaseStart..databaseEnd];
+        if (!databaseScope.Contains(
+                "item_shop_tracks",
+                StringComparison.Ordinal)
+            || databaseScope.Contains(
+                "leaderboard_entries_snapshot",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "Item-shop persistence source depends on snapshot-generation state.");
+        }
+    }
+
     private static void ValidateRegularInput(
         string path)
     {
@@ -503,6 +1076,13 @@ public static class ContinuationAuthorizationPackage
             throw new InvalidDataException(
                 "Continuation inputs cannot be symbolic links.");
         }
+    }
+
+    private static byte[] ReadRegularInputBytes(
+        string path)
+    {
+        ValidateRegularInput(path);
+        return File.ReadAllBytes(path);
     }
 
     private static void ValidateCaptureChecksums(

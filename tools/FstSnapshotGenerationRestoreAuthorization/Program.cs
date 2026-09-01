@@ -86,6 +86,9 @@ public static class Program
                                 "baseline-route-manifest",
                                 "post-restore-route-manifest",
                                 "candidate-route-manifest",
+                                "service-runtime-isolation-evidence",
+                                "historical-service-build-evidence",
+                                "stabilized-service-build-evidence",
                                 "predecessor-to-continuation-diff",
                                 "source-manifest",
                                 "test-evidence-manifest",
@@ -456,6 +459,15 @@ public static class Program
                         "candidate-route-manifest")),
                 paths.ResolveInputFile(
                     options.Require(
+                        "service-runtime-isolation-evidence")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "historical-service-build-evidence")),
+                paths.ResolveInputFile(
+                    options.Require(
+                        "stabilized-service-build-evidence")),
+                paths.ResolveInputFile(
+                    options.Require(
                         "predecessor-to-continuation-diff")),
                 paths.ResolveInputFile(
                     options.Require(
@@ -564,6 +576,18 @@ public static class Program
                     packageManifestPath),
                 manifest.RouteParityAlgorithmId,
                 manifest.RouteParityPreflightSha256,
+                manifest
+                    .StabilizedRouteSemanticEvidenceSha256,
+                manifest.TemporalBridgePredicateId,
+                manifest.TemporalBridgeEvidenceSha256,
+                manifest
+                    .RestoreScopeIsolationEvidenceSha256,
+                manifest
+                    .ServiceRuntimeIsolationEvidenceSha256,
+                manifest
+                    .HistoricalBaselineRouteManifestSha256,
+                manifest
+                    .HistoricalBaselineRouteChecksumsSha256,
                 manifest.BaselineRouteManifestSha256,
                 manifest.BaselineRouteChecksumsSha256,
                 manifest.CandidateRouteManifestSha256,
@@ -775,6 +799,18 @@ public static class Program
             record.ContinuationPackageManifestSha256,
             record.RouteParityAlgorithmId,
             record.RouteParityPreflightSha256,
+            record
+                .StabilizedRouteSemanticEvidenceSha256,
+            record.TemporalBridgePredicateId,
+            record.TemporalBridgeEvidenceSha256,
+            record
+                .RestoreScopeIsolationEvidenceSha256,
+            record
+                .ServiceRuntimeIsolationEvidenceSha256,
+            record
+                .HistoricalBaselineRouteManifestSha256,
+            record
+                .HistoricalBaselineRouteChecksumsSha256,
             record.BaselineRouteManifestSha256,
             record.BaselineRouteChecksumsSha256,
             record.CandidateRouteManifestSha256,

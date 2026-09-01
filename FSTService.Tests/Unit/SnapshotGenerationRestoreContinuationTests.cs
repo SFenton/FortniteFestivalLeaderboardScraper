@@ -30,10 +30,20 @@ public sealed class SnapshotGenerationRestoreContinuationTests
                             new string('e', 64),
                     },
                     new string('f', 64));
+        var bridgeChanged =
+            RestoreContinuationContract
+                .DeriveAuthorizationId(
+                    request with
+                    {
+                        TemporalBridgeEvidenceSha256 =
+                            new string('d', 64),
+                    },
+                    new string('f', 64));
 
         Assert.Matches("^[0-9a-f]{32}$", first);
         Assert.Equal(first, repeated);
         Assert.NotEqual(first, changed);
+        Assert.NotEqual(first, bridgeChanged);
     }
 
     [Fact]
@@ -93,6 +103,9 @@ public sealed class SnapshotGenerationRestoreContinuationTests
                      "--instrument",
                      "--snapshot",
                      "authorize-continuation-tool",
+                     "allowed-route",
+                     "bridge-route",
+                     "temporal-route",
                  })
         {
             Assert.DoesNotContain(
@@ -135,6 +148,81 @@ public sealed class SnapshotGenerationRestoreContinuationTests
     }
 
     [Fact]
+    public void ServiceRuntimeIsolationEvidenceIsCanonicalAndSealed()
+    {
+        var evidence =
+            new ServiceRuntimeIsolationEvidence(
+                1,
+                RestoreContinuationContract
+                    .ServiceRuntimeIsolationToolId,
+                "accepted",
+                DateTimeOffset.Parse(
+                    "2026-09-01T04:00:00Z"),
+                new string('1', 64),
+                new string('2', 64),
+                new string('3', 40),
+                new string('4', 64),
+                new string('5', 64),
+                new string('6', 64),
+                DateTimeOffset.Parse(
+                    "2026-08-31T21:18:05Z"),
+                new string('7', 64),
+                new string('8', 64),
+                new string('9', 40),
+                new string('a', 64),
+                DateTimeOffset.Parse(
+                    "2026-09-01T00:03:47Z"),
+                [
+                    new ServiceRuntimeSourceFile(
+                        "FSTService/Api/ShopCacheService.cs",
+                        new string('b', 64)),
+                ],
+                false,
+                false);
+
+        var sealedEvidence = evidence.Seal();
+
+        Assert.Matches(
+            "^[0-9a-f]{64}$",
+            sealedEvidence.EvidenceSha256!);
+        Assert.Equal(
+            sealedEvidence,
+            sealedEvidence.Seal());
+    }
+
+    [Fact]
+    public void SharedMiddleCaptureMismatchIsRejected()
+    {
+        var bridge = TemporalBridge(
+            historicalCandidateSha256:
+                new string('1', 64));
+        var stabilized =
+            new DetailedRouteParityEvidence(
+                new RouteParityEvidence(
+                    "/evidence/post-restore/manifest.json",
+                    new string('2', 64),
+                    "/evidence/repeat/manifest.json",
+                    new string('3', 64),
+                    165,
+                    1336,
+                    55,
+                    true,
+                    true,
+                    0),
+                QuarantineEvidenceValidator
+                    .RouteParityAlgorithmId,
+                true,
+                new string('4', 64),
+                []);
+
+        Assert.Throws<InvalidDataException>(
+            () => RestoreContinuationContract
+                .ValidateSharedMiddleCapture(
+                    bridge,
+                    stabilized));
+    }
+
+    [Fact]
     public void ContinuationPackageRequiresExactReadOnlySet()
     {
         var root = Path.Combine(
@@ -144,7 +232,14 @@ public sealed class SnapshotGenerationRestoreContinuationTests
         try
         {
             foreach (var relative in
-                     ContinuationPackage.PayloadPaths)
+                     ContinuationPackage.PayloadPaths
+                         .Where(relative =>
+                             relative is not
+                                 "historical-service-build-evidence.json"
+                             and not
+                                 "stabilized-service-build-evidence.json"
+                             and not
+                                 "service-runtime-isolation.json"))
             {
                 var path = Path.Combine(root, relative);
                 Directory.CreateDirectory(
@@ -154,6 +249,92 @@ public sealed class SnapshotGenerationRestoreContinuationTests
                     relative,
                     new UTF8Encoding(false));
             }
+            var historicalBuild =
+                new ServiceImageBuildEvidence(
+                    1,
+                    RestoreContinuationContract
+                        .ServiceImageBuildEvidenceToolId,
+                    "accepted",
+                    "historical-baseline",
+                    DateTimeOffset.Parse(
+                        "2026-08-31T21:17:04Z"),
+                    new string('1', 64),
+                    new string('2', 64),
+                    new string('3', 40),
+                    null,
+                    false,
+                    new string('4', 64),
+                    new string('5', 64));
+            var stabilizedBuild =
+                new ServiceImageBuildEvidence(
+                    1,
+                    RestoreContinuationContract
+                        .ServiceImageBuildEvidenceToolId,
+                    "accepted",
+                    "stabilized",
+                    DateTimeOffset.Parse(
+                        "2026-09-01T00:02:42Z"),
+                    new string('6', 64),
+                    new string('7', 64),
+                    new string('3', 40),
+                    new string('8', 40),
+                    true,
+                    new string('9', 64),
+                    new string('a', 64));
+            ContinuationPackage.WriteNewCanonical(
+                Path.Combine(
+                    root,
+                    "historical-service-build-evidence.json"),
+                historicalBuild);
+            ContinuationPackage.WriteNewCanonical(
+                Path.Combine(
+                    root,
+                    "stabilized-service-build-evidence.json"),
+                stabilizedBuild);
+            var sourceFiles = Enumerable.Range(0, 5)
+                .Select(index =>
+                    new ServiceRuntimeSourceFile(
+                        $"source-{index}.cs",
+                        new string(
+                            (char)('b' + index),
+                            64)))
+                .ToArray();
+            var runtime =
+                new ServiceRuntimeIsolationEvidence(
+                    1,
+                    RestoreContinuationContract
+                        .ServiceRuntimeIsolationToolId,
+                    "accepted",
+                    DateTimeOffset.Parse(
+                        "2026-09-01T04:00:00Z"),
+                    new string('4', 64),
+                    new string('e', 64),
+                    new string('3', 40),
+                    historicalBuild.ImageSha256,
+                    historicalBuild.ServiceDllSha256,
+                    ContinuationPackage.Sha256File(
+                        Path.Combine(
+                            root,
+                            "historical-service-build-evidence.json")),
+                    DateTimeOffset.Parse(
+                        "2026-08-31T21:18:05Z"),
+                    stabilizedBuild.ImageSha256,
+                    stabilizedBuild.ServiceDllSha256,
+                    stabilizedBuild.RepositoryCommit!,
+                    ContinuationPackage.Sha256File(
+                        Path.Combine(
+                            root,
+                            "stabilized-service-build-evidence.json")),
+                    DateTimeOffset.Parse(
+                        "2026-09-01T00:03:47Z"),
+                    sourceFiles,
+                    false,
+                    false).Seal();
+            ContinuationPackage.WriteNewCanonical(
+                Path.Combine(
+                    root,
+                    "service-runtime-isolation.json"),
+                runtime);
             var files =
                 ContinuationPackage.PayloadPaths
                     .Select(relative =>
@@ -198,6 +379,53 @@ public sealed class SnapshotGenerationRestoreContinuationTests
             File.WriteAllText(
                 Path.Combine(root, "unexpected.txt"),
                 "unexpected");
+            MakeReadOnly(root);
+            Assert.Throws<InvalidDataException>(
+                () => ContinuationPackage
+                    .Validate(root));
+            MakeWritable(root);
+            File.Delete(
+                Path.Combine(
+                    root,
+                    "unexpected.txt"));
+            WriteCanonicalReplacing(
+                Path.Combine(
+                    root,
+                    "historical-service-build-evidence.json"),
+                historicalBuild with
+                {
+                    ImageSha256 =
+                        new string('f', 64),
+                });
+            var tamperedFiles =
+                ContinuationPackage.PayloadPaths
+                    .Select(relative =>
+                    {
+                        var path = Path.Combine(
+                            root,
+                            relative);
+                        return new
+                            RestoreContinuationPackageFile(
+                                relative,
+                                ContinuationPackage
+                                    .Sha256File(path),
+                                new FileInfo(path).Length);
+                    })
+                    .ToArray();
+            WriteCanonicalReplacing(
+                Path.Combine(
+                    root,
+                    "continuation-manifest.json"),
+                manifest with
+                {
+                    Files = tamperedFiles,
+                });
+            File.WriteAllText(
+                Path.Combine(root, "SHA256SUMS"),
+                string.Concat(
+                    paths.Select(relative =>
+                        $"{ContinuationPackage.Sha256File(Path.Combine(root, relative))}  {relative}\n")),
+                new UTF8Encoding(false));
             MakeReadOnly(root);
             Assert.Throws<InvalidDataException>(
                 () => ContinuationPackage
@@ -275,6 +503,14 @@ public sealed class SnapshotGenerationRestoreContinuationTests
             QuarantineEvidenceValidator
                 .RouteParityAlgorithmId,
             new string('f', 64),
+            new string('8', 64),
+            RestoreContinuationContract
+                .TemporalBridgePredicateId,
+            new string('9', 64),
+            new string('a', 64),
+            new string('b', 64),
+            new string('c', 64),
+            new string('d', 64),
             new string('0', 64),
             new string('1', 64),
             new string('2', 64),
@@ -294,6 +530,54 @@ public sealed class SnapshotGenerationRestoreContinuationTests
             JsonDocument.Parse(
                 """{"validated":true}""")
                 .RootElement.Clone());
+
+    private static ShopDailyInventoryRolloverEvidence
+        TemporalBridge(
+            string historicalCandidateSha256) =>
+        new(
+            RestoreContinuationContract
+                .TemporalBridgePredicateId,
+            "/evidence/post-drop/manifest.json",
+            new string('0', 64),
+            "/evidence/post-restore/manifest.json",
+            historicalCandidateSha256,
+            DateTimeOffset.Parse(
+                "2026-08-31T21:20:46Z"),
+            DateTimeOffset.Parse(
+                "2026-09-01T01:31:36Z"),
+            DateTimeOffset.Parse(
+                "2026-08-31T21:18:02Z"),
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z"),
+            165,
+            1336,
+            55,
+            1,
+            "shop:semantic-json",
+            new string('5', 64),
+            new string('6', 64),
+            new string('7', 64),
+            new string('8', 64),
+            new string('9', 64),
+            new string('a', 64),
+            new string('b', 64),
+            new string('c', 64),
+            new string('d', 64),
+            117,
+            117,
+            100,
+            100,
+            17,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            710,
+            217,
+            0,
+            0);
 
     private static RestoreContinuationPackageManifest
         Manifest(
@@ -349,6 +633,19 @@ public sealed class SnapshotGenerationRestoreContinuationTests
                 file.Path ==
                 "route-parity-preflight.json")
                 .Sha256,
+            new string('1', 64),
+            RestoreContinuationContract
+                .TemporalBridgePredicateId,
+            new string('2', 64),
+            new string('3', 64),
+            "/evidence/continuation-package/service-runtime-isolation.json",
+            files.Single(file =>
+                file.Path ==
+                "service-runtime-isolation.json")
+                .Sha256,
+            "/evidence/routes-post-drop/manifest.json",
+            new string('4', 64),
+            new string('5', 64),
             "/evidence/routes-post-drop/manifest.json",
             new string('e', 64),
             new string('f', 64),
@@ -401,5 +698,18 @@ public sealed class SnapshotGenerationRestoreContinuationTests
                 UnixFileMode.UserRead
                 | UnixFileMode.UserWrite);
         }
+    }
+
+    private static void WriteCanonicalReplacing<T>(
+        string path,
+        T value)
+    {
+        var canonical =
+            QuarantineJson.Canonical(value);
+        var bytes = new byte[
+            canonical.Length + 1];
+        canonical.CopyTo(bytes, 0);
+        bytes[^1] = (byte)'\n';
+        File.WriteAllBytes(path, bytes);
     }
 }

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using FstSnapshotGenerationDrop;
 using FstSnapshotGenerationRestoreAuthorization;
+using FstSnapshotGenerationRestoreContinuation;
 
 namespace FSTService.Tests.Unit;
 
@@ -140,6 +141,65 @@ public sealed class SnapshotGenerationRestoreAuthorizationTests
             "authorize-repair-tool",
             restoreSource,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ServiceBuildEvidenceRejectsIdentityTamper()
+    {
+        var evidence =
+            new ServiceImageBuildEvidence(
+                1,
+                RestoreContinuationContract
+                    .ServiceImageBuildEvidenceToolId,
+                "accepted",
+                "stabilized",
+                DateTimeOffset.Parse(
+                    "2026-09-01T00:02:42Z"),
+                new string('1', 64),
+                new string('2', 64),
+                new string('3', 40),
+                new string('4', 40),
+                true,
+                new string('5', 64),
+                new string('6', 64));
+
+        ContinuationAuthorizationPackage
+            .ValidateServiceImageBuildEvidence(
+                evidence,
+                "stabilized",
+                new string('1', 64),
+                new string('2', 64),
+                new string('3', 40),
+                new string('4', 40),
+                true);
+
+        Assert.Throws<InvalidDataException>(
+            () => ContinuationAuthorizationPackage
+                .ValidateServiceImageBuildEvidence(
+                    evidence with
+                    {
+                        ImageSha256 =
+                            new string('7', 64),
+                    },
+                    "stabilized",
+                    new string('1', 64),
+                    new string('2', 64),
+                    new string('3', 40),
+                    new string('4', 40),
+                    true));
+        Assert.Throws<InvalidDataException>(
+            () => ContinuationAuthorizationPackage
+                .ValidateServiceImageBuildEvidence(
+                    evidence with
+                    {
+                        WorktreeClean = false,
+                    },
+                    "stabilized",
+                    new string('1', 64),
+                    new string('2', 64),
+                    new string('3', 40),
+                    new string('4', 40),
+                    true));
     }
 
     [Fact]
