@@ -250,10 +250,19 @@ Repair authorization tests cover deterministic IDs, immutable/idempotent
 authorization, conflicting evidence, wrong pin/actor/state/fence/hold,
 tool-only package exact-set enforcement, empty restore-table migration with a
 committed DROP, nonempty fail-closed behavior, pinned restore compatibility,
-replacement rejection without authorization, exact H3 SQL consumption, and
+replacement rejection without authorization, exact executing-tool SQL
+consumption, a second authorization for a distinct replacement hash, and
 authorized attestation/finalization. Python coverage exercises both pinned and
-authorized shared resolvers and verifies `restore.py` has no authorization
-command.
+authorized shared resolvers, verifies `restore.py` has no authorization
+command, and rejects the reserved `authorization` SQL alias.
+
+A PostgreSQL-backed regression seeds a committed disposable DROP and
+authorization, asks the actual H4 Python module to emit its shared lookup SQL,
+then executes those exact bytes through PostgreSQL and verifies the returned
+authorization/drop/plan identity. Because plan builds through the resolver and
+restore, confirm, attest, and finalize all validate the same digest-covered
+plan through that resolver, this covers the lookup used by all five commands
+without a mocked SQL parser.
 
 A downgrade/upgrade regression creates both the observed live 13-argument and
 intermediate 16-argument restore overloads, reruns initialization twice, and
@@ -264,7 +273,8 @@ recomputation, and content-tamper rejection. SHA-pinned deterministic
 gzip/base64 fixtures contain the exact committed live plan/report bytes;
 their safety manifest records zero credential, account-ID-key, connection,
 email, or private-endpoint findings, and proves the old digest
-`2536d932...aad5a` fails while H3 validates `fa45ca20...d5dc` /
+`2536d932...aad5a` fails while the current validator authenticates
+`fa45ca20...d5dc` /
 `333ba4b9...c709`.
 
 The Python tests authenticate the exact four child TOC entries while proving

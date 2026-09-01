@@ -63,6 +63,12 @@ overloads before creating the new signature. Authorization identity is
 derived from both the
 client canonical digest and an independently computed PostgreSQL JSONB digest
 plus the complete substantive provenance chain.
+One shared authorization resolver serves plan, restore, confirm, attest, and
+finalize. Its generated SQL uses the explicit `auth_row` table alias. The
+first authorized H3 plan lookup failed before output or mutation because the
+former alias `authorization` is a PostgreSQL keyword in that context. The H3
+authorization remains immutable and unused; H4 requires a separate package
+and authorization for the same DROP. No schema change is required.
 
 Quarantine structurally classifies the existing PK and score indexes and
 renames those same OIDs to

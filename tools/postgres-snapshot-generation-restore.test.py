@@ -1096,6 +1096,34 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
                 "revalidate_restore_tool_authorization("),
             3,
         )
+        self.assertIn(
+            "sql = restore_tool_authorization_lookup_sql(",
+            source,
+        )
+        self.assertNotIn(
+            "snapshot_generation_restore_tool_authorizations\n"
+            "                authorization",
+            source,
+        )
+
+    def test_authorization_lookup_uses_safe_postgres_alias(self):
+        sql = tool.restore_tool_authorization_lookup_sql(
+            {
+                "dropOperationId": "1" * 32,
+                "planDigest": "2" * 64,
+            },
+            "3" * 32,
+        )
+        self.assertIn(
+            "snapshot_generation_restore_tool_authorizations"
+            "\n                auth_row",
+            sql,
+        )
+        self.assertIn(
+            "auth_row.authorization_id",
+            sql,
+        )
+        self.assertNotIn("authorization.", sql)
 
     def test_actor_and_reference_validation_is_strict(self):
         self.assertEqual(

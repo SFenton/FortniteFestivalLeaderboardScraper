@@ -1054,6 +1054,127 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
                 () => database.AuthorizeAsync(
                     changedContent));
         Assert.Equal("55000", contentError.SqlState);
+        var nextTool = request with
+        {
+            AuthorizedRestoreToolSha256 =
+                new string('9', 64),
+            RepairPackageManifestSha256 =
+                new string('a', 64),
+            BaseToFinalDiffSha256 =
+                new string('b', 64),
+            ReasonText =
+                "Reviewed replacement after failed H3 planning",
+            CanonicalEvidence =
+                JsonDocument.Parse(
+                    """
+                    {
+                      "packageValidated": true,
+                      "toolGeneration": "H4"
+                    }
+                    """).RootElement.Clone(),
+        };
+        var nextAuthorization =
+            await database.AuthorizeAsync(nextTool);
+        Assert.NotEqual(
+            first.AuthorizationId,
+            nextAuthorization.AuthorizationId);
+        Assert.Equal(
+            nextTool.AuthorizedRestoreToolSha256,
+            nextAuthorization.AuthorizedRestoreToolSha256);
+        Assert.Equal(
+            2,
+            Scalar<int>(
+                """
+                SELECT COUNT(*)::INTEGER
+                FROM
+                    snapshot_generation_restore_tool_authorizations
+                """));
+    }
+
+    [Fact]
+    public async Task PythonAuthorizationLookupSqlExecutesAgainstPostgres()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _fixture.DataSource);
+        var identity = SeedAcceptedCandidate();
+        ExecuteScalar<string>(
+            QuarantineSql,
+            command => ConfigureQuarantine(
+                command,
+                identity,
+                expectedRowCount: 1));
+        SeedDropPrerequisites();
+        ExecuteScalar<string>(
+            DropSql,
+            command => ConfigureDrop(command, identity));
+        var request = BuildAuthorizationRequest();
+        await using var database =
+            AuthorizationDatabase.FromConnectionString(
+                _fixture.DataSource.ConnectionString);
+        var authorization =
+            await database.AuthorizeAsync(request);
+        var repository = FindRepositoryRoot();
+        var start = new ProcessStartInfo("python3")
+        {
+            WorkingDirectory = repository,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.Environment[
+            "PYTHONDONTWRITEBYTECODE"] = "1";
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add(
+            """
+            import importlib.util
+            import sys
+            spec = importlib.util.spec_from_file_location(
+                "restore_tool", sys.argv[1])
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            print(module.restore_tool_authorization_lookup_sql(
+                {
+                    "dropOperationId": sys.argv[2],
+                    "planDigest": sys.argv[3],
+                },
+                sys.argv[4]))
+            """);
+        start.ArgumentList.Add(
+            Path.Combine(
+                repository,
+                "tools",
+                "postgres-snapshot-generation-restore.py"));
+        start.ArgumentList.Add(request.DropOperationId);
+        start.ArgumentList.Add(request.DropPlanDigest);
+        start.ArgumentList.Add(
+            authorization.AuthorizationId);
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException(
+                "Python authorization SQL generator did not start.");
+        var sql =
+            await process.StandardOutput.ReadToEndAsync();
+        var error =
+            await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, error);
+
+        var result = ExecuteScalar<string>(sql);
+        using var document = JsonDocument.Parse(result);
+        Assert.Equal(
+            authorization.AuthorizationId,
+            document.RootElement
+                .GetProperty("authorizationId")
+                .GetString());
+        Assert.Equal(
+            request.DropOperationId,
+            document.RootElement
+                .GetProperty("dropOperationId")
+                .GetString());
+        Assert.Equal(
+            request.DropPlanDigest,
+            document.RootElement
+                .GetProperty("dropPlanDigest")
+                .GetString());
     }
 
     [Theory]

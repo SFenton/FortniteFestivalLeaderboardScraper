@@ -300,6 +300,14 @@ attach, re-read the same authorization and committed DROP. Authorization age
 only warns; it never expires and cannot strand confirm/attest/finalize after a
 restore row commits. Mandatory restore remains required before canary
 acceptance.
+
+The immutable H3 authorization whose first live plan lookup failed on the
+reserved SQL alias `authorization` is historical evidence, not permission to
+run H4. The failure occurred before plan/list output and before any restore
+row or mutation. Prepare and review a new H4 package, insert and confirm a new
+exact-DROP authorization, then use that authorization ID consistently through
+plan, restore, confirm, attest, and finalize. The alias-only correction uses
+`auth_row` and requires no production schema migration.
 Before deploying, verify initialization removes both known old restore
 overloads (the observed live 13-argument OID and intermediate 16-argument
 shape) and leaves only the 21-argument function. Any additional overload is a

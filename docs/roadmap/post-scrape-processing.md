@@ -79,8 +79,9 @@ update_triggers:
   Restore planning then failed before output/mutation on non-authoritative
   Python reserialization. The corrective branch now implements immutable
   exact-DROP tool authorization and a tool-only repair package. Final
-  H3/package review, live authorization, mandatory restore, and confirmation
-  evidence remain.
+  H3 was authorized, but its read-only plan lookup failed before output or
+  mutation on a reserved PostgreSQL alias. H4/package review, a new exact-DROP
+  authorization, mandatory restore, and confirmation evidence remain.
   Sparse compaction remains a separate unresolved iteration.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
@@ -689,9 +690,10 @@ snapshot `1314`. The separate no-Docker-socket quarantine/reattach executor is
 implemented and live-accepted after a 452-second soak and exact reattach.
 Current unresolved work is live acceptance of the implemented drop tier:
 
-- build/review the final H3, authorizer, source/diff/test manifests, and
-  tool-only package; deploy the additive authorization/empty-restore-table
-  schema and confirm the exact immutable authorization;
+- commit/review H4, rebuild the authorizer and source/diff/test manifests, and
+  prepare a new tool-only package; preserve the unused immutable H3
+  authorization and confirm a separate exact-DROP H4 authorization (no schema
+  migration is required);
 - execute the mandatory collision-safe logical restore under current
   live-safety approval, then collect route/health/topology and later
   confirmation evidence before promotion;
@@ -880,6 +882,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
   disposable drill are accepted. DROP operation
   `333ba4b9fb69dbc098d127f0008ec709` is committed; mandatory authenticated
   logical restore and confirmation remain. The corrective branch now carries
-  separate immutable tool authorization and a nonduplicating repair package;
-  live H3/package authorization has not yet been performed.
+  separate immutable tool authorization and a nonduplicating repair package.
+  H3 authorization exists but its plan lookup failed read-only on a reserved
+  SQL alias; H4 package preparation, separate authorization, and mandatory
+  restore remain.
   Automatic retention is still a later parity- and capacity-gated task.

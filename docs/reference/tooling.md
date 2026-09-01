@@ -528,7 +528,8 @@ the trigger and releases the hold atomically.
 prebuilt .NET executable with only `prepare-repair-package`,
 `authorize-repair-tool`, and `confirm-repair-tool`. It has no Docker,
 restore, object-target, or arbitrary SQL argument. The tool-only repair
-package exact-set binds the old pin, reviewed validator base, final H3,
+package exact-set binds the old pin, reviewed validator base, final executing
+tool,
 byte-identical archive helper, authorizer binary, source tree/diffs, tests,
 original plan/report, and immutable bundle manifest. `restore.py` exposes no
 authorization command and can consume only an explicit database authorization
@@ -537,6 +538,12 @@ The rolling schema removes the observed 13-argument live and intermediate
 16-argument restore overloads before installing the 21-argument signature.
 Authorization reports expose both the client evidence hash and the
 independently computed database JSONB hash.
+
+The shared authorization resolver emits one lookup query for plan, restore,
+confirm, attest, and finalize. Its table alias is the explicit non-keyword
+`auth_row`; never use `authorization` as a PostgreSQL alias. H3 remains
+historical failed-plan evidence, while H4 needs a new package and immutable
+authorization. The correction changes no schema or command surface.
 
 DROP plan/report validation reads the original C# canonical UTF-8 bytes.
 Python object reserialization is not authoritative. The scanner requires

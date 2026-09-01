@@ -871,6 +871,16 @@ Pinned restores require no authorization; replacement restores require the
 exact row at plan, load, and attach boundaries. No authorization check changes
 row, route, TOC, catalog, capacity, index, or topology validation.
 
+The first authorized H3 plan lookup failed read-only because its generated SQL
+used PostgreSQL keyword `authorization` as a table alias. It created no
+restore plan, list, or database row. That authorization remains immutable and
+unused. H4 uses the explicit `auth_row` alias through the one shared resolver
+used by plan, restore, confirm, attest, and finalize. A PostgreSQL-backed test
+executes that exact generated query, and the existing schema permits a second
+authorization for the same DROP when the executing-tool hash differs and no
+restore has consumed either authorization. This correction needs no schema
+change.
+
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the
 21-argument authorization-aware signature. The authorization row stores both

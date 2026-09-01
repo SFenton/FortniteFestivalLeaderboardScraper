@@ -54,6 +54,13 @@ reattach. The first restore-plan attempt performed no mutation and emitted no
 plan/bundle output because Python incorrectly reserialized the parsed C# plan
 and calculated digest
 `2536d932d3c0009eb748354f08d221f6a87f9dc49b5529cdb8a932800baaad5a`.
+The reviewed H3 validator was then authorized for the exact DROP, but its
+first live plan lookup also failed before creating a plan, restore list, or
+restore row: the generated PostgreSQL query used reserved word
+`authorization` as a table alias. Preserve that immutable unused H3
+authorization (`5e807623...`) as failed-plan evidence. H4 changes only the
+lookup alias to `auth_row`; it requires a separately prepared package and a
+new authorization for the same DROP. No database schema migration is needed.
 
 ## Boundaries
 
@@ -414,7 +421,7 @@ copied byte-for-byte from the original bundle, source/diff/test evidence, its
 repair manifest, and `SHA256SUMS`. It contains no archive, TOC, catalog,
 proof, credential, or copy of the original recovery bundle.
 Preparation refuses a dirty or uncommitted repository so the recorded commit,
-tree ID, source manifest, final H3, and reviewed diffs describe one exact
+tree ID, source manifest, final replacement tool, and reviewed diffs describe one exact
 source state.
 
 After the post-DROP soak is accepted, authorize with distinct operator and
@@ -461,7 +468,8 @@ Restore planning requires:
 ```
 
 The original bundle tool must still equal the old pin; the executing tool must
-equal the authorized final H3; the archive helper must match both packages.
+equal the authorized final replacement hash; the archive helper must match
+both packages.
 The authorization is re-read during planning, immediately before
 `pg_restore`, and immediately before SQL attach. The immutable restore row
 stores pinned/executing hashes and the consumed authorization FK.
@@ -469,12 +477,16 @@ stores pinned/executing hashes and the consumed authorization FK.
 Current local corrective build identities, not yet live-authorized:
 
 - validator base: `acb358604d9f642da3d4809581328f76118cb912c32765353b8594cc68a1522d`;
-- final H3 after DB-verifiable authorization evidence:
+- historical H3 whose immutable authorization failed during read-only
+  planning:
   `032a86272bdcf0e2586376d3f34f1fb5b89b77b2fb904c966aebc6eec97eff91`;
+- corrective H4 with the PostgreSQL-safe `auth_row` lookup:
+  `297a8118c2ad9e62cb12d1dccc62ee81a5b57ea57885329b365b6ac6bf1e62dd`;
 - original/final archive helper:
   `f1d9f9169169d60ff16b703fce7dca79784fc50fcf211374e1a63e46c08c3eeb`;
-- authorizer DLL:
-  `77e182da517072f40910fb17cd36b35974849c18b6de5819ada0b2ab81b9b4ed`.
+- current uncommitted validation-build authorizer DLL:
+  `2a76ca7501f34b06ab94eba5515fa65cf0d81bd045f3d90933c2f337b7961c18`.
+  Rebuild and repin it from the final clean commit before package preparation.
 
 Generate a restore plan from the committed drop and pinned bundle:
 

@@ -640,8 +640,7 @@ def validate_repair_package(
     return root, manifest
 
 
-def read_restore_tool_authorization(
-    args,
+def restore_tool_authorization_lookup_sql(
     drop_plan,
     authorization_id,
 ):
@@ -651,62 +650,73 @@ def read_restore_tool_authorization(
         raise RestoreError(
             "restore-tool authorization ID is invalid"
         )
-    sql = f"""
+    return f"""
         SELECT json_build_object(
             'authorizationId',
-                authorization.authorization_id,
+                auth_row.authorization_id,
             'dropOperationId',
-                authorization.drop_operation_id,
+                auth_row.drop_operation_id,
             'dropPlanDigest',
-                authorization.drop_plan_digest,
+                auth_row.drop_plan_digest,
             'originalBundleManifestSha256',
-                authorization.original_bundle_manifest_sha256,
+                auth_row.original_bundle_manifest_sha256,
             'pinnedRestoreToolSha256',
-                authorization.pinned_restore_tool_sha256,
+                auth_row.pinned_restore_tool_sha256,
             'validatorBaseToolSha256',
-                authorization.validator_base_tool_sha256,
+                auth_row.validator_base_tool_sha256,
             'authorizedRestoreToolSha256',
-                authorization.authorized_restore_tool_sha256,
+                auth_row.authorized_restore_tool_sha256,
             'authorizedArchiveHelperSha256',
-                authorization.authorized_archive_helper_sha256,
+                auth_row.authorized_archive_helper_sha256,
             'authorizerBinarySha256',
-                authorization.authorizer_binary_sha256,
+                auth_row.authorizer_binary_sha256,
             'repairPackageManifestSha256',
-                authorization.repair_package_manifest_sha256,
+                auth_row.repair_package_manifest_sha256,
             'repositoryCommit',
-                authorization.repository_commit,
+                auth_row.repository_commit,
             'repositoryTreeId',
-                authorization.repository_tree_id,
+                auth_row.repository_tree_id,
             'pinnedToBaseDiffSha256',
-                authorization.pinned_to_base_diff_sha256,
+                auth_row.pinned_to_base_diff_sha256,
             'baseToFinalDiffSha256',
-                authorization.base_to_final_diff_sha256,
+                auth_row.base_to_final_diff_sha256,
             'sourceManifestSha256',
-                authorization.source_manifest_sha256,
+                auth_row.source_manifest_sha256,
             'testEvidenceManifestSha256',
-                authorization.test_evidence_manifest_sha256,
-            'reasonCode', authorization.reason_code,
-            'reasonText', authorization.reason_text,
-            'approvedBy', authorization.approved_by,
-            'reviewedBy', authorization.reviewed_by,
+                auth_row.test_evidence_manifest_sha256,
+            'reasonCode', auth_row.reason_code,
+            'reasonText', auth_row.reason_text,
+            'approvedBy', auth_row.approved_by,
+            'reviewedBy', auth_row.reviewed_by,
             'approvalReference',
-                authorization.approval_reference,
+                auth_row.approval_reference,
             'evidenceSha256',
-                authorization.evidence_sha256,
+                auth_row.evidence_sha256,
             'canonicalEvidenceDbSha256',
-                authorization.canonical_evidence_db_sha256,
+                auth_row.canonical_evidence_db_sha256,
             'authorizedAt',
-                authorization.authorized_at)
+                auth_row.authorized_at)
         FROM
             snapshot_generation_restore_tool_authorizations
-                authorization
-        WHERE authorization.authorization_id =
+                auth_row
+        WHERE auth_row.authorization_id =
                 {ARCHIVE.sql_literal(authorization_id)}
-          AND authorization.drop_operation_id =
+          AND auth_row.drop_operation_id =
                 {ARCHIVE.sql_literal(drop_plan["dropOperationId"])}
-          AND authorization.drop_plan_digest =
+          AND auth_row.drop_plan_digest =
                 {ARCHIVE.sql_literal(drop_plan["planDigest"])}
     """
+
+
+def read_restore_tool_authorization(
+    args,
+    drop_plan,
+    authorization_id,
+):
+    sql = restore_tool_authorization_lookup_sql(
+        drop_plan,
+        authorization_id,
+    )
     authorization = ARCHIVE.psql_json(
         args.source_container,
         args.pg_user,
