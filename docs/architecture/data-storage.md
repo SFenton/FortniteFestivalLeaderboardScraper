@@ -871,9 +871,10 @@ Pinned restores require no authorization; replacement restores require the
 exact row at plan, load, and attach boundaries. No authorization check changes
 row, route, TOC, catalog, capacity, index, or topology validation.
 
-Rolling deployment explicitly drops only the obsolete 16-argument restore
-function overload before defining the 21-argument authorization-aware
-signature. The authorization row stores both the client canonical evidence
+Rolling deployment explicitly drops only the known 13-argument live and
+16-argument intermediate restore-function overloads before defining the
+21-argument authorization-aware signature. The authorization row stores both
+the client canonical evidence
 SHA-256 and a PostgreSQL-computed SHA-256 of `canonical_evidence::text`; its
 ID covers both plus every substantive provenance hash. This preserves
 independent database verifiability without claiming C# canonical bytes equal

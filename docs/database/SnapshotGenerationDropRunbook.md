@@ -134,11 +134,18 @@ authorization FK. The attestation, finalization,
 and hash-chain tables match the initial revision and require no column
 upgrade.
 
-The initializer also removes the exact legacy 16-argument
-`fst_restore_snapshot_generation` overload before creating the
-authorization-aware 21-argument function. This is the only function-drop
-surface. Repeated initialization leaves exactly one current restore function,
-with `PUBLIC` execution revoked.
+The initializer removes both known historical
+`fst_restore_snapshot_generation` overloads before creating the
+authorization-aware 21-argument function:
+
+- the original live 13-argument signature
+  `(text,text,text,bigint,bigint,bigint,text,text,text,text,text,text,jsonb)`;
+- the intermediate 16-argument signature
+  `(text,text,text,bigint,bigint,bigint,text,text,text,text,jsonb,text,text,text,text,jsonb)`.
+
+These two exact non-cascading `DROP FUNCTION IF EXISTS` statements are the
+only function-drop surface. Repeated initialization leaves exactly one current
+restore function, with `PUBLIC` execution revoked.
 
 All new DROP/restore functions are `SECURITY INVOKER`, and execution remains
 revoked from `PUBLIC`. This repository intentionally adds no role grants.

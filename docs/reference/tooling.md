@@ -533,9 +533,10 @@ byte-identical archive helper, authorizer binary, source tree/diffs, tests,
 original plan/report, and immutable bundle manifest. `restore.py` exposes no
 authorization command and can consume only an explicit database authorization
 for its own current SHA.
-The rolling schema removes the obsolete 16-argument restore overload before
-installing the 21-argument signature. Authorization reports expose both the
-client evidence hash and the independently computed database JSONB hash.
+The rolling schema removes the observed 13-argument live and intermediate
+16-argument restore overloads before installing the 21-argument signature.
+Authorization reports expose both the client evidence hash and the
+independently computed database JSONB hash.
 
 DROP plan/report validation reads the original C# canonical UTF-8 bytes.
 Python object reserialization is not authoritative. The scanner requires

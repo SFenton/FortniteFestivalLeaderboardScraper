@@ -63,7 +63,7 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             SnapshotGenerationDropSchema.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
-            1,
+            2,
             CountOccurrences(
                 SnapshotGenerationDropSchema.Sql,
                 "DROP FUNCTION IF EXISTS"));
@@ -191,12 +191,30 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
     }
 
     [Fact]
-    public async Task UpgradeRemovesLegacyRestoreFunctionOverload()
+    public async Task UpgradeRemovesKnownLegacyRestoreFunctionOverloads()
     {
         await DatabaseInitializer.EnsureSchemaAsync(
             _fixture.DataSource);
         Execute(
             """
+            CREATE FUNCTION fst_restore_snapshot_generation(
+                TEXT,
+                TEXT,
+                TEXT,
+                BIGINT,
+                BIGINT,
+                BIGINT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
+                JSONB)
+            RETURNS TEXT
+            LANGUAGE sql
+            AS 'SELECT ''legacy-13''::TEXT';
+
             CREATE FUNCTION fst_restore_snapshot_generation(
                 TEXT,
                 TEXT,
@@ -219,10 +237,26 @@ public sealed class SnapshotGenerationDropSchemaTests : IDisposable
             AS 'SELECT ''legacy''::TEXT'
             """);
         Assert.Equal(
-            2,
+            3,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER
+                FROM pg_proc function_row
+                JOIN pg_namespace namespace
+                  ON namespace.oid =
+                        function_row.pronamespace
+                WHERE namespace.nspname = 'public'
+                  AND function_row.proname =
+                        'fst_restore_snapshot_generation'
+                """));
+        Assert.Equal(
+            "13,16,21",
+            Scalar<string>(
+                """
+                SELECT string_agg(
+                    function_row.pronargs::TEXT,
+                    ','
+                    ORDER BY function_row.pronargs)
                 FROM pg_proc function_row
                 JOIN pg_namespace namespace
                   ON namespace.oid =

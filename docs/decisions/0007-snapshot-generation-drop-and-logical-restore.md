@@ -58,8 +58,9 @@ test, and dual-approval provenance. The original DROP row and bundle remain
 unchanged. Restore operations persist pinned/executing hashes and consume at
 most one authorization through a composite FK. Authorization has no hard
 expiry; age warns without stranding post-restore phases.
-The migration removes the exact obsolete restore-function overload before
-creating the new signature. Authorization identity is derived from both the
+The migration removes the exact known 13- and 16-argument restore-function
+overloads before creating the new signature. Authorization identity is
+derived from both the
 client canonical digest and an independently computed PostgreSQL JSONB digest
 plus the complete substantive provenance chain.
 

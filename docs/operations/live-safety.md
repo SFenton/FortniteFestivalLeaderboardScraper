@@ -300,6 +300,10 @@ attach, re-read the same authorization and committed DROP. Authorization age
 only warns; it never expires and cannot strand confirm/attest/finalize after a
 restore row commits. Mandatory restore remains required before canary
 acceptance.
+Before deploying, verify initialization removes both known old restore
+overloads (the observed live 13-argument OID and intermediate 16-argument
+shape) and leaves only the 21-argument function. Any additional overload is a
+halt condition.
 
 If commit acknowledgement is lost, run `confirm`; never issue another DROP
 until the immutable operation row and old relation name/OID have been

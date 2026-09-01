@@ -3582,6 +3582,22 @@ public static class SnapshotGenerationDropSchema
                 TEXT,
                 TEXT,
                 TEXT,
+                TEXT,
+                TEXT,
+                JSONB);
+
+        DROP FUNCTION IF EXISTS
+            fst_restore_snapshot_generation(
+                TEXT,
+                TEXT,
+                TEXT,
+                BIGINT,
+                BIGINT,
+                BIGINT,
+                TEXT,
+                TEXT,
+                TEXT,
+                TEXT,
                 JSONB,
                 TEXT,
                 TEXT,

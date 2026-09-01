@@ -255,9 +255,10 @@ authorized attestation/finalization. Python coverage exercises both pinned and
 authorized shared resolvers and verifies `restore.py` has no authorization
 command.
 
-A downgrade/upgrade regression creates the live legacy 16-argument restore
-overload, reruns initialization twice, and proves only the 21-argument
-signature remains with stable OID and `PUBLIC` revoked. Authorization tests
+A downgrade/upgrade regression creates both the observed live 13-argument and
+intermediate 16-argument restore overloads, reruns initialization twice, and
+proves only the 21-argument signature remains with stable OID and `PUBLIC`
+revoked. Authorization tests
 verify PostgreSQL's independent JSONB evidence digest, deterministic ID
 recomputation, and content-tamper rejection. SHA-pinned deterministic
 gzip/base64 fixtures contain the exact committed live plan/report bytes;
