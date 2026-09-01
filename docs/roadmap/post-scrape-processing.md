@@ -79,8 +79,9 @@ update_triggers:
   Restore planning then failed before output/mutation on non-authoritative
   Python reserialization. The corrective branch now implements immutable
   exact-DROP tool authorization and a tool-only repair package. Final
-  H3 was authorized, but its read-only plan lookup failed before output or
-  mutation on a reserved PostgreSQL alias. H4/package review, a new exact-DROP
+  H3 failed read-only on a reserved PostgreSQL alias. H4 passed that lookup
+  but failed before output or mutation on canonical decimal-string
+  opclass/collation OID arrays. H5/package review, a third exact-DROP
   authorization, mandatory restore, and confirmation evidence remain.
   Sparse compaction remains a separate unresolved iteration.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
@@ -690,9 +691,9 @@ snapshot `1314`. The separate no-Docker-socket quarantine/reattach executor is
 implemented and live-accepted after a 452-second soak and exact reattach.
 Current unresolved work is live acceptance of the implemented drop tier:
 
-- commit/review H4, rebuild the authorizer and source/diff/test manifests, and
-  prepare a new tool-only package; preserve the unused immutable H3
-  authorization and confirm a separate exact-DROP H4 authorization (no schema
+- commit/review H5, rebuild the authorizer and source/diff/test manifests, and
+  prepare a new tool-only package; preserve the unused immutable H3/H4
+  authorizations and confirm a third exact-DROP H5 authorization (no schema
   migration is required);
 - execute the mandatory collision-safe logical restore under current
   live-safety approval, then collect route/health/topology and later
@@ -883,7 +884,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
   `333ba4b9fb69dbc098d127f0008ec709` is committed; mandatory authenticated
   logical restore and confirmation remain. The corrective branch now carries
   separate immutable tool authorization and a nonduplicating repair package.
-  H3 authorization exists but its plan lookup failed read-only on a reserved
-  SQL alias; H4 package preparation, separate authorization, and mandatory
-  restore remain.
+  H3 authorization failed read-only on a reserved SQL alias; H4 authorization
+  passed that lookup but failed read-only on string-serialized OID arrays.
+  H5 package preparation, a third authorization, and mandatory restore remain.
   Automatic retention is still a later parity- and capacity-gated task.

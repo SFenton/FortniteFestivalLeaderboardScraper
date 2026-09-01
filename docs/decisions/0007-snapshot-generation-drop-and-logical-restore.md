@@ -69,6 +69,13 @@ first authorized H3 plan lookup failed before output or mutation because the
 former alias `authorization` is a PostgreSQL keyword in that context. The H3
 authorization remains immutable and unused; H4 requires a separate package
 and authorization for the same DROP. No schema change is required.
+H4 then failed at a later read-only boundary because the Q2 archive's
+opclass/collation OID arrays use canonical decimal strings. H5 applies the
+same strict integer-or-canonical-string parser as the reviewed C# evidence
+path, normalizes only those arrays for fixed-value and attachment-chain
+comparison, and leaves all other numeric fields number-only. H4 remains
+immutable unused evidence; H5 requires a third authorization, still without a
+schema change.
 
 Quarantine structurally classifies the existing PK and score indexes and
 renames those same OIDs to

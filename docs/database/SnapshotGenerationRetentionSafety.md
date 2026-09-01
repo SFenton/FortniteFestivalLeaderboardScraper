@@ -921,6 +921,9 @@ reserialization. The later authorized H3 attempt also stopped before
 plan/list output, restore evidence, or mutation because its generated
 PostgreSQL lookup used reserved word `authorization` as an alias. Promotion
 remains blocked on restore, parity, health, and later confirmation evidence.
+H4 corrected the lookup but then failed before output or mutation because its
+fixed-shape check compared the live Q2 catalog's decimal-string
+opclass/collation OID arrays directly with integer arrays.
 
 The corrective path preserves that row and bundle through a separate
 immutable restore-tool authorization and exact-set tool-only package. The
@@ -931,8 +934,10 @@ approval. The empty restore-operation table adds pinned/executing hashes and a
 one-use authorization FK. Authorization is rechecked at plan, load, and attach
 without weakening any existing recovery invariant.
 The unused H3 authorization remains immutable historical evidence. H4 uses
-the safe `auth_row` alias and must receive a new exact-DROP authorization; the
-existing schema already supports this and needs no migration.
+the safe `auth_row` alias, but its now-unused authorization is also immutable
+historical evidence. H5 strictly normalizes only supported OID arrays and must
+receive a third exact-DROP authorization. The existing schema already
+supports this and needs no migration.
 Automatic bounded retirement and sparse-child compaction remain unimplemented.
 
 Rollback for this slice is to keep

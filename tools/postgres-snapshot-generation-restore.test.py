@@ -27,6 +27,58 @@ SPEC.loader.exec_module(tool)
 
 
 class SnapshotGenerationRestoreTests(unittest.TestCase):
+    def decode_sha_pinned_fixture(self, root, item):
+        packed = base64.b64decode(
+            "".join(
+                (root / item["file"])
+                .read_text(encoding="utf-8")
+                .split()
+            ),
+            validate=True,
+        )
+        self.assertEqual(
+            item["gzipSha256"],
+            hashlib.sha256(packed).hexdigest(),
+        )
+        raw = gzip.decompress(packed)
+        self.assertEqual(item["rawBytes"], len(raw))
+        self.assertEqual(
+            item["rawSha256"],
+            hashlib.sha256(raw).hexdigest(),
+        )
+        return raw
+
+    def load_live_q2_archive_fixture(self):
+        root = (
+            SCRIPT.parent
+            / "testdata"
+            / "snapshot-generation-live-q2-archive"
+        )
+        fixture = json.loads(
+            (root / "fixture-manifest.json")
+            .read_text(encoding="utf-8")
+        )
+        safety = fixture["safetyReview"]
+        for key in (
+            "credentialLikeKeys",
+            "connectionStrings",
+            "emailAddresses",
+            "privateEndpoints",
+            "accountIdKeys",
+        ):
+            self.assertEqual(0, safety[key])
+        catalog = json.loads(
+            self.decode_sha_pinned_fixture(
+                root,
+                fixture["catalog"],
+            )
+        )
+        toc = self.decode_sha_pinned_fixture(
+            root,
+            fixture["toc"],
+        ).decode("utf-8")
+        return fixture, catalog, toc
+
     @staticmethod
     def canonical_drop_plan_bytes(
         *,
@@ -191,29 +243,14 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
         self.assertEqual(0, safety["privateEndpoints"])
         self.assertEqual(0, safety["accountIdKeys"])
 
-        def decode(item):
-            packed = base64.b64decode(
-                "".join(
-                    (root / item["file"])
-                    .read_text(encoding="utf-8")
-                    .split()
-                ),
-                validate=True,
-            )
-            self.assertEqual(
-                item["gzipSha256"],
-                hashlib.sha256(packed).hexdigest(),
-            )
-            raw = gzip.decompress(packed)
-            self.assertEqual(item["rawBytes"], len(raw))
-            self.assertEqual(
-                item["rawSha256"],
-                hashlib.sha256(raw).hexdigest(),
-            )
-            return raw
-
-        plan_bytes = decode(fixture["plan"])
-        report_bytes = decode(fixture["report"])
+        plan_bytes = self.decode_sha_pinned_fixture(
+            root,
+            fixture["plan"],
+        )
+        report_bytes = self.decode_sha_pinned_fixture(
+            root,
+            fixture["report"],
+        )
         expected_digest = fixture["plan"]["planDigest"]
         expected_operation = fixture[
             "plan"]["dropOperationId"]
@@ -537,6 +574,221 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
         write_bytes.assert_called_once()
         write_json.assert_called_once()
 
+    def test_builds_authorized_plan_from_live_q2_catalog_and_toc(self):
+        drop_root = (
+            SCRIPT.parent
+            / "testdata"
+            / "snapshot-generation-live-drop"
+        )
+        drop_fixture = json.loads(
+            (drop_root / "fixture-manifest.json")
+            .read_text(encoding="utf-8")
+        )
+        plan_bytes = self.decode_sha_pinned_fixture(
+            drop_root,
+            drop_fixture["plan"],
+        )
+        report_bytes = self.decode_sha_pinned_fixture(
+            drop_root,
+            drop_fixture["report"],
+        )
+        drop_plan = json.loads(plan_bytes)
+        archive_fixture, catalog, toc = (
+            self.load_live_q2_archive_fixture()
+        )
+        expected = archive_fixture["expected"]
+        args = types.SimpleNamespace(
+            drop_plan="drop-plan-v2.json",
+            drop_report="drop-report-v2.json",
+            output="/output/restore-plan.json",
+            restore_list="/output/restore.list",
+            expected_drop_plan_digest=
+                drop_fixture["plan"]["planDigest"],
+            expected_drop_operation_id=
+                drop_fixture["plan"]["dropOperationId"],
+            source_container="source",
+            pg_user="fst",
+            pg_database="fstservice",
+            postgres_image="postgres:17",
+            authorization_id="a" * 32,
+            repair_package="/repair-package",
+            expected_repair_package_manifest_sha256=
+                "b" * 64,
+        )
+        bundle = SCRIPT.parent
+        authorization = {
+            "mode": "authorized",
+            "authorizationId": args.authorization_id,
+            "pinnedToolSha256":
+                drop_plan["restoreToolSha256"],
+            "executingToolSha256": "c" * 64,
+        }
+        archive_manifest = {
+            "archive": {
+                "sha256": drop_plan[
+                    "activePlan"]["archive"]["archiveSha256"],
+                "bytes": 100,
+            },
+            "target": {
+                "childRelation":
+                    expected["childRelation"],
+            },
+        }
+        checksums = {
+            "manifest.json": drop_plan[
+                "activePlan"]["archive"][
+                    "packageManifestSha256"],
+        }
+
+        with (
+            mock.patch.object(
+                pathlib.Path,
+                "read_bytes",
+                side_effect=[
+                    plan_bytes,
+                    report_bytes,
+                ],
+            ),
+            mock.patch.object(
+                pathlib.Path,
+                "read_text",
+                return_value=toc,
+            ),
+            mock.patch.object(
+                tool,
+                "validate_path",
+                side_effect=lambda path, **_: pathlib.Path(path),
+            ),
+            mock.patch.object(
+                tool,
+                "sha256_path",
+                return_value="d" * 64,
+            ),
+            mock.patch.object(
+                tool,
+                "validate_bundle",
+                return_value=(bundle, {}),
+            ),
+            mock.patch.object(
+                tool,
+                "resolve_restore_tool_authorization",
+                return_value=authorization,
+            ) as resolve_authorization,
+            mock.patch.object(
+                tool,
+                "load_pinned_archive",
+                return_value=(
+                    archive_manifest,
+                    catalog,
+                    checksums,
+                ),
+            ),
+            mock.patch.object(
+                tool,
+                "validate_fresh_proof",
+                return_value=(
+                    pathlib.Path("/proof/manifest.json"),
+                    {
+                        "completedAtUtc":
+                            "2026-08-31T20:00:00Z",
+                    },
+                ),
+            ),
+            mock.patch.object(
+                tool.ARCHIVE,
+                "container_identity",
+                return_value={
+                    "pgdataMount": {
+                        "source": str(bundle),
+                    },
+                },
+            ),
+            mock.patch.object(
+                tool.shutil,
+                "disk_usage",
+                return_value=types.SimpleNamespace(
+                    free=10 * 1024**4),
+            ),
+            mock.patch.object(
+                tool,
+                "inspect_restore_image",
+                return_value=(
+                    "sha256:"
+                    + drop_plan["restoreImageIdSha256"],
+                    "pg_restore (PostgreSQL) 17",
+                ),
+            ),
+            mock.patch.object(
+                tool,
+                "database_drop_state",
+                return_value={
+                    "dropExists": True,
+                    "restoreExists": False,
+                    "originalExists": False,
+                    "oldOidExists": False,
+                    "holdActive": True,
+                },
+            ),
+            mock.patch.object(
+                tool,
+                "require_database_identity",
+                return_value={"database": "fstservice"},
+            ),
+            mock.patch.object(
+                tool,
+                "repository_identity",
+                return_value={
+                    "gitCommit": "1" * 40,
+                    "toolPath":
+                        "tools/postgres-snapshot-generation-restore.py",
+                    "toolSha256": "c" * 64,
+                },
+            ),
+            mock.patch.object(
+                tool,
+                "write_new_bytes",
+            ) as write_bytes,
+            mock.patch.object(
+                tool,
+                "write_new_json",
+            ) as write_json,
+        ):
+            plan = tool.build_plan(args)
+
+        resolve_authorization.assert_called_once()
+        self.assertEqual(
+            args.authorization_id,
+            resolve_authorization.call_args.kwargs[
+                "authorization_id"],
+        )
+        self.assertEqual(
+            args.repair_package,
+            resolve_authorization.call_args.kwargs[
+                "repair_package"],
+        )
+        self.assertEqual(
+            "authorized",
+            plan["restoreToolAuthorization"]["mode"],
+        )
+        self.assertEqual(
+            expected["selectedTocEntries"],
+            len(plan["selectedTocEntries"]),
+        )
+        self.assertEqual(
+            expected["executedTocEntries"],
+            len(plan["executedTocEntries"]),
+        )
+        self.assertEqual(
+            expected["primaryIndexName"],
+            plan["archivedIndexNames"]["pk"],
+        )
+        self.assertEqual(
+            expected["scoreIndexName"],
+            plan["archivedIndexNames"]["score"],
+        )
+        write_bytes.assert_called_once()
+        write_json.assert_called_once()
+
     def test_selects_only_exact_child_toc_entries(self):
         child = {
             "name":
@@ -804,6 +1056,252 @@ class SnapshotGenerationRestoreTests(unittest.TestCase):
         drifted["indexes"][1]["opclassOids"][-1] = 3124
         with self.assertRaises(tool.RestoreError):
             tool.validate_supported_index_specs(drifted)
+
+    def test_live_q2_string_oid_catalog_is_supported(self):
+        fixture, catalog, toc = (
+            self.load_live_q2_archive_fixture()
+        )
+        expected = fixture["expected"]
+        relations = {
+            relation["name"]: relation
+            for relation in catalog["physicalCatalog"]
+        }
+        child = relations[expected["childRelation"]]
+        supported = tool.validate_supported_index_specs(
+            child)
+        self.assertEqual(
+            expected["primaryIndexName"],
+            supported["pk"]["indexName"],
+        )
+        self.assertEqual(
+            expected["scoreIndexName"],
+            supported["score"]["indexName"],
+        )
+        selected = tool.select_restore_toc(toc, child)
+        self.assertEqual(
+            expected["selectedTocEntries"],
+            len(selected),
+        )
+        self.assertEqual(
+            expected["logicalIndexShapeSha256"],
+            tool.logical_index_shape_sha256(
+                child,
+                relations[expected["rootRelation"]],
+                relations[expected["topRelation"]],
+            ),
+        )
+        mixed = copy.deepcopy(relations)
+        for relation_name in (
+            expected["rootRelation"],
+            expected["topRelation"],
+        ):
+            for index in mixed[relation_name]["indexes"]:
+                index["opclassOids"] = [
+                    int(value)
+                    for value in index["opclassOids"]
+                ]
+                index["collationOids"] = [
+                    int(value)
+                    for value in index["collationOids"]
+                ]
+        self.assertEqual(
+            expected["logicalIndexShapeSha256"],
+            tool.logical_index_shape_sha256(
+                mixed[expected["childRelation"]],
+                mixed[expected["rootRelation"]],
+                mixed[expected["topRelation"]],
+            ),
+        )
+        drifted = copy.deepcopy(mixed)
+        root_score = next(
+            index
+            for index in drifted[
+                expected["rootRelation"]]["indexes"]
+            if not index["isPrimary"]
+        )
+        root_score["opclassOids"][-1] = 3124
+        with self.assertRaises(tool.RestoreError):
+            tool.logical_index_shape_sha256(
+                drifted[expected["childRelation"]],
+                drifted[expected["rootRelation"]],
+                drifted[expected["topRelation"]],
+            )
+        non_oid_drift = copy.deepcopy(mixed)
+        root_primary = next(
+            index
+            for index in non_oid_drift[
+                expected["rootRelation"]]["indexes"]
+            if index["isPrimary"]
+        )
+        root_primary["indOptions"][0] = False
+        with self.assertRaises(tool.RestoreError):
+            tool.logical_index_shape_sha256(
+                non_oid_drift[expected["childRelation"]],
+                non_oid_drift[expected["rootRelation"]],
+                non_oid_drift[expected["topRelation"]],
+            )
+
+    def test_postgres_oid_parser_is_strict(self):
+        for value in (
+            1,
+            "1",
+            3124,
+            "3124",
+            4294967295,
+            "4294967295",
+        ):
+            with self.subTest(valid=value):
+                self.assertEqual(
+                    int(value),
+                    tool.parse_postgres_oid(
+                        value,
+                        "oid",
+                    ),
+                )
+        for value in (0, "0"):
+            with self.subTest(valid_zero=value):
+                self.assertEqual(
+                    0,
+                    tool.parse_postgres_oid(
+                        value,
+                        "oid",
+                        allow_zero=True,
+                    ),
+                )
+        invalid = (
+            True,
+            False,
+            0,
+            "0",
+            -1,
+            "-1",
+            "+1",
+            " 1",
+            "1 ",
+            "01",
+            "00",
+            "1.0",
+            "1e3",
+            1.0,
+            1e3,
+            4294967296,
+            "4294967296",
+            None,
+            [],
+            {},
+        )
+        for value in invalid:
+            with self.subTest(invalid=value):
+                with self.assertRaises(tool.RestoreError):
+                    tool.parse_postgres_oid(
+                        value,
+                        "oid",
+                    )
+        for value in (
+            True,
+            False,
+            -1,
+            "-1",
+            "+0",
+            " 0",
+            "00",
+            "0.0",
+            0.0,
+            4294967296,
+            "4294967296",
+        ):
+            with self.subTest(invalid_zero=value):
+                with self.assertRaises(tool.RestoreError):
+                    tool.parse_postgres_oid(
+                        value,
+                        "oid",
+                        allow_zero=True,
+                    )
+        self.assertEqual(
+            [3124, 3126, 0],
+            tool.normalize_postgres_oid_array(
+                [3124, "3126", "0"],
+                "oids",
+                allow_zero=True,
+            ),
+        )
+        for value in (
+            "3124",
+            (3124,),
+            [3124, "01"],
+            [3124, True],
+        ):
+            with self.subTest(invalid_array=value):
+                with self.assertRaises(tool.RestoreError):
+                    tool.normalize_postgres_oid_array(
+                        value,
+                        "oids",
+                        allow_zero=True,
+                    )
+
+    def test_supported_index_specs_reject_malformed_oid_strings(self):
+        _, catalog, _ = self.load_live_q2_archive_fixture()
+        child = next(
+            relation
+            for relation in catalog["physicalCatalog"]
+            if relation["name"]
+            == "leaderboard_entries_snapshot_pro_cymbals_s1314"
+        )
+        malformed = (
+            ("opclassOids", 0, "03124"),
+            ("opclassOids", 0, "+3124"),
+            ("opclassOids", 0, " 3124"),
+            ("opclassOids", 0, "3124 "),
+            ("opclassOids", 0, "3124.0"),
+            ("opclassOids", 0, "3e3"),
+            ("opclassOids", 0, "4294967296"),
+            ("opclassOids", 0, "0"),
+            ("collationOids", 0, "00"),
+            ("collationOids", 0, "+0"),
+            ("collationOids", 0, " 0"),
+            ("collationOids", 0, "0 "),
+            ("collationOids", 0, "0.0"),
+            ("collationOids", 0, "0e0"),
+            ("collationOids", 0, "4294967296"),
+        )
+        for property_name, position, value in malformed:
+            with self.subTest(
+                property_name=property_name,
+                value=value,
+            ):
+                candidate = copy.deepcopy(child)
+                candidate["indexes"][0][
+                    property_name][position] = value
+                with self.assertRaises(tool.RestoreError):
+                    tool.validate_supported_index_specs(
+                        candidate)
+
+    def test_non_oid_index_metadata_remains_number_only(self):
+        _, catalog, _ = self.load_live_q2_archive_fixture()
+        child = next(
+            relation
+            for relation in catalog["physicalCatalog"]
+            if relation["name"]
+            == "leaderboard_entries_snapshot_pro_cymbals_s1314"
+        )
+        mutations = {
+            "indNKeyAtts": "4",
+            "indNAtts": "4",
+            "keyAttnums": ["1", 2, 3, 4],
+            "indOptions": ["0", 0, 0, 0],
+        }
+        for property_name, value in mutations.items():
+            with self.subTest(property_name=property_name):
+                candidate = copy.deepcopy(child)
+                primary = next(
+                    index
+                    for index in candidate["indexes"]
+                    if index["isPrimary"]
+                )
+                primary[property_name] = value
+                with self.assertRaises(tool.RestoreError):
+                    tool.validate_supported_index_specs(
+                        candidate)
 
     def test_parent_and_root_entries_cannot_satisfy_child_selection(self):
         child = {

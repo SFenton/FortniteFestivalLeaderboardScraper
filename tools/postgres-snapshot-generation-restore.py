@@ -25,6 +25,10 @@ REQUIRED_BASE = pathlib.Path(
 IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 OPERATION_ID = re.compile(r"^[0-9a-f]{32}$")
+CANONICAL_UNSIGNED_DECIMAL = re.compile(
+    r"^(?:0|[1-9][0-9]*)$"
+)
+POSTGRES_OID_MAX = (1 << 32) - 1
 VALIDATOR_BASE_TOOL_SHA256 = (
     "acb358604d9f642da3d4809581328f761"
     "18cb912c32765353b8594cc68a1522d"
@@ -1037,6 +1041,63 @@ def child_catalog(manifest, catalog):
     return matches[0]
 
 
+def parse_postgres_oid(
+    value,
+    field_name,
+    *,
+    allow_zero=False,
+):
+    if isinstance(value, bool):
+        text = None
+    elif isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value
+    else:
+        text = None
+    if (
+        text is None
+        or CANONICAL_UNSIGNED_DECIMAL.fullmatch(text)
+            is None
+    ):
+        raise RestoreError(
+            f"{field_name} is not a canonical "
+            f"{'unsigned' if allow_zero else 'positive'} "
+            "PostgreSQL OID"
+        )
+    parsed = int(text)
+    if (
+        parsed > POSTGRES_OID_MAX
+        or (parsed == 0 and not allow_zero)
+    ):
+        raise RestoreError(
+            f"{field_name} is not a canonical "
+            f"{'unsigned' if allow_zero else 'positive'} "
+            "PostgreSQL OID"
+        )
+    return parsed
+
+
+def normalize_postgres_oid_array(
+    value,
+    field_name,
+    *,
+    allow_zero=False,
+):
+    if not isinstance(value, list):
+        raise RestoreError(
+            f"{field_name} is not a PostgreSQL OID array"
+        )
+    return [
+        parse_postgres_oid(
+            item,
+            f"{field_name}[{index}]",
+            allow_zero=allow_zero,
+        )
+        for index, item in enumerate(value)
+    ]
+
+
 def validate_supported_index_specs(child):
     indexes = child.get("indexes") or []
     primary = [
@@ -1101,6 +1162,23 @@ def validate_supported_index_specs(child):
             if role == "pk"
             else [0, 100, 100, 0]
         )
+        observed_opclasses = (
+            normalize_postgres_oid_array(
+                index["opclassOids"],
+                f"archive {role} index opclassOids",
+            )
+            if "opclassOids" in index
+            else expected_opclasses
+        )
+        observed_collations = (
+            normalize_postgres_oid_array(
+                index["collationOids"],
+                f"archive {role} index collationOids",
+                allow_zero=True,
+            )
+            if "collationOids" in index
+            else expected_collations
+        )
         if (
             index.get("columnNames")
             != specification["columns"]
@@ -1122,30 +1200,52 @@ def validate_supported_index_specs(child):
             or index.get("expressions") not in (None, "")
             or index.get("predicate") not in (None, "")
             or index.get("relationOptions") not in (None, [])
-            or index.get("indNKeyAtts", 4) != 4
-            or index.get("indNAtts", 4) != 4
+            or (
+                "indNKeyAtts" in index
+                and (
+                    type(index["indNKeyAtts"]) is not int
+                    or index["indNKeyAtts"] != 4
+                )
+            )
+            or (
+                "indNAtts" in index
+                and (
+                    type(index["indNAtts"]) is not int
+                    or index["indNAtts"] != 4
+                )
+            )
             or (
                 "keyAttnums" in index
                 and (
-                    len(index["keyAttnums"]) != 4
+                    not isinstance(
+                        index["keyAttnums"],
+                        list,
+                    )
+                    or len(index["keyAttnums"]) != 4
                     or any(
-                        value <= 0
+                        type(value) is not int
+                        or value <= 0
                         for value in index["keyAttnums"]
                     )
                 )
             )
+            or observed_opclasses != expected_opclasses
+            or observed_collations != expected_collations
             or (
-                "opclassOids" in index
-                and index["opclassOids"]
-                != expected_opclasses
+                "indOptions" in index
+                and (
+                    not isinstance(
+                        index["indOptions"],
+                        list,
+                    )
+                    or any(
+                        type(value) is not int
+                        for value in index["indOptions"]
+                    )
+                    or index["indOptions"]
+                    != expected_options
+                )
             )
-            or (
-                "collationOids" in index
-                and index["collationOids"]
-                != expected_collations
-            )
-            or index.get("indOptions", expected_options)
-            != expected_options
         ):
             raise RestoreError(
                 f"archive {role} index is outside the fixed supported shape"
@@ -1156,23 +1256,35 @@ def validate_supported_index_specs(child):
 def logical_index_shape_sha256(child, root, top):
     supported = validate_supported_index_specs(child)
     root_indexes = {
-        int(index["indexOid"]): index
+        parse_postgres_oid(
+            index["indexOid"],
+            "archive root indexOid",
+        ): index
         for index in root.get("indexes") or []
     }
     top_indexes = {
-        int(index["indexOid"]): index
+        parse_postgres_oid(
+            index["indexOid"],
+            "archive top indexOid",
+        ): index
         for index in top.get("indexes") or []
     }
     projection = []
     for role in ("pk", "score"):
         index = supported[role]
-        parent_root_oid = int(index["parentIndexOid"])
+        parent_root_oid = parse_postgres_oid(
+            index["parentIndexOid"],
+            f"archive {role} parentIndexOid",
+        )
         root_index = root_indexes.get(parent_root_oid)
         if root_index is None:
             raise RestoreError(
                 f"restored {role} root index link is missing"
             )
-        parent_top_oid = int(root_index["parentIndexOid"])
+        parent_top_oid = parse_postgres_oid(
+            root_index["parentIndexOid"],
+            f"archive {role} parentTopIndexOid",
+        )
         top_index = top_indexes.get(parent_top_oid)
         if top_index is None:
             raise RestoreError(
@@ -1195,15 +1307,34 @@ def logical_index_shape_sha256(child, root, top):
             "collationOids",
             "indOptions",
         ):
-            values = [
-                value[property_name]
-                for value in (
-                    index,
-                    root_index,
-                    top_index,
-                )
-                if property_name in value
-            ]
+            values = []
+            for value in (
+                index,
+                root_index,
+                top_index,
+            ):
+                if property_name not in value:
+                    continue
+                observed = value[property_name]
+                if property_name in (
+                    "opclassOids",
+                    "collationOids",
+                ):
+                    observed = normalize_postgres_oid_array(
+                        observed,
+                        f"restored {role} {property_name}",
+                        allow_zero=(
+                            property_name
+                            == "collationOids"
+                        ),
+                    )
+                else:
+                    observed = json.dumps(
+                        observed,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                values.append(observed)
             if values and (
                 len(values) != 3
                 or values[0] != values[1]

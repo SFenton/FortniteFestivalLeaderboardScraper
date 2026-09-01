@@ -542,8 +542,18 @@ independently computed database JSONB hash.
 The shared authorization resolver emits one lookup query for plan, restore,
 confirm, attest, and finalize. Its table alias is the explicit non-keyword
 `auth_row`; never use `authorization` as a PostgreSQL alias. H3 remains
-historical failed-plan evidence, while H4 needs a new package and immutable
-authorization. The correction changes no schema or command surface.
+historical failed-plan evidence. H4 used a separate package and immutable
+authorization; the alias correction changed no schema or command surface.
+
+H4 subsequently exposed a separate archive-shape compatibility defect:
+cycle-16 opclass/collation OID arrays are canonical decimal strings. H5
+normalizes only those arrays through a strict PostgreSQL OID parser before
+fixed PostgreSQL-17 value and child/root/top equality checks. JSON integers
+remain accepted; booleans, noncanonical strings, fractions/exponents,
+overflow, and zero opclass OIDs reject. Counts, key attnums, and index options
+remain number-only. H3/H4 authorizations are not reusable for H5, and the
+existing schema admits a third exact-DROP authorization while no restore row
+exists.
 
 DROP plan/report validation reads the original C# canonical UTF-8 bytes.
 Python object reserialization is not authoritative. The scanner requires

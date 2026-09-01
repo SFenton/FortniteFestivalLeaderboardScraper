@@ -881,6 +881,17 @@ authorization for the same DROP when the executing-tool hash differs and no
 restore has consumed either authorization. This correction needs no schema
 change.
 
+The authorized H4 plan next stopped read-only at fixed-index validation:
+cycle-16 `catalog.json` stores PostgreSQL opclass and collation OIDs as
+canonical decimal strings, while H4 compared them directly with integer
+arrays. H5 accepts only JSON integers or canonical unsigned decimal strings,
+rejects booleans, signs, whitespace, leading zeroes, fractions, exponents, and
+values above `uint32`, and permits zero only for collation OIDs. It normalizes
+those arrays for PostgreSQL-17 fixed-shape and child/root/top equality without
+coercing counts, options, or key attnums. Exact live Q2 catalog/TOC fixtures
+cover the authorized plan path. H3 and H4 authorizations remain immutable and
+unused; a third H5 authorization can coexist without a schema change.
+
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the
 21-argument authorization-aware signature. The authorization row stores both

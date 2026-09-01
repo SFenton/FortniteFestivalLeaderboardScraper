@@ -58,9 +58,15 @@ The reviewed H3 validator was then authorized for the exact DROP, but its
 first live plan lookup also failed before creating a plan, restore list, or
 restore row: the generated PostgreSQL query used reserved word
 `authorization` as a table alias. Preserve that immutable unused H3
-authorization (`5e807623...`) as failed-plan evidence. H4 changes only the
-lookup alias to `auth_row`; it requires a separately prepared package and a
-new authorization for the same DROP. No database schema migration is needed.
+authorization (`5e807623...`) as failed-plan evidence. H4 corrected that
+lookup and passed the authorization query, but its read-only plan then failed
+before creating a plan, list, or restore row because the live Q2 catalog
+serialized `opclassOids` and `collationOids` as canonical decimal strings
+while the Python fixed-shape check compared them directly with integer
+arrays. Preserve the unused H4 authorization too. H5 strictly normalizes only
+those PostgreSQL OID arrays before supported-shape and attachment-chain
+comparison. It requires a third package and authorization for the same DROP;
+no database schema migration is needed.
 
 ## Boundaries
 
@@ -316,8 +322,10 @@ matching both cycle-14 and cycle-16 package serialization. Optional
 whitespace, leading zeroes, non-digits, zero where a positive OID is required,
 and values above PostgreSQL's unsigned OID range reject. Counts,
 `indNKeyAtts`/`indNAtts`, key attnums, and index options remain JSON numbers
-only. Cycle-14 catalogs may omit the optional index metadata; cycle-16
-catalogs must validate it when present.
+only and are never coerced. The restore tool normalizes accepted OID-array
+representations before both PostgreSQL-17 fixed-value checks and exact
+child/root/top attachment-chain equality. Cycle-14 catalogs may omit the
+optional index metadata; cycle-16 catalogs must validate it when present.
 
 ## DROP
 
@@ -482,11 +490,14 @@ Current local corrective build identities, not yet live-authorized:
   `032a86272bdcf0e2586376d3f34f1fb5b89b77b2fb904c966aebc6eec97eff91`;
 - corrective H4 with the PostgreSQL-safe `auth_row` lookup:
   `297a8118c2ad9e62cb12d1dccc62ee81a5b57ea57885329b365b6ac6bf1e62dd`;
+- corrective H5 with strict PostgreSQL OID-array normalization:
+  `e9a2214f57efe24ff29a60a7721a487e8d14b4508a84de69dea180a80dbe14cc`;
 - original/final archive helper:
   `f1d9f9169169d60ff16b703fce7dca79784fc50fcf211374e1a63e46c08c3eeb`;
-- current uncommitted validation-build authorizer DLL:
-  `2a76ca7501f34b06ab94eba5515fa65cf0d81bd045f3d90933c2f337b7961c18`.
-  Rebuild and repin it from the final clean commit before package preparation.
+- authoritative H4 clean-commit authorizer DLL:
+  `fb7b0fb77fc2fe17fb781432dd6cd707d24126320d78976d40ac3a72b5da819e`.
+  H5 must rebuild and repin the authorizer from its final clean commit before
+  package preparation.
 
 Generate a restore plan from the committed drop and pinned bundle:
 

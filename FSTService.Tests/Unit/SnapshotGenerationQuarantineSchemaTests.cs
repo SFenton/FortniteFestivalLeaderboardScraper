@@ -1081,8 +1081,38 @@ public sealed class SnapshotGenerationQuarantineSchemaTests
         Assert.Equal(
             nextTool.AuthorizedRestoreToolSha256,
             nextAuthorization.AuthorizedRestoreToolSha256);
+        var thirdTool = nextTool with
+        {
+            AuthorizedRestoreToolSha256 =
+                new string('c', 64),
+            RepairPackageManifestSha256 =
+                new string('d', 64),
+            BaseToFinalDiffSha256 =
+                new string('e', 64),
+            ReasonText =
+                "Reviewed replacement after failed H4 planning",
+            CanonicalEvidence =
+                JsonDocument.Parse(
+                    """
+                    {
+                      "packageValidated": true,
+                      "toolGeneration": "H5"
+                    }
+                    """).RootElement.Clone(),
+        };
+        var thirdAuthorization =
+            await database.AuthorizeAsync(thirdTool);
+        Assert.NotEqual(
+            first.AuthorizationId,
+            thirdAuthorization.AuthorizationId);
+        Assert.NotEqual(
+            nextAuthorization.AuthorizationId,
+            thirdAuthorization.AuthorizationId);
         Assert.Equal(
-            2,
+            thirdTool.AuthorizedRestoreToolSha256,
+            thirdAuthorization.AuthorizedRestoreToolSha256);
+        Assert.Equal(
+            3,
             Scalar<int>(
                 """
                 SELECT COUNT(*)::INTEGER

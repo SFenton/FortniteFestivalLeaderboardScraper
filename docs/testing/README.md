@@ -264,6 +264,20 @@ restore, confirm, attest, and finalize all validate the same digest-covered
 plan through that resolver, this covers the lookup used by all five commands
 without a mocked SQL parser.
 
+H5 Python regressions decode SHA-pinned deterministic gzip/base64 copies of
+the exact live Q2 `catalog.json` and `archive.toc`. They prove the
+operation-scoped `sgqi_*` PK/score definitions with canonical decimal-string
+opclass/collation OID arrays pass fixed PostgreSQL-17 validation, select only
+the four exact child TOC entries, and retain the accepted logical index-shape
+hash. Mixed integer/string attachment-chain representations compare after
+normalization; semantic drift still rejects. Malformed lanes cover booleans,
+signs, whitespace, leading zeroes, fractions, exponents, zero opclass OIDs,
+and values above `uint32`. Counts, options, and key attnums remain strict JSON
+integers. An authorized end-to-end plan fixture uses the real Q2 catalog/TOC
+shape and reaches plan/list emission without production access. PostgreSQL
+coverage also proves three unused replacement-tool authorizations can coexist
+for the exact DROP.
+
 A downgrade/upgrade regression creates both the observed live 13-argument and
 intermediate 16-argument restore overloads, reruns initialization twice, and
 proves only the 21-argument signature remains with stable OID and `PUBLIC`
