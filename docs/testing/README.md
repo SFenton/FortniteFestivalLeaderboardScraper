@@ -304,6 +304,10 @@ Stabilization tests also reject the same manifest, missing capture time, and
 reversed capture order. Package tamper coverage changes a valid build identity,
 recomputes the outer package manifest and checksum tree, and still requires
 runtime/build cross-link validation to reject it.
+Restore-scope coverage models PostgreSQL custom-archive TOC syntax directly:
+the PK constraint entry names the child relation while the secondary `INDEX`
+entry names only the archived index. Only the exact table and table-data
+entries may appear in the executable restore list.
 
 The empty-only rolling migration test downgrades restore attestations and
 finalizations, restores their old 9- and 4-argument functions, initializes

@@ -559,7 +559,7 @@ public static class ContinuationAuthorizationPackage
         ?? throw new InvalidDataException(
             $"{propertyName} is null.");
 
-    private static RestoreScopeIsolationEvidence
+    public static RestoreScopeIsolationEvidence
         BuildRestoreScopeIsolationEvidence(
             JsonElement plan,
             JsonElement report,
@@ -593,6 +593,21 @@ public static class ContinuationAuthorizationPackage
             $" TABLE {childSchema} {childRelation} ";
         var tableDataToken =
             $" TABLE DATA {childSchema} {childRelation} ";
+        var archivedIndexNames =
+            plan.GetProperty(
+                "archivedIndexNames");
+        var primaryKeyToken =
+            $" CONSTRAINT {childSchema} {childRelation} "
+            + RequireString(
+                archivedIndexNames,
+                "pk")
+            + " ";
+        var scoreIndexToken =
+            $" INDEX {childSchema} "
+            + RequireString(
+                archivedIndexNames,
+                "score")
+            + " ";
         var exactTarget =
             executed.Length == 2
             && executed.Count(entry =>
@@ -617,14 +632,37 @@ public static class ContinuationAuthorizationPackage
         var repositoryIndexes =
             selected.Length == 4
             && executed.Length == 2
-            && selected.All(entry =>
+            && selected.Count(entry =>
                 entry.Contains(
-                    childRelation,
-                    StringComparison.Ordinal))
-            && selected.Except(
+                    tableToken,
+                    StringComparison.Ordinal)) == 1
+            && selected.Count(entry =>
+                entry.Contains(
+                    tableDataToken,
+                    StringComparison.Ordinal)) == 1
+            && selected.Count(entry =>
+                entry.Contains(
+                    primaryKeyToken,
+                    StringComparison.Ordinal)) == 1
+            && selected.Count(entry =>
+                entry.Contains(
+                    scoreIndexToken,
+                    StringComparison.Ordinal)) == 1
+            && executed.All(entry =>
+                selected.Contains(
+                    entry,
+                    StringComparer.Ordinal))
+            && selected
+                .Except(
                     executed,
                     StringComparer.Ordinal)
-                .Count() == 2;
+                .All(entry =>
+                    entry.Contains(
+                        primaryKeyToken,
+                        StringComparison.Ordinal)
+                    || entry.Contains(
+                        scoreIndexToken,
+                        StringComparison.Ordinal));
         var rowFingerprint =
             report.GetProperty("rowFingerprint");
         var rowCount =

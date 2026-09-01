@@ -203,6 +203,129 @@ public sealed class SnapshotGenerationRestoreAuthorizationTests
     }
 
     [Fact]
+    public void RestoreScopeEvidenceAcceptsExactArchiveRolesOnly()
+    {
+        var root = Path.Combine(
+            AppContext.BaseDirectory,
+            $"restore-scope-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var planPath = Path.Combine(
+            root,
+            "plan.json");
+        var reportPath = Path.Combine(
+            root,
+            "report.json");
+        try
+        {
+            var plan = new
+            {
+                restoreOperationId =
+                    new string('1', 32),
+                dropOperationId =
+                    new string('2', 32),
+                planDigest =
+                    new string('3', 64),
+                archivedIndexNames = new
+                {
+                    pk = "sgqi_operation_pk",
+                    score = "sgqi_operation_score",
+                },
+                selectedTocEntries = new[]
+                {
+                    "1; 1 10 TABLE public child_relation fst",
+                    "2; 0 10 TABLE DATA public child_relation fst",
+                    "3; 2 11 CONSTRAINT public child_relation sgqi_operation_pk fst",
+                    "4; 1 12 INDEX public sgqi_operation_score fst",
+                },
+                executedTocEntries = new[]
+                {
+                    "1; 1 10 TABLE public child_relation fst",
+                    "2; 0 10 TABLE DATA public child_relation fst",
+                },
+                target = new
+                {
+                    childSchema = "public",
+                    childRelation =
+                        "child_relation",
+                    instrument =
+                        "Solo_PeripheralCymbals",
+                    snapshotId = 1314L,
+                    rowCount = 8627L,
+                    rowFingerprintSha256 =
+                        new string('4', 64),
+                },
+            };
+            var report = new
+            {
+                status = "restored",
+                commitOutcome = "committed",
+                rowFingerprint = new
+                {
+                    rowCount = 8627L,
+                    sha256 =
+                        new string('4', 64),
+                },
+            };
+            File.WriteAllText(
+                planPath,
+                JsonSerializer.Serialize(plan));
+            File.WriteAllText(
+                reportPath,
+                JsonSerializer.Serialize(report));
+            using var planDocument =
+                JsonDocument.Parse(
+                    File.ReadAllBytes(planPath));
+            using var reportDocument =
+                JsonDocument.Parse(
+                    File.ReadAllBytes(reportPath));
+
+            var evidence =
+                ContinuationAuthorizationPackage
+                    .BuildRestoreScopeIsolationEvidence(
+                        planDocument.RootElement,
+                        reportDocument.RootElement,
+                        planPath,
+                        reportPath);
+
+            Assert.True(
+                evidence
+                    .ExactTargetTableAndDataOnly);
+            Assert.True(
+                evidence
+                    .RepositoryOwnedIndexesCreatedSeparately);
+
+            var invalidPlan = JsonSerializer
+                .Serialize(plan)
+                .Replace(
+                    "INDEX public sgqi_operation_score",
+                    "INDEX public unrelated_score",
+                    StringComparison.Ordinal);
+            File.WriteAllText(
+                planPath,
+                invalidPlan);
+            using var invalidDocument =
+                JsonDocument.Parse(
+                    File.ReadAllBytes(planPath));
+            Assert.Throws<InvalidDataException>(
+                () => ContinuationAuthorizationPackage
+                    .BuildRestoreScopeIsolationEvidence(
+                        invalidDocument.RootElement,
+                        reportDocument.RootElement,
+                        planPath,
+                        reportPath));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(
+                    root,
+                    recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void RepairPackageRequiresExactReadOnlyFileSet()
     {
         var root = Path.Combine(
