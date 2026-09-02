@@ -53,12 +53,6 @@
   animation: settings-progress-indeterminate 1.25s ease-in-out infinite;
 }
 
-.warning {
-  margin-top: var(--gap-xs);
-  color: var(--settings-progress-warning);
-  line-height: 1.45;
-}
-
 @keyframes settings-progress-indeterminate {
   0% {
     transform: translateX(-110%);

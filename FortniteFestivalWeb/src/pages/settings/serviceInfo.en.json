@@ -16,8 +16,6 @@
     "stalled": "Leaderboard Update Stalled",
     "unavailable": "Leaderboard Updater Unavailable"
   },
-  "completedWithWarnings_one": "The last completed update reported {{count}} non-critical warning.",
-  "completedWithWarnings_other": "The last completed update reported {{count}} non-critical warnings.",
   "publicationUnavailable": "No successful publication yet",
   "waitingForNextUpdate": "Waiting for the next update",
   "progressWaiting": "Waiting for progress",

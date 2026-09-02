@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-25
-last_verified_commit: 8c056d1d
+last_verified: 2026-09-02
+last_verified_commit: 3bf8c6e3
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -300,10 +300,10 @@ key. The production graph requires all three JSON resources to stay outside the
 entry and inside their declared lazy owner closures.
 
 Focused unit and Playwright coverage owns v1/v2 rendering, exact and unknown
-denominators, ETA suppression, warnings/failures/restarts, absence of technical
-and selected-profile sync surfaces, shared-request concurrency, one-card
-overflow at 320, 375, 768, and 1440 pixels, and determinate desktop/mobile axe
-coverage.
+denominators, ETA suppression, failures/restarts, suppression of internal
+best-effort warning counts, absence of technical and selected-profile sync
+surfaces, shared-request concurrency, one-card overflow at 320, 375, 768, and
+1440 pixels, and determinate desktop/mobile axe coverage.
 
 The path modal can display the generated PNG or a text table. Text mode renders
 one row per activation, not one row per optional start note. Schema-v2

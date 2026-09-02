@@ -359,7 +359,7 @@ test('failed update shows stopped process and failed service state', async ({
   await expect(page.getByTestId('settings-service-info-row-update-sub-status')).toContainText(
     'Last Leaderboard Update Failed',
   );
-  await expect(page.getByText('The last completed update reported 2 non-critical warnings.')).toBeVisible();
+  await expect(page.getByText(/non-critical warnings?/i)).toHaveCount(0);
   await expect(page.getByRole('progressbar')).toHaveCount(0);
 
   await testInfo.attach('settings-failed', {
