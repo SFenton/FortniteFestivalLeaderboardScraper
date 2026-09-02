@@ -85,9 +85,11 @@ update_triggers:
   its raw-ZIP route attestation failed before database write. H6-prime now
   keeps the strict post-restore parity validator and adds a separate
   exact-manifest-pinned midnight shop rollover attribution for the sole
-  historical route difference. Review/package and authorize that
-  continuation-only C# evidence tool, then attest the stabilized pair and
-  finalize with the same bridge-bound authorization before promotion.
+  historical route difference. Authorization `0ed3cd71...` attested and
+  finalized the restore, and candidate scrape `1337`, publication `171`,
+  notifications, and cycle `17` completed with zero failures and exact
+  planner/oracle agreement. Promote through PR/CI, deploy official images, and
+  run the official-image confirmation scrape.
   Sparse compaction remains a separate unresolved iteration.
 - Keep exact archive/restore, retained-source parity, rollback, capacity, and
   live API gates for every remaining instrument and for any future recurring
@@ -891,7 +893,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
   H3 authorization failed read-only on a reserved SQL alias; H4 authorization
   passed that lookup but failed read-only on string-serialized OID arrays. H5
   restored the child exactly, but route attestation stopped on volatile ZIP
-  bytes. H6-prime's hash-only midnight shop bridge and strict stabilized pair
-  are locally implemented; clean-build package review, live authorization,
-  attestation, and finalization remain.
+  bytes. H6-prime's hash-only midnight shop bridge, strict stabilized pair,
+  live authorization/finalization, and candidate confirmation scrape are
+  accepted. PR/official-image promotion remains.
   Automatic retention is still a later parity- and capacity-gated task.

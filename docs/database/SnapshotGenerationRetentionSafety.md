@@ -964,6 +964,17 @@ evidence-tool/authorization FKs and temporal-bridge hash; finalization must use
 the same authorization and bridge as attestation. No route exception is a CLI,
 configuration, environment, or database collection. The H5 restore row, plan,
 package, authorization, and DROP evidence are never updated.
+
+H6 is now live-accepted under continuation authorization
+`0ed3cd7125af6fdf8748915318b0893d`. The bridge-bound attestation recorded
+strict 55-route stabilization, and finalization released hold 3 and removed
+the mutation trigger while preserving restored OID/relfilenode `321906645`,
+8,627 rows, and both index chains. Candidate scrape `1337`, publication `171`,
+notifications, and cycle `17` completed with zero failures and exact
+planner/oracle agreement. The restored snapshot was observed as an eligible
+candidate under its new physical identity. The acceptance bundle manifest is
+SHA-256
+`0ee12d9e9c6d0e2dd8230eca359b0a807106ef128698c9e83ef203756bea3f56`.
 Automatic bounded retirement and sparse-child compaction remain unimplemented.
 
 Rollback for this slice is to keep

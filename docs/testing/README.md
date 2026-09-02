@@ -316,6 +316,13 @@ remain with stable OIDs and `PUBLIC` revoked. The continuation authorizer has
 one 40-argument signature. Nonempty legacy downstream evidence raises `55000`
 without adding columns.
 
+The accepted H6 build passed 3,882 service tests, 125 focused
+snapshot-generation tests, 24 Python restore tests, two reproducible clean
+builds of three binaries, and a fresh PostgreSQL 17 disposable drill. The
+live package then passed the exact historical bridge and stabilized parity
+preflight. Candidate scrape `1337` supplied the end-to-end publication,
+notification, manifest, restored-identity, and planner/oracle acceptance gate.
+
 Python restore tests assert `attest` and `finalize` are absent from the parser,
 the old restore-attestation/finalization SQL function names do not occur in
 the source, and both legacy command words return the continuation-wrapper

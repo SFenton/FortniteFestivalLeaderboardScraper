@@ -729,6 +729,52 @@ Those redirects run before argument parsing, route reads, output creation, or
 database access; the old 9-/4-argument SQL function names are absent from the
 Python source.
 
+### Accepted H6 continuation canary
+
+The first mandatory restore continuation is accepted. The immutable identities
+are:
+
+- repository commit `83b75e3fb09461ca907d80e32f45911c4d0d3b86`;
+- candidate service image
+  `sha256:102d08fdfb608f07620e03eab7317bb7cbc93295a22cf0182b868399f87b26d3`;
+- continuation package manifest
+  `b1751ebfc56db36eb6268b2bf149ffdb47d832bc7c9db192885680d36dbafeeb`;
+- continuation authorization `0ed3cd7125af6fdf8748915318b0893d`;
+- continuation tool
+  `d5f75c9744ca983bb9c81bb1d2d2de19460b9818d13b2191536e4b03d13572e0`;
+- shared evidence assembly
+  `a8ddccdcf4139bf9c7883c4e1ea546138372ecb9778593f61a0ba5b285ed765a`;
+- temporal bridge
+  `1a771bf076394800e4e27c1096c2ee331546358af95f646b53276b08954b703d`;
+- stabilized route semantics
+  `37b55f7580f69a86b10a00c9140438bc440a5f517cc71348cf3a0b95f02cb972`.
+
+The live additive schema exposed only the 40-argument authorization,
+13-argument attestation, and 6-argument finalization functions, all
+`SECURITY INVOKER` with `PUBLIC` execution revoked. Attestation recorded the
+strict post-restore pair on publication `165`/scrape `1336`. Finalization then
+inserted the authoritative
+`snapshot_generation_restore_finalizations.finalized_at` row, removed the
+mutation trigger, and released hold 3 atomically. The legacy nullable
+`snapshot_generation_restore_attestations.finalized_at` column remains null;
+it is not the finalization authority.
+
+Candidate confirmation scrape `1337` completed with 710 songs, 41,182,325
+entries, 609,135 requests, 92,896,641,917 bytes, zero writer failures, and
+zero best-effort failures. Publication `171`, improvement notification
+recovery, all 8,520 scope manifests, and report-only cycle `17` completed.
+Cycle 17 had exact planner/oracle agreement, 122 candidates, 199 protected
+children, zero blockers, and zero global blockers. It observed Pro Cymbals
+snapshot `1314` as a candidate at restored OID/relfilenode `321906645`.
+Scrapes `1338` through `1341` also completed with zero best-effort failures.
+
+The hash-only terminal acceptance bundle is
+`continuation-acceptance-v2/acceptance-manifest.json`, SHA-256
+`0ee12d9e9c6d0e2dd8230eca359b0a807106ef128698c9e83ef203756bea3f56`.
+Automatic and multi-child pruning remain disabled. The remaining gate is
+normal PR promotion, official image deployment at a terminal scrape boundary,
+and an official-image confirmation scrape.
+
 ## Acceptance and rollback
 
 The first live DROP canary is intentionally restored after at least 30 minutes
@@ -745,7 +791,8 @@ of successful post-DROP monitoring. Acceptance requires:
 - a separate zero-difference 55-route post-restore stabilization attestation;
 - no service readiness, lock, resource, notification, or publication
   regression;
-- a later successful official scrape and exact planner/oracle cycle.
+- a successful candidate scrape and exact planner/oracle cycle;
+- after promotion, a separate official-image confirmation scrape.
 
 Before DROP, rollback is ordinary Q2 reattach. After committed DROP, rollback
 is logical archive restore only. Any mixed commit state, evidence mismatch,

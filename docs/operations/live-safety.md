@@ -313,10 +313,11 @@ authorization is now consumed and cannot authorize a continuation tool.
 
 H5 restore operation `da07c4ce4d07b9692a45a1498313f8b3` is now committed and
 must never be rerun. Its child is attached at OID/relfilenode `321906645`
-with exact data/topology while hold 3 and the mutation trigger remain active.
-The failed H5 route attestation wrote no database row. Keep those protections
-until the continuation-only tier records semantic route parity and
-finalization.
+with exact data/topology. H6 continuation authorization
+`0ed3cd7125af6fdf8748915318b0893d` subsequently recorded semantic route
+attestation and finalization. Hold 3 is released and the mutation trigger is
+removed. The immutable finalization row, not the legacy nullable attestation
+timestamp, is the completion authority.
 
 H6 preparation and authorization are separate from physical restore. The
 continuation package references the exact H5 plan/report/package/bundle and
@@ -341,9 +342,12 @@ restored OID/rows/two index chains, active hold/trigger, absent old OID,
 absent DEFAULT fence, and an empty DEFAULT child. Any publication rotation is
 a halt condition. Finalize only after an H6-bound attestation and use the same
 authorization ID; its transaction must preserve the hold/trigger on failure.
-H6 is repository-only until its clean-commit binaries, package, authorization,
-and confirmation are independently reviewed; this implementation is not live
-authorization.
+H6 is live-accepted. Candidate scrape `1337`, publication `171`, notification
+recovery, and retention cycle `17` completed with zero failures and exact
+planner/oracle agreement; scrapes `1338` through `1341` also completed cleanly.
+Do not rerun authorization, attestation, or finalization for this restore.
+The remaining operation is normal PR/official-image promotion and an
+official-image confirmation scrape at a safe terminal boundary.
 Before deploying, verify initialization removes both known old restore
 overloads (the observed live 13-argument OID and intermediate 16-argument
 shape) and leaves only the 21-argument function. Any additional overload is a

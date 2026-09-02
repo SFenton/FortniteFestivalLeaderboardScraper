@@ -930,6 +930,15 @@ Finalization requires the exact same continuation authorization recorded by
 attestation, including the same temporal-bridge hash, before atomically
 removing the mutation trigger and releasing the hold.
 
+The first continuation completed under authorization
+`0ed3cd7125af6fdf8748915318b0893d`. Its finalization row is the authoritative
+completion marker; the older nullable `restore_attestations.finalized_at`
+column is retained for schema compatibility and remains null. Restored Pro
+Cymbals snapshot `1314` remains attached at OID/relfilenode `321906645` with
+8,627 rows and both index chains. Candidate scrape `1337` and retention cycle
+`17` proved the generation is visible to the planner/oracle under that new
+physical identity without becoming live publication state.
+
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the
 21-argument authorization-aware signature. The authorization row stores both

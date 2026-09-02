@@ -103,6 +103,15 @@ structurally unable to repeat physical restore. The bridge is not a general
 route-exception mechanism: route, predicate, census, captures, restore scope,
 and runtime identities are fixed and hash-bound.
 
+The first use of this continuation tier is accepted. Authorization
+`0ed3cd7125af6fdf8748915318b0893d` bound the exact package, temporal bridge,
+stabilized route hash, restore scope, and runtime identities. Finalization
+released the hold and removed the restored-child mutation trigger without
+changing its OID, rows, bound, or index chains. Scrape `1337`, publication
+`171`, notifications, and cycle `17` then proved the restored generation under
+ordinary worker operation. This accepts the manual single-child recovery
+tier; it does not authorize permanent deletion or automatic pruning.
+
 Quarantine structurally classifies the existing PK and score indexes and
 renames those same OIDs to
 `sgqi_<full-quarantine-operation-id>_{pk|score}` after detach and before the
