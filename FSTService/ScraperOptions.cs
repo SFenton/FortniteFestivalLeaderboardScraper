@@ -622,7 +622,8 @@ public sealed class ScraperOptions
     public int RegisteredPlayerBandDiscoveryMaxLookupsPerPass { get; set; } = 80;
 
     /// <summary>
-    /// Maximum registered bands processed in one post-scrape pass. Set to 0 for no limit.
+    /// Maximum registered bands attempted in one post-scrape pass, including
+    /// bands whose first lookup fails. Set to 0 for no limit.
     /// </summary>
     public int RegisteredBandProcessingMaxBandsPerPass { get; set; } = 10;
 

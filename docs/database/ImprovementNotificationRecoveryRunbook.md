@@ -201,12 +201,19 @@ first on the next pass.
 | `Scraper__RegisteredPlayerBandDiscoveryTimeout` | `00:06:00` |
 | `Scraper__RegisteredBandTargetedProcessingTimeout` | `00:05:00` |
 | `Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass` | `80` |
+| `Scraper__RegisteredBandProcessingMaxBandsPerPass` | `10` |
 | `Scraper__RegisteredBandProcessingMaxLookupsPerPass` | `80` |
 
 The discovery timeout has one minute of headroom above the observed 80-lookup
 runtime. Scrape `1277` completed all 80 lookups in 291,752 ms, while scrape
 `1278` checkpointed 78 lookups before the former five-minute limit expired.
 The per-pass lookup cap and per-request cancellation remain the primary bounds.
+The registered-band count cap applies to attempted bands, including a band
+whose first lookup fails. Failed bands remain retryable, but a run of invalid
+or unavailable Epic leaderboards cannot bypass the ten-band bound, starve the
+phase denominator at zero, and consume the entire wall-clock timeout. Pending
+bands sort ahead of persisted `error` bands, so a failing target set cannot
+starve untouched registered bands on later passes.
 
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.
