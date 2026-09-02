@@ -34,6 +34,8 @@ public sealed class QuarantineDatabase : IAsyncDisposable
 
     private readonly NpgsqlDataSource _dataSource;
 
+    public static Action<string>? ReattachTestHook { get; set; }
+
     private QuarantineDatabase(NpgsqlDataSource dataSource)
     {
         _dataSource = dataSource;
@@ -461,11 +463,17 @@ public sealed class QuarantineDatabase : IAsyncDisposable
                 (string)(await command.ExecuteScalarAsync(ct)
                     ?? throw new InvalidOperationException(
                         "Reattach function returned no operation ID."));
+            ReattachTestHook?.Invoke(
+                "after-reattach-before-commit");
             await transaction.CommitAsync(ct);
 
             var state = await ReadOperationStateAsync(
                 operationId,
                 ct);
+            var committedEvidence =
+                await ReadReattachEvidenceAsync(
+                    operationId,
+                    ct);
             return BuildExecutionReport(
                 plan,
                 state,
@@ -473,7 +481,7 @@ public sealed class QuarantineDatabase : IAsyncDisposable
                 "reattached",
                 reattachedBy,
                 reattachReference,
-                evidence);
+                committedEvidence);
         }
         catch
         {
@@ -680,6 +688,34 @@ public sealed class QuarantineDatabase : IAsyncDisposable
             transaction: null,
             operationId,
             ct);
+    }
+
+    private async Task<JsonElement>
+        ReadReattachEvidenceAsync(
+            string operationId,
+            CancellationToken ct)
+    {
+        await using var connection =
+            await _dataSource.OpenConnectionAsync(ct);
+        await using var command =
+            connection.CreateCommand();
+        command.CommandText = """
+            SELECT reattach_evidence::TEXT
+            FROM snapshot_generation_quarantine_reattachments
+            WHERE operation_id = @operationId
+            """;
+        command.Parameters.AddWithValue(
+            "operationId",
+            operationId);
+        var value = (string?)(
+            await command.ExecuteScalarAsync(ct));
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidDataException(
+                "Committed reattach evidence is unavailable.");
+        }
+        using var document = JsonDocument.Parse(value);
+        return document.RootElement.Clone();
     }
 
     private static async Task<QuarantineOperationState>
@@ -1877,9 +1913,3 @@ public sealed class QuarantineDatabase : IAsyncDisposable
         }
     }
 }
-
-public sealed record FingerprintEvidence(
-    string Algorithm,
-    string Sha256,
-    long RowCount,
-    long StreamBytes);

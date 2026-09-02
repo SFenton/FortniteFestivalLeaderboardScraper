@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -19,6 +19,9 @@ sources:
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationDropToolTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRestoreAuthorizationTests.cs
   - FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs
   - FSTService.Tests/Unit/DatabaseInitializerTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
@@ -47,8 +50,17 @@ sources:
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
+  - tools/testdata/snapshot-generation-live-drop/
   - tools/FstSnapshotGenerationQuarantine/
   - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/FstSnapshotGenerationDrop/
+  - tools/FstSnapshotGenerationRestoreAuthorization/
+  - tools/postgres-snapshot-generation-drop.sh
+  - tools/postgres-snapshot-generation-restore-authorize.sh
+  - tools/postgres-snapshot-generation-restore.py
+  - tools/postgres-snapshot-generation-restore.test.py
+  - tools/postgres-snapshot-generation-drop-drill.py
+  - tools/capture-snapshot-generation-drop-health.py
   - tools/capture-publication-route-contract.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
@@ -169,6 +181,189 @@ generation-child drop removes only that snapshot while another generation,
 its two index attachments, and the empty default child remain intact. This
 does not substitute for the separately required recurring archive-before-drop
 retention package.
+
+Snapshot-generation DROP and logical-restore validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationDrop|FullyQualifiedName~SnapshotGenerationQuarantine|FullyQualifiedName~SnapshotGenerationPartition'
+
+bash -n \
+  tools/postgres-snapshot-generation-drop.sh \
+  tools/postgres-snapshot-generation-restore.sh
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-snapshot-generation-restore.test.py
+
+tools/postgres-snapshot-generation-drop-drill.py \
+  --work-root /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-drop-drills/<new-run>
+```
+
+The focused .NET coverage proves the quarantine recreation guard, additive and
+immutable evidence schema, exact private-child DROP, retained hold/DEFAULT
+fence, Q1/Q2 chronology, no-cycle-advance and soak gates, dependency rollback,
+seven-lock exclusion, commit-state confirmation, and logical reattachment with
+a new physical identity. It also reproduces the live rotation name collision,
+the mirror quarantine-direction collision, and a pre-change Q1 repair; verifies
+full-operation PK/score names, PK-constraint rename, exact table/index
+OID/relfilenode preservation, automatic root/top relinking, immutable mapping
+evidence, full transactional rollback on a derived-name collision, and no
+strong reattach lock on unrelated tables/indexes. Name-insensitive semantic
+tests accept independently hashed archives and leaf-name-only changes while
+rejecting sort/shape or physical topology drift. Final DROP-boundary tests
+reject wrong index name, OID, relfilenode, role, and extra/missing indexes
+without DROP evidence or relation residue. Archive tests prove
+`manifest.catalog.sha256` directly matches the checksum-authenticated
+`catalog.json`, even if all package/proof checksum files are recomputed around
+a false manifest digest. Static tests preserve the original quarantine
+binary's no-DROP contract and require the DROP wrapper to run a prebuilt
+SHA-256-verified assembly whose emitted dependency graph contains neither
+`Docker.DotNet` nor the FST service host.
+
+Production-shaped catalog fixtures cover cycle-14 string relation
+OID/relfilenode fields without optional metadata and cycle-16 string
+opclass/collation arrays with optional metadata. They prove rename-only
+semantic equality despite different raw catalogs/archive hashes and reject
+signed, whitespace-padded, leading-zero, out-of-range, and noncanonical
+numeric strings. Separate regressions keep counts, key attnums, and index
+options number-only.
+
+Rolling-schema tests downgrade empty current tables to the exact initial live
+drop/restore operation shapes, run `EnsureSchemaAsync` twice, and verify all
+16 evolved columns, exact types/nullability, rebuilt validated
+hash/identity constraints, unchanged companion-table schemas, all six
+functions, and zero evidence rows. Separate committed DROP and restore
+fixtures prove a missing semantic column raises `55000` and leaves the
+nonempty pre-semantic row and old constraint shape unchanged.
+
+Cross-language canonical-file coverage writes a real sealed
+`SnapshotGenerationDropPlan` with the C# canonical writer, including
+`DateTimeOffset` `+00:00`, nested records, omitted nulls, and escaped
+plus/apostrophe/safety characters, then invokes Python validation. Python
+fixtures reject nested tampering, duplicate keys, top-level reordering,
+out-of-string whitespace, identity edits/missing identity, malformed or
+non-object JSON, and trailing data. A fully mocked read-only restore-plan
+reproduction validates both canonical DROP plan/report bytes and reaches
+restore-plan emission without production access.
+
+Repair authorization tests cover deterministic IDs, immutable/idempotent
+authorization, conflicting evidence, wrong pin/actor/state/fence/hold,
+tool-only package exact-set enforcement, empty restore-table migration with a
+committed DROP, nonempty fail-closed behavior, pinned restore compatibility,
+replacement rejection without authorization, exact executing-tool SQL
+consumption, a second authorization for a distinct replacement hash, and
+authorized attestation/finalization. Python coverage exercises both pinned and
+authorized shared resolvers, verifies `restore.py` has no authorization
+command, and rejects the reserved `authorization` SQL alias.
+
+A PostgreSQL-backed regression seeds a committed disposable DROP and
+authorization, asks the actual H4 Python module to emit its shared lookup SQL,
+then executes those exact bytes through PostgreSQL and verifies the returned
+authorization/drop/plan identity. Because plan builds through the resolver and
+restore, confirm, attest, and finalize all validate the same digest-covered
+plan through that resolver, this covers the lookup used by all five commands
+without a mocked SQL parser.
+
+H5 Python regressions decode SHA-pinned deterministic gzip/base64 copies of
+the exact live Q2 `catalog.json` and `archive.toc`. They prove the
+operation-scoped `sgqi_*` PK/score definitions with canonical decimal-string
+opclass/collation OID arrays pass fixed PostgreSQL-17 validation, select only
+the four exact child TOC entries, and retain the accepted logical index-shape
+hash. Mixed integer/string attachment-chain representations compare after
+normalization; semantic drift still rejects. Malformed lanes cover booleans,
+signs, whitespace, leading zeroes, fractions, exponents, zero opclass OIDs,
+and values above `uint32`. Counts, options, and key attnums remain strict JSON
+integers. An authorized end-to-end plan fixture uses the real Q2 catalog/TOC
+shape and reaches plan/list emission without production access. PostgreSQL
+coverage also proves three unused replacement-tool authorizations can coexist
+for the exact DROP.
+
+Post-restore continuation coverage proves the separate C# evidence tool has
+only confirm/attest/finalize commands and a dependency graph containing no
+physical restore/drop host, FST service, or Docker library. Package tests
+enforce the exact read-only runtime/evidence/diff/source/test/preflight file
+set and reject symlinks or extras. PostgreSQL tests cover deterministic
+continuation authorization IDs, DB-computed canonical-evidence hashes,
+idempotency, conflicting predecessor/tool/route/actor evidence, immutability,
+same-authorization attestation/finalization, rollback-preserved hold/trigger,
+and unknown-commit confirmation.
+
+Temporal-bridge tests synthesize the exact `117/100/100/17` midnight shop
+rotation without committing production response bodies. They require removed
+songs to equal the baseline `leavingTomorrow` set, unchanged overlaps,
+catalog-derived arrival/departure metadata and URLs, empty new-song state, one
+UTC midnight, a matching pre-/post-midnight `lastUpdated` transition, exactly
+one historical route difference, and a separately strict stabilized pair
+whose shop refresh timestamp is unchanged. Negative cases cover duplicate
+IDs, a second route difference, changed cardinality, unannounced departures,
+catalog or overlap drift, new leaving flags, refresh timestamps outside the
+boundary, and zero or multiple UTC-midnight boundaries. Build-evidence tests
+reject image and worktree-state tampering; shared-middle tests reject a
+historical candidate that is not the stabilized baseline.
+Stabilization tests also reject the same manifest, missing capture time, and
+reversed capture order. Package tamper coverage changes a valid build identity,
+recomputes the outer package manifest and checksum tree, and still requires
+runtime/build cross-link validation to reject it.
+Restore-scope coverage models PostgreSQL custom-archive TOC syntax directly:
+the PK constraint entry names the child relation while the secondary `INDEX`
+entry names only the archived index. Only the exact table and table-data
+entries may appear in the executable restore list.
+
+The empty-only rolling migration test downgrades restore attestations and
+finalizations, restores their old 9- and 4-argument functions, initializes
+twice, and proves only the 13- and 6-argument authorization-aware signatures
+remain with stable OIDs and `PUBLIC` revoked. The continuation authorizer has
+one 40-argument signature. Nonempty legacy downstream evidence raises `55000`
+without adding columns.
+
+The accepted H6 build passed 3,882 service tests, 125 focused
+snapshot-generation tests, 24 Python restore tests, two reproducible clean
+builds of three binaries, and a fresh PostgreSQL 17 disposable drill. The
+live package then passed the exact historical bridge and stabilized parity
+preflight. Candidate scrape `1337` supplied the end-to-end publication,
+notification, manifest, restored-identity, and planner/oracle acceptance gate.
+
+Python restore tests assert `attest` and `finalize` are absent from the parser,
+the old restore-attestation/finalization SQL function names do not occur in
+the source, and both legacy command words return the continuation-wrapper
+message before parser construction, route validation, evidence output, or
+database mutation.
+
+Shared route-parity tests prove the existing aggregate API is behaviorally
+unchanged while detailed evidence records per-route raw/semantic hashes.
+Synthetic ZIP/XLSX tests cover generated outer timestamps, random Office core
+parts/root relationships, multi-workbook player exports, worksheet tampering,
+nested-depth and normalized-name collisions, empty/>10,000-entry archives,
+and raw tampering before semantic comparison. The committed live fixture
+contains hashes/counts/categories only—no export body, workbook entry name, or
+player content.
+
+A downgrade/upgrade regression creates both the observed live 13-argument and
+intermediate 16-argument restore overloads, reruns initialization twice, and
+proves only the 21-argument signature remains with stable OID and `PUBLIC`
+revoked. Authorization tests
+verify PostgreSQL's independent JSONB evidence digest, deterministic ID
+recomputation, and content-tamper rejection. SHA-pinned deterministic
+gzip/base64 fixtures contain the exact committed live plan/report bytes;
+their safety manifest records zero credential, account-ID-key, connection,
+email, or private-endpoint findings, and proves the old digest
+`2536d932...aad5a` fails while the current validator authenticates
+`fa45ca20...d5dc` /
+`333ba4b9...c709`.
+
+The Python tests authenticate the exact four child TOC entries while proving
+that only table and table data execute. They reject parent, attachment,
+arbitrary-object, expression/predicate/include/opclass/collation/order/options
+drift, and destructive cleanup surfaces. PostgreSQL coverage verifies fixed
+`sgri_<full-restore-operation-id>_{pk|score}` creation despite unrelated
+archived-name collisions and proves those unrelated object OIDs are unchanged.
+The
+full drill composes the existing network-none archive/proof drill with the
+PostgreSQL-backed quarantine/drop/restore suite, reruns the restore-tool tests,
+asserts the required Q1 rotation-collision/repair, post-reattach-cycle,
+Q2 DROP, and restore-name-collision regressions are present, and hashes the
+isolated DROP dependency graph. It uses only disposable
+containers and FST-drive scratch and must prove cleanup before acceptance.
 
 Focused dead/no-op phase cleanup validation:
 
@@ -307,10 +502,12 @@ The PostgreSQL-backed tests prove additive/idempotent schema, no
 drop/truncate/delete command surface, atomic hold plus detach plus evidence,
 rollback on failed preflight, exact OID/relfilenode preservation, a validated
 DEFAULT-partition exclusion that rejects ghost writes, detached-child mutation
-rejection, exact child/root/top index restoration, publication rotation during
-soak, current-publication liveness gates, a publication change committed while
-the executor waits for its pre-transaction lock chain, and immutable
-operation, reattachment, and attestation evidence. Tool tests cover archive/proof and
+rejection, operation-scoped role-based index normalization, pre-change
+reattach repair, both directions of destination-name collision, exact
+child/root/top index restoration, publication rotation during soak,
+current-publication liveness gates, a publication change committed while the
+executor waits for its pre-transaction lock chain, and immutable operation,
+index-mapping, reattachment, and attestation evidence. Tool tests cover archive/proof and
 full-scrape checksums, path/symlink fencing, strict 55-route identity, raw body
 hashes/sizes, volatile-only JSON normalization, semantic ZIP comparison,
 including narrow generated Office-metadata normalization, sealed plan

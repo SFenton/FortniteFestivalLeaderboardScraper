@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using FSTService.Persistence.Maintenance;
-using FSTService.Scraping.Replay;
+using FstSnapshotGenerationEvidence;
 
 namespace FstSnapshotGenerationQuarantine;
 
@@ -26,7 +25,7 @@ public static class QuarantineJson
     }
 
     public static byte[] Canonical<T>(T value) =>
-        TierZeroCanonicalJson.Serialize(value);
+        SnapshotGenerationCanonicalJson.Serialize(value);
 
     public static string Sha256<T>(T value) =>
         Convert.ToHexString(
@@ -89,6 +88,63 @@ public sealed record RouteParityEvidence(
     bool StatusParity,
     bool SemanticJsonParity,
     int DifferenceCount);
+
+public sealed record RouteSemanticComparisonEvidence(
+    string Name,
+    string ComparisonMode,
+    long BaselineBytes,
+    long CandidateBytes,
+    string BaselineRawSha256,
+    string CandidateRawSha256,
+    string BaselineSemanticSha256,
+    string CandidateSemanticSha256);
+
+public sealed record DetailedRouteParityEvidence(
+    RouteParityEvidence Parity,
+    string AlgorithmId,
+    bool SemanticBinaryParity,
+    string RouteSemanticEvidenceSha256,
+    IReadOnlyList<RouteSemanticComparisonEvidence> Routes);
+
+public sealed record ShopDailyInventoryRolloverEvidence(
+    string PredicateId,
+    string HistoricalBaselineManifestPath,
+    string HistoricalBaselineManifestSha256,
+    string HistoricalCandidateManifestPath,
+    string HistoricalCandidateManifestSha256,
+    DateTimeOffset HistoricalBaselineCapturedAtUtc,
+    DateTimeOffset HistoricalCandidateCapturedAtUtc,
+    DateTimeOffset HistoricalShopLastUpdatedUtc,
+    DateTimeOffset StabilizedShopLastUpdatedUtc,
+    long PublicationId,
+    long PublishedScrapeId,
+    int RouteCount,
+    int HistoricalDifferenceCount,
+    string HistoricalDifference,
+    string RouteSemanticEvidenceSha256,
+    string SongsSemanticSha256,
+    string HistoricalShopSemanticSha256,
+    string StabilizedShopSemanticSha256,
+    string HistoricalSongIdSetSha256,
+    string StabilizedSongIdSetSha256,
+    string AddedSongIdSetSha256,
+    string RemovedSongIdSetSha256,
+    string OverlapSongIdSetSha256,
+    int HistoricalCount,
+    int StabilizedCount,
+    int AddedCount,
+    int RemovedCount,
+    int OverlapCount,
+    int HistoricalLeavingTomorrowCount,
+    int StabilizedLeavingTomorrowCount,
+    int HistoricalNewSongsCount,
+    int StabilizedNewSongsCount,
+    int IsNewDifferenceCount,
+    int OverlapDifferenceCount,
+    int CatalogSongCount,
+    int CatalogMatchedShopSongCount,
+    int CatalogMetadataDifferenceCount,
+    int ShopUrlDifferenceCount);
 
 public sealed record QuarantineDatabaseSnapshot(
     DateTimeOffset CapturedAtUtc,
@@ -169,7 +225,8 @@ public sealed record SnapshotGenerationQuarantinePlan(
             new
             {
                 ToolId =
-                    SnapshotGenerationQuarantineContract.ToolId,
+                    SnapshotGenerationQuarantineEvidenceContract
+                        .ToolId,
                 PlanDigest = digest,
             })[..32];
         return this with
@@ -182,9 +239,11 @@ public sealed record SnapshotGenerationQuarantinePlan(
     public void Validate()
     {
         if (SchemaVersion !=
-                SnapshotGenerationQuarantineContract.SchemaVersion
+                SnapshotGenerationQuarantineEvidenceContract
+                    .SchemaVersion
             || ToolId !=
-                SnapshotGenerationQuarantineContract.ToolId
+                SnapshotGenerationQuarantineEvidenceContract
+                    .ToolId
             || !ExplicitApprovalRequired
             || string.IsNullOrWhiteSpace(PlanDigest)
             || string.IsNullOrWhiteSpace(OperationId))
@@ -307,3 +366,9 @@ public sealed record QuarantineOperationState(
     int SuccessfulQuarantinedAttestations,
     int SuccessfulSoakAttestations,
     int SuccessfulReattachedAttestations);
+
+public sealed record FingerprintEvidence(
+    string Algorithm,
+    string Sha256,
+    long RowCount,
+    long StreamBytes);

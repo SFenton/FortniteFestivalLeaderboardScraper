@@ -1002,6 +1002,7 @@ public class DatabaseInitializerTests : IDisposable
                 "publication-path-artifacts",
                 "snapshot-generation-retention-report-only",
                 "snapshot-generation-quarantine",
+                "snapshot-generation-drop",
                 "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
@@ -1109,7 +1110,15 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, quarantine.CommandTimeoutSeconds);
         Assert.Equal("2s", quarantine.LockTimeout);
         Assert.Equal("15s", quarantine.StatementTimeout);
-        var maxScoreMaintenance = plan[9];
+        var drop = plan[9];
+        Assert.True(drop.UseShortTransaction);
+        Assert.Equal(
+            SnapshotGenerationDropSchema.Sql,
+            drop.Sql);
+        Assert.Equal(20, drop.CommandTimeoutSeconds);
+        Assert.Equal("2s", drop.LockTimeout);
+        Assert.Equal("15s", drop.StatementTimeout);
+        var maxScoreMaintenance = plan[10];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

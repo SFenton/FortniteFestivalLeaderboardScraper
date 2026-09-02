@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>FstSnapshotGenerationEvidence</AssemblyName>
+    <RootNamespace>FstSnapshotGenerationEvidence</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\FstSnapshotGenerationQuarantine\QuarantineModels.cs"
+             Link="QuarantineModels.cs" />
+    <Compile Include="..\FstSnapshotGenerationQuarantine\EvidenceValidator.cs"
+             Link="EvidenceValidator.cs" />
+  </ItemGroup>
+</Project>

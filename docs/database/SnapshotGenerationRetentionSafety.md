@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/appsettings.json
@@ -28,6 +28,7 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
   - FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs
@@ -41,6 +42,8 @@ sources:
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationDropToolTests.cs
   - tools/postgres-snapshot-generation-archive.py
   - tools/postgres-snapshot-generation-archive.sh
   - tools/postgres-snapshot-generation-archive.test.py
@@ -50,6 +53,12 @@ sources:
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
   - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/FstSnapshotGenerationDrop/
+  - tools/postgres-snapshot-generation-drop.sh
+  - tools/postgres-snapshot-generation-restore.py
+  - tools/capture-snapshot-generation-drop-health.py
+  - tools/postgres-snapshot-generation-drop-drill.py
+  - docs/database/SnapshotGenerationDropRunbook.md
   - tools/capture-publication-route-contract.sh
 update_triggers:
   - Snapshot-generation report planning, liveness roots, provenance TTL, maintenance locks, observation gates, or later archive/destructive tiers change.
@@ -89,7 +98,25 @@ no Docker access, is not hosted by the service or worker, and has no `drop`,
 `truncate`, row-delete, or automatic-retirement command. It can move exactly
 one already archived and currently eligible numeric child into a private
 quarantine schema, collect immutable soak evidence, and reattach that same
-OID/relfilenode as rollback.
+OID/relfilenode as rollback. Quarantine structurally identifies the exact
+primary-key and score indexes, then renames them without rebuilding to
+`sgqi_<full-operation-id>_pk` and
+`sgqi_<full-operation-id>_score` before moving the table. The primary-key
+constraint follows its index name. Immutable per-index evidence records the
+old/new names, exact OID/relfilenode, role, structural semantics, phase, and
+transaction identity. Reattach applies the same normalization as a
+backward-compatible repair for pre-change operations.
+
+A separate operator-only DROP and logical-restore tier is now implemented but
+is not live-accepted or automatically invoked. DROP can target only a
+currently detached child named by an authenticated quarantine operation. It
+requires a distinct publication-rotation Q1 rehearsal, a fresh Q2 operation,
+30 minutes and 60 successful health samples, unchanged latest
+cycle/publication state, a fresh network-none proof, a sealed recovery bundle,
+and separate approval. The active hold, durable DEFAULT fence, and committed
+DROP tombstone independently prevent generation recreation. Logical restore
+is a sibling tool and records the new physical OID/relfilenode while requiring
+exact data and name-insensitive logical topology.
 
 The legacy whole-instrument `SnapshotRetentionPolicy`/rewrite path remains
 disabled and is not used as the generation-child deletion oracle.
@@ -138,11 +165,35 @@ planner-only run persisted the cycle before deliberately rejecting completed
 scrape `1329` as a resume target; no scrape `1330` was allocated during that
 archive window.
 
+Official confirmation scrape `1333` is also accepted. It completed with 710
+songs, 41,154,968 entries, 608,691 requests, 92,821,715,390 bytes, zero
+critical or best-effort phase failures, and zero writer failures. All
+8,520/8,520 manifests across 12 instruments completed with no retry-exhausted
+or failure reason. Publication `157` became current with 6,390 published solo
+source bindings, first-attempt completed notifications, unfrozen reads, and no
+working publication, commit intent, or max-score gate. Production continued
+automatically into scrape `1334`.
+
+Cycle `13`, triggered by scrape `1333` and publication `157`, is
+observed/report-only with exact planner/oracle agreement: 111 candidates, 174
+protected, zero blocked, 194,754,322,432 candidate bytes, exact child/live/
+candidate sets, and zero global blockers. Solo Bass `1308` remains protected
+by `unreplayed_writer_failure` with stable identity
+`4e3310328261704da558e6d83f99cbc77bc01cef10abbac0840df471d33809cc`.
+At the cycle-13 confirmation point, the true smallest candidate was Pro
+Cymbals `1314` at 4,628,480 bytes. Cycle `15` correctly records it absent
+while Q1 remains private; a new post-reattach cycle must establish the next
+current candidate set.
+
 ## Archive-only package and proof
 
-`tools/postgres-snapshot-generation-archive.sh archive` selects the smallest
-candidate by `(snapshot_id, instrument, child_oid)` from the newest immutable
-cycle. An optional exact `--instrument` plus `--snapshot-id` pair is accepted
+`tools/postgres-snapshot-generation-archive.sh archive` selects the
+deterministically oldest candidate by
+`(snapshot_id, instrument, child_oid)` from the newest immutable cycle; this
+ordering is not a physical-size comparison. The separate drop tool's
+`select-canary` command orders eligible nonempty children by current
+`pg_total_relation_size` for a true smallest-child canary. An optional exact
+archive `--instrument` plus `--snapshot-id` pair is accepted
 only from the fixed nine-instrument allowlist and must resolve to a candidate
 in that same newest cycle. Partial selection, relation names, and SQL text are
 not accepted.
@@ -173,6 +224,11 @@ instrument root, and selected numeric child. It uses strict names,
 `--no-owner`, `--no-privileges`, compression, and a bounded dump lock wait.
 The accepted package retains the archive, TOC, full source catalog,
 `manifest.json`, and `SHA256SUMS`; it never retains a plaintext row export.
+`SHA256SUMS` authenticates the actual `catalog.json`, and the quarantine
+validator also requires `manifest.catalog.sha256` to equal that exact digest.
+The immutable operation binds the manifest bytes, so a self-consistent
+replacement checksum/proof set cannot substitute a false manifest-to-catalog
+link.
 
 Packages are accepted only below
 `fst-data/evidence/snapshot-generation-archives`. Before package creation, the
@@ -306,16 +362,23 @@ The mutation transaction:
 3. adds and validates an exact `CHECK (snapshot_id <> G)` constraint on that
    DEFAULT child so writes for the quarantined generation fail rather than
    becoming ghost rows;
-4. detaches the numeric child, moves and renames it under
-   `fst_snapshot_quarantine`, adds an exact `CHECK (snapshot_id = G)`, and
-   installs a trigger rejecting insert/update/delete/truncate;
-5. inserts one immutable operation row containing all evidence digests and
+4. detaches the numeric child and structurally proves its exact two btree
+   index roles and both root/top attachment chains;
+5. renames the existing index OIDs to
+   `sgqi_<full-operation-id>_{pk|score}`, recording immutable before/after
+   semantic and physical evidence; the PK constraint is renamed with its
+   index;
+6. moves and renames the table under `fst_snapshot_quarantine`, adds an exact
+   `CHECK (snapshot_id = G)`, and installs a trigger rejecting
+   insert/update/delete/truncate;
+7. inserts one immutable operation row containing all evidence digests and
    physical identities.
 
 Any failure rolls back the hold, both constraints, relation moves, and
-operation evidence together. Quarantine operations, reattachments, and
-attestations are append-only; active state is derived from the absence of a
-reattachment row.
+operation/index evidence together. Index rename is catalog-only: table and
+index OIDs/relfilenodes remain exact. Quarantine operations, index mappings,
+reattachments, and attestations are append-only; active state is derived from
+the absence of a reattachment row.
 
 The first post-detach `quarantined` attestation must compare the sealed
 pre-quarantine candidate capture with a new capture on the original
@@ -326,10 +389,15 @@ successful soak and proves the target has no active snapshot, current
 projection, named current/previous/working publication source, unreplayed
 writer failure, or additional active hold. Reattach verifies the private
 relation, exact check, mutation trigger, DEFAULT exclusion, zero DEFAULT rows
-for `G`, row count, OID, and relfilenode; it then attaches the same child,
-proves both required child -> root -> top index links, removes the two
+for `G`, row count, OID, and relfilenode. Before moving the table, it verifies
+the operation-scoped index mappings or performs the same role-based rename as
+a one-transaction repair for pre-change operations. It never renames or drops
+an unrelated destination object. It then attaches the same child, proves both
+required child -> root -> top index links by exact index OIDs, removes the two
 temporary checks, releases the hold, and writes one immutable rollback row in
-the same transaction.
+the same transaction. A failed rename, move, or attach rolls back without
+residue; behavioral lock coverage proves no strong lock is taken on unrelated
+tables or indexes.
 
 A final `reattached` attestation must compare the latest successful soak
 capture with the post-reattach capture on that same publication. Publication
@@ -383,6 +451,139 @@ The acceptance bundle is:
 
 This accepts the bounded quarantine/soak/reattach tier. It does not implement
 or authorize `DROP`, automatic retirement, or sparse-child compaction.
+At the scrape `1333` confirmation point, operation
+`73bee4a09dc7648b98b7176c32616f2f` remained reattached at original
+OID/relfilenode `319748510`, with no private relation and its hold released.
+
+### Q1 publication-rotation incident
+
+Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` later quarantined the same
+Pro Cymbals `1314` child across the successful scrape `1335` and publication
+rotation `159` to `162`. Scrape `1335` completed 710 songs and 41,165,867
+entries with zero failures. Cycle `15` retained exact planner/oracle
+agreement, classified the target absent, and had zero blockers. The
+publication-162 55-route soak attestation passed.
+
+The initial reattach then failed closed with PostgreSQL `42P07`: while the
+child was private, scrape `1335` created a Solo Guitar child whose public
+secondary index reused the quarantined child's former name
+`leaderboard_entries_snapshot_snapshot_id_song_id_instrum_idx121`.
+`ALTER TABLE ... SET SCHEMA public` moves a table's indexes and therefore
+encountered the schema-wide relation-name collision. The transaction left no
+residue: the target remained private at table OID/relfilenode `319748510`, its
+then-active hold, exact checks, mutation trigger, validated DEFAULT fence,
+zero DEFAULT rows, and both index OIDs were intact; no reattachment row
+existed at that incident boundary.
+The API remained healthy and the worker remained intentionally stopped.
+The colliding private score index is OID `319748518`; the unrelated public
+Solo Guitar index is OID `321720750`.
+
+The operation was recoverable without repeating the five-hour rotation. Later
+live progression reached a separately approved DROP function call, so the
+earlier pending-recovery state is historical; exact intervening
+reattach/cycle/Q2 acceptance remains operator-owned evidence. The DROP still
+did not occur because the live empty operation table lacked nine semantic
+columns and failed closed with `42703`.
+
+## DROP and logical-restore tier
+
+The repository now contains a separately gated implementation with no runtime
+caller:
+
+- `SnapshotGenerationDropSchema` adds immutable drop, attestation, restore,
+  restore-finalization, and evidence-chain relations;
+- `FstSnapshotGenerationDrop` exposes only `select-canary`, `plan`, `drop`,
+  `confirm`, and `attest`;
+- its shell wrapper runs only a prebuilt DLL after verifying the
+  operator-supplied SHA-256 and never invokes Docker;
+- `postgres-snapshot-generation-restore.py` is a separate recovery surface
+  that reuses the accepted archive package and PostgreSQL 17 container/mount
+  helpers without adding mutation commands to the archive-only tool;
+- the service and worker do not invoke the drop function;
+- all new DROP/restore functions are `SECURITY INVOKER`, remain revoked from
+  `PUBLIC`, and receive no repository-defined grants.
+
+The Q1 rehearsal and Q2 destructive operation must be distinct. Q1 proves
+quarantine on publication A, soak through a successful full scrape and
+completed rotation to publication B, exact reattachment, and post-reattach
+parity. Q2 uses a fresh archive and
+proof for its unchanged current cycle/publication, remains quarantined for at
+least 30 minutes, and supplies 60 successful 30-second health samples plus
+fresh route parity and a proof completed after that health window.
+
+The DROP boundary does not weaken or independently reinterpret the five-cycle
+gate. Q2 can be created only after quarantine validates five accepted recent
+cycles; quarantine operations plus retention cycles/observations are
+immutable; and DROP requires Q2's cycle to remain the exact latest accepted
+cycle with the same publication. Any appended cycle or publication rotation
+therefore rejects DROP and requires a fresh Q2.
+
+The DROP transaction obtains the existing six locks followed by a dedicated
+drop lock, repeats all seven as nonblocking transaction locks, takes
+`SHARE` only on the exact DEFAULT child and `ACCESS EXCLUSIVE` only on the
+private child, and repeats publication, liveness, topology, identity,
+writer-failure, hold, DEFAULT, dependency, row-count, and row-fingerprint
+gates. A behavioral `pg_locks` regression proves the private child alone holds
+`AccessExclusiveLock`, the exact DEFAULT child holds `ShareLock`, and the top,
+root, and sibling children remain unlocked. Under that private-child lock it
+also recomputes the detached two-index inventory and requires exact
+role/OID/relfilenode/operation-scoped-name joins to the active operation's
+immutable rename evidence. Wrong, rebuilt, reindexed, role-swapped, extra, or
+missing indexes reject before DROP with no operation/attestation residue. It
+retains the already validated Q2 DEFAULT exclusion under its deterministic
+quarantine-operation name,
+inserts immutable
+operation/evidence rows, and executes one
+`DROP TABLE <derived-private-relation> RESTRICT`. It never accepts a relation
+name or SQL text. The pre-DROP attestation passes its observed route count,
+status parity, semantic JSON parity, and difference count into PostgreSQL;
+the function validates and persists those values rather than writing asserted
+success literals.
+
+The immutable operation row and relation absence classify a lost commit
+acknowledgement. The hold and durable DEFAULT exclusion remain after DROP.
+The generation-ensure function checks active retention/restore holds both
+before and after its DDL lock using rolling-schema-safe dynamic queries,
+preventing an impostor public child during quarantine or recovery. A finalized
+restore is authenticated by stable OID; relfilenode remains historical because
+supported rewrites can change it. New drop-owned insert guards make the source
+quarantine operation terminal for later reattach/attestation writes.
+
+Restore selects exactly four archive TOC entries: the child table, table data,
+primary-key constraint, and secondary index. Parent and table/index attachment
+entries are excluded. All four entries remain authenticated provenance, but
+only `TABLE` and `TABLE DATA` are executable through
+`pg_restore --single-transaction`. Archived index DDL is never executed.
+After exact archive and detached-table validation, the guarded database phase
+creates only fixed repository-owned btree shapes named
+`sgri_<full-restore-operation-id>_pk` and
+`sgri_<full-restore-operation-id>_score`, promotes the unique PK index with
+`PRIMARY KEY USING INDEX`, attaches the table to the exact parent, and proves
+both index chains. Expressions, predicates, INCLUDE columns, alternate
+opclasses/collations/options/order, extra indexes, and non-default tablespace
+drift fail closed. Existing unrelated objects with archived index names are
+neither renamed nor dropped.
+
+Leaf index names, PK constraint names, parent display names, and the
+name-bearing prefix of raw `CREATE INDEX` text are non-semantic. Raw archive
+SHA-256, raw logical-catalog SHA-256, and stable-config hashes remain
+independently authenticated provenance for each Q1/Q2 package, but are not
+cross-package equality gates: PostgreSQL custom archives are not
+byte-reproducible. Q1/Q2 equality instead binds stable child identity, exact
+rows/table identity, a versioned name-insensitive semantic catalog, fixed
+logical index roles/shapes, and exact physical index OID/relfilenode plus
+root/top OID chains. The hold remains until exact same-publication restored
+parity is recorded and separately finalized.
+
+Official scrape `1333` and cycle `13` satisfy the confirmation prerequisite.
+The remaining live blockers are independent final review, any required
+production role/grant procedure, the approved Q1 repair/reattach and
+reattached attestation, a new post-reattach scrape/publication/cycle, explicit
+Q2 authorization, and the mandatory-restore Q2 canary. The first live canary
+must restore the child; a permanent drop is a later independent promotion
+decision.
+See the
+[DROP and logical restore runbook](SnapshotGenerationDropRunbook.md).
 
 ## Scheduling boundary
 
@@ -705,11 +906,76 @@ The accepted five-cycle set includes publication rotation and genuine
 candidate-set changes. The separate quarantine/reattach executor and its first
 smallest-child live canary are accepted.
 
-The next tier must be a separate branch and command surface for one
-non-cascading drop canary. It must consume the accepted archive and immutable
-quarantine/reattach evidence, repeat current liveness/publication checks, and
-retain explicit operator approval plus restore monitoring. No current command
-can drop, truncate, delete, or automatically retire a child.
+The separate non-cascading DROP/restore implementation is repository-ready but
+not live-accepted. Official scrape `1333`, cycle `13`, and the disposable
+drill are accepted. Q1 operation
+`1b44941dc5d5ea806dabc2187c3cffed` passed its rotation and publication-162
+soak, and later live work progressed to an independently approved DROP
+attempt. That attempt failed before DDL with `42703`; no child was dropped.
+After the empty-table upgrade, operation
+`333ba4b9fb69dbc098d127f0008ec709` committed under plan digest
+`fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`.
+The current mandatory action is authenticated logical restoration; its first
+plan attempt failed before output or mutation on non-authoritative Python
+reserialization. The later authorized H3 attempt also stopped before
+plan/list output, restore evidence, or mutation because its generated
+PostgreSQL lookup used reserved word `authorization` as an alias. Promotion
+remains blocked on restore, parity, health, and later confirmation evidence.
+H4 corrected the lookup but then failed before output or mutation because its
+fixed-shape check compared the live Q2 catalog's decimal-string
+opclass/collation OID arrays directly with integer arrays.
+
+The corrective path preserves that row and bundle through a separate
+immutable restore-tool authorization and exact-set tool-only package. The
+authorization binds the old pin, reviewed validator base, final executing
+tool, original
+bundle, byte-identical helper, authorizer, source/diffs/tests, and independent
+approval. The empty restore-operation table adds pinned/executing hashes and a
+one-use authorization FK. Authorization is rechecked at plan, load, and attach
+without weakening any existing recovery invariant.
+The unused H3 authorization remains immutable historical evidence. H4 uses
+the safe `auth_row` alias, but its now-unused authorization is also immutable
+historical evidence. H5 strictly normalizes only supported OID arrays and must
+receive a third exact-DROP authorization. The existing schema already
+supports this and needs no migration.
+
+H5 subsequently committed the mandatory logical restore at new
+OID/relfilenode `321906645`, preserving all `8,627` rows, their fingerprint,
+bound, semantic hashes, and both index chains. Its route attestation failed
+before database write because Python compared raw ZIP exports. Exact shared
+C# normalization proves equal band/player export semantics; no export body is
+committed as a fixture.
+
+The corrective post-restore tier is a distinct
+`FstSnapshotGenerationRestoreContinuation` C# tool with only
+confirm/attest/finalize commands. An immutable continuation authorization
+links the restore row, predecessor H5 authorization, exact plan/report/package,
+shared evidence assembly, three route manifests/checksum trees, exact restore
+scope, both service runtime identities, repository diff/source/tests, and
+independent approval. The historical post-DROP pair is not treated as equal:
+exactly 54 routes match, while `/api/shop` is accepted only through the fixed,
+hash-pinned daily-inventory bridge. The bridge proves one UTC midnight,
+`117 -> 117` songs, the exact `100` announced departures, `100`
+catalog-consistent arrivals, `17` unchanged overlaps, and no new-song or
+other-field drift. Its authenticated `lastUpdated` must cross the same UTC
+midnight and then remain unchanged. A separate post-restore-to-repeat pair must pass the
+unchanged strict 55-route validator. Empty downstream tables add the
+evidence-tool/authorization FKs and temporal-bridge hash; finalization must use
+the same authorization and bridge as attestation. No route exception is a CLI,
+configuration, environment, or database collection. The H5 restore row, plan,
+package, authorization, and DROP evidence are never updated.
+
+H6 is now live-accepted under continuation authorization
+`0ed3cd7125af6fdf8748915318b0893d`. The bridge-bound attestation recorded
+strict 55-route stabilization, and finalization released hold 3 and removed
+the mutation trigger while preserving restored OID/relfilenode `321906645`,
+8,627 rows, and both index chains. Candidate scrape `1337`, publication `171`,
+notifications, and cycle `17` completed with zero failures and exact
+planner/oracle agreement. The restored snapshot was observed as an eligible
+candidate under its new physical identity. The acceptance bundle manifest is
+SHA-256
+`0ee12d9e9c6d0e2dd8230eca359b0a807106ef128698c9e83ef203756bea3f56`.
+Automatic bounded retirement and sparse-child compaction remain unimplemented.
 
 Rollback for this slice is to keep
 `DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled=false`.

@@ -2,7 +2,7 @@
 status: decision
 owner: data
 last_verified: 2026-08-19
-last_verified_commit: a682a16c
+last_verified_commit: 21d7193c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/LeaderboardSpoolWriterFactory.cs
@@ -38,12 +38,11 @@ IDs remain hot. Obsolete generations are reclaimed by dropping whole child
 relations instead of rewriting a cumulative instrument table.
 
 This decision establishes the physical layout and migration path; it does not
-by itself authorize or schedule recurring child deletion. A separately gated
-generation-retention owner must derive the protected set from
-current/previous/working publication sources plus active/projection state,
-archive and restore-prove every nonempty obsolete child, then drop only the
-exact archived child. Until that owner is implemented and accepted, the worker
-must remain held after migration rather than accumulate unbounded children.
+by itself authorize or schedule recurring child deletion. The separately
+implemented operator-only DROP/restore tier derives one exact target from
+immutable retention, archive, and quarantine evidence and remains live-gated.
+It is not a worker retention owner. Automatic recurring child deletion still
+requires a later independently accepted promotion.
 
 ## Context
 
@@ -122,9 +121,11 @@ analysis inputs; PostgreSQL publication/source semantics stay authoritative.
    publication, notification recovery, post-publication registration drain,
    and normal run-once worker exit; then hold the worker again.
 9. Repeat the migration and validation cycle one instrument at a time.
-10. Implement and validate recurring archive-before-child-drop retention,
-   including empty/default-child auditing.
-11. Restore unattended normal scraping only after all nine instruments are migrated and
+10. Validate the separate exact-child DROP/restore canary, including retained
+    hold/DEFAULT fencing and logical restore with a new physical identity.
+11. Implement and validate recurring archive-before-child-drop retention,
+    including empty/default-child auditing.
+12. Restore unattended normal scraping only after all nine instruments are migrated and
     the recurring retention owner is ready.
 
 ## Consequences

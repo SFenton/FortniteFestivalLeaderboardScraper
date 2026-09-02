@@ -269,6 +269,78 @@ public static class SnapshotGenerationQuarantineSchema
                 operation_id,
                 attestation_id);
 
+        CREATE TABLE IF NOT EXISTS
+            snapshot_generation_quarantine_index_renames (
+                operation_id                   TEXT NOT NULL
+                                                REFERENCES
+                                                    snapshot_generation_quarantine_operations(
+                                                        operation_id)
+                                                ON DELETE RESTRICT,
+                index_role                     TEXT NOT NULL,
+                index_oid                      BIGINT NOT NULL,
+                index_relfilenode              BIGINT NOT NULL,
+                old_index_name                 TEXT NOT NULL,
+                new_index_name                 TEXT NOT NULL,
+                old_constraint_name            TEXT,
+                new_constraint_name            TEXT,
+                source_phase                   TEXT NOT NULL,
+                semantic_before                JSONB NOT NULL,
+                semantic_after                 JSONB NOT NULL,
+                semantic_before_sha256         TEXT NOT NULL,
+                semantic_after_sha256          TEXT NOT NULL,
+                backend_pid                    INTEGER NOT NULL,
+                transaction_id                 TEXT NOT NULL,
+                renamed_at                     TIMESTAMPTZ NOT NULL
+                                                DEFAULT clock_timestamp(),
+                PRIMARY KEY (operation_id, index_role),
+                CONSTRAINT
+                    ck_snapshot_generation_quarantine_index_rename_role
+                    CHECK (index_role IN ('pk', 'score')),
+                CONSTRAINT
+                    ck_snapshot_generation_quarantine_index_rename_phase
+                    CHECK (
+                        source_phase IN (
+                            'quarantine',
+                            'reattach_repair')),
+                CONSTRAINT
+                    ck_snapshot_generation_quarantine_index_rename_identity
+                    CHECK (
+                        index_oid > 0
+                        AND index_relfilenode > 0
+                        AND old_index_name <> ''
+                        AND new_index_name =
+                            'sgqi_' || operation_id || '_' ||
+                            index_role
+                        AND (
+                            (
+                                index_role = 'pk'
+                                AND old_constraint_name IS NOT NULL
+                                AND new_constraint_name =
+                                    new_index_name)
+                            OR (
+                                index_role = 'score'
+                                AND old_constraint_name IS NULL
+                                AND new_constraint_name IS NULL))
+                        AND transaction_id ~ '^[0-9]+$'),
+                CONSTRAINT
+                    ck_snapshot_generation_quarantine_index_rename_hashes
+                    CHECK (
+                        semantic_before_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND semantic_after_sha256
+                            ~ '^[0-9a-f]{64}$'
+                        AND semantic_before_sha256 =
+                            semantic_after_sha256),
+                CONSTRAINT
+                    ck_snapshot_generation_quarantine_index_rename_evidence
+                    CHECK (
+                        jsonb_typeof(semantic_before) =
+                            'object'
+                        AND jsonb_typeof(semantic_after) =
+                            'object'
+                        AND semantic_before = semantic_after)
+            );
+
         CREATE OR REPLACE FUNCTION
             fst_reject_snapshot_generation_quarantine_evidence_mutation()
         RETURNS trigger
@@ -310,7 +382,10 @@ public static class SnapshotGenerationQuarantineSchema
                             'trg_sgq_reattachments_immutable'),
                         (
                             'snapshot_generation_quarantine_attestations',
-                            'trg_sgq_attestations_immutable')
+                            'trg_sgq_attestations_immutable'),
+                        (
+                            'snapshot_generation_quarantine_index_renames',
+                            'trg_sgq_index_renames_immutable')
                 ) names(relation_value, trigger_value)
             LOOP
                 IF NOT EXISTS (
@@ -330,6 +405,351 @@ public static class SnapshotGenerationQuarantineSchema
             END LOOP;
         END
         $quarantine_triggers$;
+
+        CREATE OR REPLACE FUNCTION
+            fst_snapshot_generation_index_inventory(
+                p_child_oid BIGINT,
+                p_expected_root_oid BIGINT,
+                p_expect_attached BOOLEAN)
+        RETURNS JSONB
+        LANGUAGE plpgsql
+        SECURITY INVOKER
+        SET search_path = pg_catalog, public
+        AS $quarantine_index_inventory$
+        DECLARE
+            inventory JSONB;
+            pk JSONB;
+            score JSONB;
+        BEGIN
+            WITH expected_parent AS (
+                SELECT
+                    CASE
+                        WHEN root_index.indisprimary
+                            THEN 'pk'
+                        ELSE 'score'
+                    END AS index_role,
+                    root_index.indexrelid::BIGINT
+                        AS root_index_oid,
+                    top_inheritance.inhparent::BIGINT
+                        AS top_index_oid,
+                    top_index_relation.relname
+                        AS top_index_name,
+                    to_jsonb(
+                        root_index.indclass::OID[])
+                        AS opclass_oids,
+                    to_jsonb(
+                        root_index.indcollation::OID[])
+                        AS collation_oids,
+                    to_jsonb(
+                        root_index.indoption::SMALLINT[])
+                        AS ind_options
+                FROM pg_index root_index
+                JOIN pg_inherits top_inheritance
+                  ON top_inheritance.inhrelid =
+                        root_index.indexrelid
+                JOIN pg_class top_index_relation
+                  ON top_index_relation.oid =
+                        top_inheritance.inhparent
+                WHERE root_index.indrelid =
+                        p_expected_root_oid
+                  AND top_index_relation.relname IN (
+                        'leaderboard_entries_snapshot_pkey',
+                        'ix_les_snapshot_song_score')
+            ),
+            child_index AS (
+                SELECT
+                    CASE
+                        WHEN index_row.indisprimary
+                            THEN 'pk'
+                        ELSE 'score'
+                    END AS index_role,
+                    index_relation.oid::BIGINT
+                        AS index_oid,
+                    index_relation.relfilenode::BIGINT
+                        AS index_relfilenode,
+                    index_relation.relname
+                        AS index_name,
+                    constraint_row.conname
+                        AS constraint_name,
+                    index_row.indisprimary,
+                    index_row.indisunique,
+                    index_row.indisvalid,
+                    index_row.indisready,
+                    index_row.indnkeyatts,
+                    index_row.indnatts,
+                    index_method.amname
+                        AS access_method,
+                    COALESCE(
+                        index_tablespace.spcname,
+                        'pg_default')
+                        AS tablespace_name,
+                    to_jsonb(
+                        COALESCE(
+                            index_relation.reloptions,
+                            ARRAY[]::TEXT[]))
+                        AS relation_options,
+                    to_jsonb(
+                        index_row.indkey::SMALLINT[])
+                        AS key_attnums,
+                    (
+                        SELECT to_jsonb(
+                            array_agg(
+                                attribute.attname
+                                ORDER BY key_row.ordinality))
+                        FROM unnest(
+                                index_row.indkey::SMALLINT[])
+                            WITH ORDINALITY
+                            AS key_row(attnum, ordinality)
+                        JOIN pg_attribute attribute
+                          ON attribute.attrelid =
+                                index_row.indrelid
+                         AND attribute.attnum =
+                                key_row.attnum
+                        WHERE key_row.ordinality <=
+                                index_row.indnkeyatts)
+                        AS key_columns,
+                    to_jsonb(
+                        index_row.indclass::OID[])
+                        AS opclass_oids,
+                    to_jsonb(
+                        index_row.indcollation::OID[])
+                        AS collation_oids,
+                    to_jsonb(
+                        index_row.indoption::SMALLINT[])
+                        AS ind_options,
+                    pg_get_expr(
+                        index_row.indexprs,
+                        index_row.indrelid,
+                        TRUE)
+                        AS expressions,
+                    pg_get_expr(
+                        index_row.indpred,
+                        index_row.indrelid,
+                        TRUE)
+                        AS predicate,
+                    index_parent.inhparent::BIGINT
+                        AS actual_parent_index_oid,
+                    expected_parent.root_index_oid,
+                    expected_parent.top_index_oid,
+                    expected_parent.top_index_name,
+                    expected_parent.opclass_oids
+                        AS expected_opclass_oids,
+                    expected_parent.collation_oids
+                        AS expected_collation_oids,
+                    expected_parent.ind_options
+                        AS expected_ind_options
+                FROM pg_index index_row
+                JOIN pg_class index_relation
+                  ON index_relation.oid =
+                        index_row.indexrelid
+                JOIN pg_am index_method
+                  ON index_method.oid =
+                        index_relation.relam
+                LEFT JOIN pg_tablespace index_tablespace
+                  ON index_tablespace.oid =
+                        index_relation.reltablespace
+                LEFT JOIN pg_constraint constraint_row
+                  ON constraint_row.conindid =
+                        index_row.indexrelid
+                LEFT JOIN pg_inherits index_parent
+                  ON index_parent.inhrelid =
+                        index_row.indexrelid
+                JOIN expected_parent
+                  ON expected_parent.index_role =
+                        CASE
+                            WHEN index_row.indisprimary
+                                THEN 'pk'
+                            ELSE 'score'
+                        END
+                WHERE index_row.indrelid =
+                        p_child_oid
+            )
+            SELECT jsonb_object_agg(
+                index_role,
+                jsonb_build_object(
+                    'indexOid', index_oid,
+                    'indexRelfilenode',
+                        index_relfilenode,
+                    'indexName', index_name,
+                    'constraintName',
+                        constraint_name,
+                    'actualParentIndexOid',
+                        actual_parent_index_oid,
+                    'semantic',
+                        jsonb_build_object(
+                            'schemaVersion', 1,
+                            'role', index_role,
+                            'indexOid', index_oid,
+                            'indexRelfilenode',
+                                index_relfilenode,
+                            'primary', indisprimary,
+                            'unique', indisunique,
+                            'valid', indisvalid,
+                            'ready', indisready,
+                            'indNKeyAtts',
+                                indnkeyatts,
+                            'indNAtts', indnatts,
+                            'accessMethod',
+                                access_method,
+                            'tablespaceName',
+                                tablespace_name,
+                            'relationOptions',
+                                relation_options,
+                            'keyAttnums',
+                                key_attnums,
+                            'keyColumns',
+                                key_columns,
+                            'opclassOids',
+                                opclass_oids,
+                            'collationOids',
+                                collation_oids,
+                            'indOptions',
+                                ind_options,
+                            'expressions',
+                                expressions,
+                            'predicate', predicate,
+                            'expectedParentIndexOid',
+                                root_index_oid,
+                            'expectedTopIndexOid',
+                                top_index_oid,
+                            'expectedTopIndexName',
+                                top_index_name)))
+            INTO inventory
+            FROM child_index;
+
+            pk := inventory -> 'pk';
+            score := inventory -> 'score';
+            IF jsonb_typeof(inventory) <> 'object'
+               OR (
+                    SELECT COUNT(*)
+                    FROM jsonb_object_keys(inventory)) <> 2
+               OR pk IS NULL
+               OR score IS NULL
+               OR (pk #>> '{semantic,primary}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR (pk #>> '{semantic,unique}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR (score #>> '{semantic,primary}')::BOOLEAN
+                    IS DISTINCT FROM FALSE
+               OR (score #>> '{semantic,unique}')::BOOLEAN
+                    IS DISTINCT FROM FALSE
+               OR (pk #>> '{semantic,valid}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR (pk #>> '{semantic,ready}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR (score #>> '{semantic,valid}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR (score #>> '{semantic,ready}')::BOOLEAN
+                    IS DISTINCT FROM TRUE
+               OR pk ->> 'constraintName' IS NULL
+               OR score ->> 'constraintName' IS NOT NULL
+               OR pk #>> '{semantic,accessMethod}' <>
+                    'btree'
+               OR score #>> '{semantic,accessMethod}' <>
+                    'btree'
+               OR pk #>> '{semantic,tablespaceName}' <>
+                    'pg_default'
+               OR score #>> '{semantic,tablespaceName}' <>
+                    'pg_default'
+               OR pk #> '{semantic,relationOptions}' <>
+                    '[]'::JSONB
+               OR score #> '{semantic,relationOptions}' <>
+                    '[]'::JSONB
+               OR (pk #>> '{semantic,indNKeyAtts}')::INTEGER
+                    <> 4
+               OR (pk #>> '{semantic,indNAtts}')::INTEGER
+                    <> 4
+               OR (score #>> '{semantic,indNKeyAtts}')::INTEGER
+                    <> 4
+               OR (score #>> '{semantic,indNAtts}')::INTEGER
+                    <> 4
+               OR pk #> '{semantic,keyColumns}' <>
+                    '["snapshot_id","song_id","instrument","account_id"]'
+                        ::JSONB
+               OR score #> '{semantic,keyColumns}' <>
+                    '["snapshot_id","song_id","instrument","score"]'
+                        ::JSONB
+               OR pk #> '{semantic,indOptions}' <>
+                    '[0,0,0,0]'::JSONB
+               OR score #> '{semantic,indOptions}' <>
+                    '[0,0,0,3]'::JSONB
+               OR pk #> '{semantic,opclassOids}' <>
+                    (
+                        SELECT to_jsonb(
+                            index_row.indclass::OID[])
+                        FROM pg_index index_row
+                        WHERE index_row.indexrelid =
+                            (pk #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::OID)
+               OR score #> '{semantic,opclassOids}' <>
+                    (
+                        SELECT to_jsonb(
+                            index_row.indclass::OID[])
+                        FROM pg_index index_row
+                        WHERE index_row.indexrelid =
+                            (score #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::OID)
+               OR pk #> '{semantic,collationOids}' <>
+                    (
+                        SELECT to_jsonb(
+                            index_row.indcollation::OID[])
+                        FROM pg_index index_row
+                        WHERE index_row.indexrelid =
+                            (pk #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::OID)
+               OR score #> '{semantic,collationOids}' <>
+                    (
+                        SELECT to_jsonb(
+                            index_row.indcollation::OID[])
+                        FROM pg_index index_row
+                        WHERE index_row.indexrelid =
+                            (score #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::OID)
+               OR pk #> '{semantic,expressions}' <>
+                    'null'::JSONB
+               OR score #> '{semantic,expressions}' <>
+                    'null'::JSONB
+               OR pk #> '{semantic,predicate}' <>
+                    'null'::JSONB
+               OR score #> '{semantic,predicate}' <>
+                    'null'::JSONB
+               OR pk #>> '{semantic,expectedTopIndexName}' <>
+                    'leaderboard_entries_snapshot_pkey'
+               OR score #>>
+                    '{semantic,expectedTopIndexName}' <>
+                    'ix_les_snapshot_song_score'
+               OR (
+                    p_expect_attached
+                    AND (
+                        (pk ->> 'actualParentIndexOid')::BIGINT
+                            <> (pk #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::BIGINT
+                        OR
+                        (score ->> 'actualParentIndexOid')::BIGINT
+                            <> (score #>>
+                                '{semantic,expectedParentIndexOid}')
+                                ::BIGINT))
+               OR (
+                    NOT p_expect_attached
+                    AND (
+                        pk ->> 'actualParentIndexOid'
+                            IS NOT NULL
+                        OR score ->>
+                            'actualParentIndexOid'
+                            IS NOT NULL))
+            THEN
+                RAISE EXCEPTION
+                    'Snapshot-generation child index inventory is unsupported or inconsistent.'
+                    USING ERRCODE = '55000';
+            END IF;
+            RETURN inventory;
+        END
+        $quarantine_index_inventory$;
 
         CREATE OR REPLACE FUNCTION
             fst_lock_snapshot_generation_for_quarantine(
@@ -557,6 +977,17 @@ public static class SnapshotGenerationQuarantineSchema
             accepted_cycle_count INTEGER;
             accepted_publication_count INTEGER;
             accepted_candidate_identity_count INTEGER;
+            index_inventory_before JSONB;
+            index_inventory_detached JSONB;
+            index_inventory_after JSONB;
+            index_renames JSONB := '{}'::JSONB;
+            role_key TEXT;
+            old_index_name TEXT;
+            new_index_name TEXT;
+            old_constraint_name TEXT;
+            new_constraint_name TEXT;
+            semantic_before JSONB;
+            semantic_after JSONB;
         BEGIN
             PERFORM set_config('lock_timeout', '5s', TRUE);
             PERFORM set_config('statement_timeout', '120s', TRUE);
@@ -927,6 +1358,11 @@ public static class SnapshotGenerationQuarantineSchema
             SELECT pg_total_relation_size(
                 observation_row.child_oid::OID)::BIGINT
             INTO observed_total_bytes;
+            index_inventory_before :=
+                fst_snapshot_generation_index_inventory(
+                    observation_row.child_oid,
+                    observation_row.root_oid,
+                    TRUE);
 
             INSERT INTO snapshot_generation_retention_holds (
                 instrument,
@@ -962,6 +1398,159 @@ public static class SnapshotGenerationQuarantineSchema
                 root_relation_name,
                 'public',
                 child_relation_name);
+            index_inventory_detached :=
+                fst_snapshot_generation_index_inventory(
+                    observation_row.child_oid,
+                    observation_row.root_oid,
+                    FALSE);
+            FOREACH role_key IN ARRAY ARRAY[
+                'pk',
+                'score'
+            ]
+            LOOP
+                semantic_before :=
+                    index_inventory_detached
+                        -> role_key
+                        -> 'semantic';
+                IF semantic_before IS DISTINCT FROM
+                        index_inventory_before
+                            -> role_key
+                            -> 'semantic'
+                THEN
+                    RAISE EXCEPTION
+                        'Snapshot-generation % index semantics changed during detach.',
+                        role_key
+                        USING ERRCODE = '55000';
+                END IF;
+                old_index_name :=
+                    index_inventory_detached
+                        -> role_key
+                        ->> 'indexName';
+                old_constraint_name :=
+                    index_inventory_detached
+                        -> role_key
+                        ->> 'constraintName';
+                IF old_index_name IS NULL THEN
+                    RAISE EXCEPTION
+                        'Snapshot-generation % index inventory is missing: %.',
+                        role_key,
+                        index_inventory_detached
+                        USING ERRCODE = '55000';
+                END IF;
+                new_index_name :=
+                    'sgqi_' || p_operation_id || '_' ||
+                    role_key;
+                IF to_regclass(
+                        format(
+                            '%I.%I',
+                            'public',
+                            new_index_name)) IS NOT NULL
+                   OR to_regclass(
+                        format(
+                            '%I.%I',
+                            'fst_snapshot_quarantine',
+                            new_index_name)) IS NOT NULL
+                THEN
+                    RAISE EXCEPTION
+                        'Snapshot-generation derived % index name % is already occupied.',
+                        role_key,
+                        new_index_name
+                        USING ERRCODE = '42P07';
+                END IF;
+                EXECUTE format(
+                    'ALTER INDEX %I.%I RENAME TO %I',
+                    'public',
+                    old_index_name,
+                    new_index_name);
+            END LOOP;
+            index_inventory_after :=
+                fst_snapshot_generation_index_inventory(
+                    observation_row.child_oid,
+                    observation_row.root_oid,
+                    FALSE);
+            FOREACH role_key IN ARRAY ARRAY[
+                'pk',
+                'score'
+            ]
+            LOOP
+                semantic_before :=
+                    index_inventory_detached
+                        -> role_key
+                        -> 'semantic';
+                semantic_after :=
+                    index_inventory_after
+                        -> role_key
+                        -> 'semantic';
+                old_index_name :=
+                    index_inventory_detached
+                        -> role_key
+                        ->> 'indexName';
+                new_index_name :=
+                    'sgqi_' || p_operation_id || '_' ||
+                    role_key;
+                old_constraint_name :=
+                    index_inventory_detached
+                        -> role_key
+                        ->> 'constraintName';
+                new_constraint_name :=
+                    index_inventory_after
+                        -> role_key
+                        ->> 'constraintName';
+                IF semantic_after IS DISTINCT FROM
+                        semantic_before
+                   OR index_inventory_after
+                        -> role_key
+                        ->> 'indexName' <>
+                        new_index_name
+                   OR (
+                        role_key = 'pk'
+                        AND new_constraint_name <>
+                            new_index_name)
+                   OR (
+                        role_key = 'score'
+                        AND new_constraint_name IS NOT NULL)
+                THEN
+                    RAISE EXCEPTION
+                        'Snapshot-generation % index normalization changed physical or semantic identity.',
+                        role_key
+                        USING ERRCODE = '55000';
+                END IF;
+                index_renames :=
+                    index_renames ||
+                    jsonb_build_object(
+                        role_key,
+                        jsonb_build_object(
+                            'role', role_key,
+                            'indexOid',
+                                (
+                                    index_inventory_after
+                                    -> role_key
+                                    ->> 'indexOid')::BIGINT,
+                            'indexRelfilenode',
+                                (
+                                    index_inventory_after
+                                    -> role_key
+                                    ->> 'indexRelfilenode')
+                                    ::BIGINT,
+                            'oldIndexName',
+                                old_index_name,
+                            'newIndexName',
+                                new_index_name,
+                            'oldConstraintName',
+                                old_constraint_name,
+                            'newConstraintName',
+                                new_constraint_name,
+                            'semantic',
+                                semantic_after,
+                            'semanticSha256',
+                                encode(
+                                    digest(
+                                        convert_to(
+                                            semantic_after::TEXT,
+                                            'UTF8'),
+                                        'sha256'),
+                                    'hex')));
+            END LOOP;
             EXECUTE format(
                 'ALTER TABLE %I.%I SET SCHEMA %I',
                 'public',
@@ -1091,7 +1680,47 @@ public static class SnapshotGenerationQuarantineSchema
                     'rowCount',
                     observed_row_count,
                     'totalBytes',
-                    observed_total_bytes));
+                    observed_total_bytes,
+                    'indexRenames',
+                    index_renames));
+
+            INSERT INTO
+                snapshot_generation_quarantine_index_renames (
+                    operation_id,
+                    index_role,
+                    index_oid,
+                    index_relfilenode,
+                    old_index_name,
+                    new_index_name,
+                    old_constraint_name,
+                    new_constraint_name,
+                    source_phase,
+                    semantic_before,
+                    semantic_after,
+                    semantic_before_sha256,
+                    semantic_after_sha256,
+                    backend_pid,
+                    transaction_id)
+            SELECT
+                p_operation_id,
+                rename_row.key,
+                (rename_row.value ->> 'indexOid')
+                    ::BIGINT,
+                (rename_row.value ->> 'indexRelfilenode')
+                    ::BIGINT,
+                rename_row.value ->> 'oldIndexName',
+                rename_row.value ->> 'newIndexName',
+                rename_row.value ->> 'oldConstraintName',
+                rename_row.value ->> 'newConstraintName',
+                'quarantine',
+                rename_row.value -> 'semantic',
+                rename_row.value -> 'semantic',
+                rename_row.value ->> 'semanticSha256',
+                rename_row.value ->> 'semanticSha256',
+                pg_backend_pid(),
+                pg_current_xact_id()::TEXT
+            FROM jsonb_each(index_renames)
+                AS rename_row;
 
             RETURN p_operation_id;
         END
@@ -1131,6 +1760,19 @@ public static class SnapshotGenerationQuarantineSchema
             successful_current_soak_attestations INTEGER;
             target_reference_count BIGINT;
             state_row scrape_publication_state%ROWTYPE;
+            index_inventory_before JSONB;
+            index_inventory_after JSONB;
+            repair_role TEXT;
+            old_index_name TEXT;
+            new_index_name TEXT;
+            old_constraint_name TEXT;
+            new_constraint_name TEXT;
+            semantic_before JSONB;
+            semantic_after JSONB;
+            existing_rename_count INTEGER;
+            stored_rename
+                snapshot_generation_quarantine_index_renames%ROWTYPE;
+            index_rename_evidence JSONB;
         BEGIN
             PERFORM set_config('lock_timeout', '5s', TRUE);
             PERFORM set_config('statement_timeout', '120s', TRUE);
@@ -1500,6 +2142,214 @@ public static class SnapshotGenerationQuarantineSchema
             END IF;
 
             EXECUTE format(
+                'LOCK TABLE ONLY %I.%I IN ACCESS EXCLUSIVE MODE',
+                operation_row.quarantine_schema,
+                operation_row.quarantine_relation);
+            index_inventory_before :=
+                fst_snapshot_generation_index_inventory(
+                    operation_row.child_oid,
+                    operation_row.root_oid,
+                    FALSE);
+            FOREACH repair_role IN ARRAY ARRAY[
+                'pk',
+                'score'
+            ]
+            LOOP
+                old_index_name :=
+                    index_inventory_before
+                        -> repair_role
+                        ->> 'indexName';
+                old_constraint_name :=
+                    index_inventory_before
+                        -> repair_role
+                        ->> 'constraintName';
+                semantic_before :=
+                    index_inventory_before
+                        -> repair_role
+                        -> 'semantic';
+                new_index_name :=
+                    'sgqi_' || p_operation_id || '_' ||
+                    repair_role;
+                SELECT COUNT(*)::INTEGER
+                INTO existing_rename_count
+                FROM
+                    snapshot_generation_quarantine_index_renames
+                        rename_row
+                WHERE rename_row.operation_id =
+                        p_operation_id
+                  AND rename_row.index_role =
+                        repair_role;
+
+                IF old_index_name = new_index_name THEN
+                    IF existing_rename_count <> 1 THEN
+                        RAISE EXCEPTION
+                            'Snapshot-generation % index is normalized without exact immutable evidence.',
+                            repair_role
+                            USING ERRCODE = '55000';
+                    END IF;
+                    SELECT rename_row.*
+                    INTO STRICT stored_rename
+                    FROM
+                        snapshot_generation_quarantine_index_renames
+                            rename_row
+                    WHERE rename_row.operation_id =
+                            p_operation_id
+                      AND rename_row.index_role =
+                            repair_role;
+                    IF stored_rename.index_oid <>
+                            (
+                                index_inventory_before
+                                -> repair_role
+                                ->> 'indexOid')::BIGINT
+                       OR stored_rename.index_relfilenode <>
+                            (
+                                index_inventory_before
+                                -> repair_role
+                                ->> 'indexRelfilenode')
+                                ::BIGINT
+                       OR stored_rename.new_index_name <>
+                            new_index_name
+                       OR stored_rename.semantic_after <>
+                            semantic_before
+                    THEN
+                        RAISE EXCEPTION
+                            'Snapshot-generation % index normalization evidence is inconsistent.',
+                            repair_role
+                            USING ERRCODE = '55000';
+                    END IF;
+                ELSE
+                    IF existing_rename_count <> 0
+                       OR to_regclass(
+                            format(
+                                '%I.%I',
+                                operation_row.quarantine_schema,
+                                new_index_name)) IS NOT NULL
+                       OR to_regclass(
+                            format(
+                                '%I.%I',
+                                operation_row.child_schema,
+                                new_index_name)) IS NOT NULL
+                    THEN
+                        RAISE EXCEPTION
+                            'Snapshot-generation derived % index name or evidence is already occupied.',
+                            repair_role
+                            USING ERRCODE = '42P07';
+                    END IF;
+                    EXECUTE format(
+                        'ALTER INDEX %I.%I RENAME TO %I',
+                        operation_row.quarantine_schema,
+                        old_index_name,
+                        new_index_name);
+                    index_inventory_after :=
+                        fst_snapshot_generation_index_inventory(
+                            operation_row.child_oid,
+                            operation_row.root_oid,
+                            FALSE);
+                    semantic_after :=
+                        index_inventory_after
+                            -> repair_role
+                            -> 'semantic';
+                    new_constraint_name :=
+                        index_inventory_after
+                            -> repair_role
+                            ->> 'constraintName';
+                    IF semantic_after IS DISTINCT FROM
+                            semantic_before
+                       OR index_inventory_after
+                            -> repair_role
+                            ->> 'indexName' <>
+                            new_index_name
+                       OR (
+                            repair_role = 'pk'
+                            AND new_constraint_name <>
+                                new_index_name)
+                       OR (
+                            repair_role = 'score'
+                            AND new_constraint_name
+                                IS NOT NULL)
+                    THEN
+                        RAISE EXCEPTION
+                            'Snapshot-generation % index repair changed physical or semantic identity.',
+                            repair_role
+                            USING ERRCODE = '55000';
+                    END IF;
+                    INSERT INTO
+                        snapshot_generation_quarantine_index_renames (
+                            operation_id,
+                            index_role,
+                            index_oid,
+                            index_relfilenode,
+                            old_index_name,
+                            new_index_name,
+                            old_constraint_name,
+                            new_constraint_name,
+                            source_phase,
+                            semantic_before,
+                            semantic_after,
+                            semantic_before_sha256,
+                            semantic_after_sha256,
+                            backend_pid,
+                            transaction_id)
+                    VALUES (
+                        p_operation_id,
+                        repair_role,
+                        (
+                            index_inventory_after
+                            -> repair_role
+                            ->> 'indexOid')::BIGINT,
+                        (
+                            index_inventory_after
+                            -> repair_role
+                            ->> 'indexRelfilenode')::BIGINT,
+                        old_index_name,
+                        new_index_name,
+                        old_constraint_name,
+                        new_constraint_name,
+                        'reattach_repair',
+                        semantic_before,
+                        semantic_after,
+                        encode(
+                            digest(
+                                convert_to(
+                                    semantic_before::TEXT,
+                                    'UTF8'),
+                                'sha256'),
+                            'hex'),
+                        encode(
+                            digest(
+                                convert_to(
+                                    semantic_after::TEXT,
+                                    'UTF8'),
+                                'sha256'),
+                            'hex'),
+                        pg_backend_pid(),
+                        pg_current_xact_id()::TEXT);
+                    index_inventory_before :=
+                        index_inventory_after;
+                END IF;
+            END LOOP;
+            SELECT jsonb_object_agg(
+                rename_row.index_role,
+                to_jsonb(rename_row)
+                    - 'operation_id'
+                    - 'index_role')
+            INTO STRICT index_rename_evidence
+            FROM
+                snapshot_generation_quarantine_index_renames
+                    rename_row
+            WHERE rename_row.operation_id =
+                    p_operation_id;
+            IF (
+                    SELECT COUNT(*)
+                    FROM jsonb_object_keys(
+                        index_rename_evidence)) <> 2
+            THEN
+                RAISE EXCEPTION
+                    'Snapshot-generation index normalization evidence is incomplete.'
+                    USING ERRCODE = '55000';
+            END IF;
+
+            EXECUTE format(
                 'DROP TRIGGER %I ON %I.%I',
                 operation_row.mutation_guard_trigger,
                 operation_row.quarantine_schema,
@@ -1544,6 +2394,20 @@ public static class SnapshotGenerationQuarantineSchema
             SELECT COUNT(*)::INTEGER
             INTO attached_required_index_count
             FROM pg_index child_index
+            JOIN pg_class child_index_relation
+              ON child_index_relation.oid =
+                    child_index.indexrelid
+            JOIN
+                snapshot_generation_quarantine_index_renames
+                    rename_row
+              ON rename_row.operation_id =
+                    operation_row.operation_id
+             AND rename_row.index_oid =
+                    child_index.indexrelid
+             AND rename_row.index_relfilenode =
+                    child_index_relation.relfilenode
+             AND rename_row.new_index_name =
+                    child_index_relation.relname
             JOIN pg_inherits child_index_inheritance
               ON child_index_inheritance.inhrelid =
                     child_index.indexrelid
@@ -1622,7 +2486,10 @@ public static class SnapshotGenerationQuarantineSchema
                 p_operation_id,
                 p_reattached_by,
                 p_reattach_reference,
-                p_reattach_evidence);
+                p_reattach_evidence ||
+                    jsonb_build_object(
+                        'indexRenames',
+                        index_rename_evidence));
 
             RETURN p_operation_id;
         END
@@ -1830,6 +2697,12 @@ public static class SnapshotGenerationQuarantineSchema
         END
         $quarantine_attestation$;
 
+        REVOKE ALL ON FUNCTION
+            fst_snapshot_generation_index_inventory(
+                BIGINT,
+                BIGINT,
+                BOOLEAN)
+            FROM PUBLIC;
         REVOKE ALL ON FUNCTION
             fst_lock_snapshot_generation_for_quarantine(
                 BIGINT,

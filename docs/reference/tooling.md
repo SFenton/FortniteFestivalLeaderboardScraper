@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-30
-last_verified_commit: 35cfe4a2
+last_verified_commit: 21d7193c
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -30,6 +30,14 @@ sources:
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
   - tools/postgres-snapshot-generation-quarantine.sh
+  - tools/FstSnapshotGenerationEvidence/
+  - tools/FstSnapshotGenerationDrop/
+  - tools/FstSnapshotGenerationRestoreAuthorization/
+  - tools/postgres-snapshot-generation-drop.sh
+  - tools/postgres-snapshot-generation-restore-authorize.sh
+  - tools/postgres-snapshot-generation-restore.py
+  - tools/capture-snapshot-generation-drop-health.py
+  - tools/postgres-snapshot-generation-drop-drill.py
   - tools/capture-publication-route-contract.sh
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
@@ -261,8 +269,11 @@ tools/postgres-snapshot-generation-archive.sh prove \
   --keep-proof-outputs
 ```
 
-`archive` defaults to the smallest candidate in the newest accepted planner
-cycle. Exact selection requires both `--instrument` and `--snapshot-id`; the
+`archive` defaults to the deterministically oldest candidate ordered by
+snapshot ID, instrument, and child OID; this is not a physical-size ranking.
+The DROP tool's read-only `select-canary` command performs the true
+`pg_total_relation_size` ranking. Exact archive selection requires both
+`--instrument` and `--snapshot-id`; the
 instrument is one of nine fixed keys and the pair must still be a candidate in
 that newest cycle. It authenticates all cycle observations, exact versions,
 canonical sets/hashes, summary validations, and evidence-chain links. The CLI
@@ -380,6 +391,13 @@ tools/postgres-snapshot-generation-quarantine.sh plan \
 The archive cycle, full scrape, both route captures, and current database
 publication must be identical. `plan` also requires the latest accepted
 five-cycle planner state and recomputes the exact archived row fingerprint.
+Quarantine then structurally classifies exactly the supported PK and score
+btree indexes, renames the existing index OIDs to
+`sgqi_<full-operation-id>_{pk|score}`, and records immutable old/new
+name/constraint, OID/relfilenode, semantic, phase, backend, and transaction
+evidence. A PK-index rename also renames its constraint. Reattach verifies
+that evidence or applies the same normalization as an atomic repair for a
+pre-change operation; it never targets an unrelated relation by name.
 
 After explicit operator approval:
 
@@ -425,6 +443,189 @@ The first accepted live run used plan digest
 and operation `73bee4a09dc7648b98b7176c32616f2f` for Pro Cymbals snapshot
 `1314`. It passed all three attestations and exact physical rollback. This is
 authorization evidence for the quarantine/reattach tier only, not a drop.
+
+Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` later passed scrape
+`1335`, publication rotation `159` to `162`, cycle `15`, and the
+publication-162 soak. Its first reattach failed closed with `42P07` because a
+new Solo Guitar child reused the target secondary-index name while the target
+was private. At that incident boundary, no residue committed and the exact
+target remained private with its hold/fences and index OIDs intact. Later live
+progression reached an independently approved DROP attempt; it failed before
+DDL with `42703` because the empty initial operation table lacked semantic
+columns. No child was dropped in that attempt. After the explicit upgrade,
+operation `333ba4b9fb69dbc098d127f0008ec709` committed with plan digest
+`fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`;
+restore is now mandatory.
+
+### Snapshot-generation DROP and logical restore
+
+`tools/postgres-snapshot-generation-drop.sh` runs a prebuilt
+`FstSnapshotGenerationDrop` assembly only. It verifies the DLL against
+`FST_SNAPSHOT_DROP_BINARY_SHA256`; it never builds at execution time and does
+not invoke Docker. The executable depends only on Npgsql and the
+`FstSnapshotGenerationEvidence` archive/quarantine evidence-contract library;
+its emitted dependency graph contains no `Docker.DotNet` or FST service host.
+
+Its command surface is exactly:
+
+- `select-canary`: read-only selection by current physical bytes from the
+  newest accepted cycle;
+- `plan`: authenticate Q1/Q2, archive/proof, source, routes, health, binary,
+  restore image/tool, database identity, and a new recovery bundle;
+- `drop`: execute one exact private-child non-cascading DROP after independent
+  approval;
+- `confirm`: classify an uncertain commit without mutation;
+- `attest`: record only `pre_drop`, `dropped`, or `post_publication` parity.
+
+Official scrape `1333`, publication `157`, and immutable cycle `13` are
+accepted; that cycle identified Pro Cymbals snapshot `1314` as the true
+smallest candidate at 4,628,480 bytes. Current cycle `15` records it absent
+at the historical Q1 incident boundary, so `select-canary` must not treat the
+cycle-13 result as current. This does not live-accept the DROP tier.
+
+The destructive commands accept expected IDs for confirmation but no relation,
+schema, SQL, batch, force, or automatic-selection input. Required environment:
+
+```bash
+export FST_SNAPSHOT_DROP_EVIDENCE_ROOT=<FST-drive-run-root>
+export FST_SNAPSHOT_DROP_CONNECTION_STRING=<direct-Npgsql-connection>
+export FST_SNAPSHOT_DROP_BINARY_SHA256=<approved-dll-sha256>
+```
+
+The database functions are `SECURITY INVOKER` and revoked from `PUBLIC`; this
+repository provisions no role grants. The DROP transaction retains the
+existing Q2 DEFAULT fence so its behavioral lock set is exactly
+`ShareLock` on that DEFAULT child and `AccessExclusiveLock` on the private
+child, with no top/root/sibling relation lock.
+Initializer deployment must complete the explicit empty-table DROP/restore
+operation-schema upgrade before rebuilding or invoking the tool. A nonempty
+pre-semantic table raises `55000`; there is no hash-backfill command.
+
+`tools/capture-snapshot-generation-drop-health.py` records the fixed
+30-minute/60-sample pre-DROP health contract.
+
+`tools/postgres-snapshot-generation-restore.py` is a separate command surface:
+`plan`, `restore`, `confirm`, `attest`, and `finalize`. It imports the archive
+module rather than extending the archive-only parser. It authenticates exactly
+the child `TABLE`, `TABLE DATA`, primary-key `CONSTRAINT`, and secondary
+`INDEX` entries; parent and attach entries reject, while the executable list
+contains only `TABLE` and `TABLE DATA`. Archived index DDL is never executed.
+The PostgreSQL 17
+client container receives the package/list/password file as read-only mounts
+and receives no Docker socket. Restore planning remeasures the source PGDATA
+filesystem and requires it to share the FST device with the sealed bundle.
+The guarded database phase requires exact fixed btree semantics, creates
+`sgri_<full-restore-operation-id>_{pk|score}` only from repository-owned SQL,
+and leaves any unrelated object with an archived name untouched. Attestation
+recomputes the exact row fingerprint and name-insensitive semantic catalog.
+Raw archive/catalog/config hashes remain independent package provenance; Q1/Q2
+equality binds stable child identity, fixed index semantics, and exact
+physical root/top chains rather than leaf names or raw archive bytes. The
+restored child remains hold- and trigger-protected until `finalize` removes
+the trigger and releases the hold atomically.
+
+`tools/postgres-snapshot-generation-restore-authorize.sh` invokes a separate
+prebuilt .NET executable with only `prepare-repair-package`,
+`authorize-repair-tool`, and `confirm-repair-tool`. It has no Docker,
+restore, object-target, or arbitrary SQL argument. The tool-only repair
+package exact-set binds the old pin, reviewed validator base, final executing
+tool,
+byte-identical archive helper, authorizer binary, source tree/diffs, tests,
+original plan/report, and immutable bundle manifest. `restore.py` exposes no
+authorization command and can consume only an explicit database authorization
+for its own current SHA.
+The rolling schema removes the observed 13-argument live and intermediate
+16-argument restore overloads before installing the 21-argument signature.
+Authorization reports expose both the client evidence hash and the
+independently computed database JSONB hash.
+
+The shared authorization resolver emits one lookup query for plan, restore,
+confirm, attest, and finalize. Its table alias is the explicit non-keyword
+`auth_row`; never use `authorization` as a PostgreSQL alias. H3 remains
+historical failed-plan evidence. H4 used a separate package and immutable
+authorization; the alias correction changed no schema or command surface.
+
+H4 subsequently exposed a separate archive-shape compatibility defect:
+cycle-16 opclass/collation OID arrays are canonical decimal strings. H5
+normalizes only those arrays through a strict PostgreSQL OID parser before
+fixed PostgreSQL-17 value and child/root/top equality checks. JSON integers
+remain accepted; booleans, noncanonical strings, fractions/exponents,
+overflow, and zero opclass OIDs reject. Counts, key attnums, and index options
+remain number-only. H3/H4 authorizations are not reusable for H5, and the
+existing schema admits a third exact-DROP authorization while no restore row
+exists.
+
+`tools/postgres-snapshot-generation-restore-continuation.sh` invokes the
+hash-pinned `FstSnapshotGenerationRestoreContinuation` assembly. Commands are
+exactly `confirm`, `attest`, and `finalize`. It has no physical restore,
+staging, attach, Docker, authorization, arbitrary SQL, or database-object
+selection surface. Connectivity is direct Npgsql through
+`FST_SNAPSHOT_RESTORE_CONTINUATION_CONNECTION_STRING`; the wrapper also
+requires `FST_SNAPSHOT_RESTORE_CONTINUATION_BINARY_SHA256`.
+Legacy `attest` and `finalize` invocations against
+`postgres-snapshot-generation-restore.py` are deterministic redirects only.
+They fail before parser construction or any route, output, Docker, or database
+operation and identify the continuation wrapper.
+
+The existing restore authorizer additionally exposes
+`prepare-continuation-package`, `authorize-continuation-tool`, and
+`confirm-continuation-tool`. Preparation derives tool/evidence hashes from
+fixed Release outputs, requires a clean committed tree, validates the original
+H5 plan/report/package/bundle and all three authenticated route checksum trees,
+and creates a hash-only semantic preflight. `--baseline-route-manifest` is the
+historical post-DROP capture, `--post-restore-route-manifest` is both the
+historical candidate and stabilized baseline, and
+`--candidate-route-manifest` is the repeated stabilized candidate.
+`--service-runtime-isolation-evidence` supplies the reviewed image/DLL/source
+identity record. The separate
+`--historical-service-build-evidence` and
+`--stabilized-service-build-evidence` files bind those identities to the
+observed builds; the authorizer verifies the shop-source hashes at both named
+commits and the current tree and statically bounds the shop endpoint/cache/
+persistence dependency. Historical comparison permits only the compile-time
+`fst.shop-daily-inventory-rollover.v1` predicate with exact fixed census and
+catalog checks, including the pre-/post-midnight `lastUpdated` transition; the
+stabilized comparison remains strict 55-route parity with the same refresh
+timestamp. The stabilized route-semantic hash and preflight-file hash remain
+separate authorization fields.
+The package contains only the framework-dependent continuation runtime, exact
+shared evidence assembly, runtime-isolation record, repository diff,
+source/tests, preflight, manifest, and checksums. Route paths come from the
+sealed package; no export body or song identifier is copied.
+
+The preparer snapshots each build/runtime evidence input once and packages
+those validated bytes. `ContinuationPackage.Validate` then independently
+cross-links the packaged build files to the sealed runtime record. Rewriting a
+build record and recomputing the package manifest/checksums therefore still
+fails validation.
+
+DROP plan/report validation reads the original C# canonical UTF-8 bytes.
+Python object reserialization is not authoritative. The scanner requires
+unique ordinal-sorted top-level properties, canonical key encoding, no
+out-of-string whitespace, one final LF, and no trailing data. It removes only
+the top-level identity member spans before hashing, preserving nested bytes,
+escaping, property order, and numeric representation exactly.
+
+Detailed command order, rollback, and acceptance gates are in
+[Snapshot generation DROP and logical restore](../database/SnapshotGenerationDropRunbook.md).
+
+Validate locally with:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationDrop|FullyQualifiedName~SnapshotGenerationQuarantine|FullyQualifiedName~SnapshotGenerationPartition'
+
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-snapshot-generation-restore.test.py
+
+tools/postgres-snapshot-generation-drop-drill.py \
+  --work-root /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-drop-drills/<new-run>
+```
+
+Drill report schema v2 records the exact regression names and source digest
+covering archive/proof, Q1 rotation collision and repair, the post-reattach
+cycle gate, Q2 DROP, and fixed-DDL restore with an unrelated archived-name
+collision.
 
 ### Legacy snapshot rewrite evidence
 

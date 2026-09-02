@@ -99,6 +99,201 @@ public sealed class SnapshotGenerationPartitionTests : IDisposable
     }
 
     [Fact]
+    public void EnsureGenerationPartition_IsSafeBeforeDropSchemaExists()
+    {
+        using var connection =
+            _fixture.DataSource.OpenConnection();
+        using (var hideDropSchema =
+               connection.CreateCommand())
+        {
+            hideDropSchema.CommandText = """
+                ALTER TABLE snapshot_generation_drop_operations
+                RENAME TO
+                    snapshot_generation_drop_operations_rolling_test
+                """;
+            hideDropSchema.ExecuteNonQuery();
+        }
+        using var transaction = connection.BeginTransaction();
+
+        Assert.Equal(
+            "leaderboard_entries_snapshot_solo_guitar_s2002",
+            EnsureGeneration(
+                connection,
+                transaction,
+                "Solo_Guitar",
+                2002));
+
+        transaction.Rollback();
+    }
+
+    [Fact]
+    public void EnsureGenerationPartition_IsSafeBeforeRetentionHoldSchemaExists()
+    {
+        using var connection =
+            _fixture.DataSource.OpenConnection();
+        using (var hideHoldSchema =
+               connection.CreateCommand())
+        {
+            hideHoldSchema.CommandText = """
+                ALTER TABLE snapshot_generation_retention_holds
+                RENAME TO
+                    snapshot_generation_retention_holds_rolling_test
+                """;
+            hideHoldSchema.ExecuteNonQuery();
+        }
+        using var transaction = connection.BeginTransaction();
+
+        Assert.Equal(
+            "leaderboard_entries_snapshot_solo_guitar_s2003",
+            EnsureGeneration(
+                connection,
+                transaction,
+                "Solo_Guitar",
+                2003));
+
+        transaction.Rollback();
+    }
+
+    [Theory]
+    [InlineData("retention_in_flight")]
+    [InlineData("restore_in_flight")]
+    public void EnsureGenerationPartition_RejectsHeldMissingTarget(
+        string holdKind)
+    {
+        using var connection =
+            _fixture.DataSource.OpenConnection();
+        using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO scrape_log (
+                    id,
+                    started_at,
+                    completed_at,
+                    status)
+                VALUES (
+                    2300,
+                    now() - interval '10 minutes',
+                    now() - interval '5 minutes',
+                    'completed');
+                INSERT INTO snapshot_generation_retention_holds (
+                    instrument,
+                    snapshot_id,
+                    hold_kind,
+                    reason,
+                    created_by)
+                VALUES (
+                    'Solo_Guitar',
+                    2300,
+                    @holdKind,
+                    'test hold',
+                    'test');
+                """;
+            seed.Parameters.AddWithValue(
+                "holdKind",
+                holdKind);
+            seed.ExecuteNonQuery();
+        }
+        using var transaction = connection.BeginTransaction();
+
+        var failure = Assert.Throws<PostgresException>(
+            () => EnsureGeneration(
+                connection,
+                transaction,
+                "Solo_Guitar",
+                2300));
+
+        Assert.Equal("55000", failure.SqlState);
+        transaction.Rollback();
+        Assert.False(
+            Scalar<bool>(
+                connection,
+                """
+                SELECT to_regclass(
+                    'public.leaderboard_entries_snapshot_solo_guitar_s2300')
+                    IS NOT NULL
+                """));
+    }
+
+    [Fact]
+    public async Task EnsureGenerationPartition_RechecksHoldAfterDdlLockWait()
+    {
+        await using var blocker =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using var blockerTransaction =
+            await blocker.BeginTransactionAsync();
+        await using (var acquire = blocker.CreateCommand())
+        {
+            acquire.Transaction = blockerTransaction;
+            acquire.CommandText = """
+                SELECT pg_advisory_xact_lock(
+                    hashtextextended(
+                        'fst.snapshot-generation-partition-ddl',
+                        0))
+                """;
+            await acquire.ExecuteNonQueryAsync();
+        }
+
+        await using var writer =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using var writerTransaction =
+            await writer.BeginTransactionAsync();
+        await using var ensure = writer.CreateCommand();
+        ensure.Transaction = writerTransaction;
+        ensure.CommandText = """
+            SELECT ensure_leaderboard_snapshot_generation_partition(
+                'Solo_Guitar',
+                2301)
+            """;
+        var ensureTask = ensure.ExecuteScalarAsync();
+        await Task.Delay(250);
+
+        await using (var seed = blocker.CreateCommand())
+        {
+            seed.Transaction = blockerTransaction;
+            seed.CommandText = """
+                INSERT INTO scrape_log (
+                    id,
+                    started_at,
+                    completed_at,
+                    status)
+                VALUES (
+                    2301,
+                    now() - interval '10 minutes',
+                    now() - interval '5 minutes',
+                    'completed');
+                INSERT INTO snapshot_generation_retention_holds (
+                    instrument,
+                    snapshot_id,
+                    hold_kind,
+                    reason,
+                    created_by)
+                VALUES (
+                    'Solo_Guitar',
+                    2301,
+                    'retention_in_flight',
+                    'race test',
+                    'test');
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+        await blockerTransaction.CommitAsync();
+
+        var failure =
+            await Assert.ThrowsAsync<PostgresException>(
+                async () => await ensureTask);
+        Assert.Equal("55000", failure.SqlState);
+        await writerTransaction.RollbackAsync();
+        Assert.False(
+            Scalar<bool>(
+                writer,
+                """
+                SELECT to_regclass(
+                    'public.leaderboard_entries_snapshot_solo_guitar_s2301')
+                    IS NOT NULL
+                """));
+    }
+
+    [Fact]
     public async Task EnsureGenerationPartition_SerializesConcurrentCrossInstrumentCreation()
     {
         string[] instruments =

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -54,6 +55,64 @@ public sealed class SnapshotGenerationQuarantineToolTests
                     .ValidateArchivePackage(
                         package,
                         proof));
+    }
+
+    [Fact]
+    public void ArchivePackageBindsManifestCatalogDigestToCatalogBytes()
+    {
+        var package = CreateArchivePackage();
+        var proofDirectory = Path.Combine(
+            package,
+            "proofs",
+            "test-proof");
+        var proofPath = Path.Combine(
+            proofDirectory,
+            "proof-manifest.json");
+        var manifestPath = Path.Combine(
+            package,
+            "manifest.json");
+        var manifest = JsonNode.Parse(
+            File.ReadAllText(manifestPath))!
+            .AsObject();
+        manifest["catalog"]!["sha256"] =
+            new string('0', 64);
+        File.WriteAllText(
+            manifestPath,
+            manifest.ToJsonString());
+        WriteChecksumFile(
+            package,
+            [
+                "archive.custom",
+                "archive.toc",
+                "catalog.json",
+                "manifest.json",
+            ]);
+        var proof = JsonNode.Parse(
+            File.ReadAllText(proofPath))!
+            .AsObject();
+        proof["packageManifestSha256"] =
+            Sha256(manifestPath);
+        File.WriteAllText(
+            proofPath,
+            proof.ToJsonString());
+        WriteChecksumFile(
+            proofDirectory,
+            [
+                "cleanup.json",
+                "container-evidence.json",
+                "proof-manifest.json",
+                "restored-catalog.json",
+            ]);
+
+        var failure = Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateArchivePackage(
+                    package,
+                    proofPath));
+        Assert.Contains(
+            "catalog",
+            failure.Message,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -219,6 +278,337 @@ public sealed class SnapshotGenerationQuarantineToolTests
     }
 
     [Fact]
+    public void ShopRolloverBridgeAcceptsExactMidnightInventoryReplacement()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-accepted",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+
+        var evidence =
+            QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate);
+
+        Assert.Equal(
+            QuarantineEvidenceValidator
+                .ShopDailyInventoryRolloverPredicateId,
+            evidence.PredicateId);
+        Assert.Equal(117, evidence.HistoricalCount);
+        Assert.Equal(117, evidence.StabilizedCount);
+        Assert.Equal(100, evidence.AddedCount);
+        Assert.Equal(100, evidence.RemovedCount);
+        Assert.Equal(17, evidence.OverlapCount);
+        Assert.Equal(
+            "shop:semantic-json",
+            evidence.HistoricalDifference);
+        Assert.Equal(
+            0,
+            evidence.CatalogMetadataDifferenceCount);
+        Assert.Equal(
+            0,
+            evidence.ShopUrlDifferenceCount);
+        Assert.True(
+            evidence.HistoricalShopLastUpdatedUtc <
+            evidence.StabilizedShopLastUpdatedUtc);
+        Assert.Matches(
+            "^[0-9a-f]{64}$",
+            QuarantineJson.Sha256(evidence));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsAnySecondRouteDifference()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-second-route",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        ReplaceRouteWithJson(
+            candidate,
+            "route-17",
+            "route-17",
+            "/api/test/17",
+            new { value = 999 });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsDuplicateSongIds()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-duplicate",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                {
+                    var songs =
+                        candidateShop["songs"]!
+                            .AsArray();
+                    songs[^1]!["songId"] =
+                        songs[0]!["songId"]!
+                            .GetValue<string>();
+                });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsUnannouncedDeparture()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-unannounced",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (baselineShop, _, _, _) =>
+                    baselineShop["songs"]!
+                        .AsArray()[0]!
+                        ["leavingTomorrow"] = false);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsCatalogOrOverlapDrift()
+    {
+        var (catalogBaseline, catalogCandidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-catalog-drift",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[17]!
+                        ["title"] = "Changed arrival");
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    catalogBaseline,
+                    catalogCandidate));
+
+        var (overlapBaseline, overlapCandidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-overlap-drift",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[0]!
+                        ["isNew"] = true);
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    overlapBaseline,
+                    overlapCandidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsNewLeavingFlag()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-new-leaving",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["songs"]!
+                        .AsArray()[17]!
+                        ["leavingTomorrow"] = true);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void ShopRolloverBridgeRejectsDifferentCardinality()
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-rollover-cardinality",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                {
+                    var songs =
+                        candidateShop["songs"]!
+                            .AsArray();
+                    songs.RemoveAt(songs.Count - 1);
+                    candidateShop["count"] =
+                        songs.Count;
+                });
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Theory]
+    [InlineData("2026-08-31T21:18:02Z")]
+    [InlineData("2026-08-31T23:59:59Z")]
+    [InlineData("2026-09-01T02:00:00Z")]
+    public void ShopRolloverBridgeRejectsUnattributedRefreshTimestamp(
+        string candidateLastUpdated)
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                $"shop-rollover-refresh-{Guid.NewGuid():N}",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["lastUpdated"] =
+                        candidateLastUpdated);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void StabilizedShopRefreshRejectsTimestampDrift()
+    {
+        var (_, baseline) =
+            CreateShopRolloverCaptures(
+                "shop-stable-baseline",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        var (_, candidate) =
+            CreateShopRolloverCaptures(
+                "shop-stable-candidate",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:32:32Z");
+        var expected =
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z");
+
+        QuarantineEvidenceValidator
+            .ValidateDetailedRouteParity(
+                baseline,
+                candidate);
+        QuarantineEvidenceValidator
+            .ValidateStabilizedShopRefresh(
+                baseline,
+                candidate,
+                expected);
+
+        var (_, changed) =
+            CreateShopRolloverCaptures(
+                "shop-stable-changed",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:33:32Z",
+                mutate: (_, candidateShop, _, _) =>
+                    candidateShop["lastUpdated"] =
+                        "2026-09-01T00:04:44Z");
+        QuarantineEvidenceValidator
+            .ValidateDetailedRouteParity(
+                baseline,
+                changed);
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    changed,
+                    expected));
+    }
+
+    [Fact]
+    public void StabilizedShopRefreshRequiresDistinctIncreasingCaptures()
+    {
+        var (_, baseline) =
+            CreateShopRolloverCaptures(
+                "shop-stable-order-baseline",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:32:32Z");
+        var (_, earlier) =
+            CreateShopRolloverCaptures(
+                "shop-stable-order-earlier",
+                "2026-08-31T21:20:46Z",
+                "2026-09-01T01:31:36Z");
+        var expected =
+            DateTimeOffset.Parse(
+                "2026-09-01T00:03:44Z");
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    baseline,
+                    expected));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    earlier,
+                    expected));
+
+        var root = JsonNode.Parse(
+            File.ReadAllText(earlier))!
+            .AsObject();
+        root.Remove("capturedAtUtc");
+        File.WriteAllText(
+            earlier,
+            root.ToJsonString(
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }),
+            new UTF8Encoding(false));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateStabilizedShopRefresh(
+                    baseline,
+                    earlier,
+                    expected));
+    }
+
+    [Theory]
+    [InlineData(
+        "2026-08-31T20:00:00Z",
+        "2026-08-31T21:00:00Z")]
+    [InlineData(
+        "2026-08-30T20:00:00Z",
+        "2026-09-01T01:00:00Z")]
+    public void ShopRolloverBridgeRequiresExactlyOneUtcMidnight(
+        string baselineCapturedAt,
+        string candidateCapturedAt)
+    {
+        var (baseline, candidate) =
+            CreateShopRolloverCaptures(
+                $"shop-rollover-time-{Guid.NewGuid():N}",
+                baselineCapturedAt,
+                candidateCapturedAt);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateShopDailyInventoryRolloverBridge(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
     public void RouteParityComparesZipEntryContents()
     {
         var baseline = CreateRouteCapture(
@@ -246,6 +636,327 @@ public sealed class SnapshotGenerationQuarantineToolTests
     }
 
     [Fact]
+    public void RouteParityNormalizesOfficeExportVolatilityAndReturnsDetails()
+    {
+        var baseline = CreateRouteCapture(
+            "office-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "office-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithOfficeExport(
+            baseline,
+            "band-export",
+            "20260831-210000",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "same-sheet",
+            workbookCount: 1);
+        ReplaceRouteWithOfficeExport(
+            candidate,
+            "band-export",
+            "20260901-010000",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "same-sheet",
+            workbookCount: 1);
+
+        var legacy =
+            QuarantineEvidenceValidator.ValidateRouteParity(
+                baseline,
+                candidate);
+        var detailed =
+            QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate);
+
+        Assert.Equal(legacy, detailed.Parity);
+        Assert.True(detailed.SemanticBinaryParity);
+        Assert.Equal(
+            QuarantineEvidenceValidator
+                .RouteParityAlgorithmId,
+            detailed.AlgorithmId);
+        Assert.Matches(
+            "^[0-9a-f]{64}$",
+            detailed.RouteSemanticEvidenceSha256);
+        var export = Assert.Single(
+            detailed.Routes,
+            route => route.Name == "band-export");
+        Assert.Equal(
+            "zip-canonical",
+            export.ComparisonMode);
+        Assert.NotEqual(
+            export.BaselineRawSha256,
+            export.CandidateRawSha256);
+        Assert.Equal(
+            export.BaselineSemanticSha256,
+            export.CandidateSemanticSha256);
+    }
+
+    [Fact]
+    public void RouteParityHandlesMultiWorkbookPlayerExport()
+    {
+        var baseline = CreateRouteCapture(
+            "player-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "player-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithOfficeExport(
+            baseline,
+            "player-export",
+            "20260831-210000",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "same-sheet",
+            workbookCount: 11);
+        ReplaceRouteWithOfficeExport(
+            candidate,
+            "player-export",
+            "20260901-010000",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "same-sheet",
+            workbookCount: 11);
+
+        var detailed =
+            QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate);
+
+        var export = Assert.Single(
+            detailed.Routes,
+            route => route.Name == "player-export");
+        Assert.Equal(
+            export.BaselineSemanticSha256,
+            export.CandidateSemanticSha256);
+    }
+
+    [Fact]
+    public void RouteParityRejectsNonvolatileWorkbookChanges()
+    {
+        var baseline = CreateRouteCapture(
+            "workbook-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "workbook-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithOfficeExport(
+            baseline,
+            "band-export",
+            "20260831-210000",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "same-sheet",
+            workbookCount: 1);
+        ReplaceRouteWithOfficeExport(
+            candidate,
+            "band-export",
+            "20260901-010000",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "changed-sheet",
+            workbookCount: 1);
+
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void RouteParityRejectsZipNameCollisionAndDepthOverflow()
+    {
+        var baseline = CreateRouteCapture(
+            "zip-bounds-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "zip-bounds-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithRawZip(
+            baseline,
+            "band-export",
+            archive =>
+            {
+                WriteZipEntry(
+                    archive,
+                    "same-20260831-210000.xlsx",
+                    "one");
+                WriteZipEntry(
+                    archive,
+                    "same-20260901-010000.xlsx",
+                    "two");
+            });
+        ReplaceRouteWithRawZip(
+            candidate,
+            "band-export",
+            archive => WriteZipEntry(
+                archive,
+                "same.xlsx",
+                "one"));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+
+        ReplaceRouteWithRawZip(
+            baseline,
+            "band-export",
+            archive => WriteZipBytes(
+                archive,
+                "nested.xlsx",
+                CreateNestedZip(depth: 4)));
+        ReplaceRouteWithRawZip(
+            candidate,
+            "band-export",
+            archive => WriteZipBytes(
+                archive,
+                "nested.xlsx",
+                CreateNestedZip(depth: 4)));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void RouteParityRejectsRawExportTamperBeforeSemanticComparison()
+    {
+        var baseline = CreateRouteCapture(
+            "raw-export-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "raw-export-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithOfficeExport(
+            baseline,
+            "band-export",
+            "20260831-210000",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "same-sheet",
+            workbookCount: 1);
+        ReplaceRouteWithOfficeExport(
+            candidate,
+            "band-export",
+            "20260901-010000",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "same-sheet",
+            workbookCount: 1);
+        File.AppendAllText(
+            Path.Combine(
+                Path.GetDirectoryName(candidate)!,
+                "raw",
+                "band-export.body"),
+            "tampered",
+            new UTF8Encoding(false));
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+
+        Assert.Contains(
+            "Raw route size differs",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RouteParityRejectsEmptyAndOversizedZipInventory()
+    {
+        var baseline = CreateRouteCapture(
+            "zip-inventory-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "zip-inventory-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithRawZip(
+            baseline,
+            "band-export",
+            _ => { });
+        ReplaceRouteWithRawZip(
+            candidate,
+            "band-export",
+            _ => { });
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+
+        ReplaceRouteWithRawZip(
+            baseline,
+            "band-export",
+            archive =>
+            {
+                for (var index = 0;
+                     index < 10_001;
+                     index++)
+                {
+                    WriteZipEntry(
+                        archive,
+                        $"entry-{index:D5}.txt",
+                        "");
+                }
+            });
+        ReplaceRouteWithRawZip(
+            candidate,
+            "band-export",
+            archive => WriteZipEntry(
+                archive,
+                "entry.txt",
+                ""));
+        Assert.Throws<InvalidDataException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+    }
+
+    [Fact]
+    public void RouteParityRejectsMalformedOfficeXmlAndExpandedLimit()
+    {
+        var baseline = CreateRouteCapture(
+            "zip-malformed-baseline",
+            generatedAt: "2026-08-30T00:00:00Z");
+        var candidate = CreateRouteCapture(
+            "zip-malformed-candidate",
+            generatedAt: "2026-08-30T00:00:00Z");
+        ReplaceRouteWithRawBytes(
+            baseline,
+            "band-export",
+            CreateMalformedOfficeZip());
+        ReplaceRouteWithRawBytes(
+            candidate,
+            "band-export",
+            CreateMalformedOfficeZip());
+        Assert.Throws<System.Xml.XmlException>(
+            () => QuarantineEvidenceValidator
+                .ValidateDetailedRouteParity(
+                    baseline,
+                    candidate));
+
+        ReplaceRouteWithRawBytes(
+            baseline,
+            "band-export",
+            CreateDeclaredOversizedZip());
+        ReplaceRouteWithRawBytes(
+            candidate,
+            "band-export",
+            CreateDeclaredOversizedZip());
+        var expanded =
+            Assert.Throws<InvalidDataException>(
+                () => QuarantineEvidenceValidator
+                    .ValidateDetailedRouteParity(
+                        baseline,
+                        candidate));
+        Assert.Contains(
+            "expanded content exceeds",
+            expanded.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutorHasNoDockerOrDropCommandSurface()
     {
         var repository = FindRepositoryRoot();
@@ -253,12 +964,22 @@ public sealed class SnapshotGenerationQuarantineToolTests
             repository,
             "tools",
             "FstSnapshotGenerationQuarantine");
+        var sharedDirectory = Path.Combine(
+            repository,
+            "tools",
+            "FstSnapshotGenerationEvidence");
         var source = string.Join(
             "\n",
-            Directory.EnumerateFiles(
+            new[]
+                {
                     directory,
-                    "*.cs",
-                    SearchOption.AllDirectories)
+                    sharedDirectory,
+                }
+                .SelectMany(path =>
+                    Directory.EnumerateFiles(
+                        path,
+                        "*.cs",
+                        SearchOption.AllDirectories))
                 .Select(File.ReadAllText));
         var wrapper = File.ReadAllText(
             Path.Combine(
@@ -350,6 +1071,13 @@ public sealed class SnapshotGenerationQuarantineToolTests
                         Path.Combine(
                             package,
                             "archive.custom")),
+                },
+                catalog = new
+                {
+                    sha256 = Sha256(
+                        Path.Combine(
+                            package,
+                            "catalog.json")),
                 },
                 cycle = new
                 {
@@ -538,12 +1266,213 @@ public sealed class SnapshotGenerationQuarantineToolTests
             manifest,
             new
             {
+                capturedAtUtc = generatedAt,
                 publicationId = 500L,
                 publishedScrapeId = 1400L,
                 routeCount = 55,
                 entries,
             });
         return manifest;
+    }
+
+    private (string Baseline, string Candidate)
+        CreateShopRolloverCaptures(
+            string name,
+            string baselineCapturedAt,
+            string candidateCapturedAt,
+            Action<
+                JsonObject,
+                JsonObject,
+                JsonObject,
+                JsonObject>? mutate = null)
+    {
+        var baseline = CreateRouteCapture(
+            $"{name}-baseline",
+            baselineCapturedAt);
+        var candidate = CreateRouteCapture(
+            $"{name}-candidate",
+            candidateCapturedAt);
+        var baselineShop = CreateShopPayload(
+            Enumerable.Range(0, 117),
+            leavingTomorrow:
+                Enumerable.Range(0, 100)
+                    .ToHashSet(),
+            lastUpdated:
+                "2026-08-31T21:18:02Z");
+        var candidateShop = CreateShopPayload(
+            Enumerable.Range(100, 117),
+            leavingTomorrow: new HashSet<int>(),
+            lastUpdated:
+                "2026-09-01T00:03:44Z");
+        var baselineCatalog =
+            CreateSongCatalogPayload();
+        var candidateCatalog =
+            CreateSongCatalogPayload();
+        mutate?.Invoke(
+            baselineShop,
+            candidateShop,
+            baselineCatalog,
+            candidateCatalog);
+        ReplaceRouteWithJson(
+            baseline,
+            "route-54",
+            "songs",
+            "/api/songs",
+            baselineCatalog);
+        ReplaceRouteWithJson(
+            candidate,
+            "route-54",
+            "songs",
+            "/api/songs",
+            candidateCatalog);
+        ReplaceRouteWithJson(
+            baseline,
+            "route-55",
+            "shop",
+            "/api/shop",
+            baselineShop);
+        ReplaceRouteWithJson(
+            candidate,
+            "route-55",
+            "shop",
+            "/api/shop",
+            candidateShop);
+        return (baseline, candidate);
+    }
+
+    private static JsonObject CreateSongCatalogPayload()
+    {
+        var songs = new JsonArray();
+        foreach (var index in Enumerable.Range(0, 217))
+        {
+            songs.Add(
+                new JsonObject
+                {
+                    ["albumArt"] =
+                        $"album-{index:D3}.jpg",
+                    ["artist"] =
+                        $"Artist {index:D3}",
+                    ["songId"] = SongId(index),
+                    ["title"] = $"Song {index:D3}",
+                    ["year"] = 2000 + index % 25,
+                });
+        }
+        return new JsonObject
+        {
+            ["count"] = songs.Count,
+            ["currentSeason"] = 1,
+            ["songs"] = songs,
+        };
+    }
+
+    private static JsonObject CreateShopPayload(
+        IEnumerable<int> indexes,
+        IReadOnlySet<int> leavingTomorrow,
+        string lastUpdated)
+    {
+        var songs = new JsonArray();
+        foreach (var index in indexes)
+        {
+            var songId = SongId(index);
+            songs.Add(
+                new JsonObject
+                {
+                    ["albumArt"] =
+                        $"album-{index:D3}.jpg",
+                    ["artist"] =
+                        $"Artist {index:D3}",
+                    ["isNew"] = false,
+                    ["leavingTomorrow"] =
+                        leavingTomorrow.Contains(index),
+                    ["shopUrl"] =
+                        $"https://www.fortnite.com/item-shop/jam-tracks/song-{index:D3}-{songId.Replace("-", "", StringComparison.Ordinal)[^12..]}",
+                    ["songId"] = songId,
+                    ["title"] = $"Song {index:D3}",
+                    ["year"] = 2000 + index % 25,
+                });
+        }
+        return new JsonObject
+        {
+            ["count"] = songs.Count,
+            ["lastUpdated"] = lastUpdated,
+            ["newSongs"] = new JsonArray(),
+            ["songs"] = songs,
+        };
+    }
+
+    private static string SongId(int index) =>
+        $"00000000-0000-0000-0000-{index:x12}";
+
+    private static void ReplaceRouteWithJson(
+        string manifestPath,
+        string oldRouteName,
+        string routeName,
+        string routePath,
+        object content)
+    {
+        var directory =
+            Path.GetDirectoryName(manifestPath)!;
+        var rawDirectory = Path.Combine(
+            directory,
+            "raw");
+        var normalizedDirectory = Path.Combine(
+            directory,
+            "normalized");
+        var oldRawPath = Path.Combine(
+            rawDirectory,
+            $"{oldRouteName}.body");
+        var oldNormalizedPath = Path.Combine(
+            normalizedDirectory,
+            $"{oldRouteName}.json");
+        var rawPath = Path.Combine(
+            rawDirectory,
+            $"{routeName}.body");
+        var normalizedPath = Path.Combine(
+            normalizedDirectory,
+            $"{routeName}.json");
+        if (!string.Equals(
+                oldRawPath,
+                rawPath,
+                StringComparison.Ordinal))
+        {
+            File.Delete(oldRawPath);
+        }
+        if (!string.Equals(
+                oldNormalizedPath,
+                normalizedPath,
+                StringComparison.Ordinal))
+        {
+            File.Delete(oldNormalizedPath);
+        }
+        WriteJson(rawPath, content);
+        WriteJson(normalizedPath, content);
+        var root = JsonNode.Parse(
+            File.ReadAllText(manifestPath))!
+            .AsObject();
+        var entry = root["entries"]!
+            .AsArray()
+            .Select(node => node!.AsObject())
+            .Single(node =>
+                node["name"]!.GetValue<string>()
+                    == oldRouteName);
+        entry["name"] = routeName;
+        entry["path"] = routePath;
+        entry["isJson"] = true;
+        entry["semanticSha256"] =
+            Sha256(normalizedPath);
+        entry["rawSha256"] = Sha256(rawPath);
+        entry["bytes"] =
+            new FileInfo(rawPath).Length;
+        entry["contentType"] =
+            "application/json; charset=utf-8";
+        File.WriteAllText(
+            manifestPath,
+            root.ToJsonString(
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }),
+            new UTF8Encoding(false));
     }
 
     private static void ReplaceRouteWithZip(
@@ -597,6 +1526,269 @@ public sealed class SnapshotGenerationQuarantineToolTests
                     WriteIndented = true,
                 }),
             new UTF8Encoding(false));
+    }
+
+    private static void ReplaceRouteWithOfficeExport(
+        string manifestPath,
+        string routeName,
+        string timestamp,
+        string coreId,
+        string worksheetContent,
+        int workbookCount)
+    {
+        ReplaceRouteWithRawZip(
+            manifestPath,
+            routeName,
+            archive =>
+            {
+                for (var index = 0;
+                     index < workbookCount;
+                     index++)
+                {
+                    WriteZipBytes(
+                        archive,
+                        $"export-{index:D2}-{timestamp}.xlsx",
+                        CreateWorkbook(
+                            coreId,
+                            worksheetContent,
+                            index));
+                }
+            });
+    }
+
+    private static void ReplaceRouteWithRawZip(
+        string manifestPath,
+        string routeName,
+        Action<ZipArchive> write)
+    {
+        using var memory = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   memory,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            write(archive);
+        }
+        ReplaceRouteWithRawBytes(
+            manifestPath,
+            routeName,
+            memory.ToArray());
+    }
+
+    private static void ReplaceRouteWithRawBytes(
+        string manifestPath,
+        string routeName,
+        byte[] content)
+    {
+        var directory =
+            Path.GetDirectoryName(manifestPath)!;
+        var rawDirectory = Path.Combine(
+            directory,
+            "raw");
+        var normalizedDirectory = Path.Combine(
+            directory,
+            "normalized");
+        var root = JsonNode.Parse(
+            File.ReadAllText(manifestPath))!.AsObject();
+        var entryNode = root["entries"]!
+            .AsArray()
+            .Select(node => node!.AsObject())
+            .Single(node =>
+            {
+                var name =
+                    node["name"]!.GetValue<string>();
+                return name == "route-55"
+                       || name == routeName;
+            });
+        var oldName =
+            entryNode["name"]!.GetValue<string>();
+        var oldRaw = Path.Combine(
+            rawDirectory,
+            $"{oldName}.body");
+        var rawPath = Path.Combine(
+            rawDirectory,
+            $"{routeName}.body");
+        File.Delete(rawPath);
+        File.WriteAllBytes(rawPath, content);
+        if (!string.Equals(
+                oldRaw,
+                rawPath,
+                StringComparison.Ordinal))
+        {
+            File.Delete(oldRaw);
+        }
+        File.Delete(
+            Path.Combine(
+                normalizedDirectory,
+                $"{oldName}.json"));
+        entryNode["name"] = routeName;
+        entryNode["path"] =
+            $"/api/continuation-test/{routeName}";
+        entryNode["isJson"] = false;
+        entryNode["semanticSha256"] = null;
+        entryNode["rawSha256"] =
+            Sha256(rawPath);
+        entryNode["bytes"] =
+            new FileInfo(rawPath).Length;
+        entryNode["contentType"] =
+            "application/zip";
+        File.WriteAllText(
+            manifestPath,
+            root.ToJsonString(
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }),
+            new UTF8Encoding(false));
+    }
+
+    private static byte[] CreateWorkbook(
+        string coreId,
+        string worksheetContent,
+        int workbookIndex)
+    {
+        using var memory = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   memory,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            WriteZipEntry(
+                archive,
+                "_rels/.rels",
+                $"""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml" />
+                  <Relationship Id="volatile-{coreId}" Type="http://schemas.microsoft.com/package/2006/relationships/metadata/core-properties" Target="package/services/metadata/core-properties/{coreId}.psmdcp" />
+                </Relationships>
+                """);
+            WriteZipEntry(
+                archive,
+                $"package/services/metadata/core-properties/{coreId}.psmdcp",
+                $"volatile-{coreId}");
+            WriteZipEntry(
+                archive,
+                "xl/workbook.xml",
+                $"workbook-{workbookIndex}");
+            WriteZipEntry(
+                archive,
+                "xl/worksheets/sheet1.xml",
+                worksheetContent);
+        }
+        return memory.ToArray();
+    }
+
+    private static byte[] CreateNestedZip(int depth)
+    {
+        using var memory = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   memory,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            if (depth <= 1)
+            {
+                WriteZipEntry(
+                    archive,
+                    "data.txt",
+                    "leaf");
+            }
+            else
+            {
+                WriteZipBytes(
+                    archive,
+                    "nested.xlsx",
+                    CreateNestedZip(depth - 1));
+            }
+        }
+        return memory.ToArray();
+    }
+
+    private static byte[] CreateMalformedOfficeZip()
+    {
+        using var workbook = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   workbook,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            WriteZipEntry(
+                archive,
+                "_rels/.rels",
+                "<Relationships");
+            WriteZipEntry(
+                archive,
+                "xl/worksheets/sheet1.xml",
+                "same-sheet");
+        }
+        using var outer = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   outer,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            WriteZipBytes(
+                archive,
+                "export-20260831-210000.xlsx",
+                workbook.ToArray());
+        }
+        return outer.ToArray();
+    }
+
+    private static byte[] CreateDeclaredOversizedZip()
+    {
+        using var memory = new MemoryStream();
+        using (var archive = new ZipArchive(
+                   memory,
+                   ZipArchiveMode.Create,
+                   leaveOpen: true))
+        {
+            WriteZipEntry(
+                archive,
+                "large.bin",
+                "small");
+        }
+        var bytes = memory.ToArray();
+        var central = bytes.AsSpan()
+            .IndexOf(
+                new byte[]
+                {
+                    (byte)'P',
+                    (byte)'K',
+                    1,
+                    2,
+                });
+        if (central < 0)
+        {
+            throw new InvalidDataException(
+                "Synthetic ZIP central directory is missing.");
+        }
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            bytes.AsSpan(
+                central + 24,
+                sizeof(uint)),
+            512U * 1024 * 1024 + 1);
+        return bytes;
+    }
+
+    private static void WriteZipEntry(
+        ZipArchive archive,
+        string name,
+        string content) =>
+        WriteZipBytes(
+            archive,
+            name,
+            Encoding.UTF8.GetBytes(content));
+
+    private static void WriteZipBytes(
+        ZipArchive archive,
+        string name,
+        byte[] content)
+    {
+        var entry = archive.CreateEntry(name);
+        using var stream = entry.Open();
+        stream.Write(content);
     }
 
     private static void WriteChecksumFile(

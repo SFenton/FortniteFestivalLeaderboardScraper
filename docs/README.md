@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-27
-last_verified_commit: c35b7f47
+last_verified_commit: 21d7193c
 sources:
   - README.md
   - AGENTS.md
@@ -12,6 +12,7 @@ sources:
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
   - docs/database/SnapshotGenerationRetentionSafety.md
+  - docs/database/SnapshotGenerationDropRunbook.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
@@ -31,6 +32,7 @@ evidence remain the behavioral sources of truth.
 | Follow data from Epic to the browser | [Scrape and publication flow](architecture/data-publication-flow.md) |
 | Understand PostgreSQL ownership and data shapes | [Data storage](architecture/data-storage.md) |
 | Review snapshot-generation retention safety | [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md) |
+| Execute the gated snapshot-generation DROP/restore canary | [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
@@ -65,6 +67,7 @@ again. Verify their preconditions and current code before execution.
 - [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
+- [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
 - [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)

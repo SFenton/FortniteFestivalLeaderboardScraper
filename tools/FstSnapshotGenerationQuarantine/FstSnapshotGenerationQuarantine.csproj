@@ -9,6 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="EvidenceValidator.cs" />
+    <Compile Remove="QuarantineModels.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\FSTService\FSTService.csproj" />
+    <ProjectReference Include="..\FstSnapshotGenerationEvidence\FstSnapshotGenerationEvidence.csproj" />
   </ItemGroup>
 </Project>

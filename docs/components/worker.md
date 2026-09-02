@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-29
-last_verified_commit: c35b7f47
+last_verified_commit: 21d7193c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -50,6 +50,7 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
@@ -699,6 +700,17 @@ fresh `READ COMMITTED` catalog snapshot, while the global key serializes child
 table and inherited-index naming across instruments. Before an instrument is
 migrated, the helper detects its regular-table layout and returns without
 mutation, so the same worker image is compatible across the rolling migration.
+The helper checks active `retention_in_flight` and `restore_in_flight` holds
+before returning or creating a generation and again after the DDL lock. When
+the additive retention/drop schemas exist, all optional-table checks use
+dynamic SQL behind `to_regclass`, preserving rolling startup before either
+table exists. Committed DROP evidence prevents accidental hold release from
+recreating a physically retired generation. Either fence fails with SQLSTATE
+`55000`; a logically restored child becomes writable only after attestation
+and finalization release its hold. Finalized-restore admission matches the
+recorded OID, while relfilenode remains historical because supported physical
+rewrites can change it. Existing unfenced, correctly attached children remain
+idempotent.
 
 The first post-Solo Bass validation attempt, scrape `1308`, exposed the prior
 per-instrument lock boundary: concurrent first batches created generation
@@ -723,12 +735,13 @@ destructive retention.
 
 Fresh schemas also include an empty default child beneath every instrument.
 Direct test/diagnostic inserts remain possible, while normal scrape writes
-route to a named generation child. After all live instruments are migrated,
-a future guarded retention owner can archive and drop obsolete generation
-children without rewriting the full instrument partition. That owner is not
-part of the migration candidate: normal scheduling remains held until
-archive-before-child-drop, default-child auditing, rollback, and public parity
-are implemented and accepted.
+route to a named generation child. The operator-only DROP/restore tools remain
+outside the worker. No worker code invokes their database functions, and no
+automatic retirement is enabled. Quarantine/reattach now normalizes only the
+exact target's existing PK and score index OIDs to full-operation-ID names;
+logical restore constructs fixed restore-operation names from repository-owned
+DDL. Neither path changes unrelated public indexes or the worker's ordinary
+generation naming.
 
 The first recurring-retention slice now keeps all archive/proof/drop behavior
 out of the worker and the repository. After publication, unfreeze,
@@ -774,17 +787,29 @@ publications remain fail-closed blockers. Existing planner-v1/v2 cycles remain
 immutable. The observer never mutates legacy publication/source rows to remove
 the warning, while newly produced generations keep the validated v1 retirement
 path.
-Disagreement is durable and produces zero candidates. No job, executable
-state, archive, detach, rename, drop, truncate, or child-deletion path exists.
-The planner is deliberately absent from
+Disagreement is durable and produces zero candidates. The worker still has no
+job, executable state, archive, detach, rename, drop, truncate, or
+child-deletion path. The separately built operator tools do not alter this
+runtime boundary. The planner is deliberately absent from
 `PostScrapeOrchestrator.RunCleanupAsync`, which remains pre-publication and
 best effort.
 
-Planner-v3 cycles `5` and `6` satisfy the two-clean-cycle entry gate for a
-separate archive-only implementation. No archive behavior exists in the
-current worker. Destructive work remains blocked until five exact-agreement
-cycles include a publication rotation and a genuine candidate-set change,
-plus all separate archive/restore/parity/live-safety gates. See
+The five-cycle observation gate is accepted. Official scrape `1333` completed
+cleanly and immutable cycle `13` for publication `157` has exact planner/oracle
+sets, 111 candidates, 174 protected, zero blocked/global blockers, and
+194,754,322,432 candidate bytes. Production continued normally into scrape
+`1334`. No archive or DROP behavior exists in the worker. Destructive live use
+advanced outside the worker to an independently approved DROP attempt, but
+the database rejected it before DDL with `42703` because the empty
+initial-revision operation table lacked semantic columns. No child was
+dropped in that attempt. A later approved retry committed operation
+`333ba4b9fb69dbc098d127f0008ec709`; the worker still owns no DROP or restore
+execution path. Recovery is now the operator-only mandatory logical restore,
+whose first plan attempt failed before mutation on canonical-file validation.
+The corrective immutable tool authorization and tool-only repair package
+remain entirely outside the worker; no scheduling, authorization, restore, or
+automatic recovery command is added here.
+See
 [Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
 ## Legacy service-level retention planning
