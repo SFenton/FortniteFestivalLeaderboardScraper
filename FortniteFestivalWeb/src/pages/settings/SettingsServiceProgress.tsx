@@ -40,7 +40,6 @@ const cardStyle: CSSProperties = {
   borderRadius: Radius.md,
   padding: padding(Layout.paddingTop),
   '--settings-progress-muted': Colors.textSecondary,
-  '--settings-progress-warning': Colors.gold,
   '--settings-progress-track': Colors.surfaceMuted,
   '--settings-progress-fill': Colors.accentPurple,
 } as CSSProperties;
@@ -304,7 +303,6 @@ export function SettingsServiceProgressCard({
       : t('settings.serviceInfo.progressUnknownTotal'),
     barUnits,
   ].filter(Boolean).join('. ');
-  const warnings = serviceInfo.lastCompletedUpdate?.bestEffortFailureCount ?? 0;
   const publishedAt = serviceInfo.lastCompletedUpdate?.publishedAt
     ?? serviceInfo.publication?.publishedAt;
   const publicationText = formatDateTime(
@@ -322,15 +320,7 @@ export function SettingsServiceProgressCard({
               description={stateDescription}
               descriptionTestId="settings-service-info-row-update-sub-status"
               trailing={<ProcessStateDisplay state={currentProcessState} />}
-            >
-              {warnings > 0 ? (
-                <div className={styles.warning}>
-                  {t('settings.serviceInfo.completedWithWarnings', {
-                    count: warnings,
-                  })}
-                </div>
-              ) : null}
-            </ServiceInfoRow>
+            />
 
             {showPhaseRow ? (
               <ServiceInfoRow
