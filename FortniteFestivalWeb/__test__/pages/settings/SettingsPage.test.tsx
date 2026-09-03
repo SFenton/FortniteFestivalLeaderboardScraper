@@ -1253,7 +1253,7 @@ describe('SettingsPage', () => {
     );
   });
 
-  it('shows failure, stale worker, and warning states without masking published data', async () => {
+  it('shows failure and stale worker states without exposing internal warning counts', async () => {
     const failedServiceInfo = {
       ...defaultServiceInfo,
       lastCompletedUpdate: {
@@ -1286,7 +1286,7 @@ describe('SettingsPage', () => {
       'Last Leaderboard Update Failed',
     );
     expect(screen.queryByTestId('settings-service-info-row-worker-status')).toBeNull();
-    expect(screen.getByText('The last completed update reported 2 non-critical warnings.')).toBeDefined();
+    expect(screen.queryByText(/non-critical warnings?/i)).toBeNull();
     expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
   });
 
