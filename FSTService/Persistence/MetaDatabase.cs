@@ -4052,7 +4052,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
              AND status.team_key = band.team_key
             ORDER BY CASE status.status
                          WHEN 'pending' THEN 0
-                         WHEN 'failed' THEN 1
+                         WHEN 'error' THEN 1
                          WHEN 'in_progress' THEN 2
                          WHEN 'complete' THEN 3
                          ELSE 0

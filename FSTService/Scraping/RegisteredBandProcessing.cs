@@ -168,6 +168,7 @@ public sealed class RegisteredBandProcessingOrchestrator
 
         var impactedTeams = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
+        int bandsAttempted = 0;
         int bandsProcessed = 0;
         int lookupsCheckedTotal = 0;
         int entriesFoundTotal = 0;
@@ -177,11 +178,12 @@ public sealed class RegisteredBandProcessingOrchestrator
         foreach (var registeredBand in registeredBands)
         {
             ct.ThrowIfCancellationRequested();
-            if (maxBands > 0 && bandsProcessed >= maxBands)
+            if (maxBands > 0 && bandsAttempted >= maxBands)
                 break;
             if (maxLookupsPerPass > 0 && lookupsCheckedTotal >= maxLookupsPerPass)
                 break;
 
+            bandsAttempted++;
             var remainingLookups = maxLookupsPerPass > 0
                 ? maxLookupsPerPass - lookupsCheckedTotal
                 : 0;
@@ -195,6 +197,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                 remainingLookups,
                 ct);
 
+            _progress.ReportPhaseItemComplete();
             if (bandResult.LookupsChecked == 0)
                 continue;
 
@@ -216,14 +219,13 @@ public sealed class RegisteredBandProcessingOrchestrator
                     impactedCurrentProjectionScopes.Add(scope);
             }
 
-            _progress.ReportPhaseItemComplete();
         }
 
         _progress.SetAdaptiveLimiter(null);
 
         _log.LogInformation(
-            "Registered-band targeted processing complete: {Bands} band(s), {Lookups} lookup(s), {Entries} entrie(s), {Persisted} persisted row(s).",
-            bandsProcessed, lookupsCheckedTotal, entriesFoundTotal, entriesPersistedTotal);
+            "Registered-band targeted processing complete: {Attempted} attempted band(s), {Processed} progressed band(s), {Lookups} lookup(s), {Entries} entrie(s), {Persisted} persisted row(s).",
+            bandsAttempted, bandsProcessed, lookupsCheckedTotal, entriesFoundTotal, entriesPersistedTotal);
 
         return new RegisteredBandProcessingResult
         {

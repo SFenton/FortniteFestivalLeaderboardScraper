@@ -1,18 +1,21 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-13
-last_verified_commit: 9d11111e
+last_verified: 2026-09-03
+last_verified_commit: f2a25ff0
 sources:
   - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
   - FSTService/Persistence/ImprovementNotificationService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Program.cs
+  - FSTService/ScraperOptions.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Scraping/RegisteredBandProcessing.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
 update_triggers:
-  - Notification recovery commands, markers, projection plans, max-score correction safety, gates, validation, or rollback change.
+  - Notification recovery commands, markers, projection plans, registered phase budgets, max-score correction safety, gates, validation, or rollback change.
 ---
 
 # Improvement Notification Recovery Runbook
@@ -201,12 +204,50 @@ first on the next pass.
 | `Scraper__RegisteredPlayerBandDiscoveryTimeout` | `00:06:00` |
 | `Scraper__RegisteredBandTargetedProcessingTimeout` | `00:05:00` |
 | `Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass` | `80` |
+| `Scraper__RegisteredBandProcessingMaxBandsPerPass` | `10` |
 | `Scraper__RegisteredBandProcessingMaxLookupsPerPass` | `80` |
 
 The discovery timeout has one minute of headroom above the observed 80-lookup
 runtime. Scrape `1277` completed all 80 lookups in 291,752 ms, while scrape
 `1278` checkpointed 78 lookups before the former five-minute limit expired.
 The per-pass lookup cap and per-request cancellation remain the primary bounds.
+The registered-band count cap applies to attempted bands, including a band
+whose first lookup fails. Failed bands remain retryable, but a run of invalid
+or unavailable Epic leaderboards cannot bypass the ten-band bound, starve the
+phase denominator at zero, and consume the entire wall-clock timeout. Pending
+bands sort ahead of persisted `error` bands, so a failing target set cannot
+starve untouched registered bands on later passes.
+
+### Accepted attempted-band canary
+
+Scrapes `1343` and `1344` each timed out
+`post.registered_band_targeted_processing` after `300 s` with `0/10` units.
+The first failed lookup returned zero successful checks, so the prior
+successful-check counter never consumed the ten-band pass budget.
+
+Candidate commit `f2a25ff0` and image
+`sha256:a4c4a334b0a28e06c342cb6543cb918de6c15604f3d17654459a34112242f6fc`
+were accepted by scrape `1345`:
+
+- the phase completed `10/10` units in `5.333779 s` with no warning or error;
+- the worker logged ten attempted bands, zero progressed lookups, and zero
+  persisted entries;
+- the exact first ten pending band hashes were the only rows resumed during
+  the phase, all became retryable `error`, and no eleventh row was touched;
+- the full 712-song scrape completed and published as publication `188` with
+  zero best-effort or writer failures;
+- notifications/projection completed, all `6,408` fingerprints and `8,544`
+  manifests were complete, and the 55-route published capture had no curl
+  failure or 5xx response;
+- report-only pruning cycle `25` matched its independent oracle with zero
+  blockers; automatic pruning remained disabled; and
+- restored Pro Cymbals snapshot `1314` remained at OID/relfilenode
+  `321906645` with `8,627` rows.
+
+The accepted evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/registered-band-targeted-resilience/candidate-1345/`.
+Promotion still requires the merged official image and one clean official
+confirmation scrape before this recovery is treated as the deployed baseline.
 
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.
