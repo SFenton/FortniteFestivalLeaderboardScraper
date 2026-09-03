@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-09-03
-last_verified_commit: f2a25ff0
+last_verified_commit: e4b892e3
 sources:
   - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
   - FSTService/Persistence/ImprovementNotificationService.cs
@@ -246,8 +246,24 @@ were accepted by scrape `1345`:
 
 The accepted evidence is under
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/registered-band-targeted-resilience/candidate-1345/`.
-Promotion still requires the merged official image and one clean official
-confirmation scrape before this recovery is treated as the deployed baseline.
+PR #76 merged as master commit `e4b892e3`. Official service/worker image
+`sha256:87ea296cec5cc4465c0e6e26934f338196ac7e2a9576c9fca617b039f259c2e4`
+passed 55-route same-publication parity against the accepted local service,
+then completed scrape `1346`:
+
+- the targeted phase completed `10/10` units in `6.319659 s`;
+- exactly the next ten pending rows became retryable `error`, with no eleventh
+  row touched;
+- the full scrape published as publication `190` with zero best-effort,
+  writer, fingerprint, manifest, or critical phase failure;
+- notifications/projection completed and the 55-route published capture had
+  no curl failure or 5xx response; and
+- report-only cycle `26` matched its independent oracle with zero blockers.
+
+The official evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/registered-band-targeted-resilience/official-1346/`.
+Attempted-band budgeting and pending-before-error ordering are now the deployed
+production baseline.
 
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.

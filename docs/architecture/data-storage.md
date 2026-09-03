@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-03
+last_verified_commit: e4b892e3
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -938,6 +938,25 @@ Cymbals snapshot `1314` remains attached at OID/relfilenode `321906645` with
 8,627 rows and both index chains. Candidate scrape `1337` and retention cycle
 `17` proved the generation is visible to the planner/oracle under that new
 physical identity without becoming live publication state.
+
+PR #75 promoted this DROP/restore tier as master commit `3bf8c6e3` and
+official image
+`sha256:6a432ac73fcca49aa6a3caf5d049eaa953d2ea7ca79ed79219230255afdfc5b5`.
+Official scrapes `1343` and `1344` preserved core acquisition, writers,
+publication, notifications, and report-only retention correctness, but were
+not terminal acceptance because an unrelated registered-band best-effort phase
+timed out at five minutes. PR #76 fixed that pass-budget defect and merged as
+`e4b892e3`; candidate scrape `1345` and official scrape `1346` then completed
+the phase in `5.333779 s` and `6.319659 s`, respectively, with 10/10 attempted
+bands and no best-effort or writer failure.
+
+Official publication `190` serves scrape `1346`; notifications are complete,
+all `6,408` scope fingerprints and `8,544` manifests are complete, and
+report-only cycle `26` has exact planner/oracle agreement with zero blockers.
+The restored Pro Cymbals child remains `8,627` rows at OID/relfilenode
+`321906645` and is now consistently classified as an unreferenced candidate.
+This closes the single-child DROP/restore promotion gate without authorizing
+automatic detach, deletion, DROP, or multi-child execution.
 
 Rolling deployment explicitly drops only the known 13-argument live and
 16-argument intermediate restore-function overloads before defining the
