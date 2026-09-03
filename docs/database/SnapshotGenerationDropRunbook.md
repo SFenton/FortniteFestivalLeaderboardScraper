@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: operations
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-03
+last_verified_commit: e4b892e3
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
@@ -771,9 +771,35 @@ Scrapes `1338` through `1341` also completed with zero best-effort failures.
 The hash-only terminal acceptance bundle is
 `continuation-acceptance-v2/acceptance-manifest.json`, SHA-256
 `0ee12d9e9c6d0e2dd8230eca359b0a807106ef128698c9e83ef203756bea3f56`.
-Automatic and multi-child pruning remain disabled. The remaining gate is
-normal PR promotion, official image deployment at a terminal scrape boundary,
-and an official-image confirmation scrape.
+PR #75 merged the DROP/restore tier as master commit `3bf8c6e3`. The official
+service/worker image
+`sha256:6a432ac73fcca49aa6a3caf5d049eaa953d2ea7ca79ed79219230255afdfc5b5`
+and web image
+`sha256:d0174bcc79e00b91155db143c2421cc26d99352ab4f0cf9e0d5f684bf6957b84`
+were deployed at a terminal boundary.
+
+Official scrapes `1343` and `1344` completed their core scrape, writer,
+publication, notification, and report-only retention paths, but each was
+rejected as the final confirmation because the unrelated
+`RegisteredBandTargetedProcessing` best-effort phase timed out after `300 s`
+with `0/10` units. The defect counted only successful lookups against the
+ten-band pass cap and ordered the persisted status `failed` even though the
+stored value is `error`.
+
+PR #76 corrected attempted-band budgeting and pending-before-error ordering,
+then merged as master commit `e4b892e3`. Local candidate scrape `1345`
+completed the targeted phase in `5.333779 s`; official-image scrape `1346`
+completed it in `6.319659 s`. Both processed exactly the next ten pending
+bands, published with zero best-effort/writer failures, completed
+notifications, passed their 55-route published captures, and produced
+oracle-agreeing report-only cycles `25` and `26` with zero blockers.
+Publication `190` now serves scrape `1346`.
+
+The restored Pro Cymbals snapshot `1314` remains attached with `8,627` rows at
+OID/relfilenode `321906645`; planner and oracle both classify it as an
+unreferenced candidate under the current publication. The single-child
+DROP/restore tier is therefore terminally accepted and deployed. Automatic
+and multi-child pruning remain disabled and require their own rollout gate.
 
 ## Acceptance and rollback
 
