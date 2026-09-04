@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-03
-last_verified_commit: e4b892e3
+last_verified: 2026-09-04
+last_verified_commit: f266ecb8
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -776,6 +776,20 @@ and logical catalog SHA-256
 `dce534bec2cd70afe873ccd5cc0c327d636bc93137839b07f20ee57631908501`,
 then proved complete container, anonymous-volume, PGDATA, and scratch cleanup.
 No source relation or row changed.
+
+The later recovery-scale canary used cycle `33`, publication `204`, and the
+largest eligible non-1308 child: Solo Guitar snapshot `1311`. Its
+`3,518,955,520`-byte attached relation contained `6,888,770` rows at
+OID/relfilenode `319406546`. A `272,084,869`-byte archive restored under
+network-none PostgreSQL `17.9` with exact row SHA-256
+`6e3b4befab4440d8175e1c8a3c246fefdf7e2121f5a50cabc48306d3c2aa60e1`
+and logical catalog SHA-256
+`e620819c8e75c7d0c5d71fe26d6a5f681e09288f882a3680c1e558c1ca044225`.
+The proof removed every owned transient resource, and the live source retained
+its attachment, OID, relfilenode, rows, and bytes. This satisfies the
+large-child recovery prerequisite for a future default-off automatic
+one-child retirement implementation; it does not authorize batch or
+multi-child execution.
 
 The next repository tier adds a separate no-Docker-socket
 quarantine/reattach CLI. Its durable control plane is additive:

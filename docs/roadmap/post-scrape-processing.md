@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-04
+last_verified_commit: f266ecb8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -688,42 +688,32 @@ Each iteration below is a separate branch/PR.
 
 ### Parallel storage and reclaim evidence
 
-The default-off generation-child report-only control plane is implemented.
-The separate archive-only package/proof tool is implemented and passes a
-disposable PostgreSQL 17 network-none drill. Live cycles `5/1325` through
-`9/1329` satisfy the five-cycle observation prerequisite with publication
-rotation and genuine candidate-set changes. A parent-controlled live
-smallest-child archive/restore canary also passed on unchanged Pro Cymbals
-snapshot `1314`. The separate no-Docker-socket quarantine/reattach executor is
-implemented and live-accepted after a 452-second soak and exact reattach.
-Current unresolved work is live acceptance of the implemented drop tier:
+The default-off generation-child report-only control plane, archive-only
+package/proof tool, quarantine/reattach executor, and guarded DROP/logical
+restore tier are implemented and live-accepted. Candidate scrape `1345` and
+official scrape `1346` closed the DROP-tier promotion with zero failures,
+clean 55-route captures, and exact cycles `25`/`26`.
 
-- commit/review the continuation-only C# tool and empty downstream migration,
-  rebuild authorizer/source/diff/test evidence, and prepare/authorize the
-  continuation package while preserving every H5 artifact;
-- run continuation confirm/semantic attestation/finalization under current
-  live-safety approval, then collect route/health/topology and later
-  confirmation evidence before promotion;
-- keep scrape `1308` protected wherever unreplayed writer-failure evidence
-  remains;
-- retain exact archive/restore, live A/B, canary, rollback, API, lock, resource,
-  and capacity gates.
+Cycle `33` / scrape `1353` then passed the separate large-child recovery gate
+on Solo Guitar snapshot `1311`: `3,518,955,520` source bytes,
+`6,888,770` rows, a `272,084,869`-byte archive, exact network-none restore
+fingerprint/catalog parity, complete cleanup, and no source mutation.
 
-Current code can create recovery archives, explicitly quarantine/reattach one
-sealed-plan child, and execute one separately authenticated private-child
-`DROP ... RESTRICT` plus fixed-DDL logical restore. It has no truncate,
-row-delete, batch, or automatic-retirement path. The legacy whole-instrument
-estimator remains disabled and is not the generation-child oracle.
+Current code still has no automatic-retirement path. Scrape `1308` remains
+protected wherever unreplayed writer-failure evidence exists. The next
+implementation must reuse the accepted immutable planner/archive/quarantine/
+DROP evidence without weakening exact liveness, rollback, API, lock, resource,
+or capacity gates.
 
 ### Next iterations
 
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
-   - validate the implemented non-cascade drop/restore tier through its
-     disposable drill and mandatory-restore live canary;
-   - run a separately approved large-child recovery canary before automatic
-     execution;
+   - implement default-off automatic retirement of at most one archive-first
+     eligible child per terminal cycle;
+   - validate it through isolated failure/recovery tests and one complete
+     dual-lane scrape candidate before any enablement;
    - separately gated sparse-child compaction before claiming bounded
      steady-state storage;
 2. review and qualify the freeze-safe publication API cache candidate. The
