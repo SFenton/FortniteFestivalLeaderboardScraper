@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-04
+last_verified_commit: f266ecb8
 sources:
   - FSTService/DatabaseMaintenanceOptions.cs
   - FSTService/appsettings.json
@@ -318,6 +318,48 @@ The checksummed package is:
 
 This accepts the archive-only package and restore-prover tier. It does not
 authorize source detach, quarantine, rename, drop, truncate, or deletion.
+
+### Accepted large-child recovery canary
+
+The recovery-scale gate completed after publication `204` / scrape `1353`
+became idle and unfrozen. Planner-only cycle `33` had exact planner/oracle
+agreement and selected the unchanged largest eligible non-1308 child:
+
+- `Solo_Guitar` snapshot `1311`;
+- relation `public.leaderboard_entries_snapshot_solo_guitar_s1311`;
+- OID/relfilenode `319406546`;
+- `3,518,955,520` physical bytes;
+- `6,888,770` exact rows;
+- row SHA-256
+  `6e3b4befab4440d8175e1c8a3c246fefdf7e2121f5a50cabc48306d3c2aa60e1`;
+- stable child identity
+  `21ba29c547aaa6d06ed41f66eadfaea7dae0ee3d8392a4afca06af2215335094`.
+
+The archive-only tool produced a `272,084,869`-byte custom archive with
+SHA-256
+`c67f1936c8b28a38e3f0b31a9f2463f07f8e0b17ad7f5ebe4bb407f71f08db62`.
+The PostgreSQL `17.9` prover ran with network mode `none`, zero published
+ports, one CPU, 1 GiB memory, and a read-only package mount. It reproduced the
+exact row fingerprint and logical catalog SHA-256
+`e620819c8e75c7d0c5d71fe26d6a5f681e09288f882a3680c1e558c1ca044225`,
+then proved container absence and complete owned-volume, PGDATA, and scratch
+cleanup.
+
+The live source stayed attached and unchanged at the same OID, relfilenode,
+row count, and byte count. It had zero active-snapshot, named-publication,
+projection, writer-failure, hold, quarantine, or DROP roots. Four sampled
+health windows remained HTTP `200` with zero lock waiters. Evidence is under:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/
+  snapshot-generation-large-child-canary/solo-guitar-1311/
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/
+  snapshot-generation-archives/large-child-cycle33-solo-guitar-1311/
+```
+
+This accepts the large-child recovery gate required before implementing
+automatic bounded retirement. It does not itself detach, delete, DROP, or
+authorize multi-child execution.
 
 ## Quarantine and reattach tier
 
@@ -975,7 +1017,11 @@ planner/oracle agreement. The restored snapshot was observed as an eligible
 candidate under its new physical identity. The acceptance bundle manifest is
 SHA-256
 `0ee12d9e9c6d0e2dd8230eca359b0a807106ef128698c9e83ef203756bea3f56`.
-Automatic bounded retirement and sparse-child compaction remain unimplemented.
+The large-child recovery canary is now accepted. Automatic bounded retirement
+and sparse-child compaction remain unimplemented. The next tier may implement
+at most one archive-first eligible child per terminal cycle behind a
+default-off gate; it still requires isolated tests, a full-scrape candidate,
+rollback evidence, official confirmation, and separate enablement.
 
 Rollback for this slice is to keep
 `DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled=false`.
