@@ -600,7 +600,7 @@ if (plan.instrument !== 'Solo_Guitar' || plan.snapshotId !== 9901) {
 if (plan.state !== 'planned') {
   throw new Error('plan did not enter planned state');
 }
-if (status.control.enabled || status.activeJob !== null) {
+if (status.control.enabled || (status.activeJob ?? null) !== null) {
   throw new Error('operator deactivation did not clear active state');
 }
 if (status.latestJob.state !== 'superseded'
