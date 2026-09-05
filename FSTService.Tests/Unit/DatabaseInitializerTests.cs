@@ -1001,6 +1001,7 @@ public class DatabaseInitializerTests : IDisposable
                 "publication-generation-retirement-index",
                 "publication-path-artifacts",
                 "snapshot-generation-retention-report-only",
+                "snapshot-generation-retirement-control-plane",
                 "snapshot-generation-quarantine",
                 "snapshot-generation-drop",
                 "max-score-maintenance",
@@ -1102,7 +1103,15 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             SnapshotGenerationRetentionSchema.Sql,
             retention.Sql);
-        var quarantine = plan[8];
+        var retirementControl = plan[8];
+        Assert.True(retirementControl.UseShortTransaction);
+        Assert.Equal(
+            SnapshotGenerationRetirementSchema.Sql,
+            retirementControl.Sql);
+        Assert.Equal(20, retirementControl.CommandTimeoutSeconds);
+        Assert.Equal("2s", retirementControl.LockTimeout);
+        Assert.Equal("15s", retirementControl.StatementTimeout);
+        var quarantine = plan[9];
         Assert.True(quarantine.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationQuarantineSchema.Sql,
@@ -1110,7 +1119,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, quarantine.CommandTimeoutSeconds);
         Assert.Equal("2s", quarantine.LockTimeout);
         Assert.Equal("15s", quarantine.StatementTimeout);
-        var drop = plan[9];
+        var drop = plan[10];
         Assert.True(drop.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationDropSchema.Sql,
@@ -1118,7 +1127,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, drop.CommandTimeoutSeconds);
         Assert.Equal("2s", drop.LockTimeout);
         Assert.Equal("15s", drop.StatementTimeout);
-        var maxScoreMaintenance = plan[10];
+        var maxScoreMaintenance = plan[11];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

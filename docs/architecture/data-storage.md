@@ -30,6 +30,7 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetirementSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
@@ -37,6 +38,7 @@ sources:
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - tools/postgres-snapshot-generation-archive.py
   - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/FstSnapshotGenerationRetirement/
   - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
   - tools/FstSnapshotGenerationDrop/
   - tools/postgres-snapshot-generation-restore.py
@@ -92,8 +94,21 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, bounded plan-only retirement policies/jobs/events, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
+
+### Snapshot-generation retirement planning
+
+The report-only retention relations remain the source of liveness and
+candidate evidence. A separate host-owned control plane can persist one
+largest-first plan from the newest accepted cycle. Its policy and event rows
+are immutable; its job target identity is immutable and can only move from
+`planned` to `expired` or `superseded`.
+
+This control plane is metadata-only. It has no worker/API registration, no
+archive or Docker execution, no source-table mutation, and no effect on
+publication reads. See
+[Snapshot generation retirement plan control plane](../database/SnapshotGenerationRetirementControlPlane.md).
 
 ### Freeze-safe publication API cache
 

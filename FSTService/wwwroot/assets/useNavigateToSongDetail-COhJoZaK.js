@@ -1,0 +1,1 @@
+import{aL as i,c as n,r,al as u}from"./index-BL9NXLbc.js";function g(o){var s;const c=i(),t=n(),e=(s=c.state)==null?void 0:s.backTo,a=o?u.songDetail(o):void 0;return r.useCallback(()=>{a&&t(e===a?-1:a)},[e,a,t])}export{g as u};

@@ -20,6 +20,7 @@ update_triggers:
 | [0005](0005-post-scrape-modular-monolith.md) | Keep post-scrape work in a modular monolith and add same-binary isolated replay before new processes or services |
 | [0006](0006-snapshot-generation-subpartitions.md) | Subpartition physical leaderboard snapshots by retained generation |
 | [0007](0007-snapshot-generation-drop-and-logical-restore.md) | Isolate exact-child DROP from quarantine and restore logically |
+| [0008](0008-snapshot-generation-retirement-plan-control-plane.md) | Start recurring retirement with a host-owned plan-only control plane |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.

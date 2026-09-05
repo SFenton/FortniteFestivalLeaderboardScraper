@@ -17,6 +17,7 @@ sources:
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetirementPlanTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs
@@ -47,6 +48,7 @@ sources:
   - tools/postgres-snapshot-generation-archive.test.py
   - tools/postgres-snapshot-generation-archive.test.sh
   - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/postgres-snapshot-generation-retirement-drill.sh
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
@@ -112,6 +114,35 @@ source maps for unnamed generations do not remain protected forever.
 It also keeps the legacy instrument-rewrite tests on an explicit regular
 partition and proves the generic retention service skips a generation-
 subpartitioned root rather than rewriting or deleting its children.
+
+Focused plan-only retirement control-plane validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetirementPlanTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~DatabaseInitializerTests'
+
+dotnet publish \
+  tools/FstSnapshotGenerationRetirement/FstSnapshotGenerationRetirement.csproj \
+  -c Release
+
+bash -n \
+  tools/postgres-snapshot-generation-retirement.sh \
+  tools/postgres-snapshot-generation-retirement-drill.sh
+```
+
+The tests prove default-off initialization, unchanged report-only schema bytes,
+exact code/database authorization, fixed search path, largest-first selection,
+Solo Bass `1308` exclusion, concurrent idempotency, immutable policy/target/
+event evidence, publication/planner fencing, exact attached-partition catalog
+validation, stale-cycle/catalog supersession, microsecond timestamp
+canonicalization, post-cycle hold/writer/running-worker liveness roots, bounded
+transaction settings, completed-or-disabled notification parity, schema
+fingerprint/trigger-enable checks, expiry, budget deactivation, and operator
+deactivation. They do not claim archive, cleanup, or destructive execution
+coverage because those commands do not exist in this slice.
+After committing the candidate, run the network-none drill described in
+[the control-plane guide](../database/SnapshotGenerationRetirementControlPlane.md)
+to exercise the clean-tree identity gate and published single-file wrapper.
 
 Pro-bass pilot structural and isolated lifecycle validation:
 

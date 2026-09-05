@@ -432,6 +432,17 @@ public static class DatabaseInitializer
                     NotificationSchemaStatementTimeout),
             new(
                 Name:
+                    "snapshot-generation-retirement-control-plane",
+                Sql: Maintenance
+                    .SnapshotGenerationRetirementSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
                     "snapshot-generation-quarantine",
                 Sql: Maintenance
                     .SnapshotGenerationQuarantineSchema.Sql,

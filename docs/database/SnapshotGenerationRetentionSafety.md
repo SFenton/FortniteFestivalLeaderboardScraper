@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetirementSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionModels.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
@@ -40,6 +41,7 @@ sources:
   - FSTService.Tests/Unit/NotificationServiceTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetirementPlanTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineSchemaTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationQuarantineToolTests.cs
   - FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs
@@ -49,6 +51,8 @@ sources:
   - tools/postgres-snapshot-generation-archive.test.py
   - tools/postgres-snapshot-generation-archive.test.sh
   - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/FstSnapshotGenerationRetirement/
+  - tools/postgres-snapshot-generation-retirement.sh
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -75,7 +79,7 @@ or delete a snapshot child.
 
 This is a structural boundary, not an option convention:
 
-- there is no retention job table;
+- the report-only schema has no executable work table;
 - there is no operation-kind column;
 - there are no planned, leased, executing, succeeded, or destructive states;
 - there is no worker/executor API and no delete-trigger API;
@@ -84,6 +88,15 @@ This is a structural boundary, not an option convention:
 - report rows require `report_only=true`;
 - cycles, child observations, deferrals, and hash-chain evidence reject update,
   delete, and truncate.
+
+The separate host-owned
+[retirement plan control plane](SnapshotGenerationRetirementControlPlane.md)
+adds immutable bounded policy/event records and one plan-only job. It is not a
+worker executor and does not change the report-only planner schema. Its job
+states are limited to `planned`, `expired`, and `superseded`; it has no
+archive/proof process state, lease, filesystem artifact, Docker identity,
+quarantine, DROP, or restore transition. The singleton starts disabled, and
+the host command can deactivate it immediately.
 
 The repository also contains a separate operator-facing archive-only tool.
 It reads one immutable candidate selected from the newest accepted cycle and
@@ -866,8 +879,20 @@ The additive schema contains:
 - `snapshot_generation_retention_evidence`: append-only per-cycle SHA-256 hash
   chain.
 
-Worker logs and these read-only relations are the visibility surface. There is
-no public HTTP route or mutation CLI.
+Worker logs and these read-only relations are the report-only planner
+visibility surface. The planner itself has no public HTTP route or mutation
+CLI.
+
+The independent plan-only control plane adds:
+
+- immutable `snapshot_generation_retirement_policy_epochs`;
+- a default-off `snapshot_generation_retirement_control` singleton;
+- one immutable-target `snapshot_generation_retirement_jobs` plan;
+- append-only `snapshot_generation_retirement_events`.
+
+Those relations are metadata and audit state only. They do not hold an
+execution lease or authorize any existing archive, quarantine, DROP, or
+restore command.
 
 ## Metadata TTL provenance and publication retirement
 
