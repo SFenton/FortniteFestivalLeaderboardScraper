@@ -74,15 +74,7 @@ if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all)" ]]; t
     printf 'ERROR: the drill requires a clean committed repository.\n' >&2
     exit 1
 fi
-
-docker_root=$(realpath -m "$(docker info --format '{{.DockerRootDir}}')")
-case "$docker_root/" in
-    /mnt/docker-storage/*/) ;;
-    *)
-        printf 'ERROR: Docker root is not on the approved FST drive: %s\n' "$docker_root" >&2
-        exit 1
-        ;;
-esac
+docker info >/dev/null
 
 mkdir -p "$approved_root"
 mkdir "$work_root"
@@ -100,6 +92,13 @@ fi
 mkdir -p "$socket_root"
 mkdir "$socket_dir"
 chmod 0777 "$socket_dir"
+approved_device=$(stat -c '%d' "$approved_root")
+if [[ "$(stat -c '%d' "$work_root")" != "$approved_device" \
+      || "$(stat -c '%d' "$socket_dir")" != "$approved_device" ]]
+then
+    printf 'ERROR: drill evidence, PGDATA, and socket paths must share the approved FST device.\n' >&2
+    exit 1
+fi
 
 container_name="fst-retirement-plan-drill-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 container_id=""
@@ -130,6 +129,7 @@ cleanup_bind_mounts() {
         --name "$container_name-cleanup" \
         --label "fst.retirement-plan-drill.operation=$operation_id" \
         --network none \
+        --read-only \
         --mount "type=bind,src=$work_root,dst=/cleanup" \
         --mount "type=bind,src=$socket_dir,dst=/cleanup-socket" \
         --entrypoint /bin/sh \
@@ -154,6 +154,8 @@ container_id=$(docker run -d \
     --name "$container_name" \
     --label "fst.retirement-plan-drill.operation=$operation_id" \
     --network none \
+    --read-only \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --mount "type=bind,src=$work_root/database,dst=/var/lib/postgresql/data" \
     --mount "type=bind,src=$socket_dir,dst=/var/run/postgresql" \
     -e POSTGRES_HOST_AUTH_METHOD=trust \
