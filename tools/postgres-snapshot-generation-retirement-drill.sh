@@ -165,16 +165,25 @@ container_id=$(docker run -d \
     -e PGDATA=/var/lib/postgresql/data/pgdata \
     "$IMAGE")
 
-for _ in $(seq 1 60); do
+ready_count=0
+for _ in $(seq 1 90); do
     if docker exec "$container_id" \
         pg_isready -U fst -d fstservice >/dev/null 2>&1
     then
-        break
+        ready_count=$((ready_count + 1))
+        if ((ready_count >= 2)); then
+            break
+        fi
+    else
+        ready_count=0
     fi
     sleep 1
 done
-docker exec "$container_id" \
-    pg_isready -U fst -d fstservice >/dev/null
+if ((ready_count < 2)); then
+    docker logs "$container_id" --tail 100 >&2 || true
+    printf 'ERROR: disposable PostgreSQL did not reach stable readiness.\n' >&2
+    exit 1
+fi
 
 dotnet build \
     "$REPO_ROOT/FSTService/FSTService.csproj" \
