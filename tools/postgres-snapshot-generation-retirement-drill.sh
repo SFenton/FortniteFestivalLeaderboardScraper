@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 APPROVED_ROOT="/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-generation-retirement-plan-drills"
-SOCKET_ROOT="/mnt/docker-storage/.fst-retirement-plan-sockets"
+SOCKET_ROOT="/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/.s"
 WORK_ROOT=""
 IMAGE="postgres:17"
 
@@ -83,7 +83,8 @@ chmod 0777 "$work_root/database"
 
 operation_id=$(tr -d '\n' </proc/sys/kernel/random/uuid)
 socket_root=$(realpath -m "$SOCKET_ROOT")
-socket_dir="$socket_root/${operation_id//-/}"
+socket_key=${operation_id//-/}
+socket_dir="$socket_root/${socket_key:0:12}"
 socket_path="$socket_dir/.s.PGSQL.5432"
 if ((${#socket_path} >= 108)); then
     printf 'ERROR: PostgreSQL socket path exceeds the Linux AF_UNIX limit: %s\n' "$socket_path" >&2

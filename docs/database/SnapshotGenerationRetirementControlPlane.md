@@ -252,7 +252,8 @@ and bytes are unchanged. Both the database and privileged scratch-cleanup
 containers carry a unique operation label; container absence is proven before
 the PostgreSQL-owned bind directories are removed. The socket uses the
 operation-scoped short path
-`/mnt/docker-storage/.fst-retirement-plan-sockets/<id>` on the same FST drive;
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/.s/<id>` on the
+same FST drive;
 the script rejects a path at or above the Linux Unix-socket limit.
 
 ## Promotion and next gate
