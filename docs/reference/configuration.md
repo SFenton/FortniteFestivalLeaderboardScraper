@@ -27,6 +27,8 @@ sources:
   - deploy/.env.example
   - tools/fst-worker-compose-guard.sh
   - FSTService/Scraping/Replay/ReplaySecurity.cs
+  - tools/FstSnapshotGenerationRetirement/
+  - tools/postgres-snapshot-generation-retirement.sh
 update_triggers:
   - An appsettings section, environment key, secret, role file, or configuration precedence rule changes.
 ---
@@ -339,6 +341,20 @@ which the isolated target must not match.
 
 Tests inject their root/target policy directly; there is no environment flag
 that weakens production root, device, marker, cluster, or publication refusal.
+
+## Snapshot-retirement plan environment
+
+The separate host-run retirement plan tool does not load service appsettings or
+Compose role files. It accepts only:
+
+| Variable | Requirement |
+|---|---|
+| `FST_SNAPSHOT_RETIREMENT_CONNECTION_STRING` | Operator-supplied PostgreSQL connection string; treated as a secret and never emitted |
+| `FST_SNAPSHOT_RETIREMENT_BINARY_SHA256` | Lowercase SHA-256 of the published self-contained single-file Release supervisor executable; the wrapper and process both verify it |
+
+These variables do not enable worker behavior. A matching explicit immutable
+policy epoch is still required before `plan-cycle` can write a plan. See
+[Snapshot generation retirement plan control plane](../database/SnapshotGenerationRetirementControlPlane.md).
 
 ## Environment naming
 

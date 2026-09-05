@@ -27,6 +27,8 @@ sources:
   - tools/FstSnapshotGenerationQuarantine/
   - tools/FstSnapshotGenerationDrop/
   - tools/postgres-snapshot-generation-restore.py
+  - tools/FstSnapshotGenerationRetirement/
+  - docs/database/SnapshotGenerationRetirementControlPlane.md
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
@@ -699,19 +701,31 @@ on Solo Guitar snapshot `1311`: `3,518,955,520` source bytes,
 `6,888,770` rows, a `272,084,869`-byte archive, exact network-none restore
 fingerprint/catalog parity, complete cleanup, and no source mutation.
 
-Current code still has no automatic-retirement path. Scrape `1308` remains
-protected wherever unreplayed writer-failure evidence exists. The next
-implementation must reuse the accepted immutable planner/archive/quarantine/
-DROP evidence without weakening exact liveness, rollback, API, lock, resource,
-or capacity gates.
+Current code still has no automatic-retirement execution path. The first
+default-off host control-plane slice now covers bounded immutable
+authorization, status, operator deactivation, reconciliation, and
+largest-first plan persistence only. It has no archive/Docker process,
+admission lease, source mutation, or worker/API integration. Scrape `1308`
+remains protected wherever unreplayed writer-failure evidence exists.
+
+Archive execution is the next separate implementation gate. It must reuse the
+accepted immutable planner/archive/quarantine/DROP evidence while proving exact
+container binding, cooperative cancellation and owned-resource cleanup,
+full-duration admission, and interruption-safe provenance before any command
+can invoke `pg_dump` or a proof container.
 
 ### Next iterations
 
 Order is evidence-driven:
 
 1. implement recurring generation retention in gated tranches:
+   - merge and deploy the default-off plan-only control plane, then collect
+     read-only largest-first plan/reconcile evidence across terminal cycles;
+   - add archive execution only after exact source-container, admission-loss,
+     process-start, cancellation-cleanup, expiry, and transition-failure gates
+     pass independent review;
    - implement default-off automatic retirement of at most one archive-first
-     eligible child per terminal cycle;
+     eligible child per terminal cycle only after those execution gates;
    - validate it through isolated failure/recovery tests and one complete
      dual-lane scrape candidate before any enablement;
    - separately gated sparse-child compaction before claiming bounded

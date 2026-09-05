@@ -26,6 +26,9 @@ sources:
   - tools/postgres-snapshot-generation-archive.test.py
   - tools/postgres-snapshot-generation-archive.test.sh
   - tools/postgres-snapshot-generation-archive-drill.py
+  - tools/FstSnapshotGenerationRetirement/
+  - tools/postgres-snapshot-generation-retirement.sh
+  - tools/postgres-snapshot-generation-retirement-drill.sh
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -213,6 +216,44 @@ Validate tool structure with:
 bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
+
+### Snapshot-generation retirement plan control plane
+
+`tools/postgres-snapshot-generation-retirement.sh` runs the prebuilt
+self-contained single-file `FstSnapshotGenerationRetirement` Release
+executable only when its
+SHA-256 matches `FST_SNAPSHOT_RETIREMENT_BINARY_SHA256`. The process verifies
+the wrapper-provided executable path and hash again before opening PostgreSQL.
+Database connectivity comes from
+`FST_SNAPSHOT_RETIREMENT_CONNECTION_STRING`.
+
+The exact command surface is:
+
+```text
+status
+authorize-policy-epoch
+reconcile
+deactivate-policy-epoch
+plan-cycle
+```
+
+`plan-cycle` accepts no cycle, snapshot, relation, or SQL argument. It records
+one largest eligible target from the newest accepted report-only cycle.
+Neither the wrapper nor the DLL can invoke archive/proof, Docker, quarantine,
+DROP, delete, truncate, restore, or worker lifecycle behavior.
+
+See
+[Snapshot generation retirement plan control plane](../database/SnapshotGenerationRetirementControlPlane.md)
+for authorization fields, ordering, reconciliation, and deferred execution
+gates.
+
+`tools/postgres-snapshot-generation-retirement-drill.sh` runs the published
+binary against a fresh PostgreSQL 17 container with network mode `none`.
+Scratch and retained drill evidence must use a new child of the approved FST
+drive root; the drill removes its container/socket/PGDATA and retains only
+JSON/text evidence plus `SHA256SUMS`. Its PostgreSQL socket uses a short,
+operation-scoped directory under `/mnt/docker-storage` so the required long
+evidence path cannot exceed the Linux Unix-socket limit.
 
 ### Snapshot-generation report-only evidence and archive proof
 

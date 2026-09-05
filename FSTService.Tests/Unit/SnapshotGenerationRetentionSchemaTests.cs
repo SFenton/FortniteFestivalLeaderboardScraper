@@ -73,6 +73,10 @@ public sealed class SnapshotGenerationRetentionSchemaTests
                           AND column_name =
                             'retired_scrape_id')
                 """));
+        Assert.DoesNotContain(
+            "snapshot_generation_retirement_jobs",
+            SnapshotGenerationRetentionSchema.Sql,
+            StringComparison.Ordinal);
         Assert.False(
             Scalar<bool>(
                 """
