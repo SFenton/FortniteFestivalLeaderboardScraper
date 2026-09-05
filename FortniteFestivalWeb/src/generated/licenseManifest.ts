@@ -428,7 +428,7 @@ export const licenseManifest = [
     licenseText: licenseTexts["PostgreSQL"],
     packageUrl: "https://www.nuget.org/packages/Npgsql/9.0.3",
     repositoryUrl: null,
-    consumers: ["FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj","tools/FstSnapshotGenerationDrop/FstSnapshotGenerationDrop.csproj","tools/FstSnapshotGenerationRestoreAuthorization/FstSnapshotGenerationRestoreAuthorization.csproj","tools/FstSnapshotGenerationRestoreContinuation/FstSnapshotGenerationRestoreContinuation.csproj"],
+    consumers: ["FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj","tools/FstSnapshotGenerationDrop/FstSnapshotGenerationDrop.csproj","tools/FstSnapshotGenerationRestoreAuthorization/FstSnapshotGenerationRestoreAuthorization.csproj","tools/FstSnapshotGenerationRestoreContinuation/FstSnapshotGenerationRestoreContinuation.csproj","tools/FstSnapshotGenerationRetirement/FstSnapshotGenerationRetirement.csproj"],
   },
   {
     id: "nuget:NSubstitute@5.3.0",
