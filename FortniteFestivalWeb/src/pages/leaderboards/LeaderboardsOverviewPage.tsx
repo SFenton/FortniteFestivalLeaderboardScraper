@@ -87,7 +87,7 @@ export default function LeaderboardsOverviewPage() {
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const isMobile = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobile;
   const { registerLeaderboardActions } = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();

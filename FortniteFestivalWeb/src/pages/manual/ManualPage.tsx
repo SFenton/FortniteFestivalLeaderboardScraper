@@ -224,8 +224,9 @@ export default function ManualPage() {
   const { t } = useTranslation(['translation', 'appManual'], { nsMode: 'fallback' });
   const styles = useStyles();
   const scrollContainerRef = useScrollContainer();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideViewport = useIsWideDesktop();
   const isMobileChrome = useIsMobileChrome();
+  const isWideDesktop = isWideViewport && !isMobileChrome;
   const [forcedCarouselIds, setForcedCarouselIds] = useState<ReadonlySet<string>>(() => new Set());
   const [suppressObservedMounts, setSuppressObservedMounts] = useState(false);
   const quickLinkScrollTimerRef = useRef<number | null>(null);

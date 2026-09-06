@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Gap, Layout } from '@festival/theme';
 import { readSafeAreaBottomPx, safeAreaBottomOffset } from '../../utils/safeAreaStyles';
+import { getScrollViewportRect } from '../../utils/scrollViewport';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import Paginator from '../common/Paginator';
@@ -58,7 +59,7 @@ function getPaginationBottomOffset(hasFab: boolean, hasPlayerFooter: boolean, ro
 
 function addMarginForFixedControl(el: HTMLElement, margin: number, controlTopOffset: number, gap: number): number {
   const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
-  const headerHeight = el.getBoundingClientRect().top;
+  const headerHeight = getScrollViewportRect(el).top;
   const viewportHeight = window.innerHeight;
   const bottomChromeHeight = viewportHeight - headerHeight - naturalHeight;
   const scrollBottomOffset = margin + bottomChromeHeight;

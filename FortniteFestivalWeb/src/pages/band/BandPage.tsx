@@ -230,7 +230,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobileChrome;
   const scrollContainerRef = useScrollContainer();
   const styles = useStyles();
 

@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, act, within, cleanup } from '@testi
 import { Routes, Route } from 'react-router-dom';
 import { Colors, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
+import quickLinksCss from '../../../src/components/page/PageQuickLinks.module.css';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { HEADER_PORTAL_HEIGHT_VAR } from '../../../src/contexts/ScrollContainerContext';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../src/constants/keyboardLayoutVars';
@@ -871,8 +872,8 @@ describe('SongsPage quick links', () => {
     expect(pageRoot).not.toContainElement(rail);
     expect(scrollContainer).not.toContainElement(rail);
     expect(portal).toContainElement(rail);
-    expect(rail).toHaveStyle({ width: `${Layout.sidebarWidth}px` });
-    expect(nav).toHaveStyle({ overscrollBehavior: 'contain' });
+    expect(rail).toHaveClass(quickLinksCss.rail!);
+    expect(nav).toHaveClass(quickLinksCss.navigation!);
   });
 
   it('keeps the delayed rail fade armed until the wide desktop fade completes', async () => {

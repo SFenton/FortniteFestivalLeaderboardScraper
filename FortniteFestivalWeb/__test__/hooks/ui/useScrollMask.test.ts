@@ -8,6 +8,19 @@ describe('useScrollMask', () => {
   beforeEach(() => { stubResizeObserver(); });
   afterEach(() => { vi.restoreAllMocks(); });
 
+  it('fades at the client viewport rather than the header border', () => {
+    const { wrapper, mockEl } = createScrollContainerWrapper();
+    Object.defineProperty(mockEl, 'clientTop', { value: 64 });
+    Object.defineProperty(mockEl, 'clientHeight', { value: 300, configurable: true });
+    mockEl.getBoundingClientRect = () => new DOMRect(0, 10, 400, 364);
+    const content = document.createElement('div');
+    content.getBoundingClientRect = () => new DOMRect(0, 50, 400, 600);
+    const { result } = renderHook(() => useScrollMask({ current: content }), { wrapper });
+    result.current();
+    expect(content.style.maskImage).toContain('transparent 24px');
+    expect(content.style.maskImage).toContain('transparent 324px');
+  });
+
   it('returns an update function', () => {
     const ref = { current: null };
     const { result } = renderHook(() => useScrollMask(ref as any, []));

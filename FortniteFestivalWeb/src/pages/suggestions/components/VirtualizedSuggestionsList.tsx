@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
+import { observeScrollViewportRect } from '../../../utils/scrollViewport';
 import type { BandType } from '@festival/core/api';
 import { LoadPhase } from '@festival/core/runtime';
 import type { LeaderboardData, SuggestionCategory } from '@festival/core/types';
@@ -91,6 +92,7 @@ export function VirtualizedSuggestionsList({
   const virtualizer = useVirtualizer({
     count: phase === LoadPhase.ContentIn ? rows.length : 0,
     getScrollElement: () => scrollContainerRef.current,
+    observeElementRect: observeScrollViewportRect,
     getItemKey: index => rows[index]?.id ?? index,
     estimateSize: index => estimateCategoryHeight(rows[index]?.category, isNarrow),
     gap: Gap.section,

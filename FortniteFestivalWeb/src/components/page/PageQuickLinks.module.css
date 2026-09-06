@@ -1,0 +1,25 @@
+.rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: var(--sidebar-width);
+  min-width: 0;
+  max-height: 100%;
+  pointer-events: auto;
+}
+
+.navigation {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  padding: var(--gap-md) 0 var(--gap-md) var(--gap-md);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
