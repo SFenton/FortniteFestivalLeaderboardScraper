@@ -439,7 +439,7 @@ test.describe('wide desktop native scroll panels', () => {
 });
 
 test.describe('compact shell scroll boundaries', () => {
-  for (const width of [768, 769, 1439, 1440]) {
+  for (const width of [390, 768, 769, 1280, 1439, 1440]) {
     test(`retains compact controls and scrolling at ${width}px`, async ({ page, appState }, testInfo) => {
       test.skip(testInfo.project.name !== WIDE_PROJECT && !isMobileProject(testInfo.project.name), 'wide boundary and mobile ownership');
       test.skip(width === 1440 && !isMobileProject(testInfo.project.name), 'desktop wide mode is covered by the panel cases');

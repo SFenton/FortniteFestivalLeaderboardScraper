@@ -833,7 +833,9 @@ overflow boundaries, alphabet/POP restoration, short selected-band controls,
 real reveal timing, keyboard/modal focus, glow, and wide Settings axe coverage.
 Its desktop cases run in Chromium wide and desktop WebKit/Firefox; its compact
 cases run in the wide/mobile owners, including touch selection and wide
-mobile-chrome fallback. Focused commands are:
+mobile-chrome fallback. The compact matrix explicitly includes 390px phones
+and ordinary 1280px desktop layouts as well as breakpoint boundaries. Focused
+commands are:
 
 ```bash
 corepack yarn e2e e2e/specs/responsive/desktop-scroll-panels.spec.ts \
