@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-06
+last_verified_commit: 880802ec
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -66,6 +66,8 @@ sources:
   - tools/capture-publication-route-contract.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
+  - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/support/focusAppearance.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/.node-version
@@ -816,6 +818,40 @@ title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
 Save-Data, and friendly instrument image semantics. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
+
+Focus appearance has a separate computed-style regression matrix:
+
+```bash
+corepack yarn playwright test e2e/specs/accessibility/focus-appearance.spec.ts \
+  --project=chromium-mobile --project=webkit-mobile --project=chromium-desktop
+```
+
+It measures fresh First Run/changelog startup, returning-user startup, real
+touch controls/custom links, cold/warm and nested dialogs, text entry, exact
+focus return, keyboard/skip navigation, hybrid input, reload/POP, unclassified
+activation, and forced colors. Attachments pair browser versions and event/
+active-element/`:focus-visible`/outline/tap-color observations with screenshots.
+The tests assert rendered decoration and preserved focus ownership, not only
+the presence of a CSS selector. Editing/contenteditable/IME provenance also has
+targeted unit coverage in `__test__/utils/focusAppearance.test.ts`.
+For global appearance changes, also inspect the emitted entry stylesheet and
+exercise the built `wwwroot` app through a fixture-only static preview. Vite's
+development CSS injection can pass while an unreferenced CSS Module is removed
+from the production bundle.
+
+No-input startup cases navigate directly instead of using
+`gotoAppRoute`/`dismissObstructions`, which can inject mouse clicks.
+`AppState.reset()` pre-dismisses the current changelog, so changed-changelog
+cases explicitly remove that record. Use genuine touch-enabled projects, not
+only a narrow desktop viewport. Browser emulation does not establish physical
+soft-keyboard, native accessibility-overlay, or standalone-PWA behavior;
+record `pageshow.persisted` before claiming BFCache coverage.
+
+Fixture-based tests intercept API requests and WebSockets before loading the
+app. An ordinary operator browser needs an actual local mock API target:
+Playwright interception alone does not make a Vite preview fixture-backed.
+Never allow an isolated focus investigation to fall through to the normal
+localhost API proxy or a production endpoint.
 
 Component UX uses Playwright's stable stories-and-gallery model through
 `playwright.component.config.ts`; publication transitions use a dedicated

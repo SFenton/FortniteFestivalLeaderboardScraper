@@ -11,6 +11,16 @@ reduced-motion, Save-Data, and image-label behavior. These specs run in the
 focused WebKit project as well as Chromium; Firefox and desktop WebKit retain
 the same surface in the nightly matrix.
 
+`specs/accessibility/focus-appearance.spec.ts` separately verifies rendered
+focus decoration in touch Chromium, iPhone-class WebKit, and real desktop
+keyboard flows. Its attachments include event order, active element,
+`:focus-visible`, computed outline/tap colors, browser version, and screenshots.
+Startup tests deliberately avoid the obstruction-dismissal driver; state reset
+already marks the current changelog seen, so changed-changelog cases remove
+that record explicitly. The suite covers cold/warm/nested dialog focus,
+editing/return, hybrid input, reload/POP, custom links, unclassified activation,
+and forced-colors behavior without replacing focus ownership with blur.
+
 Route contracts also own selected-player/band guard behavior, replace-history
 semantics, malformed deep-link resilience, and the intentional Not Found
 surface. Ownership specs verify that full-song history and Suggestions
