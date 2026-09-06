@@ -84,6 +84,7 @@ export async function captureAppearance(locator: Locator, label: string, testInf
 
 export async function expectSilentFocus(locator: Locator, label: string, testInfo: TestInfo): Promise<void> {
   const appearance = await captureAppearance(locator, label, testInfo);
+  expect(appearance.connected, `${label}: cannot measure focus paint on a detached target`).toBe(true);
   const width = appearance.outlineStyle === 'none' ? 0 : Number.parseFloat(appearance.outlineWidth);
   expect.soft(width, `${label}: unexpected ${appearance.outlineStyle} ${appearance.outlineColor} focus outline`).toBe(0);
 }

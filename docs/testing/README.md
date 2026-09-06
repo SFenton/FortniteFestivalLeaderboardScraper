@@ -845,6 +845,10 @@ Enter sequence records its trusted click, but its preceding keydown also
 restores appearance. Isolated trusted-click decisions therefore use explicitly
 modeled unit inputs; `dispatchEvent` and `HTMLElement.click()` are untrusted and
 are not presented as physical assistive-technology coverage.
+Lazy loading panels and their ready dialogs share accessible names. Hold the
+module to measure the loading panel separately, then identify the ready dialog
+by its actual controls before measuring it. A detached loading panel has no
+valid computed paint evidence and must fail rather than count as quiet focus.
 For global appearance changes, also inspect the emitted entry stylesheet and
 exercise the built `wwwroot` app through a fixture-only static preview. Vite's
 development CSS injection can pass while an unreferenced CSS Module is removed

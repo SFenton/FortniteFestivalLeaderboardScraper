@@ -101,7 +101,8 @@ test('pointer Search entry, text editing and warm return preserve silent launche
     } finally {
       release?.();
     }
-    const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Search', exact: true })
+      .filter({ has: page.getByRole('textbox') });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS('opacity', '1');
     if (isMobile) {
@@ -199,7 +200,8 @@ test('keyboard-opened Search preserves visible focus and exact Escape return', a
   await tabTo(page, launcher);
   await expectVisibleFocus(launcher);
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Search', exact: true })
+    .filter({ has: page.getByRole('textbox') });
   await expect(dialog).toBeVisible();
   // This is a trusted keyboard sequence, not an isolated assistive-click probe:
   // its preceding keydown already restores native appearance.
@@ -248,7 +250,7 @@ test('nested metric help retains silent pointer entry, keyboard trapping and bot
   await activate(launcher, isMobile);
   const rankBy = page.locator('[role="dialog"][aria-label="Rank By"]');
   const info = rankBy.getByRole('button', { name: 'Learn how FC Rate works' });
-  await expect(rankBy).toBeVisible();
+  await expect(info).toBeVisible();
   const rankByClose = rankBy.getByRole('button', { name: 'Close' });
   await expect(rankByClose).toBeFocused();
   await expectSilentFocus(rankByClose, 'rank-by-pointer-entry', testInfo);
@@ -262,7 +264,8 @@ test('nested metric help retains silent pointer entry, keyboard trapping and bot
   } finally {
     release();
   }
-  const help = page.getByRole('dialog', { name: 'FC Rate details', exact: true });
+  const help = page.getByRole('dialog', { name: 'FC Rate details', exact: true })
+    .filter({ has: page.getByRole('button', { name: 'Forward one entry' }) });
   const close = help.getByRole('button', { name: 'Close' });
   await expect(close).toBeFocused();
   await expect(rankBy).toHaveAttribute('inert', '');
@@ -285,11 +288,25 @@ test('application-generated activation retains pointer appearance without losing
   const previous = page.getByRole('button', { name: /^Light Trails/ });
   await activate(previous, isMobile);
   const launcher = page.getByTestId(isMobile ? 'mobile-header-search' : 'desktop-header-search');
-  await launcher.evaluate(element => {
-    if (element instanceof HTMLElement) element.click();
-  });
-  const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
+  const release = await holdModule(page, /\/(?:SearchModal\.tsx|SearchModal-[^/?]+\.js)(?:\?.*)?$/);
+  const loading = page.getByTestId('search-modal-lazy-loading');
+  try {
+    await launcher.evaluate(element => {
+      if (element instanceof HTMLElement) element.click();
+    });
+    await expect(loading).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-fst-quiet-focus', '');
+    if (isMobile) {
+      await expect(loading).toBeFocused();
+      await expectSilentFocus(loading, 'application-click-loading-focus', testInfo);
+    }
+  } finally {
+    release();
+  }
+  const dialog = page.getByRole('dialog', { name: 'Search', exact: true })
+    .filter({ has: page.getByRole('textbox') });
   await expect(dialog).toBeVisible();
+  await expect(loading).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-fst-quiet-focus', '');
   if (isMobile) {
     await expect(dialog).toBeFocused();

@@ -23,6 +23,9 @@ clicks/downloads, and forced-colors behavior without replacing focus ownership
 with blur. Export Data uses the existing fixture archive and records its
 untrusted anchor click; a real keyboard sequence records trusted activation.
 Synthetic DOM clicks are not claimed to be trusted assistive-technology probes.
+Loading panels share the ready dialog's accessible name, so measurements
+separate a held fallback from a ready dialog identified by its actual controls.
+Detached-target measurements are rejected rather than treated as quiet focus.
 
 Route contracts also own selected-player/band guard behavior, replace-history
 semantics, malformed deep-link resilience, and the intentional Not Found
