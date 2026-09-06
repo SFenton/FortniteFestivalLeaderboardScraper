@@ -18,8 +18,11 @@ keyboard flows. Its attachments include event order, active element,
 Startup tests deliberately avoid the obstruction-dismissal driver; state reset
 already marks the current changelog seen, so changed-changelog cases remove
 that record explicitly. The suite covers cold/warm/nested dialog focus,
-editing/return, hybrid input, reload/POP, custom links, unclassified activation,
-and forced-colors behavior without replacing focus ownership with blur.
+editing/return, hybrid input, reload/POP, custom links, application-generated
+clicks/downloads, and forced-colors behavior without replacing focus ownership
+with blur. Export Data uses the existing fixture archive and records its
+untrusted anchor click; a real keyboard sequence records trusted activation.
+Synthetic DOM clicks are not claimed to be trusted assistive-technology probes.
 
 Route contracts also own selected-player/band guard behavior, replace-history
 semantics, malformed deep-link resilience, and the intentional Not Found

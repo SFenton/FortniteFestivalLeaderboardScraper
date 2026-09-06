@@ -828,12 +828,19 @@ corepack yarn playwright test e2e/specs/accessibility/focus-appearance.spec.ts \
 
 It measures fresh First Run/changelog startup, returning-user startup, real
 touch controls/custom links, cold/warm and nested dialogs, text entry, exact
-focus return, keyboard/skip navigation, hybrid input, reload/POP, unclassified
-activation, and forced colors. Attachments pair browser versions and event/
+focus return, keyboard/skip navigation, hybrid input, reload/POP, application
+clicks/downloads, and forced colors. Attachments pair browser versions and event/
 active-element/`:focus-visible`/outline/tap-color observations with screenshots.
 The tests assert rendered decoration and preserved focus ownership, not only
 the presence of a CSS selector. Editing/contenteditable/IME provenance also has
 targeted unit coverage in `__test__/utils/focusAppearance.test.ts`.
+The Export Data case holds the existing fixture response, observes the disabled
+button and actual focus owner, consumes the fixture download, and checks that
+its untrusted anchor click does not change input provenance. A real keyboard
+Enter sequence records its trusted click, but its preceding keydown also
+restores appearance. Isolated trusted-click decisions therefore use explicitly
+modeled unit inputs; `dispatchEvent` and `HTMLElement.click()` are untrusted and
+are not presented as physical assistive-technology coverage.
 For global appearance changes, also inspect the emitted entry stylesheet and
 exercise the built `wwwroot` app through a fixture-only static preview. Vite's
 development CSS injection can pass while an unreferenced CSS Module is removed

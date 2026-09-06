@@ -36,9 +36,9 @@ export function installFocusAppearance(doc: Document = document): () => void {
     native();
   };
   const onClick = (event: MouseEvent) => {
-    // Keyboard/assistive/programmatic activation without a pointer gets native behavior,
-    // even when an earlier touch left the document in quiet mode.
-    if (event.detail === 0 && !(event as PointerEvent).pointerType) native();
+    // Browser-originated non-pointer activation can escape stale touch state.
+    // Application clicks (for example, a download link) are not new input.
+    if (event.isTrusted && event.detail === 0 && !(event as PointerEvent).pointerType) native();
   };
 
   root.classList.add(rootClass);

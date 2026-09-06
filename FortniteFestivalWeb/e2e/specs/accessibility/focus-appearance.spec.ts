@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../fixtures/test';
 import { createPopulatedScenario } from '../../fixtures/scenarios';
 import {
@@ -173,6 +174,7 @@ test('shared settings control stays silent after pointer activation and switches
   await page.keyboard.press('Tab');
   await expectVisibleFocus(page.getByRole('button', { name: /^Show Buttons In Header/ }));
   await activate(toggle, isMobile);
+  await expect(toggle).toBeFocused();
   await expectSilentFocus(toggle, 'settings-hybrid-toggle', testInfo);
   await expect(track).toHaveCSS('background-color', enabledColor);
   await page.keyboard.press('ArrowRight');
@@ -199,6 +201,19 @@ test('keyboard-opened Search preserves visible focus and exact Escape return', a
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
   await expect(dialog).toBeVisible();
+  // This is a trusted keyboard sequence, not an isolated assistive-click probe:
+  // its preceding keydown already restores native appearance.
+  const trustedKeyboardClick = await page.evaluate(testId => {
+    const events = (window as Window & {
+      __focusAppearanceEvents?: Array<{
+        type: string; trusted?: boolean; detail?: number; pointerType?: string;
+        target?: { testId?: string };
+      }>;
+    }).__focusAppearanceEvents ?? [];
+    return events.some(event => event.type === 'click' && event.trusted
+      && event.detail === 0 && !event.pointerType && event.target?.testId === testId);
+  }, isMobile ? 'mobile-header-search' : 'desktop-header-search');
+  expect(trustedKeyboardClick).toBe(true);
   if (isMobile) await expectVisibleFocus(dialog);
   else await expect(dialog.getByRole('textbox')).toBeFocused();
   await page.keyboard.press('Escape');
@@ -265,7 +280,7 @@ test('nested metric help retains silent pointer entry, keyboard trapping and bot
   await expectSilentFocus(launcher, 'rank-by-pointer-return', testInfo);
 });
 
-test('unclassified activation escapes stale pointer suppression without losing modal semantics', async ({ page, isMobile }, testInfo) => {
+test('application-generated activation retains pointer appearance without losing modal semantics', async ({ page, isMobile }, testInfo) => {
   await page.goto('/#/settings');
   const previous = page.getByRole('button', { name: /^Light Trails/ });
   await activate(previous, isMobile);
@@ -275,14 +290,71 @@ test('unclassified activation escapes stale pointer suppression without losing m
   });
   const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
   await expect(dialog).toBeVisible();
-  await expect(page.locator('html')).not.toHaveAttribute('data-fst-quiet-focus');
+  await expect(page.locator('html')).toHaveAttribute('data-fst-quiet-focus', '');
   if (isMobile) {
-    await expectVisibleFocus(dialog);
-    await captureAppearance(dialog, 'unclassified-native-focus', testInfo);
+    await expect(dialog).toBeFocused();
+    await expectSilentFocus(dialog, 'application-click-quiet-focus', testInfo);
   }
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expectVisibleFocus(previous);
+});
+
+test('pointer Export Data keeps quiet provenance through its synthetic download click', async ({ page, appState, isMobile }, testInfo) => {
+  await appState.selectPlayer();
+  await page.goto('/#/settings');
+  const button = page.getByRole('button', { name: /^(Export Data|Preparing\.\.\.)$/ });
+  await expect(button).toBeEnabled();
+
+  let release!: () => void;
+  let requestStarted!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { requestStarted = resolve; });
+  await page.route(/\/api\/player\/[^/]+\/export(?:\?.*)?$/, async route => {
+    requestStarted();
+    await pending;
+    await route.fallback();
+  }, { times: 1 });
+
+  const downloading = page.waitForEvent('download');
+  let busyOwner: string | undefined;
+  try {
+    await activate(button, isMobile);
+    await started;
+    await expect(button).toBeDisabled();
+    await expect(button).not.toBeFocused();
+    await expect(page.locator('html')).toHaveAttribute('data-fst-quiet-focus', '');
+    busyOwner = await page.evaluate(() => document.activeElement?.tagName);
+    expect(['BODY', 'MAIN']).toContain(busyOwner);
+    await captureAppearance(button, 'export-busy-button', testInfo);
+  } finally {
+    release();
+  }
+
+  const download = await downloading;
+  const path = testInfo.outputPath('fixture-export.zip');
+  await download.saveAs(path);
+  expect(await download.failure()).toBeNull();
+  expect((await readFile(path)).toString()).toBe('e2e-export');
+  await expect(button).toBeEnabled();
+  await expect(button).not.toBeFocused();
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe(busyOwner);
+  await captureAppearance(button, 'export-completed-button', testInfo);
+  const syntheticClicks = await page.evaluate(() => {
+    const events = (window as Window & {
+      __focusAppearanceEvents?: Array<{
+        type: string; trusted?: boolean; detail?: number; pointerType?: string;
+        target?: { download?: string };
+      }>;
+    }).__focusAppearanceEvents ?? [];
+    return events.filter(event => event.type === 'click' && event.target?.download);
+  });
+  expect(syntheticClicks.some(event => event.trusted === false && event.detail === 0 && !event.pointerType)).toBe(true);
+  await testInfo.attach('export-provenance.json', {
+    body: JSON.stringify({ busyOwner, syntheticClicks, suggestedFilename: download.suggestedFilename() }, null, 2),
+    contentType: 'application/json',
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-fst-quiet-focus', '');
 });
 
 test('forced colors keeps native startup focus indication available', async ({ page, appState }, testInfo) => {

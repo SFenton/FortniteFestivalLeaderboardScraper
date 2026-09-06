@@ -180,8 +180,11 @@ not sufficient. Disposal restores both the prior scope class and marker.
 Keyboard navigation/activation restores native `:focus-visible` presentation
 before component handlers run. Printable, composing/IME, and text-editing keys
 do not masquerade as navigation; Tab and Escape can leave text-entry mode.
-Pointer-free, zero-detail activation falls back to native presentation rather
-than inheriting stale touch suppression or being assumed to be a keyboard.
+Trusted, pointer-free, zero-detail browser activation falls back to native
+presentation rather than inheriting stale touch suppression or being assumed
+to be a keyboard. Untrusted application-generated clicks do not change that
+provenance: Export Data's temporary download anchor, for example, is not new
+user input. This does not cancel the click or change download/focus behavior.
 Forced-colors mode bypasses the quiet override. The rule uses no `!important`
 and leaves text-field styling, caret/selection, selected/error colors, and
 decorative shadows intact. Native accessibility overlays are outside this

@@ -140,13 +140,31 @@ describe('focus appearance provenance', () => {
     expect(document.documentElement).toHaveAttribute(attribute);
   });
 
-  it('lets unclassified activation escape stale pointer state without canceling activation', () => {
+  it('keeps application-generated clicks quiet without canceling activation', () => {
     start();
     pointer();
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     document.dispatchEvent(click);
-    expect(document.documentElement).not.toHaveAttribute(attribute);
+    expect(click.isTrusted).toBe(false);
+    expect(document.documentElement).toHaveAttribute(attribute);
     expect(click.defaultPrevented).toBe(false);
+  });
+
+  it.each([
+    { isTrusted: true, detail: 0, pointerType: undefined, quiet: false },
+    { isTrusted: true, detail: 0, pointerType: '', quiet: false },
+    { isTrusted: true, detail: 0, pointerType: 'touch', quiet: true },
+    { isTrusted: true, detail: 1, pointerType: '', quiet: true },
+    { isTrusted: false, detail: 0, pointerType: '', quiet: true },
+  ])('applies modeled click metadata without claiming trusted DOM synthesis: %o', metadata => {
+    const listeners = vi.spyOn(document, 'addEventListener');
+    start();
+    pointer();
+    const handler = listeners.mock.calls.find(([type]) => type === 'click')?.[1];
+    if (typeof handler !== 'function') throw new Error('Click handler was not installed');
+    // Direct unit input models browser metadata. dispatchEvent/.click cannot create isTrusted=true.
+    handler(metadata as unknown as Event);
+    expect(document.documentElement.hasAttribute(attribute)).toBe(metadata.quiet);
   });
 
   it('does not classify a pointer click with zero detail as keyboard or virtual input', () => {
