@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-06
-last_verified_commit: 1da2a0b8
+last_verified_commit: 341d5e88
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings

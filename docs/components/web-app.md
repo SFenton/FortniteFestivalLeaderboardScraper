@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-06
-last_verified_commit: 1da2a0b8
+last_verified_commit: 341d5e88
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
