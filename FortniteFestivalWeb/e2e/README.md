@@ -120,6 +120,14 @@ server with the normal e2e publication stub disabled.
 Breakpoint boundaries are parameterized inside responsive/component specs
 instead of multiplying the complete suite across viewport-only projects.
 
+The desktop-scroll-panels responsive spec is also selected by the cross-engine
+projects. Desktop cases belong to Chromium wide and desktop WebKit/Firefox;
+compact and touch cases belong to the wide/mobile owners. Its geometry and
+trusted wheel measurements distinguish native main scrolling from panel
+scrolling and explicit forwarding, including the wide shell's header border.
+Selected-band reachability uses the named desktop-scroll scenario and AppState,
+never live profile selection.
+
 ## Commands
 
 ```bash

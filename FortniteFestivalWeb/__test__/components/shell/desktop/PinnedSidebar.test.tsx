@@ -273,14 +273,26 @@ describe('PinnedSidebar — route-specific active styling', () => {
   });
 });
 
-describe('PinnedSidebar — wheel scroll forwarding', () => {
-  it('forwards wheel events to scroll container', () => {
+describe('PinnedSidebar — independent panels', () => {
+  it('keeps navigation separate from the profile and settings controls', () => {
+    renderPinned();
+    const navigation = screen.getByRole('navigation', { name: 'Main navigation' });
+    const utilities = screen.getByRole('navigation', { name: 'Profile and settings' });
+    expect(navigation).toContainElement(screen.getByText('Songs'));
+    expect(navigation).not.toContainElement(screen.getByText('Settings'));
+    expect(utilities).toContainElement(screen.getByText('Settings'));
+    expect(utilities).toContainElement(screen.getByRole('button', { name: /^select/i }));
+  });
+
+  it('does not forward wheel input from either panel or the empty frame', () => {
     const scrollBy = vi.fn();
     mockScrollRef.current = { scrollBy } as unknown as HTMLDivElement;
     const { container } = renderPinned();
     const aside = container.querySelector('[data-testid="pinned-sidebar"]')!;
     fireEvent.wheel(aside, { deltaY: 120, deltaX: 0 });
-    expect(scrollBy).toHaveBeenCalledWith({ top: 120, left: 0 });
+    fireEvent.wheel(screen.getByTestId('pinned-navigation'), { deltaY: 120 });
+    fireEvent.wheel(screen.getByTestId('pinned-utilities'), { deltaY: -120 });
+    expect(scrollBy).not.toHaveBeenCalled();
     mockScrollRef.current = null;
   });
 });

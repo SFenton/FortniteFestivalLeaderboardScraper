@@ -62,7 +62,7 @@ export default function RivalsPage() {
   const { settings } = useSettings();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobile;
   const scrollContainerRef = useScrollContainer();
   const accountId = player?.accountId;
   const fabSearch = useFabSearch();

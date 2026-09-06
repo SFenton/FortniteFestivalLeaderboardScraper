@@ -4,6 +4,10 @@ owner: repository
 last_verified: 2026-09-06
 last_verified_commit: 341d5e88
 sources:
+  - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
+  - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
+  - FortniteFestivalWeb/__test__/hooks/ui/useWheelHandoff.test.tsx
+  - FortniteFestivalWeb/__test__/components/leaderboard/LeaderboardPaginationFooter.test.tsx
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
   - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
@@ -865,6 +869,39 @@ Component UX uses Playwright's stable stories-and-gallery model through
 network-publication server through `playwright.publication.config.ts`.
 Breakpoint widths are parameterized in focused tests rather than represented
 as full-suite projects.
+
+`specs/responsive/desktop-scroll-panels.spec.ts` owns desktop panel geometry,
+trusted wheel hit-testing, absence of imperative scroll forwarding, fit and
+overflow boundaries, alphabet/POP restoration, short selected-band controls,
+real reveal timing, keyboard/modal focus, glow, and wide Settings axe coverage.
+Its desktop cases run in Chromium wide and desktop WebKit/Firefox; its compact
+cases run in the wide/mobile owners, including touch selection and wide
+mobile-chrome fallback. The compact matrix explicitly includes 390px phones
+and ordinary 1280px desktop layouts as well as breakpoint boundaries. Focused
+commands are:
+
+```bash
+corepack yarn e2e e2e/specs/responsive/desktop-scroll-panels.spec.ts \
+  --project=chromium-wide --project=chromium-mobile
+corepack yarn e2e e2e/specs/responsive/desktop-scroll-panels.spec.ts \
+  --project=webkit-desktop --project=firefox-desktop --project=webkit-mobile
+```
+
+Mobile WebKit does not support Playwright wheel injection; those compact cases
+use native PageDown input and touch selection instead. The reveal case preserves
+seen first-run slides while clearing catalog caches, avoiding unsupported mocked
+304 fulfillment in WebKit without replacing the real animation lifecycle.
+The continued-gesture case also verifies Firefox's one-event page-to-panel
+handoff fence and subsequent native panel scrolling, plus native PageDown
+while the pointer remains over chrome. This is distinct from waiting for
+measured scroll offsets to settle; no physical momentum claim is inferred.
+
+Selected-player and band cases use the isolated scenario router. They are not
+real-backend read-only probes: ordinary selected-profile initialization can
+POST name-refresh or tracking requests. Separate real-backend checks require
+an ordinary-dev, fresh anonymous browser context, bounded public requests,
+and denial of unsafe API methods. Do not reuse mocked scenario fixtures or the
+default e2e publication stub as evidence of genuine API data flow.
 
 Coverage-ignore directives are validated before coverage:
 

@@ -8,6 +8,8 @@ import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { getPageQuickLinkTestId, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
+import css from './PageQuickLinks.module.css';
+import { usePanelWheelHandoff } from '../../hooks/ui/useWheelHandoff';
 
 const QUICK_LINKS_MODAL_DESKTOP_STYLE = {
   width: 420,
@@ -87,6 +89,8 @@ function PageQuickLinkButton<T extends PageQuickLinkItem>({ item, activeItemId, 
 }
 
 export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: { quickLinks: PageQuickLinksConfig<T>; }) {
+  const railRef = useRef<HTMLDivElement>(null);
+  usePanelWheelHandoff(railRef);
   const testIdPrefix = quickLinks.testIdPrefix ?? 'page';
   const revealDelayMs = quickLinks.desktopRailRevealDelayMs ?? 0;
   const [activeRevealDelayMs, setActiveRevealDelayMs] = useState(revealDelayMs > 0 ? revealDelayMs : 0);
@@ -132,21 +136,18 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
 
   const railStyle = !railRevealed
     ? {
-      ...pps.quickLinksOverlay,
       opacity: 0,
       pointerEvents: 'none' as const,
       willChange: 'opacity',
       animation: `fadeIn ${FADE_DURATION}ms ease-out ${activeRevealDelayMs}ms forwards`,
     }
-    : pps.quickLinksOverlay;
+    : undefined;
 
   return (
-    <div style={railStyle} data-testid={`${testIdPrefix}-quick-links-rail`} onAnimationEnd={handleRailAnimationEnd}>
+    <div ref={railRef} className={css.rail} style={railStyle} data-testid={`${testIdPrefix}-quick-links-rail`} onAnimationEnd={handleRailAnimationEnd}>
       <nav
-        style={{
-          ...pps.quickLinksSticky,
-          ...(quickLinks.maxHeight ? { maxHeight: `${quickLinks.maxHeight}px` } : {}),
-        }}
+        className={css.navigation}
+        style={quickLinks.maxHeight ? { maxHeight: `${quickLinks.maxHeight}px` } : undefined}
         aria-label={quickLinks.title}
       >
         <PageQuickLinksButtons

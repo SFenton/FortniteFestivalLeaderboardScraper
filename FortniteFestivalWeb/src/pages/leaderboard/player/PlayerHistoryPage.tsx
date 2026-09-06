@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { observeScrollViewportRect } from '../../../utils/scrollViewport';
 import { useFestival } from '../../../contexts/FestivalContext';
 import { useTrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useFabSearch } from '../../../contexts/FabSearchContext';
@@ -167,6 +168,7 @@ export default function PlayerHistoryPage() {
     estimateSize: () => ROW_HEIGHT + ROW_GAP,
     overscan: 10,
     getScrollElement: () => scrollContainerRef.current,
+    observeElementRect: observeScrollViewportRect,
     scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
   /* v8 ignore stop */
