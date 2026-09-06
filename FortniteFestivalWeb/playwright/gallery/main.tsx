@@ -1,7 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { installFocusAppearance } from '../../src/utils/focusAppearance';
 import '../../src/i18n';
 import '../../src/index.css';
+
+const disposeFocusAppearance = installFocusAppearance();
+import.meta.hot?.dispose(disposeFocusAppearance);
 
 type StoryComponent = (props?: Record<string, unknown>) => React.ReactNode;
 type StoryModule = Record<string, StoryComponent>;

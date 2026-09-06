@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified_commit: 341d5e88
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -70,6 +70,8 @@ sources:
   - tools/capture-publication-route-contract.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
+  - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/support/focusAppearance.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/.node-version
@@ -820,6 +822,51 @@ title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
 Save-Data, and friendly instrument image semantics. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
+
+Focus appearance has a separate computed-style regression matrix:
+
+```bash
+corepack yarn playwright test e2e/specs/accessibility/focus-appearance.spec.ts \
+  --project=chromium-mobile --project=webkit-mobile --project=chromium-desktop
+```
+
+It measures fresh First Run/changelog startup, returning-user startup, real
+touch controls/custom links, cold/warm and nested dialogs, text entry, exact
+focus return, keyboard/skip navigation, hybrid input, reload/POP, application
+clicks/downloads, and forced colors. Attachments pair browser versions and event/
+active-element/`:focus-visible`/outline/tap-color observations with screenshots.
+The tests assert rendered decoration and preserved focus ownership, not only
+the presence of a CSS selector. Editing/contenteditable/IME provenance also has
+targeted unit coverage in `__test__/utils/focusAppearance.test.ts`.
+The Export Data case holds the existing fixture response, observes the disabled
+button and actual focus owner, consumes the fixture download, and checks that
+its untrusted anchor click does not change input provenance. A real keyboard
+Enter sequence records its trusted click, but its preceding keydown also
+restores appearance. Isolated trusted-click decisions therefore use explicitly
+modeled unit inputs; `dispatchEvent` and `HTMLElement.click()` are untrusted and
+are not presented as physical assistive-technology coverage.
+Lazy loading panels and their ready dialogs share accessible names. Hold the
+module to measure the loading panel separately, then identify the ready dialog
+by its actual controls before measuring it. A detached loading panel has no
+valid computed paint evidence and must fail rather than count as quiet focus.
+For global appearance changes, also inspect the emitted entry stylesheet and
+exercise the built `wwwroot` app through a fixture-only static preview. Vite's
+development CSS injection can pass while an unreferenced CSS Module is removed
+from the production bundle.
+
+No-input startup cases navigate directly instead of using
+`gotoAppRoute`/`dismissObstructions`, which can inject mouse clicks.
+`AppState.reset()` pre-dismisses the current changelog, so changed-changelog
+cases explicitly remove that record. Use genuine touch-enabled projects, not
+only a narrow desktop viewport. Browser emulation does not establish physical
+soft-keyboard, native accessibility-overlay, or standalone-PWA behavior;
+record `pageshow.persisted` before claiming BFCache coverage.
+
+Fixture-based tests intercept API requests and WebSockets before loading the
+app. An ordinary operator browser needs an actual local mock API target:
+Playwright interception alone does not make a Vite preview fixture-backed.
+Never allow an isolated focus investigation to fall through to the normal
+localhost API proxy or a production endpoint.
 
 Component UX uses Playwright's stable stories-and-gallery model through
 `playwright.component.config.ts`; publication transitions use a dedicated

@@ -2,12 +2,15 @@
 status: canonical
 owner: web
 last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified_commit: 341d5e88
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/src/main.tsx
+  - FortniteFestivalWeb/src/utils/focusAppearance.ts
+  - FortniteFestivalWeb/src/styles/focusAppearance.module.css
+  - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
   - FortniteFestivalWeb/src/App.tsx
   - FortniteFestivalWeb/src/App.module.css
   - FortniteFestivalWeb/src/appStyles.ts
@@ -225,6 +228,41 @@ the modal restores. `src/routes.ts` and `src/routeMetadata.ts` supply route
 matching, titles, and mobile chrome labels, including Not Found metadata. A
 visually hidden fallback H1 covers lazy/mobile gaps and self-removes whenever a
 page-owned visible H1 is present.
+
+Focus ownership and focus appearance are separate. `installFocusAppearance`
+runs before React in both the application and component gallery. Its
+document-level capture listeners keep passive startup and pointer interaction
+visually quiet, including body-portaled dialogs and lazy loading replacements.
+The CSS override is limited to interactive controls and the main/dialog
+structural focus targets; it does not blur elements, change initial targets,
+alter modal traps/return focus, or remove keyboard and screen-reader semantics.
+The document marker is not persisted and survives app-managed focus transfers
+until the next relevant input, rather than disappearing when a launcher blurs.
+Its CSS Module root class is explicitly bound to `documentElement`, so the
+production build retains the stylesheet; a global-only side-effect import is
+not sufficient. Disposal restores both the prior scope class and marker.
+
+Keyboard navigation/activation restores native `:focus-visible` presentation
+before component handlers run. Printable, composing/IME, and text-editing keys
+do not masquerade as navigation; Tab and Escape can leave text-entry mode.
+Trusted, pointer-free, zero-detail browser activation falls back to native
+presentation rather than inheriting stale touch suppression or being assumed
+to be a keyboard. Untrusted application-generated clicks do not change that
+provenance: Export Data's temporary download anchor, for example, is not new
+user input. This does not cancel the click or change download/focus behavior.
+Forced-colors mode bypasses the quiet override. The rule uses no `!important`
+and leaves text-field styling, caret/selection, selected/error colors, and
+decorative shadows intact. Native accessibility overlays are outside this
+application styling policy.
+
+The blue keyboard outline remains intentional, including custom `role="link"`
+controls. Native tap highlighting is independently made transparent on `html`
+so wrappers, custom links, and text fields inherit the same policy. The neutral
+press pulse remains unchanged. Do not replace this separation with blanket
+outline removal, device-width heuristics, or delayed blur. Forcing native
+`focusVisible: false` is also insufficient: engines differ when keyboard input
+reaches that same focused element, and re-focusing it does not reliably restore
+the indicator without a focus transition.
 
 Decorative visual policy is centralized through `useVisualPreferences`.
 Reduced motion removes background crossfades, continuous pulse/breathe
