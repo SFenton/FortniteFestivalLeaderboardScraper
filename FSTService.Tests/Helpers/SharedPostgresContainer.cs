@@ -9,9 +9,10 @@ namespace FSTService.Tests.Helpers;
 /// </summary>
 public static class SharedPostgresContainer
 {
+    private static readonly Lazy<string> _isolatedConnection = new(ValidateIsolatedConnection);
     private static readonly Lazy<PostgreSqlContainer> _container = new(() =>
     {
-        var container = new PostgreSqlBuilder()
+        var container = ControlledPostgresTestFixture.CreateBuilder("primary")
             .WithImage("postgres:17-alpine")
             .WithDatabase("fst_tests")
             .WithUsername("test")
@@ -25,10 +26,65 @@ public static class SharedPostgresContainer
                 "-c", "dynamic_shared_memory_type=mmap")
             .Build();
         container.StartAsync().GetAwaiter().GetResult();
+        ControlledPostgresTestFixture.RecordStartedAsync(container).GetAwaiter().GetResult();
         return container;
     });
 
-    public static string ConnectionString => _container.Value.GetConnectionString();
+    public static string ConnectionString =>
+        string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+            "FST_TEST_POSTGRES_CONNECTION_STRING"))
+            ? _container.Value.GetConnectionString()
+            : _isolatedConnection.Value;
+
+    private static string ValidateIsolatedConnection()
+    {
+        var scope = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_SCOPE");
+        if (!Guid.TryParseExact(scope, "D", out _))
+            throw new InvalidOperationException("An exact disposable PostgreSQL test scope is required.");
+        var builder = new NpgsqlConnectionStringBuilder(
+            Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_CONNECTION_STRING"))
+        {
+            Options = "",
+            ApplicationName = "fst-isolated-tests",
+            Timeout = 5,
+            CommandTimeout = 30,
+            Pooling = true,
+            MinPoolSize = 0,
+            MaxPoolSize = 10,
+        };
+        const string socketRoot =
+            "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/.s/";
+        if (string.IsNullOrWhiteSpace(builder.Host))
+            throw new InvalidOperationException("The disposable PostgreSQL socket is required.");
+        var host = Path.GetFullPath(builder.Host);
+        if (!host.StartsWith(socketRoot, StringComparison.Ordinal)
+            || host[socketRoot.Length..].Length != 12
+            || host[socketRoot.Length..].Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
+            || builder.Database != "fst_offline_report_tests"
+            || builder.Username != "fst_test")
+        {
+            throw new InvalidOperationException("The test override must identify an owned FST-drive Unix socket.");
+        }
+        using var connection = new NpgsqlConnection(builder.ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = """
+            SELECT pg_catalog.current_setting('fst.offline_report_test_scope', true),
+                current_database(), current_user,
+                pg_catalog.current_setting('server_version_num')::INTEGER,
+                pg_catalog.inet_server_addr() IS NULL
+            """;
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.IsDBNull(0) || reader.GetString(0) != scope
+            || reader.GetString(1) != "fst_offline_report_tests"
+            || reader.GetString(2) != "fst_test"
+            || reader.GetInt32(3) is < 170000 or >= 180000 || !reader.GetBoolean(4))
+        {
+            throw new InvalidOperationException("The disposable PostgreSQL test identity did not match.");
+        }
+        return builder.ConnectionString;
+    }
 
     /// <summary>
     /// Creates a fresh database with a unique name and returns a data source for it.

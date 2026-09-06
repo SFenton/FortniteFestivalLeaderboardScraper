@@ -17,7 +17,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         LoadSafePointStateAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
-            SnapshotGenerationRetentionPlanRequest request,
+            SnapshotGenerationRetentionSafePoint request,
             long configuredResumeScrapeId,
             int commandTimeoutSeconds,
             CancellationToken ct)

@@ -48,6 +48,9 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionWorkerConfiguration.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
@@ -139,6 +142,14 @@ cache staging.
 
 ## Continuous loop
 
+After schema readiness, the full worker publishes its actual report-only
+configuration, service-assembly SHA-256, and canonical-cycle lookup protocol
+in an immutable instance-bound receipt. Publication is bounded to five
+seconds; failure logs a warning and leaves the separate offline reporter
+unauthorized, rather than granting it permission or indefinitely delaying
+startup. A disabled deployment publishes disabled configuration. API-only
+serving does not publish worker authority.
+
 After startup the worker:
 
 1. resumes deferred publication;
@@ -164,6 +175,22 @@ After startup the worker:
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+An external maintenance owner must not infer a stop boundary from retention
+cycle persistence: continuous-mode draining immediately precedes the next
+pass, whose freeze occurs before its blocking allocation lock. The separate
+[offline report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+instead permits a previously verified idle stop followed by a genuine current
+observation. It starts no worker, performs no notifications, and leaves this
+worker's broadcast/quiescence admission unchanged. Its transaction is not a
+durable worker-start fence; the operator still owns stopped-container proof and
+restart exclusion.
+
+Worker and offline callers resolve one canonical cycle per scrape/publication,
+with kind retained only as provenance. Deploy the canonical-aware worker before
+allowing offline reports. After an offline cycle exists, do not roll the
+mutation worker back to the old kind-scoped lookup: schema uniqueness prevents
+duplication but the old client cannot interpret the cross-kind conflict.
 
 At a new scrape boundary, obsolete staging rows and deep-scrape work are
 removed, but an older `running` scrape and its allocated publication generation

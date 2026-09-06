@@ -715,6 +715,20 @@ safe-point deferrals, explicit holds, and append-only hash-chain evidence. It
 has no job relation, operation kind, lease, executor state, or service method
 that can archive, detach, rename, drop, truncate, or delete a child.
 
+The host-only [offline report entry point](../database/SnapshotGenerationOfflineRetentionReport.md)
+reuses that planner and persistence with explicit
+`operator_offline_post_publication` provenance. Canonical cycle identity is
+the scrape/publication trigger pair, not its kind; cycle and deferral checks
+admit both provenances. Upgrade refuses existing duplicates without rewriting
+immutable rows. Existing version `3`/`1` contracts and hash encoding remain
+valid. An immutable worker-configuration receipt independently authorizes
+reporting and binds the compatible lookup protocol to the stopped instance.
+A database-scoped shared schema fence serializes initialization. Bounded
+transactional advisory admission surrounds the real repeatable-read
+observation/persistence transaction and releases immediately after its commit.
+No pending-work flag, execution ledger, tool-owned schema repair, or
+leaderboard/publication mutation is introduced.
+
 A separate operator tool can copy one cryptographically authenticated planner
 candidate into a custom-format PostgreSQL archive and prove that package in an
 isolated PostgreSQL 17 container. It rebuilds the newest cycle's full

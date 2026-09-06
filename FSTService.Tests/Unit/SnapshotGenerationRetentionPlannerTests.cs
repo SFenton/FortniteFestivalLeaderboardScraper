@@ -8,7 +8,7 @@ using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
-public sealed class SnapshotGenerationRetentionPlannerTests
+public sealed partial class SnapshotGenerationRetentionPlannerTests
     : IDisposable
 {
     private const long CurrentScrapeId = 2000;

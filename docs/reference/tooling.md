@@ -29,6 +29,10 @@ sources:
   - tools/FstSnapshotGenerationRetirement/
   - tools/postgres-snapshot-generation-retirement.sh
   - tools/postgres-snapshot-generation-retirement-drill.sh
+  - tools/FstSnapshotGenerationRetentionReport/
+  - tools/postgres-snapshot-generation-retention-report.sh
+  - tools/postgres-snapshot-generation-retention-report-drill.py
+  - tools/run-controlled-postgres-tests.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -105,6 +109,30 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Current offline retention report
+
+`tools/postgres-snapshot-generation-retention-report.sh` invokes only a pinned
+self-contained host executable. `inspect` is read-only; `observe-current`
+requires exact identity assertions and persists the real planner's current
+report-only evidence after a separately established worker stop. It has no
+target/SQL/path selector, schema initializer, hosted service, notification,
+worker lifecycle, or archive/destructive command.
+
+The assertions include the immutable deployed worker-configuration receipt;
+an absent/disabled receipt refuses rather than self-enabling the local planner.
+Canonical identity is independent of worker/offline provenance. Loader
+injection is rejected and PATH is fixed. Budget exhaustion and verified
+commit-with-cleanup-warning outcomes are explicit, with phase timings.
+
+The network-none disposable drill uses a genuine initialized baseline,
+source-DML guards, source row/catalog parity, idempotency, and owned-resource
+cleanup. See [the offline report guide](../database/SnapshotGenerationOfflineRetentionReport.md).
+
+`tools/run-controlled-postgres-tests.py` runs focused, full, or exact
+base/candidate comparison tests through the ordinary loopback TCP fixture,
+with FST-drive PGDATA/scratch, Ryuk disabled, and explicit labelled cleanup.
+It never uses the production database or default Docker PGDATA.
 
 ### Publication API cache evidence
 

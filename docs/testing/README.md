@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-06
+last_verified_commit: 880802ec
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -49,6 +49,14 @@ sources:
   - tools/postgres-snapshot-generation-archive.test.sh
   - tools/postgres-snapshot-generation-archive-drill.py
   - tools/postgres-snapshot-generation-retirement-drill.sh
+  - tools/postgres-snapshot-generation-retention-report-drill.py
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionOfflineTests.cs
+  - FSTService.Tests/Unit/OfflineReportAttestationTests.cs
+  - FSTService.Tests/Unit/OfflineReportCommandTests.cs
+  - FSTService.Tests/Helpers/SharedPostgresContainer.cs
+  - FSTService.Tests/Helpers/ControlledPostgresTestFixture.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionRepairTests.cs
+  - tools/run-controlled-postgres-tests.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
@@ -143,6 +151,101 @@ coverage because those commands do not exist in this slice.
 After committing the candidate, run the network-none drill described in
 [the control-plane guide](../database/SnapshotGenerationRetirementControlPlane.md)
 to exercise the clean-tree identity gate and published single-file wrapper.
+
+Focused offline report validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~SnapshotGenerationRetirementPlanTests|FullyQualifiedName~OfflineReportCommandTests'
+
+dotnet publish \
+  tools/FstSnapshotGenerationRetentionReport/FstSnapshotGenerationRetentionReport.csproj \
+  -c Release
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-run> \
+  --run-focused-tests
+```
+
+The drill requires an FST-drive worktree and creates only its own PostgreSQL
+17 network-none scope. It pins the real single-file wrapper, persists a
+genuine cycle, proves source/worker/publication parity and idempotency, rejects
+online-worker/forbidden-command admission, and removes owned PGDATA, socket,
+and containers.
+
+For resource-isolated development, `--hold-for-tests` exposes only
+nonsecret `runtime.json` scope/transport metadata. The existing test helper can
+use `FST_TEST_POSTGRES_CONNECTION_STRING` plus `FST_TEST_POSTGRES_SCOPE`;
+it verifies the exact FST-drive short Unix socket, fixed disposable database
+and role, PostgreSQL 17, and matching server scope before creating any test
+database. Never point this override at production. Keep the connection string
+only in the child environment, never output or an artifact. After validation,
+`continue.requested` finishes the real wrapper proof and cleanup;
+`stop.requested` cleans up without claiming proof success.
+
+This Unix-socket override is not a TCP/container-binding fixture. Use the
+ordinary supported TCP fixture for the full service suite and stored-rank/
+Tier-1 transport contracts:
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode full \
+  --work-root artifacts/offline-retention-report-repair/<new-full-run>
+```
+
+The runner leaves `FST_TEST_POSTGRES_CONNECTION_STRING` unset, disables Ryuk,
+binds only loopback ports, and configures `FST_TEST_PGDATA_ROOT` plus an exact
+resource scope. Both the primary and second-cluster fixture use owned
+FST-drive PGDATA/socket binds. Docker logging is disabled; PostgreSQL writes
+its logs under the owned FST-drive bind. Each fixture records its actual
+container ID, logging configuration, mounts and loopback ports at startup,
+including short-lived second-cluster fixtures. The runner seals log hashes,
+device/path inventory, console/TRX evidence and final cleanup state.
+The inventory distinguishes requested port bindings from the actual assigned
+loopback port and records PostgreSQL identity. The different-cluster fixture
+completes primary initialization before starting its clone, so simultaneous
+container PID/time namespaces cannot invalidate the distinct-identity premise.
+It explicitly removes all scoped containers, volumes and scratch. No default
+Docker PGDATA or unproven Docker-log placement is permitted.
+
+`--mode comparison` runs exactly the eight transport-dependent cases twice at
+base `880802ec` and twice at the candidate under identical environment and
+resource plumbing. The extracted base lives at
+`artifacts/offline-retention-report-repair/base-880802ec`; only the shared
+resource factory and two constructor substitutions may overlay that base.
+Record the overlay hash and compare candidate outcomes rather than weakening
+transport guards. `--mode focused --filter <selector>` uses the same controlled
+fixture for targeted checks.
+
+The offline tests cover every admission surface, current-cycle revalidation,
+real oracle agreement/mismatch/failure, bounded canonical-lock contention,
+mutable-state races, cancellation, source-DML refusal, schema drift/no repair,
+role/RLS visibility, and additive schema migration without changing existing
+report rows or hash chains. Uncommitted source is explicitly content-pinned;
+this does not relax the older retirement policy tool's clean-tree gate.
+
+Repair coverage additionally proves cross-kind orderings and duplicate
+refusal, exact deferral/cycle constraints and upgrade idempotency, deployed
+configuration disablement, database-scoped schema contention, bounded
+publication convoy release, explicit budget rollback/timing, loader/decoy
+environment rejection, and authoritative committed-success cleanup recovery.
+Production-scale acceptance remains a separate promotion gate. The adjudicated
+next measurement is a bounded live offline-report canary after reviewed
+deployment and the external idle-stop gates, not a capacity-risking full
+physical duplicate. Neither the small fixture nor a partial restore
+establishes that production budget.
+
+Final hardening coverage includes direct-binary fake-Git/PATH refusal,
+pre-migration legacy-writer exclusion, cached worker-option restart semantics,
+and a deterministic cross-connection marker proving the first repeatable-read
+snapshot follows every canonical fence lock. When prior fixture evidence lacks
+logging/storage proof, run only the affected tests and ordering/fixture drill
+at a production-idle and headroom-safe time; do not silently reuse incomplete
+evidence or compete with the active scrape.
+Lock inventory compares both unsigned 32-bit halves of PostgreSQL advisory
+keys, including negative hash-derived keys. The CLI smoke explicitly removes
+its process/runtime scratch and checks labeled volume absence before sealing;
+build/native-extraction caches and recorded decoy inputs remain separate
+retained artifacts on the FST drive.
 
 Pro-bass pilot structural and isolated lifecycle validation:
 

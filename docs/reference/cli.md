@@ -19,6 +19,8 @@ sources:
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
   - FSTService/Scraping/Replay/ReplayEntryPoint.cs
+  - tools/FstSnapshotGenerationRetentionReport/Program.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
 update_triggers:
   - A command-line flag, combination rule, one-shot mode, or phase expansion changes.
 ---
@@ -41,6 +43,13 @@ Use `dotnet FSTService.dll <flags>` in a built image or the equivalent
 | `--rollout-postgres-read-only` | Enforce the paired PostgreSQL read-only rollout mode |
 
 The two rollout read-only flags must be enabled together.
+
+The separate host-only
+[offline retention report executable](../database/SnapshotGenerationOfflineRetentionReport.md)
+is not an FSTService hosting flag. Its only commands are `inspect` and
+identity-asserted `observe-current`; it never starts the service/worker
+entry point, initializes schema, resumes a scrape, or sends notifications.
+`--once` remains a full scrape/publication pass, not an offline report mode.
 
 ## Isolated phase replay candidate
 

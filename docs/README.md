@@ -13,6 +13,7 @@ sources:
   - docs/database/SnapshotGenerationPartitionMigration.md
   - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/database/SnapshotGenerationRetirementControlPlane.md
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - docs/database/SnapshotGenerationDropRunbook.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
@@ -34,6 +35,7 @@ evidence remain the behavioral sources of truth.
 | Understand PostgreSQL ownership and data shapes | [Data storage](architecture/data-storage.md) |
 | Review snapshot-generation retention safety | [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md) |
 | Operate the plan-only retirement control plane | [Snapshot generation retirement plan control plane](database/SnapshotGenerationRetirementControlPlane.md) |
+| Produce current retention evidence after an external idle stop | [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md) |
 | Execute the gated snapshot-generation DROP/restore canary | [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
@@ -58,6 +60,7 @@ evidence remain the behavioral sources of truth.
 
 - [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md)
 - [Snapshot generation retirement plan control plane](database/SnapshotGenerationRetirementControlPlane.md)
+- [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md)
 
 ## Living runbooks
 

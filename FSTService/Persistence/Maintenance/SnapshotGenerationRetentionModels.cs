@@ -6,9 +6,12 @@ public static class SnapshotGenerationRetentionContract
 {
     public const int PlannerVersion = 3;
     public const int ConfigVersion = 1;
+    public const int CanonicalCycleIdentityVersion = 2;
     public const long PlannerAdvisoryLockKey = 2026082301;
     public const string TerminalWorkerSafePoint =
         "terminal_worker_post_publication";
+    public const string OperatorOfflineSafePoint =
+        "operator_offline_post_publication";
     public static readonly IReadOnlySet<string>
         RequiredSnapshotParentIndexNames =
         new HashSet<string>(
@@ -112,7 +115,21 @@ public sealed record SnapshotGenerationRetentionPlanRequest(
     long? BroadcastCompletedScrapeId,
     bool BackgroundWorkQuiesced,
     string SafePointKind =
-        SnapshotGenerationRetentionContract.TerminalWorkerSafePoint);
+        SnapshotGenerationRetentionContract.TerminalWorkerSafePoint)
+{
+    internal SnapshotGenerationRetentionSafePoint SafePoint =>
+        new(
+            TriggerScrapeId,
+            TriggerPublicationId,
+            SafePointAtUtc,
+            SafePointKind);
+}
+
+internal sealed record SnapshotGenerationRetentionSafePoint(
+    long TriggerScrapeId,
+    long TriggerPublicationId,
+    DateTime SafePointAtUtc,
+    string SafePointKind);
 
 public sealed record SnapshotGenerationRetentionPlanResult(
     SnapshotGenerationRetentionPlanDisposition Disposition,
@@ -643,7 +660,7 @@ internal sealed record SnapshotGenerationRetentionEvaluation(
     string Classification);
 
 internal sealed record SnapshotGenerationRetentionPersistRequest(
-    SnapshotGenerationRetentionPlanRequest Request,
+    SnapshotGenerationRetentionSafePoint Request,
     string Status,
     bool OracleAgreement,
     string CandidateIdentityHash,

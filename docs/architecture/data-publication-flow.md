@@ -51,6 +51,7 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
   - Publication-bound path artifact capture, binding, read-scope, staging, or
@@ -61,6 +62,14 @@ update_triggers:
 
 The worker separates candidate work from public state. A scrape can persist
 diagnostic or replay data without becoming the published generation.
+
+Offline report generation is a separate host-owned operation, not another
+publication phase. The operator first establishes a terminal stopped-worker
+boundary; the [offline report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+then observes the current completed publication under bounded database fences.
+It does not replay notifications, allocate a scrape, or change freeze state.
+In particular, the existing allocation advisory lock must not be treated as a
+pre-freeze stop barrier.
 
 ## Normal pass
 

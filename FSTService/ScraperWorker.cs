@@ -276,6 +276,31 @@ public sealed class ScraperWorker : BackgroundService
 
         // Wait for DatabaseInitializer to finish (DBs + song catalog)
         await _dbInitializer.WaitForReadyAsync(stoppingToken);
+        if (_workerStatus is not null)
+        {
+            try
+            {
+                using var configurationDeadline =
+                    CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                configurationDeadline.CancelAfter(TimeSpan.FromSeconds(5));
+                var assemblyPath = typeof(ScraperWorker).Assembly.Location;
+                var code = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    await File.ReadAllBytesAsync(assemblyPath, configurationDeadline.Token))).ToLowerInvariant();
+                await _persistence.Meta.PublishRetentionWorkerConfigurationAsync(
+                    _workerStatus.InstanceId,
+                    _snapshotGenerationRetentionPlanner?.IsEnabled == true,
+                    code, configurationDeadline.Token);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _log.LogWarning(exception,
+                    "Offline retention reporting remains unauthorized because worker configuration publication failed.");
+            }
+        }
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 

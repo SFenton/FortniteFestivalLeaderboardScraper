@@ -62,10 +62,9 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         try
         {
             var existing =
-                await _repository.GetCycleForSafePointAsync(
+                await _repository.GetCycleForTriggerAsync(
                     request.TriggerScrapeId,
                     request.TriggerPublicationId,
-                    request.SafePointKind,
                     ct);
             if (existing is not null)
             {
@@ -160,112 +159,25 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         await using var connection =
             await _dataSource.OpenConnectionAsync(ct);
 
-        var registrationLock =
-            await PostgresSessionAdvisoryLock.TryAcquireAsync(
-                connection,
-                RegistrationMutationGate.AdvisoryLockKey,
-                shared: false,
-                lockWait,
-                ct);
-        if (registrationLock is null)
+        var acquired = await AcquirePlannerLocksAsync(
+            connection, lockWait, includeSnapshotDdl: false, ct);
+        await using var plannerScope = acquired.Lease;
+        if (acquired.Failure is { } failure)
         {
             return await DeferAsync(
                 request,
-                "registration_mutation_lock_busy",
-                "Registration mutation work currently owns the first advisory lock in the maintenance order.",
+                failure.Code,
+                failure.Detail,
                 retryable: true,
                 new
                 {
-                    LockKey =
-                        RegistrationMutationGate.AdvisoryLockKey,
+                    LockKey = failure.Key,
+                    failure.Shared,
                     WaitMilliseconds =
                         (int)lockWait.TotalMilliseconds,
                 },
                 ct);
         }
-        await using var registrationLease = registrationLock;
-
-        var maintenanceLock =
-            await _serviceMaintenanceLock.TryAcquireAsync(
-                connection,
-                lockWait,
-                ct);
-        if (maintenanceLock is null)
-        {
-            await registrationLease.DisposeAsync();
-            return await DeferAsync(
-                request,
-                "service_maintenance_lock_busy",
-                "Database TTL or another service-maintenance observer currently owns the centralized maintenance lock.",
-                retryable: true,
-                new
-                {
-                    LockKey =
-                        ServiceMaintenanceLock.AdvisoryLockKey,
-                    WaitMilliseconds =
-                        (int)lockWait.TotalMilliseconds,
-                },
-                ct);
-        }
-        await using var maintenanceLease = maintenanceLock;
-
-        var publicationLock =
-            await PostgresSessionAdvisoryLock.TryAcquireAsync(
-                connection,
-                PublicationGenerationSchema.AdvisoryLockKey,
-                shared: true,
-                lockWait,
-                ct);
-        if (publicationLock is null)
-        {
-            await maintenanceLease.DisposeAsync();
-            await registrationLease.DisposeAsync();
-            return await DeferAsync(
-                request,
-                "publication_lock_busy",
-                "Publication allocation or commit currently owns the publication advisory lock.",
-                retryable: true,
-                new
-                {
-                    LockKey =
-                        PublicationGenerationSchema.AdvisoryLockKey,
-                    Shared = true,
-                    WaitMilliseconds =
-                        (int)lockWait.TotalMilliseconds,
-                },
-                ct);
-        }
-        await using var publicationLease = publicationLock;
-
-        var plannerLock =
-            await PostgresSessionAdvisoryLock.TryAcquireAsync(
-                connection,
-                SnapshotGenerationRetentionContract
-                    .PlannerAdvisoryLockKey,
-                shared: false,
-                lockWait,
-                ct);
-        if (plannerLock is null)
-        {
-            await publicationLease.DisposeAsync();
-            await maintenanceLease.DisposeAsync();
-            await registrationLease.DisposeAsync();
-            return await DeferAsync(
-                request,
-                "retention_planner_lock_busy",
-                "Another report-only snapshot-generation retention planner owns the final planner lock.",
-                retryable: true,
-                new
-                {
-                    LockKey =
-                        SnapshotGenerationRetentionContract
-                            .PlannerAdvisoryLockKey,
-                    WaitMilliseconds =
-                        (int)lockWait.TotalMilliseconds,
-                },
-                ct);
-        }
-        await using var plannerLease = plannerLock;
 
         ReadObservation observation;
         await using (var transaction =
@@ -285,7 +197,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
             var safePoint = await LoadSafePointStateAsync(
                 connection,
                 transaction,
-                request,
+                request.SafePoint,
                 configuredResumeScrapeId,
                 commandTimeoutSeconds,
                 ct);
@@ -314,40 +226,53 @@ public sealed partial class SnapshotGenerationRetentionPlanner
                     ct);
             }
 
-            var topology = await LoadTopologyAsync(
-                connection,
-                transaction,
-                commandTimeoutSeconds,
-                ct);
-            var references = await LoadPrimaryReferencesAsync(
-                connection,
-                transaction,
-                topology.Children,
-                safePoint.NamedPublications,
-                configuredResumeScrapeId,
-                commandTimeoutSeconds,
-                ct);
-            var oracle = await _oracle.LoadAsync(
-                connection,
-                transaction,
-                configuredResumeScrapeId,
-                commandTimeoutSeconds,
-                ct);
+            observation = await ReadObservationAsync(
+                connection, transaction, safePoint,
+                configuredResumeScrapeId, commandTimeoutSeconds, ct);
             await transaction.CommitAsync(ct);
-            observation = new ReadObservation(
-                safePoint,
-                topology,
-                references,
-                oracle);
         }
 
         var persistRequest =
-            BuildPersistRequest(request, observation);
+            BuildPersistRequest(request.SafePoint, observation);
         var persisted = await _repository.PersistAsync(
             connection,
             persistRequest,
             commandTimeoutSeconds,
             ct);
+        return CompletePersistedObservation(persisted, persistRequest);
+    }
+
+    private async Task<ReadObservation> ReadObservationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SafePointState safePoint,
+        long configuredResumeScrapeId,
+        int commandTimeoutSeconds,
+        CancellationToken ct,
+        SnapshotGenerationRetentionTiming? timing = null)
+    {
+        TopologyState topology;
+        using (timing?.Measure("topology"))
+            topology = await LoadTopologyAsync(
+                connection, transaction, commandTimeoutSeconds, ct);
+        PrimaryReferenceState references;
+        using (timing?.Measure("primary_references"))
+            references = await LoadPrimaryReferencesAsync(
+                connection, transaction, topology.Children,
+                safePoint.NamedPublications, configuredResumeScrapeId,
+                commandTimeoutSeconds, ct);
+        SnapshotGenerationRetentionOracleResult oracle;
+        using (timing?.Measure("oracle"))
+            oracle = await _oracle.LoadAsync(
+                connection, transaction, configuredResumeScrapeId,
+                commandTimeoutSeconds, ct);
+        return new(safePoint, topology, references, oracle);
+    }
+
+    private SnapshotGenerationRetentionPlanResult CompletePersistedObservation(
+        (SnapshotGenerationRetentionCycle Cycle, bool Inserted) persisted,
+        SnapshotGenerationRetentionPersistRequest persistRequest)
+    {
         var cycle = persisted.Cycle;
         if (!persisted.Inserted)
         {
@@ -403,7 +328,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
 
     private SnapshotGenerationRetentionPersistRequest
         BuildPersistRequest(
-            SnapshotGenerationRetentionPlanRequest request,
+            SnapshotGenerationRetentionSafePoint request,
             ReadObservation observation)
     {
         var plannerChildKeys = observation.Topology.Children
@@ -773,6 +698,22 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         SnapshotGenerationRetentionSetComparison comparison,
         IEnumerable<SnapshotGenerationRetentionAnomaly>?
             anomalies = null) =>
+        ComputeObservationHash(
+            request.SafePoint,
+            evaluations,
+            globalBlockers,
+            comparison,
+            anomalies);
+
+    private static string ComputeObservationHash(
+        SnapshotGenerationRetentionSafePoint request,
+        IEnumerable<SnapshotGenerationRetentionEvaluation>
+            evaluations,
+        IEnumerable<SnapshotGenerationRetentionBlocker>
+            globalBlockers,
+        SnapshotGenerationRetentionSetComparison comparison,
+        IEnumerable<SnapshotGenerationRetentionAnomaly>?
+            anomalies = null) =>
         TierZeroCanonicalJson.Sha256Hex(
             TierZeroCanonicalJson.Serialize(new
             {
@@ -867,11 +808,9 @@ public sealed partial class SnapshotGenerationRetentionPlanner
             Retryable: retryable);
     }
 
-    private async Task<SnapshotGenerationRetentionPlanResult>
-        PersistFailureAsync(
-            SnapshotGenerationRetentionPlanRequest request,
-            Exception exception,
-            CancellationToken ct)
+    private static SnapshotGenerationRetentionPersistRequest BuildFailureRequest(
+        SnapshotGenerationRetentionSafePoint request,
+        Exception exception)
     {
         var baseException = exception.GetBaseException();
         var error = baseException.Message.Length <= 4_000
@@ -893,8 +832,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
                         baseException.GetType().FullName,
                     Error = error,
                 }));
-        var persistRequest =
-            new SnapshotGenerationRetentionPersistRequest(
+        return new SnapshotGenerationRetentionPersistRequest(
                 request,
                 SnapshotGenerationRetentionCycleStatus.Failed,
                 OracleAgreement: false,
@@ -918,7 +856,15 @@ public sealed partial class SnapshotGenerationRetentionPlanner
                 ],
                 [],
                 error);
+    }
 
+    private async Task<SnapshotGenerationRetentionPlanResult>
+        PersistFailureAsync(
+            SnapshotGenerationRetentionPlanRequest request,
+            Exception exception,
+            CancellationToken ct)
+    {
+        var persistRequest = BuildFailureRequest(request.SafePoint, exception);
         await using var connection =
             await _dataSource.OpenConnectionAsync(ct);
         var lockWait = TimeSpan.FromMilliseconds(

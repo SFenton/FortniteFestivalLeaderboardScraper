@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-06
+last_verified_commit: 880802ec
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -32,6 +32,8 @@ sources:
   - tools/postgres-snapshot-generation-drop-drill.py
   - docs/database/SnapshotGenerationDropRunbook.md
   - tools/capture-publication-route-contract.sh
+  - tools/postgres-snapshot-generation-retention-report.sh
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
@@ -67,6 +69,41 @@ Check:
 7. CPU and memory pressure.
 
 Use bounded read-only probes first.
+
+## Offline report-only observation
+
+The shared publication advisory key is not a safe stop gate. The current
+worker freezes reads before its synchronous allocation-lock wait; stopping it
+there may prevent ordinary freeze and operation cleanup. Faster polling,
+completed-resume rejection, and manually clearing durable state are not
+substitutes for a verified terminal boundary.
+
+After independent review and an explicit candidate gate, an operator can stop
+the mutation worker during its natural idle/unfrozen interval, prove container
+absence/stopped state, and exclude concurrent guarded restart. The separate
+[offline retention report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+then verifies recent offline/null-operation metadata, current completed
+publication and notifications, exact runtime/schema pins, and bounded
+transactional mutation quiescence before persisting real report-only evidence.
+It does not operate Docker, change production Compose, initialize schema,
+freeze reads, or clear control state. Normal guarded worker recovery remains
+operator-owned after offline reporting/planning is complete.
+
+Offline reporting additionally requires the stopped worker's immutable enabled
+configuration receipt and compatible canonical-cycle lookup protocol. The CLI
+cannot enable reporting from a flag. Schema migration is database-scoped and
+nonblocking, rejects pre-existing duplicate trigger pairs without rewriting
+evidence, and must precede deployment of the compatible worker.
+
+The scale ruling permits a bounded first live offline-report canary after
+reviewed deployment and the fresh external stop/receipt gates. It does not
+require a capacity-risking full physical duplicate on the ext4 FST drive, and a
+partial historical artifact is not scale proof. Retain the fixed observation
+budget; budget exhaustion rolls back with phase timing, and no speculative
+limit increase is authorized. After a commit-side cleanup error, accept
+a warning-bearing result only when an authoritative reread confirms the exact
+cycle and all recorded ownership has ended. Otherwise preserve uncertainty and
+inspect the possible cycle ID; do not clear durable state.
 
 ## Snapshot-generation archive-only boundary
 

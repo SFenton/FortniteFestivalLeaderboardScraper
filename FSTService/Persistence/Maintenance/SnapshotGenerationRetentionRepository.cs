@@ -91,7 +91,26 @@ public sealed class SnapshotGenerationRetentionRepository
             transaction,
             commandTimeoutSeconds,
             ct);
+        var persisted = await PersistInTransactionAsync(
+            connection,
+            transaction,
+            request,
+            commandTimeoutSeconds,
+            ct);
+        await transaction.CommitAsync(ct);
+        return persisted;
+    }
 
+    internal async Task<(
+        SnapshotGenerationRetentionCycle Cycle,
+        bool Inserted)>
+        PersistInTransactionAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            SnapshotGenerationRetentionPersistRequest request,
+            int commandTimeoutSeconds,
+            CancellationToken ct)
+    {
         var cycleId = await TryInsertCycleAsync(
             connection,
             transaction,
@@ -106,7 +125,6 @@ public sealed class SnapshotGenerationRetentionRepository
                 request.Request,
                 commandTimeoutSeconds,
                 ct);
-            await transaction.CommitAsync(ct);
             return (
                 existing
                     ?? throw new InvalidOperationException(
@@ -205,13 +223,13 @@ public sealed class SnapshotGenerationRetentionRepository
                     ct);
         }
 
-        await transaction.CommitAsync(ct);
         return (
             await GetCycleAsync(
                 connection,
                 cycleId.Value,
                 commandTimeoutSeconds,
-                ct),
+                ct,
+                transaction),
             Inserted: true);
     }
 
@@ -223,21 +241,48 @@ public sealed class SnapshotGenerationRetentionRepository
                 SnapshotGenerationRetentionContract
                     .TerminalWorkerSafePoint,
             CancellationToken ct = default)
+        => await GetCycleForTriggerAsync(triggerScrapeId, triggerPublicationId, ct);
+
+    public async Task<SnapshotGenerationRetentionCycle?>
+        GetCycleForTriggerAsync(
+            long triggerScrapeId,
+            long triggerPublicationId,
+            CancellationToken ct = default)
     {
         await using var connection =
             await _dataSource.OpenConnectionAsync(ct);
         return await GetCycleForSafePointAsync(
             connection,
             transaction: null,
-            new SnapshotGenerationRetentionPlanRequest(
+            new SnapshotGenerationRetentionSafePoint(
                 triggerScrapeId,
                 triggerPublicationId,
                 DateTime.UnixEpoch,
-                BroadcastCompletedScrapeId: null,
-                BackgroundWorkQuiesced: false,
-                safePointKind),
+                SnapshotGenerationRetentionContract.TerminalWorkerSafePoint),
             CommandTimeoutSeconds,
             ct);
+    }
+
+    internal static async Task<SnapshotGenerationRetentionCycle?> GetNewestCycleAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        int commandTimeoutSeconds,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = commandTimeoutSeconds;
+        command.CommandText = """
+            SELECT cycle_id
+            FROM public.snapshot_generation_retention_cycles
+            ORDER BY created_at DESC, cycle_id DESC
+            LIMIT 1
+            """;
+        var value = await command.ExecuteScalarAsync(ct);
+        return value is long cycleId
+            ? await GetCycleAsync(
+                connection, cycleId, commandTimeoutSeconds, ct, transaction)
+            : null;
     }
 
     public async Task<IReadOnlyList<
@@ -489,8 +534,7 @@ public sealed class SnapshotGenerationRetentionRepository
                 @errorMessage)
             ON CONFLICT (
                 trigger_scrape_id,
-                trigger_publication_id,
-                safe_point_kind)
+                trigger_publication_id)
             DO NOTHING
             RETURNING cycle_id
             """;
@@ -929,7 +973,7 @@ public sealed class SnapshotGenerationRetentionRepository
         GetCycleForSafePointAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction? transaction,
-            SnapshotGenerationRetentionPlanRequest request,
+            SnapshotGenerationRetentionSafePoint request,
             int commandTimeoutSeconds,
             CancellationToken ct)
     {
@@ -967,7 +1011,6 @@ public sealed class SnapshotGenerationRetentionRepository
             WHERE trigger_scrape_id = @triggerScrapeId
               AND trigger_publication_id =
                     @triggerPublicationId
-              AND safe_point_kind = @safePointKind
             """;
         command.Parameters.AddWithValue(
             "triggerScrapeId",
@@ -975,9 +1018,6 @@ public sealed class SnapshotGenerationRetentionRepository
         command.Parameters.AddWithValue(
             "triggerPublicationId",
             request.TriggerPublicationId);
-        command.Parameters.AddWithValue(
-            "safePointKind",
-            request.SafePointKind);
         await using var reader =
             await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
@@ -985,14 +1025,16 @@ public sealed class SnapshotGenerationRetentionRepository
             : null;
     }
 
-    private static async Task<SnapshotGenerationRetentionCycle>
+    internal static async Task<SnapshotGenerationRetentionCycle>
         GetCycleAsync(
             NpgsqlConnection connection,
             long cycleId,
             int commandTimeoutSeconds,
-            CancellationToken ct)
+            CancellationToken ct,
+            NpgsqlTransaction? transaction = null)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandTimeout = commandTimeoutSeconds;
         command.CommandText = """
             SELECT

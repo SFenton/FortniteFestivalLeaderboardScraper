@@ -529,16 +529,22 @@ public sealed class StoredRankRolloutHarnessIntegrationTests
     [Fact]
     public async Task Database_identity_rejects_same_named_database_on_a_different_cluster()
     {
-        await using var clone = new PostgreSqlBuilder()
+        // Complete primary initdb first: simultaneous PID-namespaced initdb
+        // processes can generate the same timestamp/PID-based system identifier.
+        var productionConnection = SharedPostgresContainer.ConnectionString;
+        await using var clone = ControlledPostgresTestFixture.CreateBuilder("secondary")
             .WithImage("postgres:17-alpine")
             .WithDatabase("fst_tests")
             .WithUsername("test")
             .WithPassword("test")
             .Build();
         await clone.StartAsync();
+        await ControlledPostgresTestFixture.RecordStartedAsync(clone);
         await using var production =
-            NpgsqlDataSource.Create(SharedPostgresContainer.ConnectionString);
+            NpgsqlDataSource.Create(productionConnection);
         await using var cloned = NpgsqlDataSource.Create(clone.GetConnectionString());
+        Assert.NotEqual(new NpgsqlConnectionStringBuilder(productionConnection).Port,
+            new NpgsqlConnectionStringBuilder(clone.GetConnectionString()).Port);
 
         var productionIdentity = await ReadOnlyPostgres.ReadDatabaseIdentityAsync(
             production,
