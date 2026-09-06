@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { observeScrollViewportRect } from '../../utils/scrollViewport';
 import { useQuery } from '@tanstack/react-query';
 import { IoCompass, IoFunnel, IoSwapVerticalSharp } from 'react-icons/io5';
 import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
@@ -365,7 +366,7 @@ export default function SongsPage() {
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobileChrome;
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const { profile } = useTrackedPlayer();
   const selectedBand = profile?.type === 'band' ? profile : null;
@@ -1054,6 +1055,7 @@ export default function SongsPage() {
     overscan: 8,
     gap: VIRTUAL_ROW_GAP,
     getScrollElement: () => scrollContainerRef.current,
+    observeElementRect: observeScrollViewportRect,
     scrollMargin: listScrollMargin,
     scrollPaddingStart: DEFAULT_SONGS_SCROLL_OFFSET,
   });

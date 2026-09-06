@@ -1,14 +1,29 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-02
-last_verified_commit: 3bf8c6e3
+last_verified: 2026-09-06
+last_verified_commit: 880802ec
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/src/main.tsx
   - FortniteFestivalWeb/src/App.tsx
+  - FortniteFestivalWeb/src/App.module.css
+  - FortniteFestivalWeb/src/appStyles.ts
+  - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.tsx
+  - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.module.css
+  - FortniteFestivalWeb/src/components/page/PageQuickLinks.tsx
+  - FortniteFestivalWeb/src/components/page/PageQuickLinks.module.css
+  - FortniteFestivalWeb/src/utils/scrollViewport.ts
+  - FortniteFestivalWeb/src/hooks/ui/useWheelHandoff.ts
+  - FortniteFestivalWeb/src/hooks/ui/usePageQuickLinks.ts
+  - FortniteFestivalWeb/src/hooks/ui/useScrollMask.ts
+  - FortniteFestivalWeb/src/hooks/ui/useScrollFade.ts
+  - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
+  - FortniteFestivalWeb/src/pages/leaderboard/player/PlayerHistoryPage.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/components/VirtualizedSuggestionsList.tsx
+  - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
   - FortniteFestivalWeb/src/components/common/Accordion.tsx
   - FortniteFestivalWeb/src/components/shell/fab/MobileFloatingActionButton.tsx
@@ -143,6 +158,56 @@ and abandoned/suspended work do not mutate session-level visit markers.
 The application has mobile and wide-desktop shells around one shared route
 tree. Pages use shared shell, loading, empty, error, modal, card, navigation,
 and action primitives, but not every route has an identical component shape.
+
+### Desktop panels and native scrolling
+
+The wide shell is active at 1440px and above only when mobile chrome is not
+active. Mobile/PWA chrome remains compact even on a wide viewport; Quick Links
+producers use that same distinction rather than width alone.
+
+Desktop navigation and the profile/Manual/Settings utility group are separate
+content-height panels anchored to the top and bottom of the left rail.
+Their full-height positioning frame is pointer-transparent. When vertical
+space is constrained, both panels can scroll internally instead of shrinking
+their controls or clipping the selected band's members and utility actions.
+The existing exported navigation/control styles remain available to the
+first-run navigation demo; new panel geometry is owned by CSS Modules.
+
+The right portal retains the full available height for measurement but does
+not intercept input. Its rendered Quick Links surface uses only the required
+height, capped to that budget; long lists such as Songs A–Z scroll internally.
+The reveal gate remains on the content-height root, and descendants inherit
+its pointer state until reveal completes. Existing inline `--frosted-card`
+markers stay on controls, not on rail frames or entire panels.
+
+Actual panel surfaces use native overflow and scroll containment. Wheel input
+over their controls or padding does not scroll main, including fitting lists
+and scroll boundaries. Empty rail space reaches the browser's native main
+scroller; there is no JavaScript wheel forwarding or artificial scroll range.
+Activating a navigation or Quick Links control still performs its intentional
+route or section navigation.
+
+Main scrolling belongs to `[data-testid="app-scroll-container"]`, not the
+document or `main#main-content`. In the wide shell, a transparent top border
+equal to the page-header portal height extends that element's native hit area
+into the empty header-side gutters. The visible client viewport and content
+start remain below the header, while the center header remains independent.
+The wide center header also uses native overflow containment. Firefox can
+retain an already-started page wheel transaction after the pointer enters
+overlay chrome. A Firefox-only handoff fence consumes the first wheel after
+page-to-panel transfer; subsequent wheels scroll the panel natively. Its page
+listener is passive, cancellation is attached only to actual panels/header,
+and no wheel deltas are forwarded. Pointer/key actions reset that ownership,
+and Ctrl-wheel zoom is left native. The intentional tradeoff is that the first
+handoff wheel ends the prior transaction rather than moving the panel.
+Its border box and client viewport therefore have different top/height values.
+`src/utils/scrollViewport.ts` owns client-viewport bounds and size observation
+for section offsets/visibility, masks, edge fades, virtual-list margins, and
+fixed-footer clearance. Songs, Suggestions, and Player History virtualizers
+observe client size, including header changes that leave the border box fixed.
+Compact/mobile shells retain their existing borderless scroll layout.
+
+### Shared interaction contracts
 
 Accordion triggers own stable panel relationships through `aria-expanded` and
 `aria-controls`. Collapsed panels remain mounted for their grid-row transition

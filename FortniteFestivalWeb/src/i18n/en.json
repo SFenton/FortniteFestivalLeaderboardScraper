@@ -896,6 +896,8 @@
     "filterInvalidScores": "Filter Invalid Scores"
   },
   "nav": {
+    "mainNavigation": "Main navigation",
+    "profileSettings": "Profile and settings",
     "songs": "Songs",
     "songInfo": "Song Info",
     "suggestions": "Suggestions",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useScrollUpdateScheduler } from './useScrollUpdateScheduler';
+import { getScrollViewportRect } from '../../utils/scrollViewport';
 
 export interface ScrollMaskOptions {
   /** Fade zone size in pixels. Default: 40 */
@@ -54,7 +55,7 @@ export function useScrollMask(
     } else {
       const scrollEl = scrollContainerRef.current;
       if (!scrollEl) return;
-      const scrollRect = scrollEl.getBoundingClientRect();
+      const scrollRect = getScrollViewportRect(scrollEl);
       const rect = el.getBoundingClientRect();
       atTop = rect.top >= scrollRect.top;
       atBottom = rect.bottom <= scrollRect.bottom + 1;
