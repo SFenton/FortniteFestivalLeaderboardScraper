@@ -116,7 +116,14 @@ public static class PublicationPathArtifactSchema
         + ";";
 
     private static string BuildBootstrapRebindSql() =>
-        RebindSql
+        (BindingInsertSql + "\n" + """
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM publication_surface_bindings existing
+                WHERE existing.publication_id = classified.publication_id
+                  AND existing.surface_name = 'path_artifacts')
+            ON CONFLICT (publication_id, surface_name) DO NOTHING
+            """)
             .Replace(
                 "@publicationId",
                 """
@@ -464,7 +471,17 @@ public static class PublicationPathArtifactSchema
     /// Requires <c>@publicationId</c>, <c>@source</c>, <c>@contractVersion</c>
     /// and <c>@now</c>.
     /// </summary>
-    public const string RebindSql = """
+    public const string RebindSql = BindingInsertSql + "\n" + """
+        ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+            binding_kind = EXCLUDED.binding_kind,
+            binding_json = EXCLUDED.binding_json,
+            row_count = EXCLUDED.row_count,
+            content_hash = EXCLUDED.content_hash,
+            status = EXCLUDED.status,
+            built_at = EXCLUDED.built_at
+        """;
+
+    private const string BindingInsertSql = """
         WITH target AS (
             SELECT
                 generation.publication_id,
@@ -543,13 +560,6 @@ public static class PublicationPathArtifactSchema
             END,
             @now
         FROM classified
-        ON CONFLICT (publication_id, surface_name) DO UPDATE SET
-            binding_kind = EXCLUDED.binding_kind,
-            binding_json = EXCLUDED.binding_json,
-            row_count = EXCLUDED.row_count,
-            content_hash = EXCLUDED.content_hash,
-            status = EXCLUDED.status,
-            built_at = EXCLUDED.built_at
         """;
 
     /// <summary>
@@ -596,11 +606,16 @@ public static class PublicationPathArtifactSchema
             FROM publication_generations generation
             JOIN pointers
               ON pointers.publication_id = generation.publication_id
-            LEFT JOIN publication_surface_bindings binding
+            JOIN publication_surface_bindings binding
               ON binding.publication_id = generation.publication_id
              AND binding.surface_name = 'path_artifacts'
-            WHERE (binding.binding_json ->> 'manifestVersion')
-                  IS DISTINCT FROM CAST(@manifestVersion AS text)
+            WHERE (
+                    jsonb_typeof(binding.binding_json) = 'object'
+                    AND NOT binding.binding_json ? 'manifestVersion')
+               OR (
+                    jsonb_typeof(binding.binding_json -> 'manifestVersion') = 'number'
+                    AND (binding.binding_json ->> 'manifestVersion') ~ '^[1-9][0-9]*$'
+                    AND binding.binding_json -> 'manifestVersion' < to_jsonb(@manifestVersion))
         ),
         classified AS (
             SELECT

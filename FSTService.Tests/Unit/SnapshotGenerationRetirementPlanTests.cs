@@ -73,8 +73,9 @@ public sealed class SnapshotGenerationRetirementPlanTests
             "Persistence",
             "Maintenance",
             "SnapshotGenerationRetentionSchema.cs");
+        // This pin includes the reviewed pg_catalog/public name-resolution hardening.
         Assert.Equal(
-            "def1bfdfbf780cddaf6ee267e1e03337e6d6d8d0eb6b1a7b654dffb1ade0e935",
+            "4f4f5421b915b9017126db42df16f29f33feff39fd7d6dbb8ff78662585db020",
             Convert.ToHexString(
                     SHA256.HashData(
                         File.ReadAllBytes(

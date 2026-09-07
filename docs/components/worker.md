@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-29
-last_verified_commit: 21d7193c
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/ScraperWorker.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/SongCatalogRefreshWorker.cs
@@ -187,7 +188,12 @@ durable worker-start fence; the operator still owns stopped-container proof and
 restart exclusion.
 
 Worker and offline callers resolve one canonical cycle per scrape/publication,
-with kind retained only as provenance. Deploy the canonical-aware worker before
+with kind retained only as provenance. At the external idle stop, first apply
+the dedicated `--initialize-snapshot-retention-schema-only` command and verify
+non-retention parity, then recreate the candidate service and guard-start the
+compatible worker. The command runs no hosted worker and cannot manufacture
+its receipt. Keep the already applied additive schema; the general initializer
+is not the retention deployment boundary. Deploy the canonical-aware worker before
 allowing offline reports. After an offline cycle exists, do not roll the
 mutation worker back to the old kind-scoped lookup: schema uniqueness prevents
 duplication but the old client cannot interpret the cross-kind conflict.
@@ -258,9 +264,15 @@ rows: staged rows are promoted by a compare-and-swap inside the publication
 commit transaction. `deploy/config/fstworker-role.env` enables staging and the
 publication-bound read source for the worker role, so the deployed
 configuration always has exactly one generator. Because the worker keeps
-`SkipStartupSchemaInitialization=true` and never runs DDL, startup verifies the
-current publication's path artifact release and fails fast when the
-schema-initializing role has not applied it yet. Staging is best-effort: subsystem failures are contained
+`SkipStartupSchemaInitialization=true` and never runs DDL, pre-pool startup
+verifies current/working path bindings before any mutation hosted service is
+constructed. Invalid/missing/unready bindings select sticky read-only serving:
+no scraper, heartbeat, durable progress bridge, registration/band-history
+worker, provider sync or publication recovery runs. Previous invalid bindings
+warn without blocking a valid current/working state. Require
+`startup.mutationReady=true` for worker admission; degraded HTTP 200 is only
+read availability and requires correction plus a fresh guarded restart.
+Staging is best-effort: subsystem failures are contained
 and logged, partial progress from a timed-out batch is kept, and blocked or
 repeatedly failing songs are durably deferred so they cannot monopolize later
 passes. The legacy API-owned

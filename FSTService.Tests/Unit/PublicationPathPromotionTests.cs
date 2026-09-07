@@ -441,8 +441,10 @@ public sealed class PublicationPathPromotionTests : IDisposable
             Db.GetPublicationPointerState().WorkingPublicationId);
     }
 
-    [Fact]
-    public async Task Deferred_commit_rejects_a_stale_path_manifest()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task Deferred_commit_revalidates_path_manifest_version_before_pointer_movement(int manifestVersion)
     {
         await SeedCatalogAsync("song-a");
         var firstScrapeId = Db.StartScrapeRun();
@@ -460,7 +462,16 @@ public sealed class PublicationPathPromotionTests : IDisposable
         var preparation = Db.PrepareScrapePublication(
             scrapeId,
             promoteCachedResponses: false);
-        DowngradeBindingToManifestVersion1(publicationId);
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json=jsonb_set(binding_json,'{manifestVersion}',to_jsonb(@version))
+            WHERE publication_id=@publicationId AND surface_name='path_artifacts'
+            """, command =>
+            {
+                command.Parameters.AddWithValue("version", manifestVersion);
+                command.Parameters.AddWithValue("publicationId", publicationId);
+            });
 
         var failure = Assert.Throws<InvalidOperationException>(
             () => Db.CommitPreparedScrapePublication(preparation));
@@ -605,6 +616,50 @@ public sealed class PublicationPathPromotionTests : IDisposable
 
         // Live reads still see the untouched song row.
         Assert.Empty(store.GetLiveAllMaxScores());
+    }
+
+    [Fact]
+    public async Task Invalid_previous_warning_does_not_release_path_reads_or_reuse_a_stale_preparation()
+    {
+        await SeedCatalogAsync("song-a");
+        var previousScrape = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(previousScrape, 1, 10, 1, 100);
+        var oldPreparation = Db.PrepareScrapePublication(previousScrape, promoteCachedResponses: false);
+        var oldCommit = Db.CommitPreparedScrapePublication(oldPreparation);
+        Db.CleanupPublishedScrapePublication(oldPreparation, oldCommit);
+        var previous = oldPreparation.PublicationId;
+        var currentScrape = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(currentScrape, 1, 10, 1, 100);
+        Db.PublishScrapeRun(currentScrape, promoteCachedResponses: false);
+        var current = Db.GetPublicationPointerState().CurrentPublicationId!.Value;
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json=jsonb_set(binding_json,'{manifestVersion}','3'::jsonb)
+            WHERE publication_id=@publicationId AND surface_name='path_artifacts'
+            """, command => command.Parameters.AddWithValue("publicationId", previous));
+        var previousBinding = ReadPathBinding(previous);
+        var currentBinding = ReadPathBinding(current);
+        var currentHash = ComputeManifestHash(current);
+        var currentCapturedAt = ReadCapturedAt(current, "song-a");
+        var warnings = new List<PublicationPathArtifactInitializationFailure>();
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource, reportWarning: warnings.Add);
+
+        Assert.Contains(warnings, warning => warning.PublicationId == previous && warning.Code == "manifest_version_future");
+        var store = CreateStore(usePublicationArtifacts: true);
+        using (store.BeginPublicationRead(previous))
+            Assert.Throws<PublicationPathArtifactsUnavailableException>(() => store.GetPathGenerationStates());
+        using (store.BeginPublicationRead(current))
+            Assert.Single(store.GetPathGenerationStates());
+        Assert.False(new PublicationReadinessEvaluator(Db).Evaluate(previous, previousScrape).ReadyForPinning);
+        var reuse = Assert.Throws<InvalidOperationException>(() => Db.CommitPreparedScrapePublication(oldPreparation));
+        Assert.Contains("pointers changed after preparation", reuse.Message, StringComparison.Ordinal);
+        Assert.Equal(previousBinding, ReadPathBinding(previous));
+        Assert.Equal(currentBinding, ReadPathBinding(current));
+        Assert.Equal(currentHash, ComputeManifestHash(current));
+        Assert.Equal(currentCapturedAt, ReadCapturedAt(current, "song-a"));
+        Assert.Equal(current, Db.GetPublicationPointerState().CurrentPublicationId);
     }
 
     [Fact]

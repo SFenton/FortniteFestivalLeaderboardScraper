@@ -267,7 +267,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _persistence, _metaFixture.DataSource, _festivalService, shopService,
             _lifetime,
             options,
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
 

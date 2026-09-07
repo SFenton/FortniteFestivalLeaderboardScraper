@@ -1,14 +1,18 @@
 ---
 status: decision
 owner: data
-last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Locks.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/StartupPublicationReadOnlyState.cs
+  - FSTService/StartupInitializer.cs
   - tools/FstSnapshotGenerationRetentionReport/
 update_triggers:
   - Offline-report provenance, transaction admission, runtime attestation, or production promotion boundaries change.
@@ -18,9 +22,10 @@ update_triggers:
 
 ## Status
 
-Implemented, independently reviewed candidate. Scale adjudication permits the
-bounded canary described below; reviewed deployment, its fresh operator gate
-and actual production acceptance remain outstanding.
+The host-report candidate received independent review. The source-preserving
+deployment repair remains subject to parent review. Scale adjudication permits
+the bounded canary described below, but the first deployment was rejected at
+its publication-mutation gate; production acceptance remains outstanding.
 
 ## Context
 
@@ -34,6 +39,12 @@ The accepted planner's worker admission also consumes process-local
 background-quiescence and scores-changed broadcast facts. An offline host
 cannot honestly fabricate those facts or invoke notifications to reconstruct
 them.
+
+The full schema-only entry point also ran an unconditional current path-binding
+upsert. Deployment after scrape `1362` applied the additive retention schema
+but rewrote publication `223`'s binding timestamp/provenance metadata. Unchanged
+public bodies and source relation identities did not waive the mutation gate.
+Official images were restored; no manual binding repair was performed.
 
 ## Decision
 
@@ -55,6 +66,70 @@ Require an immutable receipt of the stopped worker's actual deployed
 report-only configuration and canonical lookup protocol version, bound to its
 instance and service code hash. The CLI cannot self-enable. New offline
 reporting is gated until the compatible worker has published that receipt.
+
+Use the exact service flag `--initialize-snapshot-retention-schema-only` for
+deployment. It dispatches before host or dotenv construction and accepts no
+other arguments. Its internal wrapper executes only the same bounded retention
+schema step used by general initialization, without evaluating or invoking
+the other schema steps. It cannot run catalog, notification, registration,
+path, publication, scrape or worker lifecycle work.
+
+Make general path bootstrap insert-only without changing explicit maintenance
+rebinding. Existing current-version bindings remain byte-for-byte equivalent,
+including `built_at` and nonlegacy provenance; only missing current bindings
+bootstrap and genuinely older/unversioned bindings enter the upgrade path.
+Unsupported future or malformed versions are not silently downgraded.
+They are explicit fail-closed mutation-startup diagnostics, not silent skips. Bounded
+post-bootstrap validation shares the canonical binding validator with release
+readiness and refuses invalid ready identities/counts/hashes without rewriting
+source rows. The full executable's no-op catalog, publication-generation and
+disabled-notification normalization is guarded so repeat initialization does
+not increment non-retention mutation counters for already-correct rows.
+The dedicated command pins `pg_catalog,public` and schema-qualified DDL/built-ins
+to prevent public-shadow name-resolution attacks.
+
+Separate serving availability from mutation admission. Current/working path
+refusals keep the explicit schema command's exit-2 contract, but ordinary
+startup must not send them through the generic API shutdown path. Previous
+is non-serving and therefore warns without mutation or startup abort.
+
+Adapt only the reviewed foundation's one-way startup state, read-only
+connection policy and HTTP/selected-profile/recovery gates. Do not import
+execution admission, durable abort journals, lease/fence tables or worker
+execution state. Select the mode with a private unpooled bootstrap source
+before runtime pools. A bounded five-table SHARE-lock transaction revalidates
+the path contract before the repeatable-read snapshot is used and retains
+ownership through pool-policy construction; loss of that selection fence
+forces read-only. No long-lived publication or archive admission lock is added.
+The runtime data source is eagerly resolved immediately after host build,
+before pipeline/hosted-service construction. Selection and fence release
+therefore share one construction path rather than holding a transaction
+across lazy DI resolution or an arbitrary pipeline delay.
+
+Use the distinct `FSTService.StartupPublicationReadOnlyState` and
+publication-prefixed registration/status APIs. Do not introduce an alias,
+compatibility stub or duplicate of the separate foundation's
+`FSTService.StartupReadOnlyState`. Future composition is deliberate work:
+evaluate execution/recovery admission before allowing publication bootstrap
+to mutate schema, perform read-only publication diagnosis when already
+latched, and combine both outcomes monotonically before constructing shared
+runtime pools or writers. Both gates must allow mutation; neither may clear
+the other. This branch does not implement that composition or merge the
+foundation's admission schema.
+
+Replace mutation-capable hosted services before construction rather than
+trying to latch after they have started. In degraded mode every runtime
+connection is PostgreSQL read-only, selected-profile writes and mutation
+requests reject, recovery/providers/timers are suppressed, and persisted
+public GETs/caches retain their existing source gates. Expose separate read
+and mutation readiness, with exact reasons and previous warnings. A fresh
+guarded restart is the only path back to mutation-capable operation. This
+rejects both swallowing the exception while setting normal readiness and an
+unreviewed dynamic pool-replacement/whole-foundation merge.
+Read-serving publication degradation is a `Healthy` health-check result with
+explicit `degraded_read_only` details, not a change to aggregate health policy.
+Genuine `Degraded` checks still return HTTP 503. The readiness JSON and
+service-info retain separate mutation readiness and exact diagnostic reasons.
 
 Compose bounded transaction-scoped advisory admission in canonical order.
 PostgreSQL scopes the schema key by database; its initializer acquisition is
@@ -112,11 +187,18 @@ The operator can use the prior idle interval to stop safely, then obtain the
 current report without another scrape. No production lifecycle action is
 implemented or authorized by the command.
 
-The schema extension must be deployed through normal reviewed initialization;
-the host tool refuses a missing or older shape and never repairs it. Rolling
+At a natural terminal stop, retain external restart exclusion, run the
+dedicated retention-only initializer, prove non-retention row/schema/counter
+parity, recreate the candidate service and restore public health, then use the
+canonical guard to start the compatible worker and obtain its genuine receipt.
+Require non-degraded startup/mutation readiness as well as HTTP health;
+degraded read-serving is a rollback/admission refusal, not deployment success.
+The API-only role still skips general schema initialization. The host reporter
+refuses a missing or older shape and never repairs it. Rolling
 back the host binary does not require deleting reports or narrowing the cycle
-constraint. Preserve offline-kind evidence and the additive schema once such
-rows exist. Retain a canonical-aware mutation worker after offline evidence
+constraint. The additive schema already applied in production is compatible
+and must remain in place; this change does not restore the previously mutated
+path binding. Preserve offline-kind evidence. Retain a canonical-aware mutation worker after offline evidence
 exists; an older kind-scoped worker cannot interpret its uniqueness conflict.
 Production canary/scale acceptance and later archive execution remain separate
 gates. The report-only scale decision does not waive normal backup/recovery or

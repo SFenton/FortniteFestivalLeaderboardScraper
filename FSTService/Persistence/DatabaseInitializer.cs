@@ -46,8 +46,12 @@ public static class DatabaseInitializer
         );
         """;
 
-    public static async Task EnsureSchemaAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
+    public static async Task EnsureSchemaAsync(
+        NpgsqlDataSource dataSource,
+        CancellationToken ct = default,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null)
     {
+        await PublicationPathArtifactReleaseGate.ValidateExistingBeforeInitializationAsync(dataSource, ct);
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         foreach (var step in GetSchemaInitializationPlan())
         {
@@ -63,7 +67,8 @@ public static class DatabaseInitializer
             await ExecuteSchemaInitializationStepAsync(
                 conn,
                 step,
-                ct);
+                ct,
+                reportWarning);
         }
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
@@ -75,6 +80,27 @@ public static class DatabaseInitializer
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
     }
+
+    internal static async Task EnsureSnapshotGenerationRetentionSchemaAsync(
+        NpgsqlDataSource dataSource,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await ExecuteSchemaInitializationStepAsync(
+            connection,
+            SnapshotGenerationRetentionInitializationStep,
+            ct);
+    }
+
+    internal static DatabaseSchemaInitializationStep SnapshotGenerationRetentionInitializationStep =>
+        new(
+            Name: "snapshot-generation-retention-report-only",
+            Sql: Maintenance.SnapshotGenerationRetentionSchema.Sql,
+            CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+            UseShortTransaction: true,
+            LockTimeout: NotificationSchemaLockTimeout,
+            StatementTimeout: NotificationSchemaStatementTimeout);
 
     internal static async Task
         EnsurePublicationGenerationRetirementSchemaAsync(
@@ -144,7 +170,8 @@ public static class DatabaseInitializer
     private static async Task ExecuteSchemaInitializationStepAsync(
         NpgsqlConnection connection,
         DatabaseSchemaInitializationStep step,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null)
     {
         if (step.UseShortTransaction)
         {
@@ -156,11 +183,11 @@ public static class DatabaseInitializer
                 timeout.CommandTimeout =
                     NotificationSchemaCommandTimeoutSeconds;
                 timeout.CommandText = """
-                    SELECT set_config(
+                    SELECT pg_catalog.set_config(
                         'lock_timeout',
                         @lockTimeout,
                         true);
-                    SELECT set_config(
+                    SELECT pg_catalog.set_config(
                         'statement_timeout',
                         @statementTimeout,
                         true);
@@ -184,6 +211,25 @@ public static class DatabaseInitializer
                     step.CommandTimeoutSeconds;
                 command.CommandText = step.Sql;
                 await command.ExecuteNonQueryAsync(ct);
+            }
+
+            if (step.Name == "publication-path-artifacts")
+            {
+                var warnings = await PublicationPathArtifactReleaseGate.ValidateInitializedActiveBindingsAsync(
+                    connection, transaction, ct);
+                foreach (var warning in warnings)
+                {
+                    if (reportWarning is not null)
+                        reportWarning(warning);
+                    else
+                        Console.Error.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            severity = "warning",
+                            code = "previous_path_binding_invalid",
+                            publicationId = warning.PublicationId,
+                            reason = warning.Code,
+                        }));
+                }
             }
 
             await transaction.CommitAsync(ct);
@@ -419,17 +465,7 @@ public static class DatabaseInitializer
                 UseShortTransaction: true,
                 LockTimeout: NotificationSchemaLockTimeout,
                 StatementTimeout: NotificationSchemaStatementTimeout),
-            new(
-                Name:
-                    "snapshot-generation-retention-report-only",
-                Sql: Maintenance
-                    .SnapshotGenerationRetentionSchema.Sql,
-                CommandTimeoutSeconds:
-                    NotificationSchemaCommandTimeoutSeconds,
-                UseShortTransaction: true,
-                LockTimeout: NotificationSchemaLockTimeout,
-                StatementTimeout:
-                    NotificationSchemaStatementTimeout),
+            SnapshotGenerationRetentionInitializationStep,
             new(
                 Name:
                     "snapshot-generation-retirement-control-plane",

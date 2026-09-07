@@ -120,19 +120,13 @@ public sealed class PublicationPathArtifactTests : IDisposable
         var pointers = Db.GetPublicationPointerState();
         var publicationId = pointers.CurrentPublicationId!.Value;
 
-        // Simulate a pre-Phase-A database: no snapshot, legacy binding.
+        // Simulate a pre-Phase-A database: no snapshot or current binding.
         ExecuteNonQuery(
             """
             DELETE FROM publication_path_artifacts
             WHERE publication_id = @publicationId;
 
-            UPDATE publication_surface_bindings
-            SET binding_kind = 'legacy_live_unversioned',
-                binding_json = jsonb_build_object('table', 'songs'),
-                row_count = NULL,
-                content_hash = NULL,
-                status = 'building',
-                built_at = now()
+            DELETE FROM publication_surface_bindings
             WHERE publication_id = @publicationId
               AND surface_name = 'path_artifacts'
             """,
@@ -162,9 +156,11 @@ public sealed class PublicationPathArtifactTests : IDisposable
 
         // A second migration must not duplicate or rewrite the snapshot.
         var capturedBefore = ReadCapturedAt(publicationId, "song-a");
+        var bindingBefore = ReadFullPathBinding(publicationId);
         await DatabaseInitializer.EnsureSchemaAsync(DataSource);
         Assert.Equal(2, ReadSnapshot(publicationId).Count);
         Assert.Equal(capturedBefore, ReadCapturedAt(publicationId, "song-a"));
+        Assert.Equal(bindingBefore, ReadFullPathBinding(publicationId));
     }
 
     [Fact]
@@ -209,6 +205,228 @@ public sealed class PublicationPathArtifactTests : IDisposable
             () => store.GetPathGenerationStates());
     }
 
+    [Theory]
+    [InlineData(PublicationPathArtifactSchema.PreparedSnapshotSource)]
+    [InlineData(PublicationPathArtifactSchema.ScrapePassStagingSource)]
+    [InlineData(PublicationPathArtifactSchema.LegacyLiveBackfillSource)]
+    public async Task Full_schema_preserves_current_binding_provenance_and_built_at(
+        string source)
+    {
+        await SeedCatalogAsync("song-a", "song-b");
+        SetGeneratedPaths("song-a");
+        var publicationId = PublishScrape();
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json =
+                    jsonb_set(binding_json, '{source}', to_jsonb(@source::text))
+                    || '{"operatorEvidence":"preserve-exactly"}'::jsonb,
+                built_at = TIMESTAMPTZ '2026-08-02 03:04:05.123456Z'
+            WHERE publication_id = @publicationId
+              AND surface_name = 'path_artifacts'
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("source", source);
+                command.Parameters.AddWithValue("publicationId", publicationId);
+            });
+        var before = ReadFullPathBinding(publicationId);
+        var capturedAt = ReadCapturedAt(publicationId, "song-a");
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+            Assert.Equal(before, ReadFullPathBinding(publicationId));
+            Assert.Equal(capturedAt, ReadCapturedAt(publicationId, "song-a"));
+            Assert.Equal(ComputeManifestHash(publicationId),
+                ReadPathBinding(publicationId)!.ContentHash);
+        }
+    }
+
+    [Theory]
+    [InlineData("3", "manifest_version_future")]
+    [InlineData("2147483648", "manifest_version_future")]
+    [InlineData("-1", "manifest_version_invalid")]
+    [InlineData("0", "manifest_version_invalid")]
+    [InlineData("1.5", "manifest_version_invalid")]
+    [InlineData("\"unknown\"", "manifest_version_invalid")]
+    [InlineData("\"2\"", "manifest_version_invalid")]
+    [InlineData("null", "manifest_version_invalid")]
+    public async Task Full_schema_refuses_future_or_invalid_versions_without_rewriting(
+        string version, string code)
+    {
+        await SeedCatalogAsync("song-a");
+        SetGeneratedPaths("song-a");
+        var publicationId = PublishScrape();
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json = jsonb_set(binding_json, '{manifestVersion}', @version::jsonb)
+            WHERE publication_id = @publicationId AND surface_name = 'path_artifacts'
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("version", version);
+                command.Parameters.AddWithValue("publicationId", publicationId);
+            });
+        var before = ReadFullPathBinding(publicationId);
+
+        var failure = await Assert.ThrowsAsync<PublicationPathArtifactInitializationException>(
+            () => DatabaseInitializer.EnsureSchemaAsync(DataSource));
+
+        Assert.Equal(before, ReadFullPathBinding(publicationId));
+        Assert.Contains(failure.Failures, item => item.PublicationId == publicationId && item.Code == code);
+        Assert.False((await PublicationPathArtifactReleaseGate.ReadAsync(DataSource)).IsReleased);
+    }
+
+    [Theory]
+    [InlineData("kind", "binding_kind_invalid")]
+    [InlineData("table", "binding_json_invalid")]
+    [InlineData("authoritative", "binding_json_invalid")]
+    [InlineData("source", "binding_json_invalid")]
+    [InlineData("json-array", "manifest_version_invalid")]
+    [InlineData("publication", "binding_publication_mismatch")]
+    [InlineData("publication-type", "binding_publication_mismatch")]
+    [InlineData("scrape", "binding_scrape_mismatch")]
+    [InlineData("contract", "binding_contract_invalid")]
+    [InlineData("contract-type", "binding_contract_invalid")]
+    [InlineData("expected-count", "binding_expected_count_invalid")]
+    [InlineData("catalog", "binding_expected_count_invalid")]
+    [InlineData("actual-count", "binding_row_count_mismatch")]
+    [InlineData("binding-count", "binding_row_count_mismatch")]
+    [InlineData("hash", "binding_content_hash_mismatch")]
+    public async Task Ready_binding_contract_failures_are_visible_and_source_preserving(string defect, string code)
+    {
+        await SeedCatalogAsync("song-a", "song-b");
+        SetGeneratedPaths("song-a");
+        var publicationId = PublishScrape();
+        var patch = defect switch
+        {
+            "table" => """{"table":"wrong-source"}""",
+            "authoritative" => """{"authoritative":false}""",
+            "source" => """{"source":""}""",
+            "publication" => """{"publicationId":999999}""",
+            "publication-type" => """{"publicationId":"not-a-number"}""",
+            "scrape" => """{"scrapeId":999999}""",
+            "contract" => """{"contractVersion":99}""",
+            "contract-type" => """{"contractVersion":"1"}""",
+            "expected-count" => """{"expectedRowCount":999999}""",
+            _ => "{}",
+        };
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json = CASE WHEN @defect='json-array' THEN '[]'::jsonb
+                                    ELSE binding_json || @patch::jsonb END,
+                binding_kind = CASE WHEN @defect='kind' THEN 'wrong-kind' ELSE binding_kind END,
+                row_count = CASE WHEN @defect='binding-count' THEN row_count+1 ELSE row_count END,
+                content_hash = CASE WHEN @defect='hash' THEN repeat('f',64) ELSE content_hash END
+            WHERE publication_id=@publicationId AND surface_name='path_artifacts';
+            DELETE FROM publication_path_artifacts
+            WHERE publication_id=@publicationId AND song_id='song-b' AND @defect='actual-count';
+            UPDATE publication_song_catalog SET is_exact=FALSE
+            WHERE publication_id=@publicationId AND @defect='catalog';
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("publicationId", publicationId);
+                command.Parameters.AddWithValue("defect", defect);
+                command.Parameters.AddWithValue("patch", patch);
+            });
+        var before = ReadFullPathBinding(publicationId);
+
+        var failure = await Assert.ThrowsAsync<PublicationPathArtifactInitializationException>(
+            () => DatabaseInitializer.EnsureSchemaAsync(DataSource));
+
+        Assert.Equal(before, ReadFullPathBinding(publicationId));
+        Assert.Contains(failure.Failures, item => item.PublicationId == publicationId && item.Code == code);
+        var release = await PublicationPathArtifactReleaseGate.ReadAsync(DataSource);
+        Assert.False(release.IsReleased);
+        Assert.Equal(code, release.FailureCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Noncurrent_active_pointer_failures_cannot_be_silent(bool working)
+    {
+        await SeedCatalogAsync("song-a");
+        SetGeneratedPaths("song-a");
+        var first = PublishScrape();
+        long target;
+        if (working)
+        {
+            var scrape = Db.StartScrapeRun();
+            target = Db.GetPublicationGenerationForScrape(scrape)!.PublicationId;
+        }
+        else
+        {
+            PublishScrape();
+            target = first;
+        }
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json=jsonb_set(binding_json,'{manifestVersion}','3'::jsonb),
+                status='building'
+            WHERE publication_id=@target AND surface_name='path_artifacts'
+            """, command => command.Parameters.AddWithValue("target", target));
+        var before = ReadFullPathBinding(target);
+
+        if (working)
+        {
+            var failure = await Assert.ThrowsAsync<PublicationPathArtifactInitializationException>(
+                () => DatabaseInitializer.EnsureSchemaAsync(DataSource));
+            Assert.Contains(failure.Failures, item => item.PublicationId == target && item.Code == "manifest_version_future");
+        }
+        else
+        {
+            var warnings = new List<PublicationPathArtifactInitializationFailure>();
+            await DatabaseInitializer.EnsureSchemaAsync(DataSource, reportWarning: warnings.Add);
+            Assert.Contains(warnings, item => item.PublicationId == target && item.Code == "manifest_version_future");
+            Assert.True((await PublicationPathArtifactReleaseGate.ReadAsync(DataSource)).IsReleased);
+        }
+        Assert.Equal(before, ReadFullPathBinding(target));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"manifestVersion\":1}")]
+    public async Task Full_schema_upgrades_only_legacy_bindings_through_the_upgrade_path(string legacy)
+    {
+        await SeedCatalogAsync("song-a");
+        SetGeneratedPaths("song-a");
+        var publicationId = PublishScrape();
+        ExecuteNonQuery(
+            """
+            UPDATE publication_surface_bindings
+            SET binding_json = @legacy::jsonb, content_hash = repeat('a',64),
+                built_at = TIMESTAMPTZ '2026-08-02 03:04:05Z'
+            WHERE publication_id = @publicationId AND surface_name = 'path_artifacts'
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("legacy", legacy);
+                command.Parameters.AddWithValue("publicationId", publicationId);
+            });
+        var capturedAt = ReadCapturedAt(publicationId, "song-a");
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        var binding = ReadPathBinding(publicationId)!;
+        using var json = JsonDocument.Parse(binding.BindingJson);
+        Assert.Equal(PublicationPathArtifactSchema.SchemaUpgradeSource,
+            json.RootElement.GetProperty("source").GetString());
+        Assert.Equal(PublicationPathArtifactSchema.ManifestVersion,
+            json.RootElement.GetProperty("manifestVersion").GetInt32());
+        Assert.Equal(ComputeManifestHash(publicationId), binding.ContentHash);
+        Assert.Equal(capturedAt, ReadCapturedAt(publicationId, "song-a"));
+        var upgraded = ReadFullPathBinding(publicationId);
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+        Assert.Equal(upgraded, ReadFullPathBinding(publicationId));
+    }
+
     [Fact]
     public async Task PrepareScrapePublication_preserves_the_generation_path_binding()
     {
@@ -234,6 +452,27 @@ public sealed class PublicationPathArtifactTests : IDisposable
         Assert.Equal(
             scrapeId,
             document.RootElement.GetProperty("scrapeId").GetInt64());
+    }
+
+    [Fact]
+    public async Task Version_upgrade_does_not_invent_a_missing_previous_binding()
+    {
+        await SeedCatalogAsync("song-a");
+        SetGeneratedPaths("song-a");
+        var previous = PublishScrape();
+        var current = PublishScrape();
+        ExecuteNonQuery(
+            """
+            DELETE FROM publication_surface_bindings
+            WHERE publication_id=@previous AND surface_name='path_artifacts'
+            """,
+            command => command.Parameters.AddWithValue("previous", previous));
+        var currentBefore = ReadFullPathBinding(current);
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        Assert.Null(ReadPathBinding(previous));
+        Assert.Equal(currentBefore, ReadFullPathBinding(current));
     }
 
     [Fact]
@@ -723,6 +962,23 @@ public sealed class PublicationPathArtifactTests : IDisposable
         => Db.GetPublicationSurfaceBindings(publicationId)
             .SingleOrDefault(static binding =>
                 binding.SurfaceName == PublicationSurfaceNames.PathArtifacts);
+
+    private (string Json, string Sha256) ReadFullPathBinding(long publicationId)
+    {
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT to_jsonb(binding)::text,
+                encode(digest(to_jsonb(binding)::text, 'sha256'), 'hex')
+            FROM publication_surface_bindings binding
+            WHERE publication_id = @publicationId
+              AND surface_name = 'path_artifacts'
+            """;
+        command.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        return (reader.GetString(0), reader.GetString(1));
+    }
 
     private static Song CreateCatalogSong(string songId) =>
         new()

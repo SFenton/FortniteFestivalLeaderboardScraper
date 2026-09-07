@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -34,6 +34,7 @@ sources:
   - tools/capture-publication-route-contract.sh
   - tools/postgres-snapshot-generation-retention-report.sh
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
@@ -94,6 +95,32 @@ configuration receipt and compatible canonical-cycle lookup protocol. The CLI
 cannot enable reporting from a flag. Schema migration is database-scoped and
 nonblocking, rejects pre-existing duplicate trigger pairs without rewriting
 evidence, and must precede deployment of the compatible worker.
+
+For a reviewed deployment retry, finish publication and notifications, stop at
+the natural idle/unfrozen boundary and retain host restart exclusion. Run
+`--initialize-snapshot-retention-schema-only` from the candidate binary,
+verify no non-retention row/schema/counter drift, recreate the candidate
+service and restore the entire public path, then start the compatible worker
+through the canonical guard and verify its authentic receipt. Do not use the
+general `--initialize-schema-only` command for this retention-only boundary.
+General path bootstrap now preserves existing current-version bindings, but
+general initialization still owns unrelated schema/data work.
+
+Current/working path validation failures now keep ordinary service startup
+read-only rather than taking public reads offline. Previous invalid bindings
+warn without mutation. Publication read-only serving reports a `Healthy`
+check with explicit `degraded_read_only` details in readiness JSON; its HTTP
+200 means persisted-read availability only. Other `Degraded`/`Unhealthy`
+checks still return HTTP 503. Require `startup.mutationReady=true` and no mutation-pointer
+diagnostics before accepting deployment/worker restart. The read-only latch
+cannot be cleared by changing database rows under a running process: correction
+and a fresh guarded restart are required. It is not permission to repair the
+historically changed production binding or bypass the source-parity gate.
+
+The rejected scrape-`1362` deployment already installed the additive retention
+schema. Keep it; rollback of that schema is not part of retry. Publication
+`223`'s observed path-binding refresh was not manually repaired, and this
+source-preserving code change does not claim to repair that historical effect.
 
 The scale ruling permits a bounded first live offline-report canary after
 reviewed deployment and the fresh external stop/receipt gates. It does not

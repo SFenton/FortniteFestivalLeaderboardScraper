@@ -1,10 +1,13 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using FortniteFestival.Core;
 using FSTService;
+using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
-if (args.Length != 1 || args[0] != "publish-worker-configuration")
+if (args.Length != 1 || args[0] is not ("publish-worker-configuration" or "seed-schema-repair"))
     return 64;
 var scope = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_SCOPE");
 var connectionString = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_CONNECTION_STRING");
@@ -33,6 +36,56 @@ command.Parameters.AddWithValue("scope", scope!);
 if (await command.ExecuteScalarAsync() is not true)
     return 64;
 command.Parameters.Clear();
+if (args[0] == "seed-schema-repair")
+{
+    await new FestivalPersistence(source).SaveSongsVersionedAsync(
+    [
+        new Song
+        {
+            _title = "schema-repair-song",
+            lastModified = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
+            track = new Track
+            {
+                su = "schema-repair-song", tt = "Schema repair", an = "Fixture",
+                ab = "Fixture", au = "https://example.test/image",
+                mu = "https://example.test/song.dat", sig = "4/4",
+                ge = ["rock"], ry = 2026, mt = 120, dn = 200,
+                @in = new In { gr = 1, ba = 2, vl = 3, ds = 4 },
+            },
+        },
+    ]);
+    command.CommandText = """
+        UPDATE songs SET path_generation_revision=7,
+            path_artifact_generation_id='schema-repair-artifact',
+            dat_file_hash='fixture-dat',song_last_modified='2026-08-01T00:00:00Z',
+            paths_generated_at=TIMESTAMPTZ '2026-08-01T01:00:00Z',
+            chopt_version='fixture',chopt_binary_sha256=repeat('a',64),
+            path_generation_profile='fixture',path_expected_instruments=ARRAY['Solo_Guitar'],
+            max_lead_score=123456,path_generation_pending=FALSE
+        WHERE song_id='schema-repair-song';
+        """;
+    await command.ExecuteNonQueryAsync();
+    using var meta = new MetaDatabase(source, NullLogger<MetaDatabase>.Instance);
+    var scrapeId = meta.StartScrapeRun();
+    meta.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+    meta.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+    var publicationId = meta.GetPublicationPointerState().CurrentPublicationId!.Value;
+    command.CommandText = """
+        UPDATE publication_surface_bindings
+        SET binding_json=binding_json || '{"operatorEvidence":"preserve-exactly"}'::jsonb,
+            built_at=TIMESTAMPTZ '2026-08-02T03:04:05.123456Z'
+        WHERE publication_id=@publication AND surface_name='path_artifacts';
+        INSERT INTO service_worker_status(worker_key,status,mode,instance_id,started_at,
+            last_status_change_at,last_heartbeat_at,current_operation_json,updated_at)
+        VALUES('scraper','offline','scraper','owned-schema-drill',now()-interval '1 hour',
+            now(),now(),NULL,now());
+        SELECT pg_stat_force_next_flush();
+        """;
+    command.Parameters.AddWithValue("publication", publicationId);
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine(JsonSerializer.Serialize(new { fixture = true, scrapeId, publicationId }));
+    return 0;
+}
 command.CommandText = """
     UPDATE service_worker_status SET status='running'
     WHERE worker_key='scraper' AND instance_id='owned-offline-drill'

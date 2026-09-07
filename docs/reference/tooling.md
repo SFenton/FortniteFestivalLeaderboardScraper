@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-06
+last_verified_commit: 0b07fff0
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -32,6 +32,8 @@ sources:
   - tools/FstSnapshotGenerationRetentionReport/
   - tools/postgres-snapshot-generation-retention-report.sh
   - tools/postgres-snapshot-generation-retention-report-drill.py
+  - tools/snapshot_retention_schema_proof.py
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - tools/run-controlled-postgres-tests.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
@@ -128,6 +130,17 @@ commit-with-cleanup-warning outcomes are explicit, with phase timings.
 The network-none disposable drill uses a genuine initialized baseline,
 source-DML guards, source row/catalog parity, idempotency, and owned-resource
 cleanup. See [the offline report guide](../database/SnapshotGenerationOfflineRetentionReport.md).
+
+Deployment initialization is the separate FSTService command
+`--initialize-snapshot-retention-schema-only`, not a new reporter capability.
+It runs only the accepted bounded retention schema step before any host or
+dotenv setup. Under external idle-stop exclusion, run it and prove
+non-retention parity before recreating the service and guarded compatible
+worker. The drill's `--schema-only-repair` mode exercises this exact command,
+full path-binding idempotence, legacy upgrade, complete non-retention
+row/schema/counter parity and mixed-command refusal. Optional hash-pinned
+baseline service input reproduces the former bootstrap mutation only inside
+the disposable fixture.
 
 `tools/run-controlled-postgres-tests.py` runs focused, full, or exact
 base/candidate comparison tests through the ordinary loopback TCP fixture,

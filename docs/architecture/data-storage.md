@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-04
-last_verified_commit: f266ecb8
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Persistence/PublicationGeneration.cs
@@ -728,6 +729,43 @@ transactional advisory admission surrounds the real repeatable-read
 observation/persistence transaction and releases immediately after its commit.
 No pending-work flag, execution ledger, tool-owned schema repair, or
 leaderboard/publication mutation is introduced.
+
+Deployment uses the service's isolated
+`--initialize-snapshot-retention-schema-only` mode, not general database
+initialization. Its shared bounded step creates/updates only retention schema
+objects and preserves all non-retention rows and mutation counters. The
+additive canonical schema is already present in production and is compatible;
+do not roll it back. The rejected deployment's path-binding refresh remains
+recorded and is not repaired by this change.
+
+General path bootstrap now inserts a current publication binding only when
+missing. A current-version canonical binding preserves its complete JSON,
+provenance and `built_at`; only unversioned/strictly older bindings upgrade.
+Intentional runtime publication/path rebinding is unchanged. Full schema
+initialization remains broader than retention-only deployment.
+Invalid future/malformed current/working versions and invalid ready binding
+contracts produce bounded, source-preserving initialization failures shared
+with release readiness; previous invalid bindings are structured warnings.
+Ordinary startup classifies that outcome before runtime pool construction,
+using a private unpooled bootstrap source and bounded SHARE locks on exactly
+`scrape_publication_state`, `publication_generations`,
+`publication_surface_bindings`, `publication_path_artifacts` and
+`publication_song_catalog`. Locks precede the repeatable-read snapshot and are
+released only once pool policy is fixed. `Program` eagerly resolves the main
+data source immediately after host build, keeping selection and release in
+one bounded construction path before pipeline or hosted writers. Selection
+loss forces read-only.
+Current/working refusal disables all runtime database writers, HTTP/selected
+profile mutations and background/recovery services without removing persisted
+public reads. The process cannot re-enable mutations until a guarded restart.
+No new durable execution/admission schema accompanies this startup state.
+Its type is `StartupPublicationReadOnlyState`, distinct from the separate
+execution-admission foundation; future composition must precede any shared
+pool construction and cannot clear either gate's refusal.
+Already-correct catalog, generation and disabled
+notification metadata are no longer subject to no-op compatibility updates.
+The executable parity proof covers non-retention row hashes and mutation
+counters, including the publication singleton, not only visible API content.
 
 A separate operator tool can copy one cryptographically authenticated planner
 candidate into a custom-format PostgreSQL archive and prove that package in an

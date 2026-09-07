@@ -22,6 +22,7 @@ public sealed class PublicationRecoveryCoordinator
     private readonly IMetaDatabase _metaDb;
     private readonly PublicationCommitOptions _options;
     private readonly bool _readOnly;
+    private readonly StartupPublicationReadOnlyState? _publicationStartup;
     private readonly ILogger<PublicationRecoveryCoordinator> _log;
     private long _nextTriggerTicks;
     private int _running;
@@ -30,17 +31,19 @@ public sealed class PublicationRecoveryCoordinator
         IMetaDatabase metaDb,
         IOptions<PublicationCommitOptions> options,
         IOptions<ScraperOptions> scraperOptions,
-        ILogger<PublicationRecoveryCoordinator> log)
+        ILogger<PublicationRecoveryCoordinator> log,
+        StartupPublicationReadOnlyState? publicationStartup = null)
     {
         _metaDb = metaDb;
         _options = options.Value;
         _readOnly = scraperOptions.Value.RolloutReadOnlyStartup;
         _log = log;
+        _publicationStartup = publicationStartup;
     }
 
     public void Trigger()
     {
-        if (_readOnly)
+        if (_readOnly || _publicationStartup is { MutationsReady: false })
             return;
 
         var nowTicks = DateTime.UtcNow.Ticks;
@@ -77,7 +80,7 @@ public sealed class PublicationRecoveryCoordinator
 
     public PublicationRecoveryRunResult RunOnce()
     {
-        if (_readOnly)
+        if (_readOnly || _publicationStartup?.IsLatched == true)
         {
             return new PublicationRecoveryRunResult(
                 new PublicationCommitIntentReconciliationResult(

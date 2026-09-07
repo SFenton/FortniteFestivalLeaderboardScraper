@@ -9,9 +9,8 @@ using Npgsql;
 namespace FSTService;
 
 /// <summary>
-/// Initializes database schemas and eagerly loads the song catalog
-/// as a background hosted service, allowing Kestrel to start accepting connections
-/// immediately. Implements <see cref="IHealthCheck"/> for the /readyz endpoint.
+/// Loads runtime state after the pre-pool schema/read-only selection.
+/// Implements <see cref="IHealthCheck"/> for read-serving readiness.
 /// </summary>
 public sealed class StartupInitializer : IHostedService, IHealthCheck
 {
@@ -27,11 +26,22 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         _publicationRecovery;
     private readonly RolloutReadOnlyViolationMonitor? _readOnlyViolations;
     private readonly ILogger<StartupInitializer> _log;
+    private readonly StartupPublicationReadOnlyState _publicationReadOnlyState;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CancellationTokenSource? _initializationCancellation;
+    private Task? _initializationTask;
 
     /// <summary>True once databases and song catalog are fully initialized.</summary>
     public bool IsReady => _readySignal.Task.IsCompletedSuccessfully;
     public bool PostgresDefaultTransactionReadOnly { get; private set; }
+    public bool ReadOnlyServing => _publicationReadOnlyState.IsLatched;
+    public bool MutationReady => IsReady && _publicationReadOnlyState.MutationsReady;
+    public string? MutationDisabledReason => _publicationReadOnlyState.Reason;
+    public IReadOnlyList<PublicationPathArtifactInitializationFailure> StartupDiagnostics => _publicationReadOnlyState.Failures;
+    public IReadOnlyList<PublicationPathArtifactInitializationFailure> StartupWarnings => _publicationReadOnlyState.Warnings;
+    public StartupPublicationReadOnlyStatus PublicationStartupStatus => new(
+        ReadOnlyServing ? "degraded_read_only" : IsReady ? "ready" : "initializing",
+        IsReady, MutationReady, MutationDisabledReason, StartupDiagnostics, StartupWarnings);
 
     /// <summary>Awaitable task that completes when initialization finishes.</summary>
     public Task WaitForReadyAsync(CancellationToken ct = default)
@@ -45,6 +55,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         IHostApplicationLifetime lifetime,
         IOptions<ScraperOptions> scraperOptions,
         ILogger<StartupInitializer> log,
+        StartupPublicationReadOnlyState startupPublicationReadOnlyState,
         RolloutReadOnlyViolationMonitor? readOnlyViolations = null,
         IOptions<PublicationCommitOptions>?
             publicationCommitOptions = null,
@@ -63,11 +74,14 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         _publicationRecovery = publicationRecovery;
         _log = log;
         _readOnlyViolations = readOnlyViolations;
+        _publicationReadOnlyState = startupPublicationReadOnlyState;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _ = InitializeInBackgroundAsync(cancellationToken);
+        _initializationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _lifetime.ApplicationStopping);
+        _initializationTask = InitializeInBackgroundAsync(_initializationCancellation.Token);
         return Task.CompletedTask;
     }
 
@@ -76,37 +90,14 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         try
         {
             _log.LogInformation("Initializing databases and song catalog...");
-            await VerifyPostgresTransactionModeAsync(ct);
-
-            if (_scraperOptions.RolloutReadOnlyStartup)
+            if (_publicationReadOnlyState.IsLatched)
             {
-                await EnsurePublicationPathArtifactReleaseAsync(ct);
-                _log.LogWarning(
-                    "Rollout read-only startup enabled. Loading existing published state without schema, cleanup, provider sync, item-shop refresh, timers, or persistence writes.");
-                _persistence.InitializeReadOnly();
-                await _festivalService.InitializePersistedStateOnlyAsync();
-                await _shopService.InitializePersistedStateOnlyAsync(ct);
-                EnsurePublishedScopeSourceReadiness();
-                _readySignal.TrySetResult();
-                _log.LogInformation(
-                    "Rollout read-only initialization complete. {SongCount} persisted songs loaded.",
-                    _festivalService.Songs.Count);
+                await InitializeReadOnlyUntilAvailableAsync(ct);
                 return;
             }
 
-            if (_scraperOptions.SkipsStartupSchemaInitialization)
-            {
-                _log.LogInformation(
-                    "Skipping startup schema initialization; ApiOnly={ApiOnly}, SkipStartupSchemaInitialization={SkipStartupSchemaInitialization}. Relying on existing database schema.",
-                    _scraperOptions.ApiOnly,
-                    _scraperOptions.SkipStartupSchemaInitialization);
-            }
-            else
-            {
-                await EnsureSchemaWithRetryAsync(ct);
-            }
-
-            await EnsurePublicationPathArtifactReleaseAsync(ct);
+            await VerifyPostgresTransactionModeAsync(ct);
+            _log.LogInformation("Startup schema/admission selection completed before runtime pool construction.");
 
             PurgeSongsRouteCacheRowsIfPublicationBound();
 
@@ -177,7 +168,12 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
             _log.LogInformation(
                 "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
                 _festivalService.Songs.Count, 6);
+            _publicationReadOnlyState.MarkReady();
             _readySignal.TrySetResult();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _readySignal.TrySetCanceled(ct);
         }
         catch (Exception ex)
         {
@@ -222,44 +218,34 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         }
     }
 
-    private async Task EnsureSchemaWithRetryAsync(CancellationToken ct)
+    private async Task InitializeReadOnlyUntilAvailableAsync(CancellationToken ct)
     {
-        const int maxRetries = 10;
-        for (var attempt = 1; ; attempt++)
+        while (true)
         {
+            ct.ThrowIfCancellationRequested();
             try
             {
-                await DatabaseInitializer.EnsureSchemaAsync(_dataSource, ct);
+                await VerifyPostgresTransactionModeAsync(ct);
+                _persistence.InitializeReadOnly();
+                await _festivalService.InitializePersistedStateOnlyAsync();
+                await _shopService.InitializePersistedStateOnlyAsync(ct);
+                var sourceReadiness = _persistence.PublishedScopeSourceReadiness.EvaluateCurrent(forceRefresh: true);
+                if (!sourceReadiness.Ready)
+                    _log.LogWarning("Read-only startup retains route-level publication refusal ({Reason}).",
+                        sourceReadiness.Reason);
+                _publicationReadOnlyState.MarkReady();
+                _readySignal.TrySetResult();
+                _log.LogWarning(
+                    "Serving persisted public state in degraded read-only mode ({Reason}); all mutations require a guarded restart.",
+                    _publicationReadOnlyState.Reason);
                 return;
             }
-            catch (Exception ex) when (attempt < maxRetries &&
-                (ex is NpgsqlException || ex is System.Net.Sockets.SocketException ||
-                 ex.InnerException is System.Net.Sockets.SocketException))
+            catch (NpgsqlException exception)
             {
-                var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30));
-                _log.LogWarning(ex,
-                    "Schema init attempt {Attempt}/{MaxRetries} failed. Retrying in {Delay}s...",
-                    attempt, maxRetries, delay.TotalSeconds);
-                await Task.Delay(delay, ct);
+                _log.LogWarning(exception, "Persisted read-only startup data unavailable; retrying without mutation.");
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
         }
-    }
-
-    private async Task EnsurePublicationPathArtifactReleaseAsync(
-        CancellationToken ct)
-    {
-        // A startup mode that never runs DDL must not read publication-bound
-        // path artifacts before the schema-initializing role applies the
-        // current manifest release.
-        if (!_scraperOptions.RequiresPublicationPathArtifactReleaseGate)
-            return;
-
-        await PublicationPathArtifactReleaseGate
-            .EnsureReleasedAsync(_dataSource, ct);
-        _log.LogInformation(
-            "Publication path artifact release verified: contractVersion={ContractVersion}, manifestVersion={ManifestVersion}.",
-            PublicationPathArtifactSchema.ContractVersion,
-            PublicationPathArtifactSchema.ManifestVersion);
     }
 
     private async Task VerifyPostgresTransactionModeAsync(CancellationToken ct)
@@ -283,31 +269,52 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                 : throw new InvalidOperationException(
                     $"Unexpected default_transaction_read_only value: {value ?? "<null>"}.");
         PostgresDefaultTransactionReadOnly = isReadOnly;
-        if (isReadOnly != _scraperOptions.RolloutReadOnlyStartup)
+        if (isReadOnly != _publicationReadOnlyState.IsLatched)
         {
             throw new InvalidOperationException(
-                _scraperOptions.RolloutReadOnlyStartup
-                    ? "Rollout read-only startup requires default_transaction_read_only=on."
+                _publicationReadOnlyState.IsLatched
+                    ? "Read-only startup requires default_transaction_read_only=on."
                     : "Normal startup requires default_transaction_read_only=off.");
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (_initializationCancellation is null)
+            return;
+        await _initializationCancellation.CancelAsync();
+        try
+        {
+            if (_initializationTask is not null)
+                await _initializationTask.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            _initializationCancellation.Dispose();
+        }
+    }
 
     public Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context, CancellationToken cancellationToken = default)
     {
+        var data = new Dictionary<string, object> { ["startup"] = PublicationStartupStatus };
         if (_readOnlyViolations?.HasViolation == true)
         {
             return Task.FromResult(HealthCheckResult.Unhealthy(
                 "A PostgreSQL read-only violation was detected.",
-                _readOnlyViolations.LastViolation));
+                _readOnlyViolations.LastViolation, data));
         }
         if (!IsReady)
         {
             return Task.FromResult(
                 HealthCheckResult.Unhealthy(
-                    "Databases still initializing."));
+                    "Databases still initializing.", data: data));
+        }
+        if (ReadOnlyServing)
+        {
+            return Task.FromResult(HealthCheckResult.Healthy(
+                "degraded_read_only: serving persisted public reads; mutations disabled until guarded restart: " + MutationDisabledReason,
+                data));
         }
 
         var publicationReadiness =
@@ -316,9 +323,9 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         return Task.FromResult(
             publicationReadiness.Ready
                 ? HealthCheckResult.Healthy(
-                    "Databases initialized and published scope-source binding verified.")
+                    "Databases initialized and published scope-source binding verified.", data)
                 : HealthCheckResult.Unhealthy(
-                    $"Published scope-source readiness failed: {publicationReadiness.Reason}."));
+                    $"Published scope-source readiness failed: {publicationReadiness.Reason}.", data: data));
     }
 
     private void EnsurePublishedScopeSourceReadiness()

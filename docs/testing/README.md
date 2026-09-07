@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -53,6 +53,13 @@ sources:
   - FSTService.Tests/Unit/SnapshotGenerationRetentionOfflineTests.cs
   - FSTService.Tests/Unit/OfflineReportAttestationTests.cs
   - FSTService.Tests/Unit/OfflineReportCommandTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaCommandTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaInitializationTests.cs
+  - FSTService.Tests/Unit/PublicationPathArtifactTests.cs
+  - FSTService.Tests/Unit/StartupPublicationReadOnlyStateTests.cs
+  - FSTService.Tests/Unit/ReadinessHealthTests.cs
+  - FSTService.Tests/Unit/RolloutReadOnlyRequestGuardTests.cs
+  - tools/snapshot_retention_schema_proof.py
   - FSTService.Tests/Helpers/SharedPostgresContainer.cs
   - FSTService.Tests/Helpers/ControlledPostgresTestFixture.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionRepairTests.cs
@@ -172,6 +179,82 @@ The drill requires an FST-drive worktree and creates only its own PostgreSQL
 genuine cycle, proves source/worker/publication parity and idempotency, rejects
 online-worker/forbidden-command admission, and removes owned PGDATA, socket,
 and containers.
+
+Source-preserving deployment validation:
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode focused \
+  --work-root artifacts/offline-retention-report-repair/<new-schema-matrix> \
+  --filter 'FullyQualifiedName~PublicationPathArtifactTests|FullyQualifiedName~PublicationPathPromotionTests|FullyQualifiedName~SnapshotRetentionSchemaCommandTests|FullyQualifiedName~SnapshotRetentionSchemaInitializationTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~HostedWorkerModeResolverTests|FullyQualifiedName~StartupPublicationReadOnlyStateTests|FullyQualifiedName~ReadinessHealthTests|FullyQualifiedName~RolloutReadOnlyRequestGuardTests|FullyQualifiedName~PublicationRecoveryCoordinatorTests'
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-schema-proof> \
+  --schema-only-repair
+```
+
+The matrix compares complete binding JSON/SHA-256 and `built_at` across first
+and repeated full initialization for nonlegacy and already-recorded legacy
+provenance. It covers missing current-binding bootstrap, intentional old
+manifest upgrade, no future/malformed downgrade, strict CLI exclusivity,
+early dispatch before replay/dotenv/hosting, cancellation, incompatible-worker
+and schema-lock refusal, and no prerequisite creation in an empty database.
+Runtime deliberate rebinding remains covered by the existing path tests.
+Hostile `public` catalog/function shadows, including a preferred concrete
+`format` overload, cannot hijack dedicated DDL under exact
+`pg_catalog,public` resolution. Current/working invalid bindings produce
+stable source-preserving CLI refusals; previous invalid bindings produce
+structured warnings and permit normal startup. Runtime release readiness still
+rejects invalid current data.
+
+Startup tests prove pre-pool selection, selection-fence ownership/loss,
+read-only PostgreSQL/auxiliary connection policy, no writer construction,
+mutation/recovery/registration/selected-profile suppression, and sticky
+read-only state even after a fixture repairs the database. Transient persisted
+load failures must retry completely rather than marking a partial load ready.
+They also cover eager source resolution without circular DI, release before
+an 11-second pipeline delay, and bounded refusal while a publication writer
+holds conflicting locks. Source-order checks pin eager resolution immediately
+after host build and preserve one-shot/schema exemptions. HTTP health tests
+require read-serving `Healthy`/200 with explicit structured detail while
+unrelated `Degraded`/`Unhealthy` remains 503. Previous-warning tests retain
+current rows/reads while rejecting previous path reads, current pinning and
+stale-preparation reuse; working cutover separately revalidates old/future
+manifest versions through `VerifyPreparedPathArtifacts`.
+
+The network-none repair drill invokes the actual service command, compares
+all non-retention table row hashes/identities, schema definitions and DML
+counters, installs statement-level source-write traps, and captures
+publication/path/catalog/control state. It proves both a missing retention
+constraint/receipt-table upgrade and a repeat against the current schema.
+`--baseline-service <FST-drive-FSTService.dll>` plus
+`--baseline-service-sha256 <sha256>` optionally reproduces the old full
+initializer's mutation with an independently pinned binary. Its reset applies
+only to that disposable fixture; it is never a production repair.
+Four actual full `--initialize-schema-only` process launches must also retain
+all non-retention table rows/hashes and mutation counters, not just path
+binding bytes. The proof catches and rejects no-op compatibility writes to
+catalog, publication-generation and disabled-notification state. Separate
+actual CLI cases require visible structured refusals for future, malformed
+and invalid-ready bindings with their exact rows unchanged.
+The actual ordinary service additionally runs current-ready/inexact-catalog,
+current-ready/missing-catalog and invalid-working cases. It must serve exact
+persisted GET/cache bytes in explicit degraded mode, reject mutation attempts,
+construct no expected hosted writer, and preserve all non-retention row hashes
+and mutation counters. Degraded mutation refusal is not misclassified as a rollout
+violation. Owned service process groups, backend sessions and HOME/XDG/data
+paths are removed before the fixture is cleaned.
+Docker logging remains disabled and all PGDATA, sockets, logs and scratch
+remain on the FST drive, with exact cleanup and checksums.
+Fixture readiness uses the main postmaster's loopback TCP listener, not the
+entrypoint's temporary Unix-socket initialization server. Failed owned commands
+retain sanitized stdout/stderr as failure evidence before cleanup.
+
+If a shared host exhausts its per-user inotify instance quota while the
+integration suite constructs API hosts, use the process-local
+`DOTNET_USE_POLLING_FILE_WATCHER=1` setting for that validation run and record
+it with the evidence. This keeps file-change watching enabled without
+changing kernel limits or production configuration; it does not waive a
+failed test.
 
 For resource-isolated development, `--hold-for-tests` exposes only
 nonsecret `runtime.json` scope/transport metadata. The existing test helper can

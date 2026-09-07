@@ -12,6 +12,16 @@ using Npgsql;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
+// The retention-only command must not load .env or construct any host services.
+if (SnapshotRetentionSchemaCommand.IsRequested(args))
+{
+    Environment.ExitCode = await SnapshotRetentionSchemaCommand.RunAsync(
+        args,
+        Environment.GetEnvironmentVariable(SnapshotRetentionSchemaCommand.ConnectionEnvironment),
+        Console.Out);
+    return;
+}
+
 // Replay dispatch must happen before .env loading and WebApplication/worker
 // registration so production credentials and mutation services are absent.
 if (ReplayCommand.IsRequested(args))
@@ -428,11 +438,7 @@ builder.Services.AddSingleton<TokenManager>();
 
 // ─── Persistence (PostgreSQL) ───────────────────────────────
 
-var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
-    ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
-var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
-{
-    ApplicationName =
+var pgApplicationName =
         maxScoreMaintenanceCommand?.Action
             == MaxScoreMaintenanceAction.Rollback
         ? "fst-max-score-rollback"
@@ -445,21 +451,35 @@ var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
             HostedWorkerMode.ApiOnly => "fstservice-api",
             HostedWorkerMode.FrontendOnly => "fstservice-frontend",
             _ => "fstservice",
-        },
-};
-if (rolloutPostgresReadOnlyRequested)
+        };
+string ConfiguredPostgresConnection(IServiceProvider services)
 {
-    const string readOnlyOption = "-c default_transaction_read_only=on";
-    pgConnectionStringBuilder.Options = string.IsNullOrWhiteSpace(
-        pgConnectionStringBuilder.Options)
-        ? readOnlyOption
-        : $"{pgConnectionStringBuilder.Options} {readOnlyOption}";
+    return new NpgsqlConnectionStringBuilder(
+        services.GetRequiredService<IConfiguration>().GetConnectionString("PostgreSQL")
+        ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required."))
+    { ApplicationName = pgApplicationName }.ConnectionString;
 }
-var pgDataSource = NpgsqlDataSource.Create(pgConnectionStringBuilder.ConnectionString);
-builder.Services.AddSingleton(pgDataSource);
-builder.Services.AddSingleton(
-    new PostgresUnpooledConnectionFactory(
-        pgConnectionStringBuilder.ConnectionString));
+builder.Services.AddSingleton(services =>
+{
+    var options = services.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    if (strictOneShotWithoutHostedServices || initializeSchemaOnlyRequested
+        || improvementNotificationRecoveryRequested || scoreHistoryDedupMaintenanceCommand is not null)
+        return StartupPublicationReadOnlyState.ForInitializedDatabase(options.RolloutReadOnlyStartup);
+    return StartupPublicationReadOnlyState.PrepareRuntimeAsync(
+        ConfiguredPostgresConnection(services), options,
+        services.GetRequiredService<ILoggerFactory>().CreateLogger<StartupPublicationReadOnlyState>())
+        .GetAwaiter().GetResult();
+});
+builder.Services.AddSingleton(services => StartupPublicationReadOnlyState.CreateDataSource(
+    ConfiguredPostgresConnection(services), services.GetRequiredService<StartupPublicationReadOnlyState>()));
+string RuntimePostgresConnection(IServiceProvider services)
+{
+    _ = services.GetRequiredService<NpgsqlDataSource>();
+    return services.GetRequiredService<StartupPublicationReadOnlyState>().ConfigureConnectionString(
+        ConfiguredPostgresConnection(services));
+}
+builder.Services.AddSingleton(services => new PostgresUnpooledConnectionFactory(
+    RuntimePostgresConnection(services)));
 builder.Services.AddSingleton(sp =>
     PostgresRuntimeTarget.FromConnectionString(
         sp.GetRequiredService<NpgsqlDataSource>().ConnectionString));
@@ -567,7 +587,7 @@ builder.Services.AddSingleton<
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
 builder.Services.AddSingleton(sp =>
     new FSTService.Api.PublicationReadLockDataSource(
-        pgConnectionStringBuilder.ConnectionString));
+        RuntimePostgresConnection(sp)));
 builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =>
     new FSTService.Api.PublicationReadContextService(
         sp.GetRequiredService<IMetaDatabase>(),
@@ -760,7 +780,7 @@ builder.Services.AddHttpClient("PathGeneration")
     });
 builder.Services.AddSingleton<IPathGenerationAdmissionLeaseProvider>(sp =>
     new PostgresPathGenerationAdmissionLeaseProvider(
-        pgConnectionStringBuilder.ConnectionString,
+        RuntimePostgresConnection(sp),
         sp.GetRequiredService<
             ILogger<PostgresPathGenerationAdmissionLeaseProvider>>()));
 builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
@@ -866,36 +886,36 @@ else
         sp => sp.GetRequiredService<StartupInitializer>());
     if (hostedServicePlan.RegisterStalenessMonitor)
     {
-        builder.Services.AddHostedService<
+        builder.Services.AddPublicationStartupGatedHostedService<
             FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
     }
     if (hostedServicePlan.RegisterPublicationChangeMonitor)
     {
-        builder.Services.AddHostedService<
+        builder.Services.AddPublicationStartupGatedHostedService<
             FSTService.Api.PublicationChangeMonitorService>();
     }
     builder.Services.AddHealthChecks()
         .AddCheck<StartupInitializer>("database", tags: ["ready"]);
     if (hostedServicePlan.RegisterFullWorkerServices)
     {
-        builder.Services.AddHostedService<DurablePhaseProgressBridgeService>();
-        builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
-        builder.Services.AddHostedService<ScraperWorker>();
+        builder.Services.AddPublicationStartupGatedHostedService<DurablePhaseProgressBridgeService>();
+        builder.Services.AddPublicationStartupGatedHostedService<WorkerStatusHeartbeatService>();
+        builder.Services.AddPublicationStartupGatedHostedService<ScraperWorker>();
         if (hostedServicePlan.RegisterRegistrationBackfill)
         {
-            builder.Services.AddHostedService<RegistrationBackfillWorker>();
+            builder.Services.AddPublicationStartupGatedHostedService<RegistrationBackfillWorker>();
         }
-        builder.Services.AddHostedService<BandRankHistoryWorker>();
+        builder.Services.AddPublicationStartupGatedHostedService<BandRankHistoryWorker>();
     }
     else
     {
         if (hostedServicePlan.RegisterSongCatalogRefresh)
         {
-            builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+            builder.Services.AddPublicationStartupGatedHostedService<SongCatalogRefreshWorker>();
         }
         if (hostedServicePlan.RegisterRegistrationBackfill)
         {
-            builder.Services.AddHostedService<RegistrationBackfillWorker>();
+            builder.Services.AddPublicationStartupGatedHostedService<RegistrationBackfillWorker>();
         }
     }
 }
@@ -903,6 +923,9 @@ else
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
+
+// Finish publication startup selection and release its fence before pipeline construction.
+_ = app.Services.GetRequiredService<NpgsqlDataSource>();
 
 if (soloFamilyRankingBackfillCommand is not null)
 {
@@ -926,15 +949,15 @@ else if (rolloutReadOnlyStartupRequested)
 }
 else if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
 {
-    app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered. Song catalog refresh remains active.");
+    app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered. Startup admission controls song catalog refresh.");
 }
 else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
 {
-    app.Logger.LogInformation("API frontend mode enabled; scraper and mutation background hosted services were not registered. Song catalog refresh remains active.");
+    app.Logger.LogInformation("API frontend mode enabled; scraper and mutation background hosted services were not registered. Startup admission controls song catalog refresh.");
 }
 else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
 {
-    app.Logger.LogInformation("Registration sync worker mode enabled; scheduled scrape and band rank-history workers were not registered. Song catalog refresh and registration sync remain active.");
+    app.Logger.LogInformation("Registration sync worker mode enabled; scheduled scrape and band rank-history workers were not registered. Startup admission controls catalog refresh and registration sync.");
 }
 
 if (initializeSchemaOnlyRequested)
@@ -943,8 +966,23 @@ if (initializeSchemaOnlyRequested)
         .CreateLogger("SchemaInitialization");
     schemaLog.LogInformation(
         "--initialize-schema-only: applying idempotent database schema...");
-    await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(
-        app.Services.GetRequiredService<NpgsqlDataSource>());
+    try
+    {
+        await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(
+            app.Services.GetRequiredService<NpgsqlDataSource>());
+    }
+    catch (PublicationPathArtifactInitializationException exception)
+    {
+        schemaLog.LogError("{InitializationFailure}", exception.Message);
+        Console.Error.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            outcome = "refused",
+            code = "path_artifact_initialization_rejected",
+            failures = exception.Failures,
+        }));
+        Environment.ExitCode = 2;
+        return;
+    }
     schemaLog.LogInformation(
         "--initialize-schema-only: database schema is current. Exiting.");
     return;

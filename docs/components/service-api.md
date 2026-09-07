@@ -1,10 +1,14 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-27
-last_verified_commit: c35b7f47
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Program.cs
+  - FSTService/StartupPublicationReadOnlyState.cs
+  - FSTService/StartupInitializer.cs
+  - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -39,6 +43,60 @@ FSTService is an ASP.NET Core .NET 9 application. The same binary can host the
 public API, the full worker, a registration-sync worker, read-only rollout
 serving, one-shot tools, or an embedded SPA.
 
+`--initialize-snapshot-retention-schema-only` is an early-dispatched exception:
+it constructs no ASP.NET host, reads no `.env`, registers no hosted services,
+and runs only the bounded retention schema step using the environment-supplied
+database connection. Every additional argument is refused. It is the reviewed
+offline retention deployment prerequisite, not an API startup or schema-wide
+maintenance mode.
+Explicit general schema initialization refuses invalid current/working path
+bindings with structured diagnostics and no binding rewrite. Invalid previous
+bindings warn without aborting startup. The shared validator checks JSON
+identity, authority, versions, counts and hash; a read-serving health result
+does not release an invalid path binding.
+
+### Sticky read-only startup
+
+`StartupPublicationReadOnlyState` selects its database policy before runtime pools and hosted
+writers exist. A private unpooled source applies general schema only for roles
+that own it, then revalidates current/working path bindings under a bounded
+selection fence. Invalid bindings or unavailable admission select
+`publication_path_artifact_validation_failed` or a specific database/fence
+reason, not `StopApplication`. All runtime pools, unpooled registration
+connections, publication-read locks and path-admission connections then use
+`default_transaction_read_only=on`. The policy cannot be re-enabled in process.
+Immediately after `builder.Build()`, `Program` eagerly resolves the main
+`NpgsqlDataSource`. Its factory selects publication startup state, fixes pool
+policy and releases the held transaction in one construction path, before
+pipeline/hosted-service construction or pool-using one-shot dispatch. There is
+no delayed DI gap through the 10-second idle timeout. One-shot/schema exemptions
+remain in the state factory; the dedicated retention-only CLI never builds a
+host or reaches this path.
+
+`StartupInitializer` loads only persisted state in that mode. It performs no
+provider sync, spool cleanup, cache purge, publication recovery, shop timer or
+registration startup writes. Mutation/background hosted services are replaced
+before construction, including scraper, heartbeat, progress bridge,
+staleness/publication monitors, catalog refresh, registration and band history.
+Transient persisted-load failures retry without admitting mutations. A fresh
+guarded restart after correcting the cause is required to restore writers.
+
+Persisted public GETs and valid cache hits remain available; existing
+publication/source gates still refuse invalid or missing data. `/readyz`
+reports this specific check as `Healthy` with an explicit `degraded_read_only`
+description/reason and HTTP 200 for read availability, not mutation readiness.
+The global `Degraded` mapping remains HTTP 503, so an unrelated degraded check
+still makes the aggregate non-healthy. Readiness JSON contains aggregate
+`status`, named `checks` with status/description, and the structured `startup`
+object; it does not serialize raw check exceptions.
+`/api/service-info.startup` exposes the selected state, separate read/mutation
+readiness, exact reason, current/working diagnostics and previous warnings.
+Configured rollout read-only flags remain separate from automatic degradation.
+The publication-only type and hosted-registration APIs deliberately differ
+from the execution-admission foundation. A future merge must compose both
+gates monotonically before pool creation, not alias either type or let one
+gate clear the other's refusal; see [ADR 0009](../decisions/0009-offline-retention-report-admission.md).
+
 ## API role
 
 Production `fstservice` normally runs with scraper mutation disabled. It still
@@ -53,15 +111,21 @@ exists. The normal split deployment uses the standalone Nginx web container.
 
 After CORS, WebSockets, and forwarded headers, the service applies:
 
-1. rate limiting;
-2. API-key authentication and authorization;
-3. public API response caching;
-4. publication read context;
-5. publication read leases;
-6. the public-read gate;
-7. selected-profile activity tracking.
+1. startup/rollout mutation guard;
+2. rate limiting;
+3. API-key authentication and authorization;
+4. public API response caching;
+5. publication read context;
+6. publication read leases;
+7. the public-read gate;
+8. selected-profile activity tracking.
 
 This order is part of the read-safety contract.
+During initialization/degradation the outer guard rejects mutation HTTP
+methods, known write-capable GETs and WebSocket admission. Selected-profile
+activity, including cache-hit activity, is skipped before resolving writers.
+Degraded PostgreSQL write refusals return `startup_read_only`, not a rollout
+violation; the read-only pool is the backstop for an unclassified SQL writer.
 
 When the service role enables `UsePublishedScopeSources`, publication-bound
 reads have an additional fail-closed invariant across that order. The

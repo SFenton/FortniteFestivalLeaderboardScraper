@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-28
-last_verified_commit: 21d7193c
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -27,6 +27,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
@@ -71,9 +72,32 @@ It does not replay notifications, allocate a scrape, or change freeze state.
 In particular, the existing allocation advisory lock must not be treated as a
 pre-freeze stop barrier.
 
+The deployment prerequisite is outside this publication flow: after the
+natural idle stop and external restart exclusion, run the exact retention-only
+schema initializer, prove unchanged non-retention rows/schema/counters,
+recreate the candidate service, and then guard-start the compatible worker
+for its genuine receipt. The dedicated mode does not run publication,
+notifications, catalog/path or startup services. The general initializer's
+path bootstrap no longer overwrites current-version binding provenance or
+timestamps; explicit path maintenance and older-manifest upgrade remain
+separate deliberate transitions. Already deployed additive retention schema
+is retained, not rolled back, and the prior binding mutation is not repaired.
+Bounded post-migration validation fails closed on invalid current/working
+bindings and future-version downgrade attempts, with explicit diagnostic
+codes. It never changes a binding merely to satisfy readiness; startup release
+readiness uses the same full identity/count/hash contract.
+Previous invalid bindings warn without blocking normal startup. Ordinary
+current/working refusal is selected before runtime pools: PostgreSQL read-only
+connections, suppressed hosted writers/recovery/provider sync, rejected HTTP
+and selected-profile mutations, and persisted read/cache serving. The
+`degraded_read_only` state is sticky until a fresh guarded restart. HTTP 200
+read-serving health does not admit the next scrape or imply source readiness.
+
 ## Normal pass
 
 1. **Startup and recovery**
+   - Complete pre-pool schema/path admission; a degraded process constructs no
+     mutation hosted services and performs none of the recovery below.
    - Wait for startup initialization and load the song catalog.
    - Resume a publication that was durably prepared but deferred.
    - Complete required improvement-notification recovery before another scrape.

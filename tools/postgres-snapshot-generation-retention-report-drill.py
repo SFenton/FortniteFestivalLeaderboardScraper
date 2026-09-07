@@ -6,11 +6,17 @@ import hashlib
 import json
 import os
 import pathlib
+import re
+import resource
 import shutil
 import signal
 import subprocess
 import time
 import uuid
+import urllib.error
+import urllib.request
+
+from snapshot_retention_schema_proof import run_schema_repair_proof
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FST_DATA = pathlib.Path("/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data")
@@ -56,6 +62,17 @@ def execute(arguments, *, environment=None, cwd=None, timeout=180, input_text=No
 def checked(arguments, **kwargs):
     result = execute(arguments, **kwargs)
     if result.returncode:
+        stdout, stderr = result.stdout, result.stderr
+        environment = kwargs.get("environment") or {}
+        for key in ("ConnectionStrings__PostgreSQL", "FST_TEST_POSTGRES_CONNECTION_STRING",
+                    "FST_SNAPSHOT_RETENTION_REPORT_CONNECTION_STRING"):
+            secret = environment.get(key)
+            if secret:
+                stdout = stdout.replace(secret, "[redacted]")
+                stderr = stderr.replace(secret, "[redacted]")
+        write("owned-command-failure-" + str(time.time_ns()) + ".json", {
+            "at": utc(), "executable": str(arguments[0]), "exitCode": result.returncode,
+            "stdout": stdout, "stderr": stderr})
         raise RuntimeError("Owned drill command failed: " + str(arguments[0]))
     return result.stdout
 
@@ -80,7 +97,19 @@ def main():
     parser.add_argument("--hold-for-tests", action="store_true")
     parser.add_argument("--run-focused-tests", action="store_true")
     parser.add_argument("--upgrade-from-880802ec", action="store_true")
+    parser.add_argument("--schema-only-repair", action="store_true")
+    parser.add_argument("--baseline-service")
+    parser.add_argument("--baseline-service-sha256")
     args = parser.parse_args()
+    if args.schema_only_repair and args.upgrade_from_880802ec:
+        parser.error("Select either the schema repair proof or the legacy reporter upgrade proof")
+    baseline_service = pathlib.Path(args.baseline_service).resolve() if args.baseline_service else None
+    if baseline_service is not None:
+        if not args.schema_only_repair or not baseline_service.is_relative_to(FST_DATA) \
+                or baseline_service.is_symlink() or sha(baseline_service) != args.baseline_service_sha256:
+            parser.error("A schema repair baseline requires an exact FST-drive service binary hash")
+    elif args.baseline_service_sha256:
+        parser.error("The baseline hash requires its explicit baseline service")
     os.chdir(ROOT)
     work = pathlib.Path(args.work_root).resolve()
     approved = ROOT / "artifacts/offline-retention-report-drills"
@@ -228,7 +257,8 @@ def main():
 
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
-    try:
+    def validate():
+        nonlocal container
         if execute(["docker", "image", "inspect", IMAGE], timeout=30).returncode:
             checked(["docker", "pull", IMAGE], timeout=300)
         container = checked([
@@ -278,7 +308,7 @@ def main():
             "fstDevice": os.stat(FST_DATA).st_dev, "artifactDevice": os.stat(work).st_dev,
             "pgdataDevice": os.stat("postgres-data").st_dev, "socketDevice": os.stat(socket).st_dev})
         for _ in range(90):
-            ready = execute(["docker", "exec", container, "pg_isready", "-U", "fst_test",
+            ready = execute(["docker", "exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "fst_test",
                              "-d", "fst_offline_report_tests"], timeout=15)
             if ready.returncode == 0:
                 break
@@ -303,6 +333,7 @@ def main():
         write("host-headroom-before-build.json", headroom())
         build = execute([
             "dotnet", "publish",
+            "FSTService/FSTService.csproj" if args.schema_only_repair else
             "tools/FstSnapshotGenerationRetentionReport/FstSnapshotGenerationRetentionReport.csproj",
             "-c", "Release", "--nologo", "-m:1", "-p:UseSharedCompilation=false", "-v:q",
         ], environment=environment, cwd=ROOT, timeout=600)
@@ -334,6 +365,168 @@ def main():
                                              "baseline": "DatabaseInitializer.EnsureSchemaAsync"})
         if initialize.returncode:
             raise RuntimeError("Exact isolated baseline schema initialization failed")
+        if args.schema_only_repair:
+            seed = execute([
+                "dotnet", "run", "--project", "tools/testdata/offline-retention-report-fixture/Fixture.csproj",
+                "-c", "Release", "-p:UseSharedCompilation=false", "--", "seed-schema-repair",
+            ], environment=environment, cwd=ROOT, timeout=180)
+            pathlib.Path("schema-fixture-seed.stdout").write_text(seed.stdout)
+            pathlib.Path("schema-fixture-seed.stderr").write_text(seed.stderr)
+            if seed.returncode:
+                raise RuntimeError("Live-like publication/path/catalog fixture seeding failed")
+
+            def invoke_service(name, arguments, service=None, expected_exit=0, json_output=False):
+                target = service or current_service
+                started = time.monotonic()
+                invocation = execute(["dotnet", str(target), *arguments],
+                                     environment=seed_environment, cwd=work, timeout=180)
+                if connection in invocation.stdout or connection in invocation.stderr:
+                    raise RuntimeError("Service connection output was suppressed")
+                pathlib.Path(name + ".stdout").write_text(invocation.stdout)
+                pathlib.Path(name + ".stderr").write_text(invocation.stderr)
+                write(name + "-invocation.json", {
+                    "observedAt": utc(), "exitCode": invocation.returncode,
+                    "elapsedSeconds": time.monotonic() - started,
+                    "serviceBinary": str(target), "serviceSha256": sha(target),
+                    "arguments": arguments})
+                if invocation.returncode != expected_exit:
+                    raise RuntimeError("Schema command failed its expected outcome: " + name)
+                return json.loads(invocation.stdout) if json_output else invocation
+
+            def serve_degraded(name, arguments):
+                data_directory = work / (name + "-data")
+                data_directory.mkdir()
+                for child in ("home", "cache", "config", "data"):
+                    (data_directory / child).mkdir()
+                runtime_environment = dict(seed_environment)
+                runtime_environment.update({
+                    "HOME": str(data_directory / "home"),
+                    "DOTNET_CLI_HOME": str(data_directory / "home"),
+                    "XDG_CACHE_HOME": str(data_directory / "cache"),
+                    "XDG_CONFIG_HOME": str(data_directory / "config"),
+                    "XDG_DATA_HOME": str(data_directory / "data"),
+                    "ASPNETCORE_URLS": "http://127.0.0.1:0",
+                    "Api__ApiKey": uuid.uuid4().hex,
+                    "Scraper__DataDirectory": str(data_directory),
+                    "Scraper__DeviceAuthPath": str(data_directory / "device-auth.json"),
+                    "Scraper__ApiOnly": "false",
+                    "Scraper__RunOnce": "false",
+                    "Scraper__BackfillOnly": "false",
+                    "Scraper__DisableScraperWorker": "false",
+                    "Scraper__RegistrationSyncWorkerOnly": "false",
+                    "Scraper__UsePublicationPathArtifacts": "true",
+                    "Scraper__EnableAutomaticPathGeneration": "false",
+                    "Scraper__RolloutReadOnlyStartup": "false",
+                    "Scraper__RolloutPostgresReadOnly": "false",
+                    "DOTNET_USE_POLLING_FILE_WATCHER": "1",
+                })
+                stdout_path, stderr_path = work / (name + ".stdout"), work / (name + ".stderr")
+                with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+                    process = subprocess.Popen(
+                        ["dotnet", str(current_service), *arguments], env=runtime_environment, cwd=work,
+                        stdout=stdout, stderr=stderr, start_new_session=True,
+                        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)))
+                    started = utc()
+                    validated = False
+                    try:
+                        address = None
+                        deadline = time.monotonic() + 60
+                        info = None
+                        while time.monotonic() < deadline:
+                            if process.poll() is not None:
+                                raise RuntimeError("The ordinary degraded service exited before serving: " + name)
+                            ports = re.findall(r"Now listening on: http://127\.0\.0\.1:([1-9][0-9]*)",
+                                               stdout_path.read_text())
+                            if ports:
+                                address = "http://127.0.0.1:" + ports[-1]
+                                try:
+                                    with urllib.request.urlopen(address + "/api/service-info", timeout=2) as response:
+                                        info = json.load(response)
+                                    if (info.get("startup") or {}).get("readServingReady") is True:
+                                        break
+                                except (urllib.error.URLError, TimeoutError, ConnectionError):
+                                    pass
+                            time.sleep(0.25)
+                        else:
+                            raise RuntimeError("The ordinary degraded service did not become read-serving")
+                        startup = info["startup"]
+                        if startup["state"] != "degraded_read_only" or startup["mutationReady"] is not False \
+                                or info["postgresDefaultTransactionReadOnly"] is not True \
+                                or info["rolloutReadOnlyStartup"] is not False \
+                                or info["readOnlyViolationDetected"] is not False:
+                            raise RuntimeError("Ordinary startup did not select the explicit database-protected degraded state")
+                        expected_suppressed = (
+                            {"ImprovementNotificationStalenessMonitor", "PublicationChangeMonitorService",
+                             "SongCatalogRefreshWorker"} if "--api-only" in arguments else
+                            {"ImprovementNotificationStalenessMonitor", "DurablePhaseProgressBridgeService",
+                             "WorkerStatusHeartbeatService", "ScraperWorker", "RegistrationBackfillWorker",
+                             "BandRankHistoryWorker"})
+                        suppressed = set(re.findall(
+                            r"Hosted mutation/background service (\w+) suppressed", stdout_path.read_text()))
+                        if suppressed != expected_suppressed:
+                            raise RuntimeError("The ordinary degraded host did not suppress every expected background service")
+                        requests = []
+                        for method, path in (
+                            ("GET", "/healthz"), ("GET", "/readyz"), ("GET", "/api/songs"),
+                            ("POST", "/api/account/name-refresh"), ("GET", "/api/admin/epic-token"),
+                            ("GET", "/api/player/fixture-selected/stats"),
+                        ):
+                            request = urllib.request.Request(
+                                address + path, method=method,
+                                headers={"X-FST-Selected-Player": "fixture-selected",
+                                         "Content-Type": "application/json"},
+                                data=b"{}" if method == "POST" else None)
+                            try:
+                                with urllib.request.urlopen(request, timeout=5) as response:
+                                    status, body = response.status, response.read()
+                            except urllib.error.HTTPError as response:
+                                status, body = response.code, response.read()
+                            requests.append({"method": method, "path": path, "status": status,
+                                             "sha256": hashlib.sha256(body).hexdigest(),
+                                             "body": body.decode()})
+                        if [item["status"] for item in requests] != [200, 200, 200, 503, 503, 503]:
+                            write(name + "-requests.json", requests)
+                            raise RuntimeError("Degraded public-read/mutation HTTP behavior was incorrect")
+                        readiness = json.loads(requests[1]["body"])
+                        if readiness["status"] != "Healthy" or readiness["startup"] != startup \
+                                or "degraded_read_only" not in readiness["checks"]["database"]["description"]:
+                            raise RuntimeError("Read-serving health hid its sticky mode or used the global Degraded status")
+                        if requests[2]["body"] != '[{"songId":"schema-repair-song","title":"persisted-read-proof"}]':
+                            raise RuntimeError("Degraded GET did not preserve the exact persisted publication cache")
+                        write(name + "-requests.json", requests)
+                        with urllib.request.urlopen(address + "/api/service-info", timeout=5) as response:
+                            final_info = json.load(response)
+                        if final_info["readOnlyViolationDetected"] is not False:
+                            raise RuntimeError("Degraded blocking was misclassified as a rollout violation")
+                        write(name + "-state.json", {"startedAt": started, "pid": process.pid,
+                            "arguments": arguments, "address": address, "serviceSha256": sha(current_service),
+                            "initial": info, "afterRequests": final_info,
+                            "suppressedHostedServices": sorted(suppressed)})
+                        validated = True
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGTERM)
+                            try:
+                                process.wait(timeout=20)
+                            except subprocess.TimeoutExpired:
+                                os.killpg(process.pid, signal.SIGKILL)
+                                process.wait(timeout=10)
+                        write(name + "-cleanup.json", {"pid": process.pid, "exitCode": process.returncode,
+                            "processAbsent": not pathlib.Path(f"/proc/{process.pid}").exists()})
+                        if data_directory.exists():
+                            shutil.rmtree(data_directory)
+                        if validated and (process.returncode != 0 or pathlib.Path(f"/proc/{process.pid}").exists()):
+                            raise RuntimeError("Ordinary degraded service did not shut down cleanly")
+                if sql("""
+                    SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()
+                      AND application_name IN ('fstservice-api','fstworker-scraper',
+                        'fst-startup-schema-selection','fst-publication-read-lock')
+                    """) != "0":
+                    raise RuntimeError("Degraded service database ownership remains after shutdown")
+
+            result.update(run_schema_repair_proof(
+                sql, invoke_service, write, baseline_service, serve_degraded=serve_degraded))
+            return
         sql(SEED_SQL)
         if args.upgrade_from_880802ec:
             legacy_source = json.loads(sql(SOURCE_PARITY_SQL))
@@ -444,6 +637,8 @@ def main():
                        "realPlannerAndOracleInvoked": True, "oneCycleOnly": True,
                        "binarySha256": sha(binary),
                        "wrapperSha256": sha(ROOT / "tools/postgres-snapshot-generation-retention-report.sh")})
+    try:
+        validate()
     except Exception as error:
         result.update({"outcome": "failed", "error": str(error)})
     finally:

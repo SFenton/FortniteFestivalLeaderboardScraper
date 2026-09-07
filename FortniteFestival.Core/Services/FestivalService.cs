@@ -192,7 +192,9 @@ namespace FortniteFestival.Core.Services
         {
             if (_initialized)
                 return;
-            _initialized = true;
+            // A failed persisted-only load must remain retryable without enabling provider sync.
+            if (!persistedOnly)
+                _initialized = true;
             if (_persistence != null)
             {
                 var loadedScores = await _persistence.LoadScoresAsync().ConfigureAwait(false);
@@ -262,7 +264,10 @@ namespace FortniteFestival.Core.Services
                 }
             }
             if (persistedOnly)
+            {
+                _initialized = true;
                 return;
+            }
 
             // Establish image root and /images subfolder early
             try

@@ -1,12 +1,17 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-06
-last_verified_commit: 880802ec
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - tools/FstSnapshotGenerationRetentionReport/
   - tools/postgres-snapshot-generation-retention-report.sh
   - tools/postgres-snapshot-generation-retention-report-drill.py
+  - tools/snapshot_retention_schema_proof.py
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Locks.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
@@ -94,14 +99,20 @@ new instance-bound receipt; a pending file edit is not an immediate kill switch.
 The first canonical-uniqueness migration is an offline schema-only stage.
 For an existing report schema without the canonical constraint, initialization
 acquires the legacy admission chain nonblockingly, locks worker/publication
-state, and refuses active, unknown, stale or nonterminal boundaries. Empty
-fresh databases can initialize directly. An old worker cannot race its
-three-column conflict target through this migration.
+state, and refuses active, unknown, stale or nonterminal boundaries. New service
+databases use their normal complete initialization. An old worker cannot race its
+three-column conflict target through this migration. The dedicated initializer
+requires the existing FST database prerequisites; it does not bootstrap a new
+service database.
 
 The exact order is: finish publication/notifications and unfreeze; perform the
-externally guarded stop and exclude restarts; run reviewed schema-only
-initialization within the fresh offline window; then start the compatible
-canonical-lookup-aware worker through the guard. Only its new receipt can
+externally guarded stop and exclude restarts; run the reviewed
+`dotnet FSTService.dll --initialize-snapshot-retention-schema-only` command
+from the candidate binary within the fresh offline window; prove unchanged
+non-retention rows, mutation counters and publication/path/catalog/source
+identities; recreate only the candidate service and restore full public
+health; then start the compatible canonical-lookup-aware worker through the
+guard. Only its new receipt can
 authorize later offline reporting. The old same-kind conflict target remains
 valid; an old cross-kind insert fails immediately on canonical uniqueness,
 without rewriting evidence. This bounded refusal is not compatibility with an
@@ -111,6 +122,64 @@ the canonical constraint will reject a conflicting old insert rather than
 duplicate evidence, and that old worker cannot interpret the cross-kind
 conflict. Keep the compatible worker or backport its lookup contract. API-only
 readers do not acquire offline execution authority.
+
+### Source-preserving deployment initialization
+
+The dedicated service command is separate from the host reporter's command
+surface. It dispatches before replay, `.env` loading, configuration/host
+construction or hosted-service registration. It reads only
+`ConnectionStrings__PostgreSQL` from the process environment and accepts no
+additional argument, including other schema, maintenance or hosting flags.
+It executes only the shared `SnapshotGenerationRetentionSchema.Sql` step:
+2-second lock timeout, 15-second statement timeout, 20-second command timeout,
+10-second connection timeout and a 30-second cancellation deadline. Its
+unpooled data source is disposed before secret-free success JSON is written.
+It neither runs the general initializer nor creates a worker receipt.
+Its connection search path is exactly `pg_catalog,public`. Retention DDL
+explicitly qualifies application objects with `public` and catalog functions
+with `pg_catalog`, including variadic-overload-sensitive formatting, so public
+shadow objects cannot redirect initialization.
+
+Do not substitute full `--initialize-schema-only` for this deployment step.
+That general command still owns other schema/data initialization. Its path
+bootstrap is now insert-only: an existing current-version binding retains
+exact JSON, provenance, kind, count, hash, status and `built_at`, including
+nonlegacy sources. Missing current bindings bootstrap; unversioned legacy or
+strictly older positive-integer manifest versions use the explicit upgrade
+path. Future/malformed versions are not silently downgraded or silently skipped:
+bounded current/working validation after bootstrap/upgrade fails the path-schema transaction
+with publication IDs and stable diagnostic codes. Explicit null, nonpositive,
+fractional and nonnumeric versions are invalid, not legacy upgrades.
+Ready bindings must satisfy the same canonical release contract used by
+startup readiness, including JSON identity/authority, publication/scrape,
+versions, expected/actual/binding counts and the canonical content hash.
+Invalid rows are never rewritten to hide the refusal. Deliberate
+runtime path/publication maintenance retains its explicit rebinding behavior.
+Previous invalid bindings are non-serving warnings, not startup aborts.
+Ordinary service startup uses `StartupPublicationReadOnlyState`, distinct from
+the separate execution-admission foundation. The main data source is eagerly
+resolved immediately after host build, completing selection and fence release
+before pipeline or hosted-service construction. A current/working refusal
+selects sticky `degraded_read_only` with
+PostgreSQL read-only connections, mutation HTTP/selected-profile rejection
+and no hosted writer, provider sync or publication recovery. Persisted public
+reads/caches remain available without releasing invalid path data. Its
+readiness check reports `Healthy`/HTTP 200 with explicit `degraded_read_only`
+details in structured JSON; unrelated `Degraded`/`Unhealthy` checks remain
+HTTP 503. Read availability is not deployment acceptance: require
+`startup.mutationReady=true` and no current/working diagnostics before guarded
+worker acceptance. Only a fresh guarded restart can clear the latch.
+API-only startup still skips general schema initialization; recreating the API
+is not evidence that a migration ran.
+
+The rejected deployment after scrape `1362` already applied the additive
+canonical retention schema in production. The full initializer also refreshed
+publication `223`'s path binding, so the no-publication-mutation gate rejected
+promotion and official runtime images were restored. Keep that compatible
+additive schema; do not roll it back to retry. This repair prevents subsequent
+bootstrap overwrites and does **not** repair or claim to restore that existing
+binding mutation. Parent review and a new deployment/canary gate remain
+required.
 
 ## Admission and transaction boundary
 
@@ -309,6 +378,38 @@ exercise the exact prior initializer, record both legacy kind constraints,
 upgrade through the current initializer, and prove source rows unchanged.
 The configuration fixture invokes the real worker-configuration publisher;
 the production reporter never creates its own authority.
+
+The source-preserving deployment proof uses the same owned fixture:
+
+```bash
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-schema-run> \
+  --schema-only-repair
+```
+
+It seeds a live-like publication/catalog/path snapshot with nonlegacy
+provenance, compares the complete binding through repeated full initialization,
+and launches the actual `--initialize-schema-only` executable repeatedly,
+comparing all non-retention row hashes and mutation counters, not just the
+binding. Catalog and publication/disabled-notification compatibility
+normalization skip already-correct values. The drill also runs the actual
+retention-only CLI against a simulated older retention
+schema and then its already-current shape. All non-retention tables have
+statement-level mutation traps, row hashes, physical identity and mutation
+counter comparisons; non-retention schema definitions are also compared.
+Mixed commands refuse before any workload. An optional `--baseline-service`
+plus `--baseline-service-sha256` pins an existing FST-drive baseline binary to
+reproduce the prior mutation inside the disposable database only.
+Future-version, malformed-version and invalid-ready-binding cases also execute
+the full CLI and require nonzero exit plus structured diagnostics, while the
+exact invalid binding remains unchanged.
+Reachable current-ready/inexact-catalog, current-ready/missing-catalog and
+invalid-working scenarios additionally launch the ordinary service executable.
+They require exact persisted GET/cache bytes, explicit degraded health/status,
+HTTP mutation refusal, suppressed hosted writers, no rollout-violation
+misclassification and unchanged non-retention rows/counters. Actual service
+process groups, database backends and per-case HOME/XDG/data paths must be
+absent before fixture cleanup is accepted.
 
 The drill requires an FST-drive worktree and uses only a new labelled
 PostgreSQL 17 container with network `none`, no ports, bounded resources,
