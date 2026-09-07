@@ -7,6 +7,7 @@ const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === '1';
 const crossEngineTests = [
   '**/specs/browser/**/*.spec.ts',
   '**/specs/accessibility/**/*.spec.ts',
+  '**/specs/responsive/desktop-scroll-panels.spec.ts',
 ];
 const wideTests = [
   '**/specs/pages/manual/**/*.spec.ts',

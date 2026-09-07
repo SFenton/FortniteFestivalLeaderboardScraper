@@ -103,6 +103,8 @@ describe('useScrollFade', () => {
       const { wrapper } = createScrollContainerWrapper();
       let viewportHeight = 120;
       const scrollEl = document.createElement('div');
+      Object.defineProperty(scrollEl, 'clientHeight', { get: () => viewportHeight, configurable: true });
+      Object.defineProperty(scrollEl, 'clientWidth', { value: 300, configurable: true });
       Object.defineProperty(scrollEl, 'scrollHeight', { value: 1000, configurable: true });
       Object.defineProperty(scrollEl, 'scrollTop', { value: 0, configurable: true });
       scrollEl.getBoundingClientRect = () => ({ top: 0, bottom: viewportHeight, left: 0, right: 300, width: 300, height: viewportHeight, x: 0, y: 0, toJSON: () => '' });

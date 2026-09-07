@@ -58,6 +58,18 @@ export const E2E_BAND = {
     { accountId: 'e2e-player-b', displayName: 'E2E Player B' },
   ],
 } as const;
+export const E2E_QUAD_BAND = {
+  ...E2E_BAND,
+  bandId: 'e2e-quad-band',
+  bandType: 'Band_Quad' as const,
+  teamKey: 'e2e-player-a:e2e-player-b:e2e-player-c:e2e-player-d',
+  displayName: 'E2E Quad',
+  members: [
+    ...E2E_BAND.members,
+    { accountId: 'e2e-player-c', displayName: 'E2E Player C' },
+    { accountId: 'e2e-player-d', displayName: 'E2E Player D' },
+  ],
+};
 export const E2E_SONG_ID = 'e2e-song-01';
 export const E2E_COMBO_ID = '01+02';
 
@@ -221,6 +233,22 @@ export function createScrollableShopScenario(): AppScenario {
       newSongs: [populated.songs.songs[0]!.songId],
       lastUpdated: E2E_NOW,
     },
+  };
+}
+
+export function createDesktopScrollScenario(): AppScenario {
+  const populated = createPopulatedScenario();
+  const letters = ['0', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+  const songs = letters.flatMap((letter, letterIndex) => Array.from({ length: 3 }, (_, index) => ({
+    ...populated.songs.songs[(letterIndex * 3 + index) % populated.songs.songs.length]!,
+    songId: `e2e-song-${String(letterIndex * 3 + index + 1).padStart(2, '0')}`,
+    title: `${letter} Scroll Song ${index + 1}`,
+    artist: `Scroll Artist ${letter}`,
+  })));
+  return {
+    ...populated,
+    name: 'desktop-scroll-panels',
+    songs: { ...populated.songs, count: songs.length, songs },
   };
 }
 

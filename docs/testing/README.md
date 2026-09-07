@@ -2,8 +2,12 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified_commit: a8579529
 sources:
+  - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
+  - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
+  - FortniteFestivalWeb/__test__/hooks/ui/useWheelHandoff.test.tsx
+  - FortniteFestivalWeb/__test__/components/leaderboard/LeaderboardPaginationFooter.test.tsx
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
   - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
@@ -84,6 +88,8 @@ sources:
   - tools/capture-publication-route-contract.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
+  - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/support/focusAppearance.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/.node-version
@@ -1050,11 +1056,89 @@ Save-Data, and friendly instrument image semantics. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
 
+Focus appearance has a separate computed-style regression matrix:
+
+```bash
+corepack yarn playwright test e2e/specs/accessibility/focus-appearance.spec.ts \
+  --project=chromium-mobile --project=webkit-mobile --project=chromium-desktop
+```
+
+It measures fresh First Run/changelog startup, returning-user startup, real
+touch controls/custom links, cold/warm and nested dialogs, text entry, exact
+focus return, keyboard/skip navigation, hybrid input, reload/POP, application
+clicks/downloads, and forced colors. Attachments pair browser versions and event/
+active-element/`:focus-visible`/outline/tap-color observations with screenshots.
+The tests assert rendered decoration and preserved focus ownership, not only
+the presence of a CSS selector. Editing/contenteditable/IME provenance also has
+targeted unit coverage in `__test__/utils/focusAppearance.test.ts`.
+The Export Data case holds the existing fixture response, observes the disabled
+button and actual focus owner, consumes the fixture download, and checks that
+its untrusted anchor click does not change input provenance. A real keyboard
+Enter sequence records its trusted click, but its preceding keydown also
+restores appearance. Isolated trusted-click decisions therefore use explicitly
+modeled unit inputs; `dispatchEvent` and `HTMLElement.click()` are untrusted and
+are not presented as physical assistive-technology coverage.
+Lazy loading panels and their ready dialogs share accessible names. Hold the
+module to measure the loading panel separately, then identify the ready dialog
+by its actual controls before measuring it. A detached loading panel has no
+valid computed paint evidence and must fail rather than count as quiet focus.
+For global appearance changes, also inspect the emitted entry stylesheet and
+exercise the built `wwwroot` app through a fixture-only static preview. Vite's
+development CSS injection can pass while an unreferenced CSS Module is removed
+from the production bundle.
+
+No-input startup cases navigate directly instead of using
+`gotoAppRoute`/`dismissObstructions`, which can inject mouse clicks.
+`AppState.reset()` pre-dismisses the current changelog, so changed-changelog
+cases explicitly remove that record. Use genuine touch-enabled projects, not
+only a narrow desktop viewport. Browser emulation does not establish physical
+soft-keyboard, native accessibility-overlay, or standalone-PWA behavior;
+record `pageshow.persisted` before claiming BFCache coverage.
+
+Fixture-based tests intercept API requests and WebSockets before loading the
+app. An ordinary operator browser needs an actual local mock API target:
+Playwright interception alone does not make a Vite preview fixture-backed.
+Never allow an isolated focus investigation to fall through to the normal
+localhost API proxy or a production endpoint.
+
 Component UX uses Playwright's stable stories-and-gallery model through
 `playwright.component.config.ts`; publication transitions use a dedicated
 network-publication server through `playwright.publication.config.ts`.
 Breakpoint widths are parameterized in focused tests rather than represented
 as full-suite projects.
+
+`specs/responsive/desktop-scroll-panels.spec.ts` owns desktop panel geometry,
+trusted wheel hit-testing, absence of imperative scroll forwarding, fit and
+overflow boundaries, alphabet/POP restoration, short selected-band controls,
+real reveal timing, keyboard/modal focus, glow, and wide Settings axe coverage.
+Its desktop cases run in Chromium wide and desktop WebKit/Firefox; its compact
+cases run in the wide/mobile owners, including touch selection and wide
+mobile-chrome fallback. The compact matrix explicitly includes 390px phones
+and ordinary 1280px desktop layouts as well as breakpoint boundaries. Focused
+commands are:
+
+```bash
+corepack yarn e2e e2e/specs/responsive/desktop-scroll-panels.spec.ts \
+  --project=chromium-wide --project=chromium-mobile
+corepack yarn e2e e2e/specs/responsive/desktop-scroll-panels.spec.ts \
+  --project=webkit-desktop --project=firefox-desktop --project=webkit-mobile
+```
+
+Mobile WebKit does not support Playwright wheel injection; those compact cases
+use native PageDown input and touch selection instead. The reveal case preserves
+seen first-run slides while clearing catalog caches, avoiding unsupported mocked
+304 fulfillment in WebKit without replacing the real animation lifecycle.
+The continued-gesture case also verifies Firefox's one-event page-to-panel
+handoff fence and subsequent native panel scrolling, plus native PageDown
+while the pointer remains over chrome. This is distinct from waiting for
+measured scroll offsets to settle; no physical momentum claim is inferred.
+
+Selected-player and band cases use the isolated scenario router. They are not
+real-backend read-only probes: ordinary selected-profile initialization can
+POST name-refresh or tracking requests. Separate real-backend checks require
+an ordinary-dev, fresh anonymous browser context, bounded public requests,
+and denial of unsafe API methods. Do not reuse mocked scenario fixtures or the
+default e2e publication stub as evidence of genuine API data flow.
 
 Coverage-ignore directives are validated before coverage:
 

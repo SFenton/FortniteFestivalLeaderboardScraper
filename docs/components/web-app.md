@@ -1,14 +1,32 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-02
-last_verified_commit: 3bf8c6e3
+last_verified: 2026-09-06
+last_verified_commit: 341d5e88
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/src/main.tsx
+  - FortniteFestivalWeb/src/utils/focusAppearance.ts
+  - FortniteFestivalWeb/src/styles/focusAppearance.module.css
+  - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
   - FortniteFestivalWeb/src/App.tsx
+  - FortniteFestivalWeb/src/App.module.css
+  - FortniteFestivalWeb/src/appStyles.ts
+  - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.tsx
+  - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.module.css
+  - FortniteFestivalWeb/src/components/page/PageQuickLinks.tsx
+  - FortniteFestivalWeb/src/components/page/PageQuickLinks.module.css
+  - FortniteFestivalWeb/src/utils/scrollViewport.ts
+  - FortniteFestivalWeb/src/hooks/ui/useWheelHandoff.ts
+  - FortniteFestivalWeb/src/hooks/ui/usePageQuickLinks.ts
+  - FortniteFestivalWeb/src/hooks/ui/useScrollMask.ts
+  - FortniteFestivalWeb/src/hooks/ui/useScrollFade.ts
+  - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
+  - FortniteFestivalWeb/src/pages/leaderboard/player/PlayerHistoryPage.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/components/VirtualizedSuggestionsList.tsx
+  - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
   - FortniteFestivalWeb/src/components/common/Accordion.tsx
   - FortniteFestivalWeb/src/components/shell/fab/MobileFloatingActionButton.tsx
@@ -144,6 +162,56 @@ The application has mobile and wide-desktop shells around one shared route
 tree. Pages use shared shell, loading, empty, error, modal, card, navigation,
 and action primitives, but not every route has an identical component shape.
 
+### Desktop panels and native scrolling
+
+The wide shell is active at 1440px and above only when mobile chrome is not
+active. Mobile/PWA chrome remains compact even on a wide viewport; Quick Links
+producers use that same distinction rather than width alone.
+
+Desktop navigation and the profile/Manual/Settings utility group are separate
+content-height panels anchored to the top and bottom of the left rail.
+Their full-height positioning frame is pointer-transparent. When vertical
+space is constrained, both panels can scroll internally instead of shrinking
+their controls or clipping the selected band's members and utility actions.
+The existing exported navigation/control styles remain available to the
+first-run navigation demo; new panel geometry is owned by CSS Modules.
+
+The right portal retains the full available height for measurement but does
+not intercept input. Its rendered Quick Links surface uses only the required
+height, capped to that budget; long lists such as Songs A–Z scroll internally.
+The reveal gate remains on the content-height root, and descendants inherit
+its pointer state until reveal completes. Existing inline `--frosted-card`
+markers stay on controls, not on rail frames or entire panels.
+
+Actual panel surfaces use native overflow and scroll containment. Wheel input
+over their controls or padding does not scroll main, including fitting lists
+and scroll boundaries. Empty rail space reaches the browser's native main
+scroller; there is no JavaScript wheel forwarding or artificial scroll range.
+Activating a navigation or Quick Links control still performs its intentional
+route or section navigation.
+
+Main scrolling belongs to `[data-testid="app-scroll-container"]`, not the
+document or `main#main-content`. In the wide shell, a transparent top border
+equal to the page-header portal height extends that element's native hit area
+into the empty header-side gutters. The visible client viewport and content
+start remain below the header, while the center header remains independent.
+The wide center header also uses native overflow containment. Firefox can
+retain an already-started page wheel transaction after the pointer enters
+overlay chrome. A Firefox-only handoff fence consumes the first wheel after
+page-to-panel transfer; subsequent wheels scroll the panel natively. Its page
+listener is passive, cancellation is attached only to actual panels/header,
+and no wheel deltas are forwarded. Pointer/key actions reset that ownership,
+and Ctrl-wheel zoom is left native. The intentional tradeoff is that the first
+handoff wheel ends the prior transaction rather than moving the panel.
+Its border box and client viewport therefore have different top/height values.
+`src/utils/scrollViewport.ts` owns client-viewport bounds and size observation
+for section offsets/visibility, masks, edge fades, virtual-list margins, and
+fixed-footer clearance. Songs, Suggestions, and Player History virtualizers
+observe client size, including header changes that leave the border box fixed.
+Compact/mobile shells retain their existing borderless scroll layout.
+
+### Shared interaction contracts
+
 Accordion triggers own stable panel relationships through `aria-expanded` and
 `aria-controls`. Collapsed panels remain mounted for their grid-row transition
 but are `inert` and `aria-hidden`, so hidden controls never enter the tab order.
@@ -160,6 +228,41 @@ the modal restores. `src/routes.ts` and `src/routeMetadata.ts` supply route
 matching, titles, and mobile chrome labels, including Not Found metadata. A
 visually hidden fallback H1 covers lazy/mobile gaps and self-removes whenever a
 page-owned visible H1 is present.
+
+Focus ownership and focus appearance are separate. `installFocusAppearance`
+runs before React in both the application and component gallery. Its
+document-level capture listeners keep passive startup and pointer interaction
+visually quiet, including body-portaled dialogs and lazy loading replacements.
+The CSS override is limited to interactive controls and the main/dialog
+structural focus targets; it does not blur elements, change initial targets,
+alter modal traps/return focus, or remove keyboard and screen-reader semantics.
+The document marker is not persisted and survives app-managed focus transfers
+until the next relevant input, rather than disappearing when a launcher blurs.
+Its CSS Module root class is explicitly bound to `documentElement`, so the
+production build retains the stylesheet; a global-only side-effect import is
+not sufficient. Disposal restores both the prior scope class and marker.
+
+Keyboard navigation/activation restores native `:focus-visible` presentation
+before component handlers run. Printable, composing/IME, and text-editing keys
+do not masquerade as navigation; Tab and Escape can leave text-entry mode.
+Trusted, pointer-free, zero-detail browser activation falls back to native
+presentation rather than inheriting stale touch suppression or being assumed
+to be a keyboard. Untrusted application-generated clicks do not change that
+provenance: Export Data's temporary download anchor, for example, is not new
+user input. This does not cancel the click or change download/focus behavior.
+Forced-colors mode bypasses the quiet override. The rule uses no `!important`
+and leaves text-field styling, caret/selection, selected/error colors, and
+decorative shadows intact. Native accessibility overlays are outside this
+application styling policy.
+
+The blue keyboard outline remains intentional, including custom `role="link"`
+controls. Native tap highlighting is independently made transparent on `html`
+so wrappers, custom links, and text fields inherit the same policy. The neutral
+press pulse remains unchanged. Do not replace this separation with blanket
+outline removal, device-width heuristics, or delayed blur. Forcing native
+`focusVisible: false` is also insufficient: engines differ when keyboard input
+reaches that same focused element, and re-focusing it does not reliably restore
+the indicator without a focus transition.
 
 Decorative visual policy is centralized through `useVisualPreferences`.
 Reduced motion removes background crossfades, continuous pulse/breathe

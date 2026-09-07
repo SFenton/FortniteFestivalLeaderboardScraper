@@ -365,6 +365,19 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
     });
+
+  });
+
+  it('uses modal selection rather than desktop rail behavior in wide mobile chrome', async () => {
+    mockIsMobileChromeOverride.value = true;
+    setViewportQueries({ mobile: false, wide: true });
+    renderSettings({ withQuickLinksHarness: true });
+    expect(screen.queryByTestId('settings-quick-links-rail')).toBeNull();
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+    const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
+    fireEvent.click(within(dialog).getByTestId('settings-quick-link-show-instruments'));
+    fireEvent.transitionEnd(dialog);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull());
   });
 
   it('opens the settings quick links modal with the expected sections and closes on selection', async () => {

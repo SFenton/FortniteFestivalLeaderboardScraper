@@ -1,9 +1,18 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { stubResizeObserver } from '../../helpers/browserStubs';
-import { useVirtualListScrollMargin } from '../../../src/hooks/ui/useVirtualListScrollMargin';
+import { resolveVirtualListScrollMargin, useVirtualListScrollMargin } from '../../../src/hooks/ui/useVirtualListScrollMargin';
 
 describe('useVirtualListScrollMargin', () => {
+  it('excludes the native gutter border from list offsets', () => {
+    const scrollElement = document.createElement('div');
+    const listElement = document.createElement('div');
+    scrollElement.scrollTop = 120;
+    Object.defineProperty(scrollElement, 'clientTop', { value: 64 });
+    scrollElement.getBoundingClientRect = () => rect(20);
+    listElement.getBoundingClientRect = () => rect(140);
+    expect(resolveVirtualListScrollMargin(scrollElement, listElement)).toBe(176);
+  });
   it('measures the list offset and resets while disabled', () => {
     const observers = stubResizeObserver();
     const scrollElement = document.createElement('div');
