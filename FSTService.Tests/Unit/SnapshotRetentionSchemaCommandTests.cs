@@ -116,7 +116,7 @@ public sealed class SnapshotRetentionSchemaCommandTests
         })
             Assert.DoesNotContain(forbidden, command, StringComparison.Ordinal);
         var initializer = File.ReadAllText(Path.Combine(root, "FSTService/Persistence/DatabaseInitializer.cs"));
-        var start = initializer.IndexOf("internal static async Task EnsureSnapshotGenerationRetentionSchemaAsync",
+        var start = initializer.IndexOf("internal static async Task<SnapshotRetentionSchemaDmlProof> EnsureSnapshotGenerationRetentionSchemaAsync",
             StringComparison.Ordinal);
         var end = initializer.IndexOf("internal static DatabaseSchemaInitializationStep", start, StringComparison.Ordinal);
         var dedicated = initializer[start..end];

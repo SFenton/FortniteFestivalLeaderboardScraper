@@ -81,16 +81,55 @@ public static class DatabaseInitializer
         await seqCmd.ExecuteNonQueryAsync(ct);
     }
 
-    internal static async Task EnsureSnapshotGenerationRetentionSchemaAsync(
+    internal static async Task<SnapshotRetentionSchemaDmlProof> EnsureSnapshotGenerationRetentionSchemaAsync(
         NpgsqlDataSource dataSource,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeDmlAssertionForTest = null,
+        Func<CancellationToken, Task>? afterServerCommitForTest = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
-        await using var connection = await dataSource.OpenConnectionAsync(ct);
-        await ExecuteSchemaInitializationStepAsync(
-            connection,
-            SnapshotGenerationRetentionInitializationStep,
-            ct);
+        var step = SnapshotGenerationRetentionInitializationStep;
+        SnapshotRetentionSchemaSqlBackstop.RequireDdlOnly(step.Sql);
+        SnapshotRetentionSchemaDmlProof? proof = null;
+        var commitAttempted = false;
+        var commitAcknowledged = false;
+        try
+        {
+            // PG17's xact view can include older unflushed backend counts; never reuse a session here.
+            await using var connection = new PostgresUnpooledConnectionFactory(dataSource.ConnectionString).CreateConnection();
+            await connection.OpenAsync(ct);
+            IReadOnlyList<SnapshotRetentionSchemaTableIdentity>? identitiesBefore = null;
+            await ExecuteSchemaInitializationStepAsync(
+                connection, step, ct,
+                beforeExecute: async (session, transaction, token) =>
+                {
+                    await SnapshotRetentionSchemaDmlAssertion.AcquireAdmissionAsync(session, transaction, token);
+                    identitiesBefore = await SnapshotRetentionSchemaRelationIdentity.CaptureAsync(session, transaction, token);
+                },
+                beforeCommit: async (session, transaction, token) =>
+                {
+                    if (beforeDmlAssertionForTest is not null)
+                        await beforeDmlAssertionForTest(session, transaction, token);
+                    proof = await SnapshotRetentionSchemaDmlAssertion.AssertBeforeCommitAsync(session, transaction,
+                        identitiesBefore ?? throw new InvalidOperationException("Source identity baseline is absent."), token);
+                },
+                commitTransaction: async (transaction, token) =>
+                {
+                    if (proof is null)
+                        throw new InvalidOperationException("The combined proof is absent before commit.");
+                    commitAttempted = true;
+                    await transaction.CommitAsync(token);
+                    if (afterServerCommitForTest is not null)
+                        await afterServerCommitForTest(token);
+                    commitAcknowledged = true;
+                });
+            return proof ?? throw new InvalidOperationException("The dedicated schema transaction did not produce its combined proof.");
+        }
+        catch (Exception exception) when (commitAttempted && proof is not null)
+        {
+            throw new SnapshotRetentionSchemaCommitOutcomeException(
+                commitAcknowledged ? true : null, proof, exception);
+        }
     }
 
     internal static DatabaseSchemaInitializationStep SnapshotGenerationRetentionInitializationStep =>
@@ -171,8 +210,13 @@ public static class DatabaseInitializer
         NpgsqlConnection connection,
         DatabaseSchemaInitializationStep step,
         CancellationToken ct,
-        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null)
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeExecute = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeCommit = null,
+        Func<NpgsqlTransaction, CancellationToken, Task>? commitTransaction = null)
     {
+        if (!step.UseShortTransaction && (beforeExecute is not null || beforeCommit is not null || commitTransaction is not null))
+            throw new InvalidOperationException("Schema transaction hooks require a bounded transaction.");
         if (step.UseShortTransaction)
         {
             await using var transaction =
@@ -203,6 +247,9 @@ public static class DatabaseInitializer
                 await timeout.ExecuteNonQueryAsync(ct);
             }
 
+            if (beforeExecute is not null)
+                await beforeExecute(connection, transaction, ct);
+
             await using (var command =
                          connection.CreateCommand())
             {
@@ -232,7 +279,12 @@ public static class DatabaseInitializer
                 }
             }
 
-            await transaction.CommitAsync(ct);
+            if (beforeCommit is not null)
+                await beforeCommit(connection, transaction, ct);
+            if (commitTransaction is not null)
+                await commitTransaction(transaction, ct);
+            else
+                await transaction.CommitAsync(ct);
             return;
         }
 

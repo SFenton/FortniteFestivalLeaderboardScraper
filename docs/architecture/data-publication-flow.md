@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -74,7 +74,8 @@ pre-freeze stop barrier.
 
 The deployment prerequisite is outside this publication flow: after the
 natural idle stop and external restart exclusion, run the exact retention-only
-schema initializer, prove unchanged non-retention rows/schema/counters,
+schema initializer, require its version-2 combined zero-DML/table-identity
+proof with acknowledged commit and unchanged non-retention rows/schema/source/control,
 recreate the candidate service, and then guard-start the compatible worker
 for its genuine receipt. The dedicated mode does not run publication,
 notifications, catalog/path or startup services. The general initializer's
@@ -86,6 +87,17 @@ Bounded post-migration validation fails closed on invalid current/working
 bindings and future-version downgrade attempts, with explicit diagnostic
 codes. It never changes a binding merely to satisfy readiness; startup release
 readiness uses the same full identity/count/hash contract.
+The dedicated transaction takes schema then exclusive registration admission
+and checks a fresh-backend zero-DML baseline, pre-commit counts and exact
+non-retention table schema/name/OID/relfilenode identities. The DML allowlist
+is empty; only the six exact managed public retention relations are excluded
+from the identity inventory, not from the tuple assertion. Identity drift
+refuses and rolls back. Unconfirmed COMMIT acknowledgement instead returns
+`commit_acknowledgement_unknown` with `transactionCommitted=null`, never a
+rollback claim or permission to retry. Cumulative table counters are
+non-causal telemetry only, not evidence that the
+initializer or a particular ambient caller changed source data. Actual
+unexplained row/schema drift and resource/lock failures still reject.
 Previous invalid bindings warn without blocking normal startup. Ordinary
 current/working refusal is selected before runtime pools: PostgreSQL read-only
 connections, suppressed hosted writers/recovery/provider sync, rejected HTTP

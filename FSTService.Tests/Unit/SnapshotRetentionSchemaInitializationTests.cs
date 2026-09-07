@@ -153,6 +153,8 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
                 now()-interval '1 hour',now(),now(),now());
             CREATE TABLE public.pg_trigger AS SELECT * FROM pg_catalog.pg_trigger WHERE FALSE;
             CREATE TABLE public.pg_constraint AS SELECT * FROM pg_catalog.pg_constraint WHERE FALSE;
+            CREATE TABLE public.pg_stat_xact_user_tables AS
+                SELECT * FROM pg_catalog.pg_stat_xact_user_tables WHERE FALSE;
             CREATE FUNCTION public.set_config(text,text,boolean) RETURNS text LANGUAGE plpgsql
                 AS $f$ BEGIN RAISE EXCEPTION 'hostile set_config invoked'; END $f$;
             CREATE FUNCTION public.clock_timestamp() RETURNS timestamptz LANGUAGE plpgsql

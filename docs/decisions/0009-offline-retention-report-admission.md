@@ -2,7 +2,7 @@
 status: decision
 owner: data
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionRepository.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaDmlProof.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/StartupPublicationReadOnlyState.cs
   - FSTService/StartupInitializer.cs
@@ -74,6 +75,41 @@ schema step used by general initialization, without evaluating or invoking
 the other schema steps. It cannot run catalog, notification, registration,
 path, publication, scrape or worker lifecycle work.
 
+Make source-DML evidence causal, not a comparison of asynchronously
+flushed/cached database-wide counters. The dedicated path owns one fresh
+unpooled backend and one bounded transaction, checks a zero entry baseline,
+takes schema admission before exclusive canonical registration admission,
+and asserts `pg_stat_xact_user_tables` before commit. Its exact DML allowlist
+is empty because the accepted SQL performs no user-table seed/repair DML.
+Any nonzero disallowed insert/update/delete count rolls back the schema step.
+The structured proof records its fresh-session scope, exact allowlist,
+totals and digest. A fresh session is necessary because PG17's xact view also
+exposes pending backend counts from earlier unflushed work on reused sessions.
+
+Version 2 combines that DML evidence with a same-transaction before/after
+inventory of non-retention user table names, schemas, OIDs, relfilenodes and
+kinds (`r`, `p`, `m`, `f`). Only system/temp objects and six exact public
+retention DDL families are excluded; the DML allowlist remains empty.
+Identity drift catches TRUNCATE and heap rewrites even with zero tuple
+counters. A line-independent static step backstop covers TRUNCATE/COPY FROM
+as well as INSERT/UPDATE/DELETE/MERGE.
+
+Do not reinterpret a COMMIT transport/cancellation exception as rollback.
+An attempted but unacknowledged commit emits nonzero uncertainty with null
+committed state and possible schema/proof identities. This slice does not
+add automatic retries or a speculative reconnect-success path: an idempotent
+schema match alone cannot prove which transaction committed. Known commit
+followed by cleanup failure remains committed but unsuccessful as a complete
+operation. Precommit failure and explicit rollback remain distinct.
+
+Retain cumulative counters as non-causal telemetry only. A later registration
+counter delta neither proves initializer DML nor identifies the exact ambient
+source, even when row timestamps and common registration statements provide
+context. Accept only with the causal zero proof, unchanged actual
+row/schema/source/path/control/public data, and independent lock/resource
+gates. Ambient counter drift alone is not a rejection; unexplained actual
+state drift remains one.
+
 Make general path bootstrap insert-only without changing explicit maintenance
 rebinding. Existing current-version bindings remain byte-for-byte equivalent,
 including `built_at` and nonlegacy provenance; only missing current bindings
@@ -83,8 +119,8 @@ They are explicit fail-closed mutation-startup diagnostics, not silent skips. Bo
 post-bootstrap validation shares the canonical binding validator with release
 readiness and refuses invalid ready identities/counts/hashes without rewriting
 source rows. The full executable's no-op catalog, publication-generation and
-disabled-notification normalization is guarded so repeat initialization does
-not increment non-retention mutation counters for already-correct rows.
+disabled-notification normalization is guarded against no-op row updates
+during repeat initialization of already-correct state.
 The dedicated command pins `pg_catalog,public` and schema-qualified DDL/built-ins
 to prevent public-shadow name-resolution attacks.
 
@@ -188,8 +224,10 @@ current report without another scrape. No production lifecycle action is
 implemented or authorized by the command.
 
 At a natural terminal stop, retain external restart exclusion, run the
-dedicated retention-only initializer, prove non-retention row/schema/counter
-parity, recreate the candidate service and restore public health, then use the
+dedicated retention-only initializer, require its version-2 combined
+zero-DML/table-identity proof with acknowledged commit and
+exact non-retention row/schema/source parity, recreate the candidate service
+and restore public health, then use the
 canonical guard to start the compatible worker and obtain its genuine receipt.
 Require non-degraded startup/mutation readiness as well as HTTP health;
 degraded read-serving is a rollback/admission refusal, not deployment success.

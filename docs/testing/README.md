@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -55,6 +55,9 @@ sources:
   - FSTService.Tests/Unit/OfflineReportCommandTests.cs
   - FSTService.Tests/Unit/SnapshotRetentionSchemaCommandTests.cs
   - FSTService.Tests/Unit/SnapshotRetentionSchemaInitializationTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaDmlTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaCombinedProofTests.cs
+  - tools/snapshot_retention_deployment_parity.test.py
   - FSTService.Tests/Unit/PublicationPathArtifactTests.cs
   - FSTService.Tests/Unit/StartupPublicationReadOnlyStateTests.cs
   - FSTService.Tests/Unit/ReadinessHealthTests.cs
@@ -185,7 +188,9 @@ Source-preserving deployment validation:
 ```bash
 python3 tools/run-controlled-postgres-tests.py --mode focused \
   --work-root artifacts/offline-retention-report-repair/<new-schema-matrix> \
-  --filter 'FullyQualifiedName~PublicationPathArtifactTests|FullyQualifiedName~PublicationPathPromotionTests|FullyQualifiedName~SnapshotRetentionSchemaCommandTests|FullyQualifiedName~SnapshotRetentionSchemaInitializationTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~HostedWorkerModeResolverTests|FullyQualifiedName~StartupPublicationReadOnlyStateTests|FullyQualifiedName~ReadinessHealthTests|FullyQualifiedName~RolloutReadOnlyRequestGuardTests|FullyQualifiedName~PublicationRecoveryCoordinatorTests'
+  --filter 'FullyQualifiedName~PublicationPathArtifactTests|FullyQualifiedName~PublicationPathPromotionTests|FullyQualifiedName~SnapshotRetentionSchemaCommandTests|FullyQualifiedName~SnapshotRetentionSchemaInitializationTests|FullyQualifiedName~SnapshotRetentionSchemaDmlTests|FullyQualifiedName~SnapshotRetentionSchemaCombinedProofTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~HostedWorkerModeResolverTests|FullyQualifiedName~StartupPublicationReadOnlyStateTests|FullyQualifiedName~ReadinessHealthTests|FullyQualifiedName~RolloutReadOnlyRequestGuardTests|FullyQualifiedName~PublicationRecoveryCoordinatorTests'
+
+python3 -B tools/snapshot_retention_deployment_parity.test.py
 
 python3 tools/postgres-snapshot-generation-retention-report-drill.py \
   --work-root artifacts/offline-retention-report-drills/<new-schema-proof> \
@@ -197,7 +202,7 @@ and repeated full initialization for nonlegacy and already-recorded legacy
 provenance. It covers missing current-binding bootstrap, intentional old
 manifest upgrade, no future/malformed downgrade, strict CLI exclusivity,
 early dispatch before replay/dotenv/hosting, cancellation, incompatible-worker
-and schema-lock refusal, and no prerequisite creation in an empty database.
+and schema/registration-lock refusal, and no prerequisite creation in an empty database.
 Runtime deliberate rebinding remains covered by the existing path tests.
 Hostile `public` catalog/function shadows, including a preferred concrete
 `format` overload, cannot hijack dedicated DDL under exact
@@ -205,6 +210,38 @@ Hostile `public` catalog/function shadows, including a preferred concrete
 stable source-preserving CLI refusals; previous invalid bindings produce
 structured warnings and permit normal startup. Runtime release readiness still
 rejects invalid current data.
+
+Dedicated DML tests require the exact empty allowlist, a fresh unpooled
+single-transaction backend, enabled PG17 statistics, zero entry baseline and
+pre-commit insert/update/delete totals. Reusing a pooled backend must not
+contaminate proof with earlier pending work. Injected insert/update/delete
+statements and a retention-like unreviewed table refuse and roll back both
+rows and missing schema objects. A test-only DDL hook exercises structured
+CLI refusal without adding any production selector.
+
+Combined-proof tests cover same-line, multiline, comment-separated and
+DO-body static mutation detection, including TRUNCATE and relation COPY FROM.
+Same-transaction hooks truncate/rewrite/rename a source table, copy rows from
+STDIN and refresh a materialized heap; refusal must restore exact rows and
+identities. Inventory tests cover all user schemas, partition parents/leaves,
+materialized and foreign metadata, system/temp exclusions and exact retention
+name exclusions (not prefixes).
+
+Commit hooks distinguish precommit failure/explicit rollback from a real
+server commit followed by simulated client acknowledgement loss. The latter
+must exit nonzero with null committed state and possible schema/proof
+identities while the committed fixture schema remains visible. Artifact
+tests reject version-1, missing/changed identity and null/uncertain commits
+even when other source snapshots match.
+
+The concurrency case uses the real registration coordinator. Its shared
+writer queues behind the initializer's exclusive registration lock, cannot
+touch a selected profile during the transaction, and proceeds after commit.
+The initializer still reports zero DML; later ambient row work/cumulative
+telemetry is distinguishable rather than attributed to it. Artifact tests
+accept delayed cumulative counter changes only with a valid causal proof
+and exact actual source state; missing/tampered proof or row/schema/topology/
+control drift rejects.
 
 Startup tests prove pre-pool selection, selection-fence ownership/loss,
 read-only PostgreSQL/auxiliary connection policy, no writer construction,
@@ -222,8 +259,9 @@ stale-preparation reuse; working cutover separately revalidates old/future
 manifest versions through `VerifyPreparedPathArtifacts`.
 
 The network-none repair drill invokes the actual service command, compares
-all non-retention table row hashes/identities, schema definitions and DML
-counters, installs statement-level source-write traps, and captures
+all non-retention table row hashes/identities and schema definitions,
+retains cumulative counters as explicitly non-causal telemetry, installs
+statement-level source-write traps, and captures
 publication/path/catalog/control state. It proves both a missing retention
 constraint/receipt-table upgrade and a repeat against the current schema.
 `--baseline-service <FST-drive-FSTService.dll>` plus
@@ -231,16 +269,25 @@ constraint/receipt-table upgrade and a repeat against the current schema.
 initializer's mutation with an independently pinned binary. Its reset applies
 only to that disposable fixture; it is never a production repair.
 Four actual full `--initialize-schema-only` process launches must also retain
-all non-retention table rows/hashes and mutation counters, not just path
+all non-retention table rows/hashes and schema, not just path
 binding bytes. The proof catches and rejects no-op compatibility writes to
-catalog, publication-generation and disabled-notification state. Separate
+catalog, publication-generation and disabled-notification state through
+fixture-only AFTER-row DML and BEFORE-TRUNCATE traps, not cumulative counters.
+Zero-row statements and conflict-do-nothing remain legal. Logical-schema
+arrays sort exact definitions rather than incidental catalog
+OID order, while source table OIDs/relfilenodes remain exact invariants. Separate
 actual CLI cases require visible structured refusals for future, malformed
-and invalid-ready bindings with their exact rows unchanged.
+and invalid-ready bindings with their exact rows unchanged. Dedicated CLI
+runs must emit the committed causal proof; a separate actual executable
+invocation injects DML through a fixture event trigger and requires refusal/
+rollback with unchanged source rows.
+Actual CLI TRUNCATE and heap-rewrite hooks also require identity-drift
+refusal and source rollback with the combined version-2 proof.
 The actual ordinary service additionally runs current-ready/inexact-catalog,
 current-ready/missing-catalog and invalid-working cases. It must serve exact
 persisted GET/cache bytes in explicit degraded mode, reject mutation attempts,
 construct no expected hosted writer, and preserve all non-retention row hashes
-and mutation counters. Degraded mutation refusal is not misclassified as a rollout
+while recording counter telemetry without using it for acceptance. Degraded mutation refusal is not misclassified as a rollout
 violation. Owned service process groups, backend sessions and HOME/XDG/data
 paths are removed before the fixture is cleaned.
 Docker logging remains disabled and all PGDATA, sockets, logs and scratch

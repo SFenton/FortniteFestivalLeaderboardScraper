@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -99,12 +99,37 @@ evidence, and must precede deployment of the compatible worker.
 For a reviewed deployment retry, finish publication and notifications, stop at
 the natural idle/unfrozen boundary and retain host restart exclusion. Run
 `--initialize-snapshot-retention-schema-only` from the candidate binary,
-verify no non-retention row/schema/counter drift, recreate the candidate
+require its fresh-session version-2 combined zero-DML/table-identity proof
+with acknowledged commit and
+exact non-retention row/schema/source/path/control identities, recreate the candidate
 service and restore the entire public path, then start the compatible worker
 through the canonical guard and verify its authentic receipt. Do not use the
 general `--initialize-schema-only` command for this retention-only boundary.
 General path bootstrap now preserves existing current-version bindings, but
 general initialization still owns unrelated schema/data work.
+
+The dedicated initializer holds schema then canonical registration admission
+through its DML assertion and transaction end. Its DML allowlist is empty:
+the schema step installs no user-table seed/repair rows. Cumulative
+`pg_stat_user_tables` deltas are asynchronously flushed/cached, non-causal
+telemetry; ambient counter drift alone must not reject a deployment when
+causal zero-DML, exact data/schema/public parity and resource/lock gates pass.
+Do not attribute the previously observed registration-family delta to a
+particular transaction or caller without evidence. Actual unexplained
+row/schema/source drift still rejects, and no counter rule waives bounded
+resources, healthy public reads or external worker ownership.
+
+Require the version-2 combined proof: zero tuple DML plus the same
+non-retention user-table set/schema/name/OID/relfilenode identities before
+execution and before commit. Ordinary/partitioned tables, materialized views
+and foreign-table metadata across user schemas are included; only system/temp
+and the six exact managed retention table families are excluded. Identity
+drift (including TRUNCATE/heap rewrite) refuses and rolls back.
+`transactionCommitted=null` with `commit_acknowledgement_unknown` is not a
+rollback claim and never admits a retry or deployment. Preserve the possible
+schema/proof identity and resolve the durable outcome and ownership
+authoritatively before further action. An already-matching idempotent schema
+alone is insufficient.
 
 Current/working path validation failures now keep ordinary service startup
 read-only rather than taking public reads offline. Previous invalid bindings

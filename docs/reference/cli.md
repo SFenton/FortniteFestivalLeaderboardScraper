@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - FSTService/Program.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
@@ -178,7 +178,40 @@ Output is secret-free JSON with scope `snapshot_generation_retention`.
 Exit `0` means `schema_current`; `64` rejects arguments, `2` reports missing or
 invalid connection configuration or database refusal (including SQLSTATE),
 and `130` reports cancellation/deadline exhaustion. The data source is disposed
-before success is emitted. Normal migration admission and incompatible-worker
+before success is emitted. Success additionally requires
+`transactionCommitted=true` and a version-2 combined `dmlProof` with
+`statisticsSource=pg_stat_xact_user_tables`,
+`backendScope=fresh_unpooled_single_transaction`,
+`allowedRetentionRelations=[]`, zero `nonRetentionDml` inserted/updated/deleted
+totals, `allowedRetentionChanges=[]`, exact schema SQL SHA-256,
+`nonRetentionRelationIdentity` before/after set-count and identity-digest
+parity, and a deterministic SHA-256 of all ordered proof fields. The identity
+scope covers non-system/non-temporary ordinary, partitioned, materialized and
+foreign-table metadata across user schemas, excluding only the six exact
+DDL-managed public retention tables. The exact step still has no user-table
+DML allowlist entries.
+Non-retention DML refuses/rolls back with code `non_retention_dml_detected`,
+attempted totals and `transactionCommitted=false`.
+`non_retention_relation_identity_changed` likewise refuses/rolls back
+TRUNCATE, rewrite or set/OID/relfilenode drift. The static step backstop rejects
+TRUNCATE/COPY FROM and INSERT/UPDATE/DELETE/MERGE without line-position
+assumptions; it exposes no operator SQL selector.
+`transaction_statistics_unavailable` and `transaction_dml_baseline_not_zero`
+refuse unusable evidence. No SQL/table selectors or test hooks are exposed
+by the CLI.
+
+Commit-attempt acknowledgement loss exits nonzero with `outcome=uncertain`,
+`code=commit_acknowledgement_unknown`, `transactionCommitted=null`, the
+precommit combined proof and `possibleSchemaProof` identities. There is no
+automatic retry or inference of success from already-existing schema.
+Acknowledged commit followed by cleanup failure instead retains
+`transactionCommitted=true` with nonzero
+`committed_cleanup_unconfirmed`/`post_commit_cleanup_failed`.
+
+The fresh backend prevents pending counts from earlier pooled-session work
+from contaminating PG17 xact statistics. Schema admission precedes exclusive
+canonical registration admission, held through the pre-commit assertion.
+Normal migration admission and incompatible-worker
 refusals remain those of `SnapshotGenerationRetentionSchema.Sql`; the external
 idle stop and restart exclusion are still operator responsibilities.
 Name resolution is pinned to `pg_catalog,public`, with explicit schema-qualified

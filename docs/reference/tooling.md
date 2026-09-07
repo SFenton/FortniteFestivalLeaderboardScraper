@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-06
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -33,6 +33,8 @@ sources:
   - tools/postgres-snapshot-generation-retention-report.sh
   - tools/postgres-snapshot-generation-retention-report-drill.py
   - tools/snapshot_retention_schema_proof.py
+  - tools/snapshot_retention_deployment_parity.py
+  - tools/snapshot_retention_deployment_parity.test.py
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - tools/run-controlled-postgres-tests.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
@@ -135,12 +137,32 @@ Deployment initialization is the separate FSTService command
 `--initialize-snapshot-retention-schema-only`, not a new reporter capability.
 It runs only the accepted bounded retention schema step before any host or
 dotenv setup. Under external idle-stop exclusion, run it and prove
-non-retention parity before recreating the service and guarded compatible
+its fresh-session version-2 combined zero-DML/table-identity proof with
+acknowledged commit and exact non-retention
+row/schema/source/path/control parity before recreating the service and guarded compatible
 worker. The drill's `--schema-only-repair` mode exercises this exact command,
 full path-binding idempotence, legacy upgrade, complete non-retention
-row/schema/counter parity and mixed-command refusal. Optional hash-pinned
+row/schema parity, causal DML/identity assertion and rollback, and mixed-command refusal.
+Cumulative counters remain non-causal telemetry. Optional hash-pinned
 baseline service input reproduces the former bootstrap mutation only inside
 the disposable fixture.
+
+The artifact-only comparator performs no SQL, Docker or lifecycle action:
+
+```bash
+python3 tools/snapshot_retention_deployment_parity.py \
+  --before <before-source.json> --after <after-source.json> \
+  --initializer-result <dedicated-command.stdout>
+```
+
+It requires `transactionCommitted=true`, the version-2 combined zero-DML/
+relation-identity proof and complete source evidence shape,
+compares actual source dimensions (including physical identity/bytes),
+and classifies cumulative table/topology counters separately as non-causal
+telemetry. Output never grants deployment authority; public-body,
+lock/resource, binary/source pin and ownership gates remain independent.
+Null/uncertain committed state never passes this comparator; it does not
+reconnect, retry or infer COMMIT success from an idempotent schema match.
 
 `tools/run-controlled-postgres-tests.py` runs focused, full, or exact
 base/candidate comparison tests through the ordinary loopback TCP fixture,

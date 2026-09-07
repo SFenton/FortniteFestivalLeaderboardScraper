@@ -2,13 +2,17 @@
 status: canonical
 owner: data
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - tools/FstSnapshotGenerationRetentionReport/
   - tools/postgres-snapshot-generation-retention-report.sh
   - tools/postgres-snapshot-generation-retention-report-drill.py
   - tools/snapshot_retention_schema_proof.py
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaDmlProof.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaRelationIdentity.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaSqlBackstop.cs
+  - tools/snapshot_retention_deployment_parity.py
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
@@ -108,8 +112,9 @@ service database.
 The exact order is: finish publication/notifications and unfreeze; perform the
 externally guarded stop and exclude restarts; run the reviewed
 `dotnet FSTService.dll --initialize-snapshot-retention-schema-only` command
-from the candidate binary within the fresh offline window; prove unchanged
-non-retention rows, mutation counters and publication/path/catalog/source
+from the candidate binary within the fresh offline window; require its
+version-2 combined zero-DML/table-identity proof with acknowledged commit and unchanged
+non-retention rows/schema and publication/path/catalog/source/control
 identities; recreate only the candidate service and restore full public
 health; then start the compatible canonical-lookup-aware worker through the
 guard. Only its new receipt can
@@ -139,6 +144,109 @@ Its connection search path is exactly `pg_catalog,public`. Retention DDL
 explicitly qualifies application objects with `public` and catalog functions
 with `pg_catalog`, including variadic-overload-sensitive formatting, so public
 shadow objects cannot redirect initialization.
+
+### Causal DML and live parity
+
+The dedicated wrapper executes the unchanged schema step in one short
+transaction on a **fresh, unpooled, nonmultiplexed backend**. PostgreSQL 17
+and enabled `track_counts` are required. It verifies a zero user-DML entry
+baseline, acquires the database-scoped retention schema advisory lock first
+and the canonical registration mutation lock exclusively second, then runs
+the schema step and reads `pg_catalog.pg_stat_xact_user_tables` before commit.
+Both locks remain held through the assertion and commit/rollback. Existing
+registration/selected-profile writers cannot cross that transaction; queued
+work may proceed after it ends. Schema/registration contention refuses rather
+than skipping admission.
+
+The exact DML allowlist is **`[]` (no relations)**. The reviewed
+`SnapshotGenerationRetentionSchema.Sql` installs DDL but seeds or repairs no
+user-table rows. Its six retention table families are not implicitly allowed
+DML targets, and a retention-like name prefix grants no permission. Any
+insert/update/delete count outside that exact list raises
+`non_retention_dml_detected` and rolls back the entire schema transaction.
+The existing helper index on publication scope sources remains part of the
+unchanged step; no new extension, configuration or source-DML surface is added.
+
+Tuple counters alone do not cover `TRUNCATE` or heap-rewriting DDL. Before
+executing the schema SQL, the same transaction captures every non-retention
+user table's schema, relation name, OID, relfilenode and relation kind. Before
+commit the exact set and identities must still match; drift returns
+`non_retention_relation_identity_changed` and rolls back. Scope includes
+ordinary tables/partition leaves (`r`), partitioned parents (`p`),
+materialized views (`m`) and foreign-table metadata (`f`) across all user
+schemas. Partitioned/foreign relations normally have relfilenode zero;
+foreign metadata identity is not a claim about external foreign data.
+System schemas (`pg_catalog`, `information_schema`, `pg_toast`) and temporary
+relations are excluded. Sequences, indexes and ordinary views are not table
+identities and remain covered by separate source/schema parity.
+
+The only non-system, non-temporary exclusions are the six exact DDL-managed
+`public.snapshot_generation_retention_` relations: `cycles`, `deferrals`,
+`evidence`, `holds`, `observations`, and `worker_configuration`. These are
+identity-inventory exclusions, **not** a DML allowlist. Same-name relations in
+other schemas and similarly prefixed user tables remain protected.
+The static SQL backstop independently rejects executable INSERT/UPDATE/
+DELETE/MERGE, TRUNCATE and relation COPY FROM forms irrespective of line
+position, semicolon placement or DO-body formatting. Trigger-definition
+event clauses and COPY TO remain legal. This is a backstop for the exact
+reviewed step, not a general-purpose SQL sandbox.
+
+Fresh-session enforcement is essential: PG17's xact accessors read backend
+pending counts plus active transaction/subtransaction counts, so a reused
+session can retain earlier unflushed work. The dedicated wrapper uses the
+existing unpooled connection factory even if its caller supplies a pooled
+data source; it never resets statistics to manufacture a zero. The proof
+declares `backendScope=fresh_unpooled_single_transaction`.
+See PG17's [xact accessor](https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pgstatfuncs.c#L1588-L1632)
+and [pending/current-transaction aggregation](https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/activity/pgstat_relation.c#L475-L583).
+
+Successful `schema_current` JSON includes `transactionCommitted=true` and
+`dmlProof`: version `2`, statistics source, backend scope, exact schema SQL
+SHA-256, exact allowed DML relations, `nonRetentionDml` inserted/updated/deleted
+totals (all zero), `allowedRetentionChanges` (empty), and
+`nonRetentionRelationIdentity` scope/kinds/exclusions, before/after counts and
+digests, and `unchanged=true`. A deterministic combined SHA-256 covers all
+ordered proof fields. Nonzero-DML or identity refusal includes attempted
+evidence and
+proof digest with `transactionCommitted=false`; it does not echo arbitrary
+relation names or SQL. Missing/disabled statistics or a nonzero entry baseline
+refuses. The 2/15/20-second lock/statement/command limits and 30-second deadline
+remain unchanged; the transaction also has 20-second idle and 30-second total
+limits.
+
+Commit acknowledgement is a separate boundary. A failure before COMMIT is
+attempted is a refusal/rollback. If COMMIT is attempted but its acknowledgement
+is lost or unconfirmed, the CLI exits nonzero with `outcome=uncertain`,
+`code=commit_acknowledgement_unknown`, `transactionCommitted=null`, and
+`possibleSchemaProof` containing the schema-step and combined-proof identities.
+It never claims `false` for that case and never automatically retries.
+Matching schema objects alone cannot resolve an idempotent migration's
+commit outcome. This slice deliberately performs no automatic reconnect
+resolution; any later adjudication must prove the exact schema/proof identity
+and absence of the owning backend/locks. If COMMIT was acknowledged but later
+cleanup fails, `committed_cleanup_unconfirmed`/`post_commit_cleanup_failed`
+retains `transactionCommitted=true` while still exiting nonzero.
+
+`pg_stat_user_tables` counters, including copies embedded in topology
+inventories, are **non-causal telemetry only**: updates are asynchronously
+flushed/cached, and ambient traffic cannot be attributed to the initializer
+from a later cumulative delta. The previously observed registration-family
+delta remains unattributed; absence of matching row timestamps and ordinary
+registration statements does not establish its exact origin.
+
+Live acceptance requires the causal initializer proof **and** byte-stable
+non-retention row hashes/schema/source/path/control identities, public-body
+parity and no unexpected locks/resource pressure. Cumulative counter drift
+alone cannot reject when those invariants pass. Unexplained actual row,
+schema or source drift still rejects; do not filter away registration rows or
+timestamps to force a pass. General service startup remains a separate exact
+row/schema/public-data gate, not an excuse to infer causality from counters.
+The read-only artifact comparator requires the combined version-2 proof and
+`transactionCommitted=true`; null/uncertain and version-1 proofs cannot pass.
+The comparator
+`tools/snapshot_retention_deployment_parity.py` enforces the proof and source
+dimensions, records cumulative deltas as telemetry, and never authorizes a
+deployment or replaces independent ownership/resource admission.
 
 Do not substitute full `--initialize-schema-only` for this deployment step.
 That general command still owns other schema/data initialization. Its path
@@ -390,13 +498,22 @@ python3 tools/postgres-snapshot-generation-retention-report-drill.py \
 It seeds a live-like publication/catalog/path snapshot with nonlegacy
 provenance, compares the complete binding through repeated full initialization,
 and launches the actual `--initialize-schema-only` executable repeatedly,
-comparing all non-retention row hashes and mutation counters, not just the
-binding. Catalog and publication/disabled-notification compatibility
+comparing all non-retention row hashes and schema, not just the
+binding. Cumulative counters are retained with explicit non-causal
+classification. Fixture AFTER-row DML and BEFORE-TRUNCATE traps preserve
+the full executable's no-source-write/no-op-update regression without
+misclassifying zero-row statements as row mutations. Catalog and publication/disabled-notification compatibility
 normalization skip already-correct values. The drill also runs the actual
 retention-only CLI against a simulated older retention
 schema and then its already-current shape. All non-retention tables have
-statement-level mutation traps, row hashes, physical identity and mutation
-counter comparisons; non-retention schema definitions are also compared.
+statement-level mutation traps, row hashes and physical identity;
+non-retention schema definitions are also compared. Both dedicated runs must
+return the exact causal zero-DML proof. A test-only DDL hook injects source DML
+into an actual CLI process and must receive a structured refusal with complete
+row/transaction rollback. Additional actual CLI hooks truncate or rewrite a
+source heap and require identity-drift refusal and exact source restoration.
+Unit hooks distinguish precommit failure, definite rollback, and a real
+server commit followed by a simulated lost client acknowledgement.
 Mixed commands refuse before any workload. An optional `--baseline-service`
 plus `--baseline-service-sha256` pins an existing FST-drive baseline binary to
 reproduce the prior mutation inside the disposable database only.
@@ -407,7 +524,8 @@ Reachable current-ready/inexact-catalog, current-ready/missing-catalog and
 invalid-working scenarios additionally launch the ordinary service executable.
 They require exact persisted GET/cache bytes, explicit degraded health/status,
 HTTP mutation refusal, suppressed hosted writers, no rollout-violation
-misclassification and unchanged non-retention rows/counters. Actual service
+misclassification and unchanged non-retention rows. Counter telemetry is not
+treated as transaction attribution. Actual service
 process groups, database backends and per-case HOME/XDG/data paths must be
 absent before fixture cleanup is accepted.
 

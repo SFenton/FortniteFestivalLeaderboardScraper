@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import time
+from snapshot_retention_deployment_parity import classify_cumulative_counters, require_initializer_dml_proof
 
 FLAG = "--initialize-snapshot-retention-schema-only"
 
@@ -66,6 +67,45 @@ BEGIN
 END $body$;
 """
 
+FULL_SOURCE_GUARDS_SQL = """
+CREATE FUNCTION schema_repair_forbid_full_source_dml() RETURNS trigger
+LANGUAGE plpgsql AS $body$
+BEGIN RAISE EXCEPTION 'source row DML forbidden during full initialization proof'; END $body$;
+DO $body$
+DECLARE relation record;
+BEGIN
+    FOR relation IN
+        SELECT relname,relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND relkind IN ('r','p')
+          AND relname NOT LIKE 'snapshot_generation_retention_%'
+    LOOP
+        IF relation.relkind='r' THEN
+            EXECUTE format(
+                'CREATE TRIGGER schema_repair_full_dml_guard AFTER INSERT OR UPDATE OR DELETE ON public.%I
+                 FOR EACH ROW EXECUTE FUNCTION schema_repair_forbid_full_source_dml()',relation.relname);
+        END IF;
+        EXECUTE format(
+            'CREATE TRIGGER schema_repair_full_truncate_guard BEFORE TRUNCATE ON public.%I
+             FOR EACH STATEMENT EXECUTE FUNCTION schema_repair_forbid_full_source_dml()',relation.relname);
+    END LOOP;
+END $body$;
+"""
+
+REMOVE_FULL_SOURCE_GUARDS_SQL = """
+DO $body$
+DECLARE item record;
+BEGIN
+    FOR item IN
+        SELECT c.relname,t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+        JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND t.tgname IN ('schema_repair_full_dml_guard','schema_repair_full_truncate_guard')
+    LOOP
+        EXECUTE format('DROP TRIGGER %I ON public.%I',item.tgname,item.relname);
+    END LOOP;
+END $body$;
+DROP FUNCTION schema_repair_forbid_full_source_dml();
+"""
+
 COUNTERS_SQL = """
 SELECT coalesce(jsonb_agg(jsonb_build_object(
     'relation',relname,'inserted',n_tup_ins,'updated',n_tup_upd,'deleted',n_tup_del)
@@ -90,11 +130,11 @@ SELECT jsonb_build_object(
     'constraints',(SELECT jsonb_agg(jsonb_build_object('table',r.relname,'name',c.conname,
         'definition',pg_get_constraintdef(c.oid)) ORDER BY r.relname,c.conname)
         FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid),
-    'indexes',(SELECT jsonb_agg(pg_get_indexdef(i.indexrelid) ORDER BY i.indexrelid)
+    'indexes',(SELECT jsonb_agg(pg_get_indexdef(i.indexrelid) ORDER BY pg_get_indexdef(i.indexrelid) COLLATE "C")
         FROM relations r JOIN pg_index i ON i.indrelid=r.oid),
-    'triggers',(SELECT jsonb_agg(pg_get_triggerdef(t.oid) ORDER BY t.oid)
+    'triggers',(SELECT jsonb_agg(pg_get_triggerdef(t.oid) ORDER BY pg_get_triggerdef(t.oid) COLLATE "C")
         FROM relations r JOIN pg_trigger t ON t.tgrelid=r.oid),
-    'functions',(SELECT jsonb_agg(pg_get_functiondef(p.oid) ORDER BY p.oid)
+    'functions',(SELECT jsonb_agg(pg_get_functiondef(p.oid) ORDER BY pg_get_functiondef(p.oid) COLLATE "C")
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname='public' AND p.prokind IN ('f','p')
           AND p.proname<>'fst_reject_snapshot_generation_retention_evidence_mutation')
@@ -152,23 +192,30 @@ def restore_fixture_binding(sql, original):
 
 
 def full_executable_parity(sql, invoke_service, write, name, original):
+    sql(FULL_SOURCE_GUARDS_SQL)
     time.sleep(1.2)
     before = json.loads(sql("SELECT schema_repair_non_retention_state()::text;"))
     counters_before = json.loads(sql(COUNTERS_SQL))
+    schema_before = json.loads(sql(NON_RETENTION_SCHEMA_SQL))
     invoke_service(name, ["--initialize-schema-only"])
     time.sleep(1.2)
     current = sql(BINDING_SQL)
     after = json.loads(sql("SELECT schema_repair_non_retention_state()::text;"))
     counters_after = json.loads(sql(COUNTERS_SQL))
+    schema_after = json.loads(sql(NON_RETENTION_SCHEMA_SQL))
     evidence = {
         "command": "--initialize-schema-only",
         "bindingBefore": binding_evidence(original), "bindingAfter": binding_evidence(current),
         "nonRetentionBefore": before, "nonRetentionAfter": after,
         "mutationCountersBefore": counters_before, "mutationCountersAfter": counters_after,
+        "cumulativeCounterTelemetry": classify_cumulative_counters(counters_before, counters_after),
+        "nonRetentionSchemaBefore": schema_before, "nonRetentionSchemaAfter": schema_after,
+        "actualSourceDmlAndTruncateTrapsInstalled": True,
     }
     write(name + "-parity.json", evidence)
-    if current != original or before != after or counters_before != counters_after:
-        raise RuntimeError("Full executable initialization changed binding/source rows or mutation counters: " + name)
+    if current != original or before != after or schema_before != schema_after:
+        raise RuntimeError("Full executable initialization changed binding/source rows or schema: " + name)
+    sql(REMOVE_FULL_SOURCE_GUARDS_SQL)
     return binding_evidence(current)
 
 
@@ -230,8 +277,7 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
     results = []
     for attempt in range(2):
         result = invoke_service("schema-retention-only-" + str(attempt), [FLAG], json_output=True)
-        if result.get("outcome") != "schema_current" or result.get("hostedServicesStarted") is not False:
-            raise RuntimeError("The dedicated command did not return its exact isolated success contract")
+        require_initializer_dml_proof(result)
         time.sleep(1.2)
         after = json.loads(sql("SELECT schema_repair_non_retention_state()::text;"))
         counters_after = json.loads(sql(COUNTERS_SQL))
@@ -239,10 +285,13 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
         write("schema-non-retention-after-" + str(attempt) + ".json", after)
         write("schema-mutation-counters-after-" + str(attempt) + ".json", counters_after)
         write("schema-non-retention-definitions-after-" + str(attempt) + ".json", schema_after)
-        if after != before or counters_after != counters_before or schema_after != schema_before \
+        write("schema-cumulative-counter-telemetry-" + str(attempt) + ".json",
+              classify_cumulative_counters(counters_before, counters_after))
+        if after != before or schema_after != schema_before \
                 or sql(BINDING_SQL) != original:
-            raise RuntimeError("Retention-only initialization changed non-retention rows or mutation counters")
+            raise RuntimeError("Retention-only initialization changed non-retention rows, schema or binding")
         results.append(result)
+    write("schema-transaction-local-dml-proofs.json", results)
     upgraded = json.loads(sql(SCHEMA_SQL))
     write("schema-upgraded-retention-shape.json", upgraded)
     if not upgraded["receiptPresent"] or len(upgraded["receiptColumns"]) != 8 \
@@ -262,6 +311,46 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
     if json.loads(sql("SELECT schema_repair_non_retention_state()::text;")) != before:
         raise RuntimeError("Rejected CLI arguments changed source rows")
     sql(REMOVE_GUARDS_SQL)
+    for kind, statement, expected in (
+        ("dml", "INSERT INTO public.schema_repair_injected_source VALUES(3)", "non_retention_dml_detected"),
+        ("truncate", "TRUNCATE public.schema_repair_injected_source", "non_retention_relation_identity_changed"),
+        ("rewrite", "ALTER TABLE public.schema_repair_injected_source ALTER COLUMN value TYPE bigint USING value::bigint",
+         "non_retention_relation_identity_changed"),
+    ):
+        sql("""
+            CREATE TABLE schema_repair_injected_source(value integer);
+            INSERT INTO schema_repair_injected_source VALUES(1),(2);
+            CREATE FUNCTION schema_repair_inject_dml() RETURNS event_trigger LANGUAGE plpgsql AS $body$
+            BEGIN
+                IF pg_catalog.current_setting('application_name')='fst-snapshot-retention-schema-only'
+                   AND pg_catalog.current_setting('fst.schema_repair_injected',true) IS DISTINCT FROM 'yes'
+                THEN
+                    PERFORM pg_catalog.set_config('fst.schema_repair_injected','yes',true);
+                    """ + statement + """;
+                END IF;
+            END $body$;
+            CREATE EVENT TRIGGER schema_repair_inject_dml ON ddl_command_start
+                EXECUTE FUNCTION schema_repair_inject_dml();
+            """)
+        injection_before = json.loads(sql("SELECT schema_repair_non_retention_state()::text;"))
+        injected = invoke_service("schema-injected-non-retention-" + kind, [FLAG], expected_exit=2, json_output=True)
+        injection_after = json.loads(sql("SELECT schema_repair_non_retention_state()::text;"))
+        if injected.get("code") != expected or injected.get("transactionCommitted") is not False \
+                or injected["dmlProof"]["version"] != 2 or injection_before != injection_after:
+            raise RuntimeError("The real dedicated CLI failed to reject and roll back injected source mutation: " + kind)
+        if kind == "dml" and injected["dmlProof"]["nonRetentionDml"]["inserted"] <= 0:
+            raise RuntimeError("Injected tuple DML was not counted")
+        if kind != "dml" and injected["dmlProof"]["nonRetentionRelationIdentity"]["unchanged"] is not False:
+            raise RuntimeError("Injected source identity mutation was not captured")
+        write("schema-injected-" + kind + "-rollback-proof.json", {
+            "response": injected, "sourceBefore": injection_before, "sourceAfter": injection_after,
+            "sourceRowsUnchanged": True, "transactionRolledBack": True,
+        })
+        sql("""
+            DROP EVENT TRIGGER schema_repair_inject_dml;
+            DROP FUNCTION schema_repair_inject_dml();
+            DROP TABLE schema_repair_injected_source;
+            """)
     for attempt in range(2):
         full_executable_parity(
             sql, invoke_service, write, "schema-post-upgrade-full-" + str(attempt), original)
@@ -356,8 +445,9 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
             after_counters = json.loads(sql(COUNTERS_SQL))
             write("startup-" + defect + "-source-parity.json", {
                 "before": before_state, "after": after_state,
-                "countersBefore": before_counters, "countersAfter": after_counters})
-            if before_state != after_state or before_counters != after_counters:
+                "countersBefore": before_counters, "countersAfter": after_counters,
+                "cumulativeCounterTelemetry": classify_cumulative_counters(before_counters, after_counters)})
+            if before_state != after_state:
                 raise RuntimeError("Ordinary degraded startup or HTTP requests changed source state: " + defect)
             availability.append(defect)
             if defect == "inexact-catalog":
@@ -376,9 +466,16 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
         "baselineMutationReproduced": reproduction is not None,
         "fullInitializationParityRuns": 4, "retentionOnlyParityRuns": 2,
         "mixedCommandsRefused": refusals, "nonRetentionTables": len(before),
-        "nonRetentionRowsAndMutationCountersUnchanged": True,
+        "nonRetentionRowsAndSchemaUnchanged": True,
+        "initializerTransactionNonRetentionDmlZero": True,
+        "initializerDmlAllowlist": [],
+        "injectedNonRetentionDmlRefusedAndRolledBack": True,
+        "injectedTruncateAndRewriteRefusedAndRolledBack": True,
+        "combinedProofVersion": 2,
+        "cumulativeCountersUsedForAcceptance": False,
         "fullBindingJsonAndBuiltAtPreserved": True,
-        "fullExecutableNonRetentionRowsAndCountersUnchanged": True,
+        "fullExecutableNonRetentionRowsAndSchemaUnchanged": True,
+        "fullExecutableActualSourceDmlTrapsPassed": True,
         "invalidBindingsRefusedWithStructuredDiagnostics": diagnostics,
         "ordinaryDegradedServingCases": availability,
         "onlyRetentionSchemaChanged": True,
@@ -389,4 +486,7 @@ def run_schema_repair_proof(sql, invoke_service, write, baseline_service=None, s
             "nonRetentionTables": len(before), "fullInitializationParityRuns": 4,
             "retentionOnlyParityRuns": 2, "mixedCommandRefusals": len(refusals),
             "executableDiagnosticRefusals": len(diagnostics),
-            "ordinaryDegradedServingCases": len(availability)}
+            "ordinaryDegradedServingCases": len(availability),
+            "causalDmlProofs": len(results), "injectedDmlRefusals": 1,
+            "injectedIdentityRefusals": 2, "combinedProofVersion": 2,
+            "cumulativeCountersUsedForAcceptance": False}

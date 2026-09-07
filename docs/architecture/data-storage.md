@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified_commit: b1695507
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
@@ -732,11 +732,27 @@ leaderboard/publication mutation is introduced.
 
 Deployment uses the service's isolated
 `--initialize-snapshot-retention-schema-only` mode, not general database
-initialization. Its shared bounded step creates/updates only retention schema
-objects and preserves all non-retention rows and mutation counters. The
+initialization. Its unchanged bounded step installs retention DDL and the
+existing publication-source helper index, but seeds/repairs no user-table
+rows. The dedicated DML allowlist is therefore empty. A fresh unpooled backend,
+zero entry baseline and schema-then-registration advisory admission make its
+pre-commit `pg_stat_xact_user_tables` assertion attributable to that one schema
+transaction. Any nonzero unauthorized insert/update/delete count refuses and
+rolls back. PG17's view also includes pending backend work, so a reused pooled
+session is not an acceptable proof boundary. The
 additive canonical schema is already present in production and is compatible;
 do not roll it back. The rejected deployment's path-binding refresh remains
 recorded and is not repaired by this change.
+
+The version-2 proof also captures the exact before-execute and pre-commit
+non-retention table identity set (schema/name/OID/relfilenode/kind), including
+ordinary/partitioned/materialized/foreign metadata across user schemas.
+System/temp and only the six exact public retention DDL tables are excluded.
+TRUNCATE and heap rewrites therefore cannot hide behind zero tuple counters.
+The schema SQL digest, tuple proof and identity digests share one combined
+hash. Unacknowledged COMMIT reports null committed state and possible
+identities, not false; no automatic retry or schema-presence inference is
+performed.
 
 General path bootstrap now inserts a current publication binding only when
 missing. A current-version canonical binding preserves its complete JSON,
@@ -764,8 +780,14 @@ execution-admission foundation; future composition must precede any shared
 pool construction and cannot clear either gate's refusal.
 Already-correct catalog, generation and disabled
 notification metadata are no longer subject to no-op compatibility updates.
-The executable parity proof covers non-retention row hashes and mutation
-counters, including the publication singleton, not only visible API content.
+The executable parity proof covers causal dedicated-initializer DML and exact
+non-retention row hashes/schema, including the publication singleton, not only
+visible API content. Cumulative `pg_stat_user_tables` counters remain
+non-causal telemetry (including copies in source topology inventories).
+Ambient counter drift alone cannot reject when causal proof and exact source
+invariants pass; unexplained actual row/schema/physical-source drift still
+rejects. No claim identifies the exact origin of the prior delayed
+registration-family counter delta.
 
 A separate operator tool can copy one cryptographically authenticated planner
 candidate into a custom-format PostgreSQL archive and prove that package in an
