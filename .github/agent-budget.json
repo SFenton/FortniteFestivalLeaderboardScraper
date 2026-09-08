@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "instructions": ["AGENTS.md", ".github/skills/fst-budget-workflow/SKILL.md"],
+  "riskTerms": ["publication", "retention", "scrape", "provenance", "postgres", "storage", "repack", "performance", "compute"],
+  "gates": [
+    "Database-management plus only relevant advisors for DB work",
+    "Live health/resource/freeze gates before broad production probes",
+    "Matched data/cache/concurrency/resource benchmarks and correctness parity before performance claims",
+    "Preserve Epic provenance, historical correctness, publication and restore evidence; FST storage stays on its required drive",
+    "Focused .NET or web tests; canonical documentation and node tools/check-docs.mjs",
+    "Release and destructive work require existing authorization and parity gates"
+  ],
+  "evidencePolicy": {
+    "always": ["Keep secrets out of evidence; preserve historical correctness, Epic provenance and publication boundaries.", "Research grants no live mutation or destructive-operation authority; required FST data/scratch drive ownership remains unchanged."],
+    "phases": {
+      "research": ["Locate current source, canonical docs and reusable mechanisms before external alternatives.", "Source alone cannot prove current performance or operational readiness; propose bounded matched measurements rather than invent gains."],
+      "implementation": ["Apply affected component contracts and relevant database advisors; retain rollback and source ownership."],
+      "validation": ["Use targeted existing tests, matched correctness/performance evidence, canonical documentation and check-docs."],
+      "release": ["Preserve existing authorization, live health/freeze, exact-object, parity and restore gates."]
+    },
+    "content": {
+      "allowPaths": ["FSTService", "FSTService.Tests", "FortniteFestival.Core", "FortniteFestivalWeb/src", "packages", "docs", "AGENTS.md", ".github/copilot-instructions.md"],
+      "denyPaths": ["FSTService/bin", "FSTService/obj", "FSTService.Tests/bin", "FSTService.Tests/obj"],
+      "maxFileBytes": 1000000
+    }
+  },
+  "commands": {
+    "service": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter <affected tests>",
+    "web": "cd FortniteFestivalWeb && corepack yarn test:unit <affected tests>",
+    "docs": "node tools/check-docs.mjs"
+  }
+}
