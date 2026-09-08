@@ -24,6 +24,10 @@ Current architecture and ownership are indexed in `docs/README.md`.
 - Keep task state and documentation accurate.
 - Commit and push accepted/project-required changes unless the operator says
   not to.
+- Prefer read-only evidence before mutation; never fabricate measurements.
+- Use `.github/agent-budget.json` and `fst-budget-workflow` for bounded generic
+  research and delivery. Tandem and autonomous-plan execution are explicit-only.
+  A budget route never changes the live-safety or specialist contract.
 
 ## Live safety
 

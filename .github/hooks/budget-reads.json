@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [{
+      "type": "command",
+      "bash": "if [ -f \"$HOME/.copilot/skills/budget-workflow/scripts/budget.mjs\" ]; then node \"$HOME/.copilot/skills/budget-workflow/scripts/budget.mjs\" hook; else printf '%s\\n' 'Budget read guard unavailable: install SFenton/copilot-config or use bounded reads manually.' >&2; printf '{}'; fi",
+      "timeoutSec": 5
+    }]
+  }
+}
