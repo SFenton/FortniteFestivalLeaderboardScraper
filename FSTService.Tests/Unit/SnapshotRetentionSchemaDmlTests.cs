@@ -77,7 +77,7 @@ public sealed class SnapshotRetentionSchemaDmlTests : IDisposable
         var before = Scalar<string>("SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM causal_source t");
         var failure = await Assert.ThrowsAsync<SnapshotRetentionSchemaDmlRefusal>(() =>
             DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(
-                _fixture.DataSource,
+                SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
                 beforeDmlAssertionForTest: async (connection, transaction, ct) =>
                 {
                     await using var command = connection.CreateCommand();
@@ -97,7 +97,7 @@ public sealed class SnapshotRetentionSchemaDmlTests : IDisposable
     {
         var failure = await Assert.ThrowsAsync<SnapshotRetentionSchemaDmlRefusal>(() =>
             DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(
-                _fixture.DataSource,
+                SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
                 beforeDmlAssertionForTest: async (connection, transaction, ct) =>
                 {
                     await using var command = connection.CreateCommand();
@@ -140,7 +140,7 @@ public sealed class SnapshotRetentionSchemaDmlTests : IDisposable
     [Fact]
     public async Task Disabled_transaction_statistics_refuse_instead_of_claiming_zero_DML()
     {
-        var connection = new NpgsqlConnectionStringBuilder(_fixture.DataSource.ConnectionString)
+        var connection = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource))
         {
             Options = "-c track_counts=off",
         };
@@ -175,7 +175,7 @@ public sealed class SnapshotRetentionSchemaDmlTests : IDisposable
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var initializer = DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(
-            _fixture.DataSource, deadline.Token,
+            SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource), deadline.Token,
             beforeDmlAssertionForTest: async (connection, _, ct) =>
             {
                 entered.SetResult(connection.ProcessID);
@@ -232,7 +232,7 @@ public sealed class SnapshotRetentionSchemaDmlTests : IDisposable
     {
         using var output = new StringWriter();
         var code = await SnapshotRetentionSchemaCommand.RunAsync(
-            [SnapshotRetentionSchemaCommand.Flag], connection ?? _fixture.DataSource.ConnectionString, output);
+            [SnapshotRetentionSchemaCommand.Flag], connection ?? SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource), output);
         using var json = JsonDocument.Parse(output.ToString());
         return (code, json.RootElement.Clone());
     }

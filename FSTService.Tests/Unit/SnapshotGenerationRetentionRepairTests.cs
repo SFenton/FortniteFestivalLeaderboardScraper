@@ -332,7 +332,7 @@ public sealed partial class SnapshotGenerationRetentionPlannerTests
     {
         SeedOfflineBaseline(("Solo_Guitar", 1307));
         var result = await CreatePlanner().ObserveCurrentOfflineAsync(new OfflineTestAttestation());
-        await using var database = new OfflineReportDatabase(_fixture.DataSource.ConnectionString);
+        await using var database = new OfflineReportDatabase(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource));
         database.DisposeTestHook = () => throw new IOException("injected source disposal");
         var confirmed = await database.CompleteAndDisposeAsync(result);
         Assert.Contains("committed_cycle_cleanup_warning_verified", confirmed.Warnings);
@@ -356,12 +356,12 @@ public sealed partial class SnapshotGenerationRetentionPlannerTests
         }
         var pending = result with { Completion = result.Completion! with { Owners = [owner] } };
         Assert.Null(await SnapshotGenerationRetentionPlanner.ConfirmCommittedAfterCleanupAsync(
-            _fixture.DataSource.ConnectionString, pending));
+            new FSTService.Persistence.PostgresUnpooledConnectionFactory(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource)), pending));
         await transaction.CommitAsync();
         Assert.NotNull(await SnapshotGenerationRetentionPlanner.ConfirmCommittedAfterCleanupAsync(
-            _fixture.DataSource.ConnectionString, pending));
+            new FSTService.Persistence.PostgresUnpooledConnectionFactory(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource)), pending));
         Assert.Null(await SnapshotGenerationRetentionPlanner.ConfirmCommittedAfterCleanupAsync(
-            _fixture.DataSource.ConnectionString,
+            new FSTService.Persistence.PostgresUnpooledConnectionFactory(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource)),
             result with { Cycle = result.Cycle with { CandidateIdentityHash = new('f', 64) } }));
     }
 

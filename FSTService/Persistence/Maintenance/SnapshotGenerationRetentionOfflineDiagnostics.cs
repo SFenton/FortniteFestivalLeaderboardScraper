@@ -78,23 +78,23 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         return new(reader.GetInt32(0), reader.GetDateTime(1), reader.GetDateTime(2));
     }
 
+    internal static NpgsqlConnection CreateOfflineCommitReconciliationConnection(
+        PostgresUnpooledConnectionFactory dedicatedConnections) =>
+        dedicatedConnections.CreateHostConnection(
+            5, 5, "-c statement_timeout=5s -c lock_timeout=2s -c transaction_timeout=15s");
+
     public static async Task<SnapshotGenerationRetentionOfflineResult?>
         ConfirmCommittedAfterCleanupAsync(
-            string connectionString,
+            PostgresUnpooledConnectionFactory dedicatedConnections,
             SnapshotGenerationRetentionOfflineResult expected,
             CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(dedicatedConnections);
         if (expected.Completion is null)
             return null;
-        var builder = new NpgsqlConnectionStringBuilder(connectionString)
-        {
-            Pooling = false, Timeout = 5, CommandTimeout = 5,
-            IncludeErrorDetail = false, SearchPath = "pg_catalog,public",
-            Options = "-c statement_timeout=5s -c lock_timeout=2s -c transaction_timeout=15s",
-        };
         try
         {
-            await using var connection = new NpgsqlConnection(builder.ConnectionString);
+            await using var connection = CreateOfflineCommitReconciliationConnection(dedicatedConnections);
             await connection.OpenAsync(ct);
             await using var transaction = await connection.BeginTransactionAsync(ct);
             await using (var readOnly = connection.CreateCommand())

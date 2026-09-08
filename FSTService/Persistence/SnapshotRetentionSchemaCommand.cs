@@ -19,7 +19,8 @@ internal static class SnapshotRetentionSchemaCommand
         TextWriter output,
         CancellationToken ct = default,
         Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeDmlAssertionForTest = null,
-        Func<CancellationToken, Task>? afterServerCommitForTest = null)
+        Func<CancellationToken, Task>? afterServerCommitForTest = null,
+        Func<Task>? beforeConnectionDisposeForTest = null)
     {
         if (args.Count != 1 || !string.Equals(args[0], Flag, StringComparison.OrdinalIgnoreCase))
             return await WriteAsync(output, "refused", "invalid_command_arguments", 64);
@@ -33,19 +34,19 @@ internal static class SnapshotRetentionSchemaCommand
             {
                 ApplicationName = ApplicationName,
                 Pooling = false,
+                Multiplexing = false,
+                PersistSecurityInfo = false,
+                IncludeErrorDetail = false,
                 Timeout = 10,
                 CommandTimeout = 20,
                 SearchPath = "pg_catalog,public",
             };
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(30));
-            SnapshotRetentionSchemaDmlProof proof;
-            await using (var dataSource = NpgsqlDataSource.Create(connection.ConnectionString))
-            {
-                proof = await DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(
-                    dataSource, deadline.Token, beforeDmlAssertionForTest, afterServerCommitForTest);
-                acknowledgedProof = proof;
-            }
+            var proof = await DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(
+                connection.ConnectionString, deadline.Token, beforeDmlAssertionForTest, afterServerCommitForTest,
+                beforeConnectionDisposeForTest);
+            acknowledgedProof = proof;
             return await WriteAsync(output, "schema_current", null, 0, proof: proof, transactionCommitted: true);
         }
         catch (SnapshotRetentionSchemaCommitOutcomeException exception)

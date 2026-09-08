@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-07
-last_verified_commit: a8579529
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -70,7 +70,12 @@ sources:
   - FSTService.Tests/Helpers/SharedPostgresContainer.cs
   - FSTService.Tests/Helpers/ControlledPostgresTestFixture.cs
   - FSTService.Tests/Unit/SnapshotGenerationRetentionRepairTests.cs
+  - FSTService.Tests/Helpers/AuthenticatedPostgresScope.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionAuthenticationTests.cs
+  - FSTService.Tests/Unit/HostConnectionOwnershipTests.cs
   - tools/run-controlled-postgres-tests.py
+  - tools/owned_postgres_auth.py
+  - tools/owned_postgres_auth.test.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
@@ -188,6 +193,47 @@ The drill requires an FST-drive worktree and creates only its own PostgreSQL
 genuine cycle, proves source/worker/publication parity and idempotency, rejects
 online-worker/forbidden-command admission, and removes owned PGDATA, socket,
 and containers.
+
+Authenticated fresh-connection validation (separate from trust/socket tests):
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode focused \
+  --work-root artifacts/offline-retention-report-repair/<new-auth-matrix> \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|FullyQualifiedName~SnapshotRetentionSchema|FullyQualifiedName~OfflineReport|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~HostConnectionOwnershipTests|FullyQualifiedName~RetentionConfigurationReloadTests'
+
+python3 -B tools/owned_postgres_auth.test.py
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-reporter> \
+  --scram-tcp
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-schema> \
+  --scram-tcp --schema-only-repair
+```
+
+`AuthenticatedPostgresScope` creates a disposable SCRAM role with a nonempty
+random password held only in process memory. It does not inherit security-info
+persistence from legacy fixture configuration. Tests explicitly prove default
+`PersistSecurityInfo=false`, sanitized data-source output, failed sanitized
+reconstruction, successful direct/factory authentication, unchanged fresh
+backend/timeouts/v2 proof, wrong-password refusal, and real authenticated
+offline identity/fence/oracle/persistence/idempotence. Disposal and injected
+post-commit failures require exact-cycle/ended-owner reconciliation; failed
+authentication or unresolved ownership retains uncertainty. Missing dedicated
+offline factories refuse before connection. Ordinary worker planner behavior
+and source SQL remain unchanged.
+
+The executable `--scram-tcp` lane binds only loopback and replaces owned host
+rules with SCRAM. No plaintext password enters SQL, Docker configuration or a
+password file. Private administration supplies only a SCRAM verifier with
+statement/parameter logging suppressed. In-memory stdout/stderr capture and
+runtime sentinel scans cover JSON/console/TRX/PostgreSQL artifacts; sentinels
+and full credential strings are never written into evidence. The runner
+allowlists noncredential environment keys instead of copying operator
+credentials. The existing `--run-focused-tests` drill option is a separate
+trust/socket regression lane and excludes authenticated-role tests; use the
+controlled TCP runner for the latter.
 
 Source-preserving deployment validation:
 

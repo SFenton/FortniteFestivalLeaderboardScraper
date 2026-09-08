@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - tools/FstSnapshotGenerationRetentionReport/
   - tools/postgres-snapshot-generation-retention-report.sh
@@ -14,6 +14,11 @@ sources:
   - FSTService/Persistence/SnapshotRetentionSchemaSqlBackstop.cs
   - tools/snapshot_retention_deployment_parity.py
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService.Tests/Helpers/AuthenticatedPostgresScope.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionAuthenticationTests.cs
+  - FSTService.Tests/Unit/HostConnectionOwnershipTests.cs
+  - tools/owned_postgres_auth.py
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
@@ -138,12 +143,72 @@ additional argument, including other schema, maintenance or hosting flags.
 It executes only the shared `SnapshotGenerationRetentionSchema.Sql` step:
 2-second lock timeout, 15-second statement timeout, 20-second command timeout,
 10-second connection timeout and a 30-second cancellation deadline. Its
-unpooled data source is disposed before secret-free success JSON is written.
+fresh unpooled connection is disposed before secret-free success JSON is written.
 It neither runs the general initializer nor creates a worker receipt.
 Its connection search path is exactly `pg_catalog,public`. Retention DDL
 explicitly qualifies application objects with `public` and catalog functions
 with `pg_catalog`, including variadic-overload-sensitive formatting, so public
 shadow objects cannot redirect initialization.
+
+### Authenticated fresh-connection ownership
+
+`NpgsqlDataSource.ConnectionString` is a sanitized display/configuration
+view, **not a credential source**. With default `PersistSecurityInfo=false`,
+it does not contain the password originally supplied to the data source.
+Opening that data source can succeed while reconstructing a new connection
+from its displayed string fails authentication. Never enable
+`PersistSecurityInfo` to recover credentials from a data source.
+
+The dedicated CLI passes its original normalized environment configuration
+directly to `DatabaseInitializer`'s dedicated helper. The helper creates a
+fresh backend through `PostgresUnpooledConnectionFactory` from that private
+source; it does not create or inspect a data source to recover credentials.
+The command normalizes security-information persistence off and keeps
+`pg_catalog,public`, nonpooling/nonmultiplexing and every existing timeout.
+
+`OfflineReportDatabase` likewise owns a private normalized factory. It uses
+that source for inspection and explicitly supplies it through
+`SnapshotGenerationRetentionPlanner.CreateForOffline`. Its data source and
+planner-construction method are internal to the tool assembly (with test-only
+friend access), not a public route to sanitized credential reconstruction. Identity/data,
+advisory-fence and cleanup-reconciliation connections all come from that
+factory, including reconciliation after data-source disposal. Calling offline
+observation on an ordinary planner without the dedicated factory refuses with
+`dedicated_connection_factory_required`; there is no sanitized-string
+fallback. The ordinary worker constructor and `PlanAsync` behavior remain
+unchanged.
+
+Connection-purpose variants preserve the existing bounds: offline data and
+fence connect/command limits are 10/15 seconds, and authoritative cleanup
+reconciliation uses 5/5 seconds with a 15-second transaction limit. A successful
+reconnect alone proves nothing about commit: the exact immutable cycle,
+database signature and ended transaction/advisory ownership must still match.
+Wrong authentication or unavailable confirmation retains uncertainty.
+Every host-connection variant unconditionally sets exactly one
+`-c row_security=off`. Option composition accepts only unique positive-second
+timeout settings; redundant exact `row_security=off` settings normalize away,
+while overrides, unsupported syntax and conflicting timeouts refuse before
+connection creation. This does not bypass RLS or grant privileges: a query that
+would silently hide retention rows must raise an error instead. Owned SCRAM
+fixtures prove this on real fence and reconciliation connections with a
+non-owner, non-superuser, non-bypass role, alongside their unchanged timeouts.
+
+Credentials remain only in the host's environment/process memory and private
+non-record factory. They are never returned as identity fields, serialized,
+logged, put in command-line arguments or persisted in evidence. Factory
+construction does not extend their lifetime into another host or artifact.
+
+The host-tool audit also covers retirement, quarantine, DROP, restore
+authorization/continuation and stored-rank tools. Their sources are constructed
+from original normalized input and reopened with `OpenConnectionAsync`, which
+retains authentication. Metadata-only `PostgresRuntimeTarget` and pool-size
+inspection are safe display-string uses. The service injects the original
+runtime factory into `MetaDatabase`; its legacy optional-constructor fallback
+is not an authenticated host credential source, and the owned fixture seeder
+now supplies an explicit factory too. Source and API-visibility contracts guard
+host-tool reconstruction and public data-source exposure. The sole deliberate
+reconstruction exception is the owned
+`authentication-probe`, which must prove sanitized reconstruction fails.
 
 ### Causal DML and live parity
 
@@ -194,8 +259,8 @@ reviewed step, not a general-purpose SQL sandbox.
 Fresh-session enforcement is essential: PG17's xact accessors read backend
 pending counts plus active transaction/subtransaction counts, so a reused
 session can retain earlier unflushed work. The dedicated wrapper uses the
-existing unpooled connection factory even if its caller supplies a pooled
-data source; it never resets statistics to manufacture a zero. The proof
+existing unpooled connection factory even if the original configuration enables
+pooling; it never resets statistics to manufacture a zero. The proof
 declares `backendScope=fresh_unpooled_single_transaction`.
 See PG17's [xact accessor](https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pgstatfuncs.c#L1588-L1632)
 and [pending/current-transaction aggregation](https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/activity/pgstat_relation.c#L475-L583).
@@ -475,6 +540,32 @@ offline report.
 
 ## Disposable validation
 
+The authenticated lane is required for credential-boundary acceptance:
+
+```bash
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-report> \
+  --scram-tcp
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-schema> \
+  --scram-tcp --schema-only-repair
+```
+
+This lane binds only an owned loopback TCP port and installs SCRAM host rules.
+Its random nonempty password stays in process memory/owned child environments;
+only a SCRAM verifier is supplied to private fixture administration, with
+statement/parameter logging suppressed. No password is placed in Docker
+configuration, a password file or SQL text. The actual executable probe proves
+default security-information persistence is false, the data-source password
+is absent, sanitized reconstruction refuses, and direct/private-factory TCP
+authentication succeeds. Actual initializer and reporter wrong-password
+invocations retain secret-free refusals. All ordinary source-preserving
+schema/degraded-serving proofs also run over this password-authenticated
+client path.
+
+The original trust/socket lane remains separate coverage:
+
 ```bash
 python3 tools/postgres-snapshot-generation-retention-report-drill.py \
   --work-root artifacts/offline-retention-report-drills/<new-run> \
@@ -530,8 +621,9 @@ process groups, database backends and per-case HOME/XDG/data paths must be
 absent before fixture cleanup is accepted.
 
 The drill requires an FST-drive worktree and uses only a new labelled
-PostgreSQL 17 container with network `none`, no ports, bounded resources,
-owned PGDATA, and a unique short Unix socket. Only its isolated fixture runs
+PostgreSQL 17 container with bounded resources, owned PGDATA and a unique short
+Unix socket. The default trust lane has network `none` and no ports; only
+`--scram-tcp` enables an exact loopback port. Only its isolated fixture runs
 the real schema initializer. It seeds genuine baseline source state, invokes
 the pinned host wrapper, proves one real report and idempotency, compares
 source OID/relfilenode/bytes and all scrape/publication/freeze/worker rows, and
@@ -543,7 +635,16 @@ Fixture evidence includes authoritative per-instance startup inventory,
 loopback-only TCP bindings where applicable, exact data/socket mounts,
 disabled Docker logging, PostgreSQL log hashes on the FST drive, disabled Ryuk,
 and final absence of labelled containers/volumes and owned paths. Console/TRX
-evidence also remains on the FST drive. Earlier runs that did not inventory
+evidence also remains on the FST drive. Stdout/stderr are captured in memory
+and checked against runtime password/connection/verifier sentinels before
+artifact writes; PostgreSQL logs and final evidence are scanned before
+cleanup/sealing. The controlled service runner separately supplies an
+in-memory authentication sentinel, scans console/TRX/PostgreSQL evidence and
+does not copy operator credential environments. Authenticated integration
+tests cover real planner/fence/oracle/persistence, data-source disposal,
+exact-cycle/ownership reconciliation and unresolved commit outcomes. Legacy
+shared/trust fixtures are not credential-propagation proof.
+Earlier runs that did not inventory
 Docker logging are not proof of log placement; rerun only the minimal evidence
 in a production-idle/headroom-safe window rather than competing with a scrape.
 

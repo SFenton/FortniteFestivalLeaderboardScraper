@@ -4316,7 +4316,7 @@ public sealed partial class SnapshotGenerationRetentionPlannerTests
         long resumeScrapeId = 0,
         ISnapshotGenerationRetentionOracle? oracle = null,
         int lockWaitMilliseconds = 100) =>
-        new(
+        SnapshotGenerationRetentionPlanner.CreateForOffline(
             _fixture.DataSource,
             new SnapshotGenerationRetentionRepository(
                 _fixture.DataSource),
@@ -4338,7 +4338,8 @@ public sealed partial class SnapshotGenerationRetentionPlannerTests
                     ResumeScrapeId = resumeScrapeId,
                 }),
             NullLogger<
-                SnapshotGenerationRetentionPlanner>.Instance);
+                SnapshotGenerationRetentionPlanner>.Instance,
+            new PostgresUnpooledConnectionFactory(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource)));
 
     private static SnapshotGenerationRetentionPlanRequest
         CreateRequest(

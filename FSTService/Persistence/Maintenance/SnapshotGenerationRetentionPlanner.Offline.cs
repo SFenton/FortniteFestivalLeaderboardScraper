@@ -1,4 +1,5 @@
 using System.Data;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FSTService.Persistence.Maintenance;
@@ -47,11 +48,30 @@ public sealed partial class SnapshotGenerationRetentionPlanner
     public const int OfflineTotalTimeoutSeconds = 120;
     public const int OfflineBoundaryMaximumAgeSeconds = 900;
 
+    private PostgresUnpooledConnectionFactory? _offlineConnections;
+
+    public static SnapshotGenerationRetentionPlanner CreateForOffline(
+        NpgsqlDataSource dataSource,
+        SnapshotGenerationRetentionRepository repository,
+        ISnapshotGenerationRetentionOracle oracle,
+        ServiceMaintenanceLock serviceMaintenanceLock,
+        IOptions<DatabaseMaintenanceOptions> options,
+        IOptions<ScraperOptions> scraperOptions,
+        ILogger<SnapshotGenerationRetentionPlanner> log,
+        PostgresUnpooledConnectionFactory dedicatedConnections) =>
+        new(dataSource, repository, oracle, serviceMaintenanceLock, options, scraperOptions, log)
+        {
+            _offlineConnections = dedicatedConnections
+                ?? throw new ArgumentNullException(nameof(dedicatedConnections)),
+        };
+
     public async Task<SnapshotGenerationRetentionOfflineResult> ObserveCurrentOfflineAsync(
         ISnapshotGenerationRetentionOfflineAttestation attestation,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(attestation);
+        var connections = _offlineConnections
+            ?? throw new SnapshotGenerationRetentionOfflineRefusal("dedicated_connection_factory_required");
         if (!IsEnabled)
             throw new SnapshotGenerationRetentionOfflineRefusal("report_only_planner_disabled");
         if (OfflineObservationBudget <= TimeSpan.Zero
@@ -66,7 +86,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         try
         {
             var result = await ObserveCurrentOfflineCoreAsync(
-                attestation, operation, timing, ct, deadline.Token);
+                connections, attestation, operation, timing, ct, deadline.Token);
             return result with { Timings = timing.Snapshot() };
         }
         catch (Exception exception)
@@ -74,7 +94,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
             if (operation.CommittedCandidate is { } committed)
             {
                 var recovered = await ConfirmCommittedAfterCleanupAsync(
-                    _dataSource.ConnectionString, committed, CancellationToken.None);
+                    connections, committed, CancellationToken.None);
                 if (recovered is not null)
                     return recovered with { Timings = timing.Snapshot() };
                 throw new SnapshotGenerationRetentionOfflineRefusal("commit_outcome_uncertain")
@@ -102,13 +122,19 @@ public sealed partial class SnapshotGenerationRetentionPlanner
     }
 
     private async Task<SnapshotGenerationRetentionOfflineResult> ObserveCurrentOfflineCoreAsync(
+        PostgresUnpooledConnectionFactory connections,
         ISnapshotGenerationRetentionOfflineAttestation attestation,
         OfflineOperationState operation,
         SnapshotGenerationRetentionTiming timing,
         CancellationToken external,
         CancellationToken ct)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(ct);
+        await using var connection = connections.CreateHostConnection(
+            10, OfflineCommandTimeoutSeconds,
+            "-c statement_timeout=15s -c lock_timeout=2s -c row_security=off "
+                + "-c idle_session_timeout=20s -c idle_in_transaction_session_timeout=20s "
+                + "-c transaction_timeout=120s");
+        await connection.OpenAsync(ct);
         await using (var settings = connection.CreateCommand())
         {
             settings.CommandTimeout = OfflineCommandTimeoutSeconds;
@@ -138,14 +164,11 @@ public sealed partial class SnapshotGenerationRetentionPlanner
             await identityTransaction.CommitAsync(ct);
         }
 
-        var fenceBuilder = new NpgsqlConnectionStringBuilder(_dataSource.ConnectionString)
-        {
-            Pooling = false, Timeout = 10, CommandTimeout = OfflineCommandTimeoutSeconds,
-            Options = "-c lock_timeout=2s -c statement_timeout=15s -c transaction_timeout="
+        await using var fenceConnection = connections.CreateHostConnection(
+            10, OfflineCommandTimeoutSeconds,
+            "-c lock_timeout=2s -c statement_timeout=15s -c transaction_timeout="
                 + OfflineFenceTransactionTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + "s "
-                + "-c idle_in_transaction_session_timeout=120s",
-        };
-        await using var fenceConnection = new NpgsqlConnection(fenceBuilder.ConnectionString);
+                + "-c idle_in_transaction_session_timeout=120s");
         await fenceConnection.OpenAsync(ct);
         await using var fenceTransaction = await fenceConnection.BeginTransactionAsync(
             IsolationLevel.ReadCommitted, ct);

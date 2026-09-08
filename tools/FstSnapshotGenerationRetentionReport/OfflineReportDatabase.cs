@@ -1,14 +1,18 @@
 using System.Data;
 using System.Text.Json;
+using FSTService;
+using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FstSnapshotGenerationRetentionReport;
 
 public sealed class OfflineReportDatabase : IAsyncDisposable
 {
-    public NpgsqlDataSource DataSource { get; }
-    private readonly string _connectionString;
+    internal NpgsqlDataSource DataSource { get; }
+    private readonly PostgresUnpooledConnectionFactory _connections;
     private int _disposeAttempted;
     internal Func<Task>? DisposeTestHook { get; set; }
 
@@ -20,13 +24,15 @@ public sealed class OfflineReportDatabase : IAsyncDisposable
             Timeout = 10,
             CommandTimeout = SnapshotGenerationRetentionPlanner.OfflineCommandTimeoutSeconds,
             Pooling = false,
+            Multiplexing = false,
+            PersistSecurityInfo = false,
             IncludeErrorDetail = false,
             SearchPath = "pg_catalog,public",
             Options = "-c statement_timeout=15s -c lock_timeout=2s -c row_security=off "
                 + "-c idle_session_timeout=20s -c idle_in_transaction_session_timeout=20s "
                 + "-c transaction_timeout=120s",
         };
-        _connectionString = builder.ConnectionString;
+        _connections = new(builder.ConnectionString);
         DataSource = NpgsqlDataSource.Create(builder.ConnectionString);
     }
 
@@ -37,6 +43,24 @@ public sealed class OfflineReportDatabase : IAsyncDisposable
             throw new OfflineReportRefusal("connection_environment_missing");
         return new(connection);
     }
+
+    internal SnapshotGenerationRetentionPlanner CreatePlanner(
+        bool reportOnlyEnabled,
+        ISnapshotGenerationRetentionOracle? oracle = null) =>
+        SnapshotGenerationRetentionPlanner.CreateForOffline(
+            DataSource,
+            new SnapshotGenerationRetentionRepository(DataSource),
+            oracle ?? new SnapshotGenerationRetentionOracle(),
+            new ServiceMaintenanceLock(),
+            Options.Create(new DatabaseMaintenanceOptions
+            {
+                SnapshotGenerationRetentionReportOnlyEnabled = reportOnlyEnabled,
+                SnapshotGenerationRetentionCommandTimeoutSeconds = 15,
+                ServiceMaintenanceLockWaitMilliseconds = 250,
+            }),
+            Options.Create(new ScraperOptions()),
+            NullLogger<SnapshotGenerationRetentionPlanner>.Instance,
+            _connections);
 
     public async ValueTask DisposeAsync()
     {
@@ -58,7 +82,7 @@ public sealed class OfflineReportDatabase : IAsyncDisposable
         catch
         {
             var verified = await SnapshotGenerationRetentionPlanner.ConfirmCommittedAfterCleanupAsync(
-                _connectionString, result);
+                _connections, result);
             return verified ?? throw new SnapshotGenerationRetentionOfflineRefusal("commit_outcome_uncertain")
             {
                 PossibleCommittedCycleId = result.Cycle.CycleId,
@@ -70,7 +94,8 @@ public sealed class OfflineReportDatabase : IAsyncDisposable
         IOfflineReportCodeIdentityProvider codeProvider,
         CancellationToken ct)
     {
-        await using var connection = await DataSource.OpenConnectionAsync(ct);
+        await using var connection = _connections.CreateConnection();
+        await connection.OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, ct);
         await using var settings = connection.CreateCommand();

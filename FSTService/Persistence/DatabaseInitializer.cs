@@ -82,12 +82,13 @@ public static class DatabaseInitializer
     }
 
     internal static async Task<SnapshotRetentionSchemaDmlProof> EnsureSnapshotGenerationRetentionSchemaAsync(
-        NpgsqlDataSource dataSource,
+        string normalizedConnectionString,
         CancellationToken ct = default,
         Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeDmlAssertionForTest = null,
-        Func<CancellationToken, Task>? afterServerCommitForTest = null)
+        Func<CancellationToken, Task>? afterServerCommitForTest = null,
+        Func<Task>? beforeConnectionDisposeForTest = null)
     {
-        ArgumentNullException.ThrowIfNull(dataSource);
+        ArgumentNullException.ThrowIfNull(normalizedConnectionString);
         var step = SnapshotGenerationRetentionInitializationStep;
         SnapshotRetentionSchemaSqlBackstop.RequireDdlOnly(step.Sql);
         SnapshotRetentionSchemaDmlProof? proof = null;
@@ -96,7 +97,8 @@ public static class DatabaseInitializer
         try
         {
             // PG17's xact view can include older unflushed backend counts; never reuse a session here.
-            await using var connection = new PostgresUnpooledConnectionFactory(dataSource.ConnectionString).CreateConnection();
+            // The host passes its original normalized configuration, never the data source's sanitized display string.
+            await using var connection = new PostgresUnpooledConnectionFactory(normalizedConnectionString).CreateConnection();
             await connection.OpenAsync(ct);
             IReadOnlyList<SnapshotRetentionSchemaTableIdentity>? identitiesBefore = null;
             await ExecuteSchemaInitializationStepAsync(
@@ -123,6 +125,8 @@ public static class DatabaseInitializer
                         await afterServerCommitForTest(token);
                     commitAcknowledged = true;
                 });
+            if (beforeConnectionDisposeForTest is not null)
+                await beforeConnectionDisposeForTest();
             return proof ?? throw new InvalidOperationException("The dedicated schema transaction did not produce its combined proof.");
         }
         catch (Exception exception) when (commitAttempted && proof is not null)

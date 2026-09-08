@@ -1,8 +1,8 @@
 ---
 status: decision
 owner: data
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
@@ -11,6 +11,9 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/SnapshotRetentionSchemaDmlProof.cs
+  - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOfflineDiagnostics.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionAuthenticationTests.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/StartupPublicationReadOnlyState.cs
   - FSTService/StartupInitializer.cs
@@ -24,9 +27,12 @@ update_triggers:
 ## Status
 
 The host-report candidate received independent review. The source-preserving
-deployment repair remains subject to parent review. Scale adjudication permits
+and authenticated fresh-connection repairs remain subject to parent review. Scale adjudication permits
 the bounded canary described below, but the first deployment was rejected at
 its publication-mutation gate; production acceptance remains outstanding.
+The later dedicated initializer refused at authentication before schema work.
+Owned SCRAM/TCP validation of the repair is not a new live acceptance or retry
+authorization.
 
 ## Context
 
@@ -46,6 +52,13 @@ upsert. Deployment after scrape `1362` applied the additive retention schema
 but rewrote publication `223`'s binding timestamp/provenance metadata. Unchanged
 public bodies and source relation identities did not waive the mutation gate.
 Official images were restored; no manual binding repair was performed.
+
+Npgsql's default `PersistSecurityInfo=false` sanitizes
+`NpgsqlDataSource.ConnectionString`. Recovering an original password from that
+property is impossible even when direct data-source connections authenticate.
+Reconstruction at the initializer, offline fence or reconciliation boundary
+can therefore fail only when a fresh backend is required, which trust fixtures
+cannot detect.
 
 ## Decision
 
@@ -74,6 +87,25 @@ other arguments. Its internal wrapper executes only the same bounded retention
 schema step used by general initialization, without evaluating or invoking
 the other schema steps. It cannot run catalog, notification, registration,
 path, publication, scrape or worker lifecycle work.
+
+Keep normalized credential-bearing input only in fixed-purpose host process
+memory/private non-record factories. The dedicated CLI passes that original
+configuration directly to its initializer helper; the reporter supplies an
+explicit private factory to the offline-only planner path. Every fresh
+inspection/data/fence/reconciliation connection uses this source, including
+after disposal. Missing offline factories refuse; no sanitized-data fallback
+or `PersistSecurityInfo=true` workaround is permitted. Preserve the worker's
+ordinary planner behavior, per-purpose timeouts and all commit/ownership
+assertions. A reconnect remains evidence only for the exact cycle and ended
+owners, never proof of an idempotent schema commit.
+
+Require independent password-authenticated PG17 TCP coverage with a nonempty
+random in-memory password and default security-information persistence off.
+Retain trust/socket coverage separately. Executable drills validate
+sanitization, actual initializer/reporting authentication and wrong-password
+refusal. Integration fault injection validates authenticated disposal and
+commit reconciliation without inventing a network-fault proof. Runtime
+sentinel scans and in-memory output capture prevent credential artifacts.
 
 Make source-DML evidence causal, not a comparison of asynchronously
 flushed/cached database-wide counters. The dedicated path owns one fresh
@@ -216,6 +248,9 @@ increase, automatic lifecycle action or archive capability follows from that.
 - Stopping a worker blocked after it has already frozen reads.
 - Duplicating planner SQL or weakening its independent liveness oracle.
 - Treating this bounded report transaction as archive/execution admission.
+- Treating a data-source display string as credentials, enabling persisted
+  security information to recover it, or calling trust-only tests authentication
+  evidence.
 
 ## Consequences and rollback
 

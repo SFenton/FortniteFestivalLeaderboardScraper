@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-06
-last_verified_commit: b1695507
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -37,6 +37,9 @@ sources:
   - tools/snapshot_retention_deployment_parity.test.py
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - tools/run-controlled-postgres-tests.py
+  - tools/owned_postgres_auth.py
+  - tools/owned_postgres_auth.test.py
+  - FSTService.Tests/Unit/HostConnectionOwnershipTests.cs
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -129,9 +132,27 @@ Canonical identity is independent of worker/offline provenance. Loader
 injection is rejected and PATH is fixed. Budget exhaustion and verified
 commit-with-cleanup-warning outcomes are explicit, with phase timings.
 
-The network-none disposable drill uses a genuine initialized baseline,
+The disposable drill uses a genuine initialized baseline,
 source-DML guards, source row/catalog parity, idempotency, and owned-resource
-cleanup. See [the offline report guide](../database/SnapshotGenerationOfflineRetentionReport.md).
+cleanup. Its default trust/socket lane remains network-none. Add `--scram-tcp`
+for the required authenticated lane: a random process-memory password,
+SCRAM-only host rules and one owned loopback port, with no password in Docker
+configuration or artifact. Both `inspect` and `observe-current` exercise the
+actual pinned executable and wrong-password refusals. The same flag composes
+with `--schema-only-repair`.
+
+Host tools must create fresh connections from original private normalized
+factories, not `NpgsqlDataSource.ConnectionString`. That display property is
+sanitized with default `PersistSecurityInfo=false`; enabling security-info
+persistence is not a repair. The reporter's private factory supplies
+inspection, offline data/fence and cleanup-reconciliation connections, and
+offline execution refuses when no dedicated factory is supplied. Other host
+tools' direct data-source opens and metadata-only property inspection remain
+safe; the source contract documents the deliberate owned negative probe.
+`owned_postgres_auth.py` provides in-memory output capture, runtime secret
+sentinels and artifact scans to the drill/controlled runner. It never imports
+operator connection/provider environments. See
+[the offline report guide](../database/SnapshotGenerationOfflineRetentionReport.md).
 
 Deployment initialization is the separate FSTService command
 `--initialize-snapshot-retention-schema-only`, not a new reporter capability.

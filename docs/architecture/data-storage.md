@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
@@ -33,6 +33,9 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetirementSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOfflineDiagnostics.cs
+  - tools/FstSnapshotGenerationRetentionReport/OfflineReportDatabase.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
@@ -729,6 +732,25 @@ transactional advisory admission surrounds the real repeatable-read
 observation/persistence transaction and releases immediately after its commit.
 No pending-work flag, execution ledger, tool-owned schema repair, or
 leaderboard/publication mutation is introduced.
+
+Fresh host backends must retain authentication independently of Npgsql's
+sanitized `DataSource.ConnectionString`. The dedicated CLI forwards its
+original normalized environment configuration to the dedicated initializer;
+the reporter owns a private non-record unpooled factory and explicitly gives
+it to the offline-only planner. Inspection, data, fence and authoritative
+cleanup/reconciliation connections use that source with unchanged
+`pg_catalog,public` and purpose-specific bounds. Every host variant composes
+only unique positive-second timeouts with exactly one mandatory
+`row_security=off`; conflicting or unsupported options refuse. This raises
+rather than silently filtering RLS-protected rows and never bypasses privileges.
+The reporter data source and planner factory are tool-internal, not public
+credential-reconstruction surfaces. Missing offline factories
+refuse. Credentials stay in process memory, never artifacts; do not enable
+`PersistSecurityInfo` to recover them. Direct data-source opens and
+metadata-only property inspection remain safe, but the property is not a
+credential source. Ordinary worker `PlanAsync` is unchanged. PG17 SCRAM/TCP
+and separate trust/socket fixtures cover this boundary without claiming live
+deployment acceptance.
 
 Deployment uses the service's isolated
 `--initialize-snapshot-retention-schema-only` mode, not general database

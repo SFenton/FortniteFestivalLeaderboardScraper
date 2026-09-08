@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Owned, network-none PostgreSQL 17 proof for the offline report entry point."""
+"""Owned PostgreSQL 17 proof with separate trust/socket and password/SCRAM/TCP client lanes."""
 import argparse
 import datetime
 import hashlib
@@ -17,11 +17,13 @@ import urllib.error
 import urllib.request
 
 from snapshot_retention_schema_proof import run_schema_repair_proof
+from owned_postgres_auth import CapturedProcessOutput, SecretGuard, scram_verifier, validation_environment
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FST_DATA = pathlib.Path("/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data")
 IMAGE = "postgres:17"
 LABEL = "fst.offline-retention-report.scope"
+SECRETS = SecretGuard()
 
 
 def utc():
@@ -29,7 +31,7 @@ def utc():
 
 
 def write(name, value):
-    pathlib.Path(name).write_text(json.dumps(value, indent=2) + "\n")
+    pathlib.Path(name).write_text(SECRETS.require_safe(json.dumps(value, indent=2) + "\n"))
 
 
 def sha(path):
@@ -44,7 +46,8 @@ def execute(arguments, *, environment=None, cwd=None, timeout=180, input_text=No
     process = subprocess.Popen(arguments, env=environment, cwd=cwd, text=True,
                                stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               start_new_session=True)
+                               start_new_session=True,
+                               preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)))
     try:
         stdout, stderr = process.communicate(input=input_text, timeout=timeout)
     except BaseException:
@@ -56,7 +59,8 @@ def execute(arguments, *, environment=None, cwd=None, timeout=180, input_text=No
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=10)
         raise
-    return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(arguments, process.returncode,
+                                       SECRETS.require_safe(stdout), SECRETS.require_safe(stderr))
 
 
 def checked(arguments, **kwargs):
@@ -98,6 +102,8 @@ def main():
     parser.add_argument("--run-focused-tests", action="store_true")
     parser.add_argument("--upgrade-from-880802ec", action="store_true")
     parser.add_argument("--schema-only-repair", action="store_true")
+    parser.add_argument("--scram-tcp", action="store_true",
+                        help="Use a random process-memory password and SCRAM on an owned loopback TCP port")
     parser.add_argument("--baseline-service")
     parser.add_argument("--baseline-service-sha256")
     args = parser.parse_args()
@@ -137,7 +143,7 @@ def main():
     if len(str(socket / ".s.PGSQL.5432").encode()) >= 108:
         raise RuntimeError("Owned PostgreSQL socket path is too long")
 
-    environment = dict(os.environ)
+    environment = validation_environment()
     environment.update({
         "DOTNET_NOLOGO": "1", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
         "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1", "DOTNET_PROCESSOR_COUNT": "2",
@@ -145,15 +151,20 @@ def main():
         "TMPDIR": str(work / "process-workspace"),
         "DOTNET_BUNDLE_EXTRACT_BASE_DIR": str(work / "runtime-bundle"),
         "DOTNET_EnableDiagnostics": "0",
+        "DOTNET_USE_POLLING_FILE_WATCHER": "1",
     })
     connection = f"Host={socket};Database=fst_offline_report_tests;Username=fst_test;Pooling=false"
+    SECRETS.register(connection)
     environment["FST_TEST_POSTGRES_CONNECTION_STRING"] = connection
     environment["FST_TEST_POSTGRES_SCOPE"] = scope
+    trust_test_environment = dict(environment)
+    wrong_connection = None
     container = None
     cleanup_complete = False
     result = {"startedAt": utc(), "scope": scope, "image": IMAGE,
               "productionTouched": False, "archiveInvoked": False,
               "destructiveSourceOperationInvoked": False}
+    result["clientAuthentication"] = "scram-sha-256/tcp" if args.scram_tcp else "trust/unix-socket"
 
     def owned_ids(role=None):
         arguments = ["docker", "ps", "-aq", "--filter", f"label={LABEL}={scope}"]
@@ -163,8 +174,15 @@ def main():
 
     def verify_owned(identity):
         obj = json.loads(checked(["docker", "inspect", identity], timeout=30))[0]
-        if obj["Config"]["Labels"].get(LABEL) != scope or obj["HostConfig"]["NetworkMode"] != "none":
+        role = obj["Config"]["Labels"].get("fst.offline-retention-report.role")
+        network = "bridge" if args.scram_tcp and role == "database" else "none"
+        if obj["Config"]["Labels"].get(LABEL) != scope or obj["HostConfig"]["NetworkMode"] != network:
             raise RuntimeError("Disposable container identity differs from the owned scope")
+        if network == "bridge":
+            mappings = obj["HostConfig"].get("PortBindings") or {}
+            if set(mappings) != {"5432/tcp"} or len(mappings["5432/tcp"]) != 1 \
+                    or mappings["5432/tcp"][0].get("HostIp") != "127.0.0.1":
+                raise RuntimeError("Owned SCRAM TCP port escaped loopback")
         return obj
 
     def cleanup():
@@ -179,6 +197,7 @@ def main():
             if path.is_file():
                 if path.is_symlink() or os.stat(path).st_dev != os.stat(FST_DATA).st_dev:
                     raise RuntimeError("PostgreSQL log storage escaped the FST drive")
+                SECRETS.scan_file(path)
                 logs.append({"path": str(work / path), "bytes": path.stat().st_size, "sha256": sha(path)})
         write("postgres-log-storage.json", {"logs": logs, "fstDevice": os.stat(FST_DATA).st_dev})
         checked([
@@ -258,12 +277,14 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     def validate():
-        nonlocal container
+        nonlocal container, connection, wrong_connection
         if execute(["docker", "image", "inspect", IMAGE], timeout=30).returncode:
             checked(["docker", "pull", IMAGE], timeout=300)
+        network_arguments = ["--network", "bridge", "--publish", "127.0.0.1::5432"] \
+            if args.scram_tcp else ["--network", "none"]
         container = checked([
             "docker", "run", "-d", "--name", "fst-offline-report-" + key,
-            "--network", "none", "--read-only", "--cpus", "2", "--memory", "4g", "--memory-swap", "4g",
+            *network_arguments, "--read-only", "--cpus", "2", "--memory", "4g", "--memory-swap", "4g",
             "--log-driver", "none",
             "--pids-limit", "256", "--shm-size", "256m",
             "--label", f"{LABEL}={scope}",
@@ -317,8 +338,44 @@ def main():
             raise RuntimeError("Owned PostgreSQL did not become ready")
         if sql("SELECT current_setting('fst.offline_report_test_scope');") != scope:
             raise RuntimeError("Owned PostgreSQL server scope mismatch")
+        if args.scram_tcp:
+            ports = obj["NetworkSettings"]["Ports"].get("5432/tcp") or []
+            if len(ports) != 1 or ports[0].get("HostIp") != "127.0.0.1" \
+                    or not 0 < int(ports[0].get("HostPort") or "0") <= 65535:
+                raise RuntimeError("The SCRAM fixture has no exact loopback TCP binding")
+            password = SECRETS.password()
+            verifier = scram_verifier(password, SECRETS)
+            sql("""
+                SET log_statement='none';
+                SET log_min_duration_statement=-1;
+                SET log_min_error_statement='panic';
+                SET log_parameter_max_length=0;
+                SET log_parameter_max_length_on_error=0;
+                ALTER ROLE fst_test PASSWORD '""" + verifier + """';
+                """)
+            checked(["docker", "exec", "-i", "-u", "postgres", container,
+                     "/bin/sh", "-c", "cd /var/lib/postgresql/data/pgdata && cat > pg_hba.conf"],
+                    input_text="local all all trust\nhost all all 0.0.0.0/0 scram-sha-256\n"
+                               "host all all ::/0 scram-sha-256\n")
+            sql("SELECT pg_reload_conf();")
+            if sql("""
+                SELECT count(*)=2 AND bool_and(auth_method='scram-sha-256' AND error IS NULL)
+                FROM pg_hba_file_rules WHERE type='host'
+                """) != "t":
+                raise RuntimeError("The owned TCP host rules are not exclusively SCRAM")
+            connection = SECRETS.register(
+                f"Host=127.0.0.1;Port={ports[0]['HostPort']};Database=fst_offline_report_tests;"
+                f"Username=fst_test;Password={password};Pooling=false")
+            wrong_connection = SECRETS.register(connection.replace(
+                f"Password={password};", f"Password={password}-wrong;"))
+            environment["FST_TEST_POSTGRES_CONNECTION_STRING"] = connection
+            write("authentication-setup.json", {
+                "hostRule": "scram-sha-256", "tcp": True, "bindAddress": "127.0.0.1",
+                "passwordRandomNonempty": True, "passwordInDockerConfiguration": False,
+                "plaintextPasswordInSql": False, "passwordFileCreated": False,
+                "persistSecurityInfo": "default_false", "administration": "owned_local_socket_only"})
         write("runtime.json", {"scope": scope, "containerId": container, "imageId": obj["Image"],
-                               "networkMode": "none", "socket": str(socket),
+                               "networkMode": obj["HostConfig"]["NetworkMode"], "socket": str(socket),
                                "driverPid": os.getpid(),
                                "database": "fst_offline_report_tests", "username": "fst_test"})
         print(json.dumps({"status": "ready", "workRoot": str(work), "scope": scope}), flush=True)
@@ -344,10 +401,10 @@ def main():
             tests = execute([
                 "dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "-c", "Release",
                 "--nologo", "-m:1", "-p:UseSharedCompilation=false", "-v:q",
-                "--filter", "FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|"
+                "--filter", "(FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|"
                 "FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|"
-                "FullyQualifiedName~OfflineReportCommandTests",
-            ], environment=environment, cwd=ROOT, timeout=1800)
+                "FullyQualifiedName~OfflineReportCommandTests)&FullyQualifiedName!~Authenticated",
+            ], environment=trust_test_environment, cwd=ROOT, timeout=1800)
             pathlib.Path("focused-tests.log").write_text(tests.stdout + tests.stderr)
             if tests.returncode:
                 raise RuntimeError("Focused validation failed")
@@ -365,6 +422,16 @@ def main():
                                              "baseline": "DatabaseInitializer.EnsureSchemaAsync"})
         if initialize.returncode:
             raise RuntimeError("Exact isolated baseline schema initialization failed")
+        if args.scram_tcp:
+            probe = execute([
+                "dotnet", "run", "--project", "tools/testdata/offline-retention-report-fixture/Fixture.csproj",
+                "-c", "Release", "-p:UseSharedCompilation=false", "--", "authentication-probe",
+            ], environment=environment, cwd=ROOT, timeout=180)
+            pathlib.Path("authentication-probe.stdout").write_text(probe.stdout)
+            pathlib.Path("authentication-probe.stderr").write_text(probe.stderr)
+            if probe.returncode:
+                raise RuntimeError("The actual Npgsql authenticated/sanitized premise probe failed")
+            result["authenticationPremise"] = json.loads(probe.stdout)
         if args.schema_only_repair:
             seed = execute([
                 "dotnet", "run", "--project", "tools/testdata/offline-retention-report-fixture/Fixture.csproj",
@@ -375,11 +442,11 @@ def main():
             if seed.returncode:
                 raise RuntimeError("Live-like publication/path/catalog fixture seeding failed")
 
-            def invoke_service(name, arguments, service=None, expected_exit=0, json_output=False):
+            def invoke_service(name, arguments, service=None, expected_exit=0, json_output=False, env=None):
                 target = service or current_service
                 started = time.monotonic()
                 invocation = execute(["dotnet", str(target), *arguments],
-                                     environment=seed_environment, cwd=work, timeout=180)
+                                     environment=env or seed_environment, cwd=work, timeout=180)
                 if connection in invocation.stdout or connection in invocation.stderr:
                     raise RuntimeError("Service connection output was suppressed")
                 pathlib.Path(name + ".stdout").write_text(invocation.stdout)
@@ -406,7 +473,7 @@ def main():
                     "XDG_CONFIG_HOME": str(data_directory / "config"),
                     "XDG_DATA_HOME": str(data_directory / "data"),
                     "ASPNETCORE_URLS": "http://127.0.0.1:0",
-                    "Api__ApiKey": uuid.uuid4().hex,
+                    "Api__ApiKey": SECRETS.register(uuid.uuid4().hex),
                     "Scraper__DataDirectory": str(data_directory),
                     "Scraper__DeviceAuthPath": str(data_directory / "device-auth.json"),
                     "Scraper__ApiOnly": "false",
@@ -421,11 +488,13 @@ def main():
                     "DOTNET_USE_POLLING_FILE_WATCHER": "1",
                 })
                 stdout_path, stderr_path = work / (name + ".stdout"), work / (name + ".stderr")
-                with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+                with CapturedProcessOutput(SECRETS, stdout_path, stderr_path) as captured:
                     process = subprocess.Popen(
                         ["dotnet", str(current_service), *arguments], env=runtime_environment, cwd=work,
-                        stdout=stdout, stderr=stderr, start_new_session=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                        start_new_session=True,
                         preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)))
+                    captured.attach(process)
                     started = utc()
                     validated = False
                     try:
@@ -436,7 +505,7 @@ def main():
                             if process.poll() is not None:
                                 raise RuntimeError("The ordinary degraded service exited before serving: " + name)
                             ports = re.findall(r"Now listening on: http://127\.0\.0\.1:([1-9][0-9]*)",
-                                               stdout_path.read_text())
+                                               captured.stdout())
                             if ports:
                                 address = "http://127.0.0.1:" + ports[-1]
                                 try:
@@ -462,7 +531,7 @@ def main():
                              "WorkerStatusHeartbeatService", "ScraperWorker", "RegistrationBackfillWorker",
                              "BandRankHistoryWorker"})
                         suppressed = set(re.findall(
-                            r"Hosted mutation/background service (\w+) suppressed", stdout_path.read_text()))
+                            r"Hosted mutation/background service (\w+) suppressed", captured.stdout()))
                         if suppressed != expected_suppressed:
                             raise RuntimeError("The ordinary degraded host did not suppress every expected background service")
                         requests = []
@@ -524,6 +593,16 @@ def main():
                     """) != "0":
                     raise RuntimeError("Degraded service database ownership remains after shutdown")
 
+            if args.scram_tcp:
+                wrong_environment = dict(seed_environment)
+                wrong_environment["ConnectionStrings__PostgreSQL"] = wrong_connection
+                rejected = invoke_service("schema-wrong-password",
+                    ["--initialize-snapshot-retention-schema-only"],
+                    expected_exit=2, json_output=True, env=wrong_environment)
+                if rejected["code"] != "retention_schema_refused" or rejected["sqlState"] != "28P01" \
+                        or rejected["transactionCommitted"] is not False or rejected["dmlProof"] is not None:
+                    raise RuntimeError("The actual initializer did not preserve its wrong-password refusal")
+                result["wrongPasswordInitializerRefused"] = True
             result.update(run_schema_repair_proof(
                 sql, invoke_service, write, baseline_service, serve_degraded=serve_degraded))
             return
@@ -580,6 +659,15 @@ def main():
             if response["code"] != "invalid_command_or_arguments":
                 raise RuntimeError("A forbidden command reached another surface")
         identity = call_tool("inspect-before", ["inspect"])["runtimeIdentity"]
+        if args.scram_tcp:
+            wrong_environment = dict(environment)
+            wrong_environment["FST_SNAPSHOT_RETENTION_REPORT_CONNECTION_STRING"] = wrong_connection
+            for name, arguments in (
+                ("inspect", ["inspect"]), ("observe-current", identity_arguments(identity))):
+                rejected = call_tool("wrong-password-" + name, arguments, expected_exit=2, env=wrong_environment)
+                if rejected["code"] != "postgres_rejected" or rejected["sqlState"] != "28P01":
+                    raise RuntimeError("The actual reporter did not preserve its wrong-password refusal")
+            result["wrongPasswordReporterRefused"] = True
         pathlib.Path("decoy-path").mkdir()
         for utility in ("git", "sha256sum", "dirname", "stat", "cut", "mkdir"):
             decoy = pathlib.Path("decoy-path", utility)
@@ -649,6 +737,13 @@ def main():
         except Exception as error:
             result.update({"outcome": "failed", "cleanupError": str(error)})
         result.update({"finishedAt": utc(), "ownedScratchAndContainersRemoved": cleanup_complete})
+        try:
+            for path in sorted(pathlib.Path(".").rglob("*")):
+                if path.is_file() and not {"postgres-data", "process-workspace", "runtime-bundle"}.intersection(path.parts):
+                    SECRETS.scan_file(path)
+        except Exception:
+            result.update({"outcome": "failed", "secretScanFailed": True})
+        result["secretSafety"] = SECRETS.evidence()
         write("run.json", result)
         files = sorted(path for path in pathlib.Path(".").rglob("*")
                        if path.is_file() and path.name != "SHA256SUMS"

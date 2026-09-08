@@ -41,7 +41,7 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var result = await RunAsync(_fixture.DataSource.ConnectionString);
+            var result = await RunAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource));
             Assert.Equal(0, result.ExitCode);
             Assert.Equal("schema_current", result.Json.GetProperty("outcome").GetString());
             Assert.False(result.Json.GetProperty("hostedServicesStarted").GetBoolean());
@@ -83,7 +83,7 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
         }
         var before = Scalar<string>("SELECT to_jsonb(worker)::text FROM service_worker_status worker");
 
-        var result = await RunAsync(_fixture.DataSource.ConnectionString);
+        var result = await RunAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource));
 
         Assert.Equal(2, result.ExitCode);
         Assert.Equal("55000", result.Json.GetProperty("sqlState").GetString());
@@ -104,7 +104,7 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
             """;
         await command.ExecuteNonQueryAsync();
 
-        var result = await RunAsync(_fixture.DataSource.ConnectionString);
+        var result = await RunAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource));
 
         Assert.Equal(2, result.ExitCode);
         Assert.Equal("55P03", result.Json.GetProperty("sqlState").GetString());
@@ -134,7 +134,7 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
         cancellation.Cancel();
         using var output = new StringWriter();
         var exit = await SnapshotRetentionSchemaCommand.RunAsync(
-            [SnapshotRetentionSchemaCommand.Flag], _fixture.DataSource.ConnectionString,
+            [SnapshotRetentionSchemaCommand.Flag], SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
             output, cancellation.Token);
         Assert.Equal(130, exit);
         Assert.Contains("cancelled_or_deadline_exceeded", output.ToString(), StringComparison.Ordinal);
@@ -176,7 +176,7 @@ public sealed class SnapshotRetentionSchemaInitializationTests : IDisposable
                 ON ddl_command_start EXECUTE FUNCTION public.assert_retention_schema_search_path();
             """);
 
-        var result = await RunAsync(_fixture.DataSource.ConnectionString);
+        var result = await RunAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource));
 
         Assert.Equal(0, result.ExitCode);
         Assert.True(Scalar<bool>("""

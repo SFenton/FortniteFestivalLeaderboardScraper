@@ -9,14 +9,17 @@ import pathlib
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
+from owned_postgres_auth import SecretGuard, validation_environment
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FST = pathlib.Path("/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data")
 LABEL = "fst.controlled-test.scope"
 IMAGE = "postgres:17-alpine"
+SECRETS = SecretGuard()
 EIGHT = [
     "FSTService.Tests.Integration.StoredRankRolloutHarnessIntegrationTests.Database_identity_rejects_same_named_database_on_a_different_cluster",
     "FSTService.Tests.Integration.StoredRankRolloutHarnessIntegrationTests.Manifest_and_row_harness_cover_the_complete_rollout_matrix",
@@ -34,7 +37,10 @@ def now():
 
 
 def command(args, **kwargs):
-    return subprocess.run(args, capture_output=True, text=True, timeout=120, **kwargs)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=120, **kwargs)
+    SECRETS.require_safe(result.stdout)
+    SECRETS.require_safe(result.stderr)
+    return result
 
 
 def main():
@@ -55,7 +61,7 @@ def main():
     fixture = work / "pgdata"
     scratch = work / "process-workspace"
     base = ROOT / "artifacts/offline-retention-report-repair/base-880802ec"
-    environment = dict(os.environ)
+    environment = validation_environment()
     for key in ("FST_TEST_POSTGRES_CONNECTION_STRING", "FST_TEST_POSTGRES_SCOPE"):
         environment.pop(key, None)
     environment.update({
@@ -65,6 +71,8 @@ def main():
         "MSBUILDDISABLENODEREUSE": "1", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
         "DOTNET_NOLOGO": "1", "TMPDIR": str(scratch),
         "DOCKER_HOST": "unix:///var/run/docker.sock",
+        "DOTNET_USE_POLLING_FILE_WATCHER": "1",
+        "FST_TEST_AUTH_PASSWORD": SECRETS.password(),
     })
     comparison_filter = "|".join("FullyQualifiedName=" + name for name in EIGHT)
     runs = [("base-1", base, comparison_filter), ("candidate-1", ROOT, comparison_filter),
@@ -78,6 +86,11 @@ def main():
                 "baseCommit": "880802ec7fa3fb9b20561596819766be1b11e66a",
                 "ryukDisabled": True, "connectionOverrideUnset": True, "runs": [],
                 "productionTouched": False, "allOwnedResourcesRemoved": False}
+    manifest["authenticatedRolePassword"] = {
+        "randomNonempty": True, "processMemoryAndChildEnvironmentOnly": True,
+        "dockerConfigurationContainsPassword": False, "plaintextPasswordInSql": False,
+        "persistSecurityInfo": "default_false_in_authenticated_scope",
+    }
     manifest["cleanupAttempts"] = []
     manifest["fixtureEvidence"] = []
     invariant = {key: environment[key] for key in (
@@ -154,6 +167,7 @@ def main():
                 if log.is_file():
                     if log.is_symlink() or os.stat(log).st_dev != os.stat(FST).st_dev:
                         raise RuntimeError("PostgreSQL log is not an owned regular FST-drive file")
+                    SECRETS.scan_file(log)
                     logs.append({"path": str(log), "bytes": log.stat().st_size,
                                  "sha256": hashlib.sha256(log.read_bytes()).hexdigest()})
             if not logs:
@@ -241,15 +255,23 @@ def main():
             if selected:
                 args_test += ["--filter", selected]
             started = time.monotonic()
-            with pathlib.Path(name, "console.log").open("w") as output:
-                process = subprocess.Popen(args_test, cwd=source, env=environment,
-                                           stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-                while process.poll() is None:
-                    for identity in ids():
-                        inspect(identity)
-                    if time.monotonic() - started > 2700:
-                        raise RuntimeError("Controlled test deadline exceeded")
-                    time.sleep(1)
+            captured = []
+            process = subprocess.Popen(args_test, cwd=source, env=environment, text=True,
+                                       errors="replace", stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, start_new_session=True)
+            reader = threading.Thread(target=lambda: captured.append(process.stdout.read()), daemon=True)
+            reader.start()
+            while process.poll() is None:
+                for identity in ids():
+                    inspect(identity)
+                if time.monotonic() - started > 2700:
+                    raise RuntimeError("Controlled test deadline exceeded")
+                time.sleep(1)
+            reader.join(timeout=10)
+            if reader.is_alive():
+                raise RuntimeError("Controlled test output capture did not complete")
+            pathlib.Path(name, "console.log").write_text(SECRETS.require_safe("".join(captured)))
+            SECRETS.scan_file(work / name / "result.trx")
             root = ET.parse(work / name / "result.trx").getroot()
             counters = root.find(".//{*}Counters").attrib
             total, passed, failed = (int(counters[key]) for key in ("total", "passed", "failed"))
@@ -280,6 +302,13 @@ def main():
         manifest["containers"] = list(observed.values())
         manifest["artifactDevice"] = os.stat(work).st_dev
         manifest["fstDevice"] = os.stat(FST).st_dev
+        try:
+            for path in sorted(pathlib.Path(".").rglob("*")):
+                if path.is_file() and not {"pgdata", "process-workspace"}.intersection(path.parts):
+                    SECRETS.scan_file(path)
+        except Exception:
+            manifest.update({"outcome": "failed", "secretScanFailed": True})
+        manifest["secretSafety"] = SECRETS.evidence()
         pathlib.Path("run.json").write_text(json.dumps(manifest, indent=2) + "\n")
         checksums = []
         for path in sorted(pathlib.Path(".").rglob("*")):

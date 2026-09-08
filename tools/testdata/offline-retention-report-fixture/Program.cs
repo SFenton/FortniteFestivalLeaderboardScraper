@@ -7,7 +7,7 @@ using FSTService.Persistence.Maintenance;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
-if (args.Length != 1 || args[0] is not ("publish-worker-configuration" or "seed-schema-repair"))
+if (args.Length != 1 || args[0] is not ("publish-worker-configuration" or "seed-schema-repair" or "authentication-probe"))
     return 64;
 var scope = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_SCOPE");
 var connectionString = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_CONNECTION_STRING");
@@ -17,25 +17,68 @@ var builder = new NpgsqlConnectionStringBuilder(connectionString)
 {
     Pooling = false, Timeout = 5, CommandTimeout = 5, Options = "",
 };
+var tcp = builder.Host == "127.0.0.1" && builder.Port > 0
+    && !string.IsNullOrEmpty(builder.Password) && !builder.PersistSecurityInfo;
+var socket = builder.Host?.StartsWith(
+    "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/.s/",
+    StringComparison.Ordinal) is true;
 if (builder.Database != "fst_offline_report_tests" || builder.Username != "fst_test"
-    || builder.Host?.StartsWith(
-        "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/.s/",
-        StringComparison.Ordinal) != true)
+    || (!tcp && !socket))
     return 64;
 await using var source = NpgsqlDataSource.Create(builder.ConnectionString);
 await using var connection = await source.OpenConnectionAsync();
 await using var command = connection.CreateCommand();
 command.CommandText = """
     SELECT current_setting('fst.offline_report_test_scope',true)=@scope
-        AND inet_server_addr() IS NULL
+        AND (inet_server_addr() IS NOT NULL)=@tcp
         AND current_database()='fst_offline_report_tests'
         AND current_user='fst_test'
         AND current_setting('server_version_num')::INTEGER BETWEEN 170000 AND 179999
     """;
 command.Parameters.AddWithValue("scope", scope!);
+command.Parameters.AddWithValue("tcp", tcp);
 if (await command.ExecuteScalarAsync() is not true)
     return 64;
 command.Parameters.Clear();
+if (args[0] == "authentication-probe")
+{
+    var display = new NpgsqlConnectionStringBuilder(source.ConnectionString);
+    if (!tcp || builder.PersistSecurityInfo || display.PersistSecurityInfo
+        || !string.IsNullOrEmpty(display.Password))
+        return 2;
+    await using var sanitizedReconstruction = new NpgsqlConnection(source.ConnectionString);
+    try
+    {
+        await sanitizedReconstruction.OpenAsync();
+        return 2;
+    }
+    catch (NpgsqlException)
+    {
+    }
+    await using var fresh = new PostgresUnpooledConnectionFactory(builder.ConnectionString).CreateConnection();
+    await fresh.OpenAsync();
+    await using var freshIdentity = fresh.CreateCommand();
+    freshIdentity.CommandText = """
+        SELECT current_setting('fst.offline_report_test_scope',true)=@scope
+            AND current_user='fst_test' AND inet_client_addr() IS NOT NULL
+        """;
+    freshIdentity.Parameters.AddWithValue("scope", scope!);
+    if (await freshIdentity.ExecuteScalarAsync() is not true)
+        return 2;
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        outcome = "authenticated_fresh_connection_proved",
+        serverVersion = connection.PostgreSqlVersion.Major,
+        passwordNonempty = true,
+        persistSecurityInfo = false,
+        dataSourcePasswordSanitized = true,
+        sanitizedReconstructionRefused = true,
+        directDataSourceAuthenticated = true,
+        privateFactoryAuthenticated = true,
+        tcp = true,
+    }));
+    return 0;
+}
 if (args[0] == "seed-schema-repair")
 {
     await new FestivalPersistence(source).SaveSongsVersionedAsync(
@@ -65,7 +108,8 @@ if (args[0] == "seed-schema-repair")
         WHERE song_id='schema-repair-song';
         """;
     await command.ExecuteNonQueryAsync();
-    using var meta = new MetaDatabase(source, NullLogger<MetaDatabase>.Instance);
+    using var meta = new MetaDatabase(source, NullLogger<MetaDatabase>.Instance,
+        unpooledConnections: new PostgresUnpooledConnectionFactory(builder.ConnectionString));
     var scrapeId = meta.StartScrapeRun();
     meta.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
     meta.PublishScrapeRun(scrapeId, promoteCachedResponses: false);

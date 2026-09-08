@@ -51,7 +51,7 @@ public sealed class SnapshotRetentionSchemaCombinedProofTests : IDisposable
         SeedSource();
         var before = SourceState();
         var failure = await Assert.ThrowsAsync<SnapshotRetentionSchemaDmlRefusal>(() =>
-            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(_fixture.DataSource,
+            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
                 beforeDmlAssertionForTest: (connection, transaction, ct) => ExecuteAsync(connection, transaction, sql, ct)));
 
         Assert.Equal("non_retention_relation_identity_changed", failure.Code);
@@ -69,7 +69,7 @@ public sealed class SnapshotRetentionSchemaCombinedProofTests : IDisposable
         SeedSource();
         var before = SourceState();
         var failure = await Assert.ThrowsAsync<SnapshotRetentionSchemaDmlRefusal>(() =>
-            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(_fixture.DataSource,
+            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
                 beforeDmlAssertionForTest: async (connection, _, ct) =>
                 {
                     await using var copy = await connection.BeginBinaryImportAsync(
@@ -92,7 +92,7 @@ public sealed class SnapshotRetentionSchemaCombinedProofTests : IDisposable
         Execute("CREATE MATERIALIZED VIEW public.identity_materialized AS SELECT 1::integer AS value");
         var before = Scalar<long>("SELECT relfilenode::bigint FROM pg_class WHERE oid='public.identity_materialized'::regclass");
         var failure = await Assert.ThrowsAsync<SnapshotRetentionSchemaDmlRefusal>(() =>
-            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(_fixture.DataSource,
+            DatabaseInitializer.EnsureSnapshotGenerationRetentionSchemaAsync(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource),
                 beforeDmlAssertionForTest: (connection, transaction, ct) => ExecuteAsync(connection, transaction,
                     "REFRESH MATERIALIZED VIEW public.identity_materialized", ct)));
         Assert.Equal("non_retention_relation_identity_changed", failure.Code);
@@ -193,7 +193,7 @@ public sealed class SnapshotRetentionSchemaCombinedProofTests : IDisposable
     {
         using var output = new StringWriter();
         var code = await SnapshotRetentionSchemaCommand.RunAsync([SnapshotRetentionSchemaCommand.Flag],
-            _fixture.DataSource.ConnectionString, output,
+            SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource), output,
             beforeDmlAssertionForTest: beforeProof, afterServerCommitForTest: afterServerCommit);
         using var json = JsonDocument.Parse(output.ToString());
         return (code, json.RootElement.Clone());

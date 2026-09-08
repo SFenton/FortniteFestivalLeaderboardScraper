@@ -1,9 +1,6 @@
 using System.Text.Json;
 using FstSnapshotGenerationRetentionReport;
-using FSTService;
 using FSTService.Persistence.Maintenance;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FstSnapshotGenerationRetentionReport;
@@ -57,20 +54,7 @@ try
     var initialIdentity = await database.InspectAsync(code, cancellation.Token);
     command.Assertions!.Require(initialIdentity);
     var attestation = new OfflineReportAttestation(code, command.Assertions);
-    var planner = new SnapshotGenerationRetentionPlanner(
-        database.DataSource,
-        new SnapshotGenerationRetentionRepository(database.DataSource),
-        new SnapshotGenerationRetentionOracle(),
-        new ServiceMaintenanceLock(),
-        Options.Create(new DatabaseMaintenanceOptions
-        {
-            SnapshotGenerationRetentionReportOnlyEnabled =
-                initialIdentity.WorkerConfiguration!.ReportOnlyEnabled,
-            SnapshotGenerationRetentionCommandTimeoutSeconds = 15,
-            ServiceMaintenanceLockWaitMilliseconds = 250,
-        }),
-        Options.Create(new ScraperOptions()),
-        NullLogger<SnapshotGenerationRetentionPlanner>.Instance);
+    var planner = database.CreatePlanner(initialIdentity.WorkerConfiguration!.ReportOnlyEnabled);
     var observation = await planner.ObserveCurrentOfflineAsync(attestation, cancellation.Token);
     observation = await database.CompleteAndDisposeAsync(observation);
     using var blockers = JsonDocument.Parse(observation.Cycle.GlobalBlockersJson);

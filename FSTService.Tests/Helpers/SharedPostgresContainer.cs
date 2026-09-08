@@ -36,6 +36,16 @@ public static class SharedPostgresContainer
             ? _container.Value.GetConnectionString()
             : _isolatedConnection.Value;
 
+    internal static string OriginalConnectionStringFor(NpgsqlDataSource source)
+    {
+        var settings = new NpgsqlConnectionStringBuilder(ConnectionString)
+        {
+            Database = new NpgsqlConnectionStringBuilder(source.ConnectionString).Database,
+        };
+        settings.Remove("Persist Security Info");
+        return settings.ConnectionString;
+    }
+
     private static string ValidateIsolatedConnection()
     {
         var scope = Environment.GetEnvironmentVariable("FST_TEST_POSTGRES_SCOPE");

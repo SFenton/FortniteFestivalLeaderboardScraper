@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FSTService/Program.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
@@ -173,11 +173,16 @@ publication/path/catalog/registration data, operate Docker, start workers or
 publish their configuration receipts. It shares the exact retention schema
 step, with 2-second lock/15-second statement/20-second command limits, a
 10-second connect limit and a 30-second cancellation deadline.
+Its original normalized credential-bearing configuration passes directly to
+the dedicated initializer's private unpooled factory. It is never recovered
+from `NpgsqlDataSource.ConnectionString`, which omits passwords with default
+`PersistSecurityInfo=false`. The command keeps that setting off; credentials
+remain process-memory only and never enter output/evidence.
 
 Output is secret-free JSON with scope `snapshot_generation_retention`.
 Exit `0` means `schema_current`; `64` rejects arguments, `2` reports missing or
 invalid connection configuration or database refusal (including SQLSTATE),
-and `130` reports cancellation/deadline exhaustion. The data source is disposed
+and `130` reports cancellation/deadline exhaustion. The fresh connection is disposed
 before success is emitted. Success additionally requires
 `transactionCommitted=true` and a version-2 combined `dmlProof` with
 `statisticsSource=pg_stat_xact_user_tables`,
