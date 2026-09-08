@@ -65,6 +65,7 @@ implementation fragments into ad hoc commands.
 | Documentation | `tools/check-docs.mjs` |
 | Secret/encoding/license/coverage checks | `tools/secret-scan.mjs`, `tools/check-encoding.mjs`, `tools/generate-license-manifest.mjs`, `FortniteFestivalWeb/scripts/check-coverage-ignores.mjs` |
 | Autonomous reports | `tools/agent-report-email.mjs` |
+| Budget-aware agent routing | `.github/agent-budget.json`, `fst-budget-workflow`; [workflow](../governance/agent-budget.md) |
 | Production MCP adapters | `tools/mcp/` |
 | Pak extraction | `tools/FortnitePakExtractor/` |
 

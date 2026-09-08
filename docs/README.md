@@ -53,6 +53,7 @@ evidence remain the behavioral sources of truth.
 | Find active future work | [Roadmap](roadmap/README.md) |
 | Understand why a boundary exists | [Architecture decisions](decisions/README.md) |
 | Change documentation safely | [Documentation governance](governance/documentation.md) |
+| Route agent work within a budget | [Budget-aware agents](governance/agent-budget.md) |
 
 ## Database safety
 

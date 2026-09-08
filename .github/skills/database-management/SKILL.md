@@ -10,7 +10,7 @@ Use this skill when researching database platforms, evaluating storage/query alt
 
 This is an umbrella skill. Load only the relevant advisor skill(s) and reference file(s) for the task instead of putting every database checklist into context.
 
-Like `ml-implementation-review`, this skill is seeded by permissively licensed OSS skills/agents and then adapted to this repository. Read `references/oss-feeders.md` and `references/attribution.md` when adding, changing, or justifying feeder-derived database guidance.
+This skill is seeded by permissively licensed OSS skills/agents and then adapted to this repository. Read `references/oss-feeders.md` and `references/attribution.md` when adding, changing, or justifying feeder-derived database guidance.
 
 ## Repository rules override general database guidance
 
