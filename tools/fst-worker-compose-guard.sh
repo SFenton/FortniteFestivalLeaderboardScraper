@@ -12,7 +12,16 @@ RUNONCE_ACTION_REQUESTED=false
 THROUGHPUT_PROFILE="baseline-up-to-800-32-4"
 DATA_PROFILE="none"
 EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
+EXPECTED_WORKER_IMAGE_ID=""
+EXPECTED_WORKER_REVISION=""
 WORKER_MUTATION_LOCK_PATH="${FST_WORKER_COMPOSE_GUARD_LOCK_PATH:-}"
+INHERITED_WORKER_LOCK_FD=""
+WORKER_LOCK_FD=""
+WORKER_CREATE_ATTEMPTED=0
+CREATED_WORKER_CONTAINER_ID=""
+PREVIOUS_WORKER_CONTAINER_ID=""
+DIRECT_WORKER_START_ACCEPTED=0
+WORKER_CLEANUP_FAILED=0
 RECOVERY_CORE_WAIT_SECONDS="${FST_WORKER_RECOVERY_CORE_WAIT_SECONDS:-60}"
 RECOVERY_INITIAL_WAIT_SECONDS="${FST_WORKER_RECOVERY_INITIAL_WAIT_SECONDS:-360}"
 RECOVERY_RECREATE_WAIT_SECONDS="${FST_WORKER_RECOVERY_RECREATE_WAIT_SECONDS:-360}"
@@ -63,6 +72,16 @@ Options:
                            Require the resolved fstworker image to match I.
                            Enforced whenever supplied and required whenever
                            --data-profile is not none.
+  --expected-worker-image-id I
+                           Require I to be the exact local image ID resolved
+                           by --expected-worker-image before and after startup.
+  --expected-worker-revision R
+                           Require the image and started worker OCI revision
+                           label to match the exact 40-hex commit R.
+  --inherited-worker-lock-fd N
+                           For a mutating action, require descriptor N to
+                           already own the canonical worker lock in this same
+                           process. The guard retains it through startup.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
 EOF
@@ -79,6 +98,9 @@ while [[ $# -gt 0 ]]; do
         --throughput-profile) THROUGHPUT_PROFILE="$2"; shift 2 ;;
         --data-profile) DATA_PROFILE="$2"; shift 2 ;;
         --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
+        --expected-worker-image-id) EXPECTED_WORKER_IMAGE_ID="$2"; shift 2 ;;
+        --expected-worker-revision) EXPECTED_WORKER_REVISION="$2"; shift 2 ;;
+        --inherited-worker-lock-fd) INHERITED_WORKER_LOCK_FD="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'ERROR: unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
@@ -173,6 +195,27 @@ if [[ "$DATA_PROFILE" != "none" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
     exit 64
 fi
 
+if [[ -n "$EXPECTED_WORKER_IMAGE_ID" \
+    && ! "$EXPECTED_WORKER_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+then
+    printf 'ERROR: --expected-worker-image-id must be a lowercase sha256 image ID\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_REVISION" \
+    && ! "$EXPECTED_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]
+then
+    printf 'ERROR: --expected-worker-revision must be a lowercase 40-hex commit\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_IMAGE_ID" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
+    printf 'ERROR: --expected-worker-image-id requires --expected-worker-image\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_REVISION" && -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+    printf 'ERROR: --expected-worker-revision requires --expected-worker-image-id\n' >&2
+    exit 64
+fi
+
 if [[ "$THROUGHPUT_PROFILE" == candidate-* \
     && "$ACTION" =~ ^(recreate|recover-start)$ ]]
 then
@@ -184,6 +227,40 @@ MUTATING_WORKER_ACTION=false
 if [[ "$ACTION" =~ ^(recreate|recreate-runonce|recover-start)$ ]]; then
     MUTATING_WORKER_ACTION=true
 fi
+
+if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
+    require_inherited_lock_action="$MUTATING_WORKER_ACTION"
+    if [[ "$require_inherited_lock_action" != "true" ]]; then
+        printf 'ERROR: --inherited-worker-lock-fd requires a mutating worker action\n' >&2
+        exit 64
+    fi
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" \
+        || -z "$EXPECTED_WORKER_REVISION" ]]
+    then
+        printf 'ERROR: inherited worker handoff requires exact image ID and revision assertions\n' >&2
+        exit 64
+    fi
+    if [[ ! "$EXPECTED_WORKER_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+        printf 'ERROR: inherited worker handoff requires an immutable digest image reference\n' >&2
+        exit 64
+    fi
+fi
+
+if [[ -n "${COMPOSE_FILE:-}" \
+    || -n "${COMPOSE_PROJECT_NAME:-}" \
+    || -n "${COMPOSE_ENV_FILES:-}" \
+    || -n "${COMPOSE_PROFILES:-}" \
+    || -n "${DOCKER_HOST:-}" \
+    || -n "${DOCKER_CONTEXT:-}" ]]
+then
+    printf 'ERROR: Docker/Compose routing environment overrides are not permitted\n' >&2
+    exit 64
+fi
+DOCKER_HOST="unix:///var/run/docker.sock"
+DOCKER_CONFIG="/nonexistent/fst-worker-compose-guard"
+COMPOSE_PROJECT_NAME="festivalservicetracker"
+export DOCKER_HOST DOCKER_CONFIG COMPOSE_PROJECT_NAME
+unset DOCKER_CONTEXT COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES
 
 for command in docker python3 realpath; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -213,6 +290,94 @@ require_positive_integer() {
         printf 'ERROR: %s must be greater than zero\n' "$name" >&2
         exit 64
     fi
+}
+
+verify_inherited_worker_mutation_lock() {
+    if [[ -z "$INHERITED_WORKER_LOCK_FD" ]]; then
+        return 0
+    fi
+    python3 - "$WORKER_MUTATION_LOCK_PATH" "$INHERITED_WORKER_LOCK_FD" "$$" <<'PY'
+import fcntl
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+descriptor = int(sys.argv[2])
+owner_pid = int(sys.argv[3])
+if descriptor < 3 or not path.is_absolute():
+    raise SystemExit("ERROR: inherited worker lock descriptor or path is invalid")
+parent = path.parent
+parent_before = parent.stat()
+parent_descriptor = os.open(
+    parent,
+    os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW,
+)
+try:
+    parent_opened = os.fstat(parent_descriptor)
+    if (
+        (parent_opened.st_dev, parent_opened.st_ino)
+        != (parent_before.st_dev, parent_before.st_ino)
+        or not stat.S_ISDIR(parent_opened.st_mode)
+    ):
+        raise SystemExit("ERROR: canonical worker lock parent identity changed")
+    before = os.stat(
+        path.name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+    ):
+        raise SystemExit("ERROR: canonical worker lock path is not a safe owned regular file")
+    opened = os.open(
+        path.name,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        dir_fd=parent_descriptor,
+    )
+finally:
+    os.close(parent_descriptor)
+try:
+    canonical = os.fstat(opened)
+    inherited = os.fstat(descriptor)
+    if (
+        (before.st_dev, before.st_ino) != (canonical.st_dev, canonical.st_ino)
+        or (canonical.st_dev, canonical.st_ino)
+        != (inherited.st_dev, inherited.st_ino)
+        or not stat.S_ISREG(inherited.st_mode)
+        or inherited.st_uid != os.getuid()
+    ):
+        raise SystemExit("ERROR: inherited worker lock inode identity changed")
+    matches = []
+    for line in pathlib.Path("/proc/locks").read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[1:4] != ["FLOCK", "ADVISORY", "WRITE"]:
+            continue
+        device = fields[5].split(":")
+        if len(device) != 3:
+            continue
+        if (
+            int(fields[4]) == owner_pid
+            and int(device[0], 16) == os.major(inherited.st_dev)
+            and int(device[1], 16) == os.minor(inherited.st_dev)
+            and int(device[2]) == inherited.st_ino
+        ):
+            matches.append(line)
+    if len(matches) != 1:
+        raise SystemExit("ERROR: inherited worker lock is not owned by this exact process")
+    try:
+        fcntl.flock(opened, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    else:
+        fcntl.flock(opened, fcntl.LOCK_UN)
+        raise SystemExit("ERROR: canonical worker lock path is not excluded by the inherited lock")
+finally:
+    os.close(opened)
+PY
 }
 
 acquire_worker_mutation_lock() {
@@ -252,6 +417,15 @@ acquire_worker_mutation_lock() {
         exit 1
     fi
 
+    if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
+        require_positive_integer \
+            inherited_worker_lock_fd \
+            "$INHERITED_WORKER_LOCK_FD"
+        WORKER_LOCK_FD="$INHERITED_WORKER_LOCK_FD"
+        verify_inherited_worker_mutation_lock
+        return
+    fi
+
     if ! exec 9>>"$WORKER_MUTATION_LOCK_PATH"; then
         printf 'ERROR: worker mutation lock file could not be opened\n' >&2
         exit 1
@@ -260,6 +434,7 @@ acquire_worker_mutation_lock() {
         printf 'ERROR: another fstworker start/recreate action is already running\n' >&2
         exit 1
     fi
+    WORKER_LOCK_FD=9
 }
 
 if [[ "$ACTION" == "recover-start" ]]; then
@@ -356,8 +531,12 @@ if $MUTATING_WORKER_ACTION; then
     acquire_worker_mutation_lock
 fi
 
-if [[ "$(basename "$pia_overlay")" != "docker-compose.pia-30.yml" ]]; then
-    printf 'ERROR: canonical PIA overlay must be docker-compose.pia-30.yml\n' >&2
+if [[ "$base_file" != "$compose_dir/docker-compose.yml" ]]; then
+    printf 'ERROR: canonical base file must resolve inside the Compose directory\n' >&2
+    exit 1
+fi
+if [[ "$pia_overlay" != "$compose_dir/docker-compose.pia-30.yml" ]]; then
+    printf 'ERROR: canonical PIA overlay must resolve inside the Compose directory\n' >&2
     exit 1
 fi
 for file in "$base_file" "$pia_overlay"; do
@@ -374,7 +553,8 @@ fi
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
     runonce_restart="$(
         cd "$compose_dir"
-        docker compose --profile worker \
+        docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+            --project-directory "$compose_dir" --profile worker \
             -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
             config --format json \
             | python3 -c 'import json,sys; print((json.load(sys.stdin).get("services", {}).get("fstworker", {}).get("restart") or "").strip())'
@@ -389,7 +569,8 @@ fi
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
     compose_json="$(
         cd "$compose_dir"
-        docker compose --profile worker \
+        docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+            --project-directory "$compose_dir" --profile worker \
             -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
             config --format json
     )"
@@ -397,7 +578,8 @@ if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
 else
     compose_json="$(
         cd "$compose_dir"
-        docker compose --profile worker \
+        docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+            --project-directory "$compose_dir" --profile worker \
             -f "$base_file" -f "$pia_overlay" config --format json
     )"
     REQUIRE_RUN_ONCE=false
@@ -913,6 +1095,21 @@ if recovery_mode:
         <<< "$compose_json"
 )"
 
+compose_snapshot() {
+    local include_worker_profile="$1"
+    shift
+    if [[ "$include_worker_profile" == "true" ]]; then
+        printf '%s\n' "$compose_json" \
+            | docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$compose_dir" --profile worker \
+                -f - "$@"
+    else
+        printf '%s\n' "$compose_json" \
+            | docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$compose_dir" -f - "$@"
+    fi
+}
+
 summary="$(head -n 1 <<< "$validation")"
 IFS='|' read -r _ throughput_profile data_profile expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency connection_reuse_disabled curl_transport_enabled run_once <<< "$summary"
 mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
@@ -924,6 +1121,189 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     printf 'ERROR: internal guard node-count mismatch\n' >&2
     exit 1
 fi
+
+verify_expected_worker_image_object() {
+    local identity actual_id actual_revision
+
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        return 0
+    fi
+    if ! identity="$(
+        docker image inspect --format \
+            '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+            "$EXPECTED_WORKER_IMAGE" 2>/dev/null
+    )"
+    then
+        printf 'ERROR: expected worker image object is unavailable\n' >&2
+        exit 1
+    fi
+    IFS='|' read -r actual_id actual_revision <<< "$identity"
+    if [[ "$actual_id" != "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        printf 'ERROR: expected worker image reference resolved to a different image ID\n' >&2
+        exit 1
+    fi
+    if [[ -n "$EXPECTED_WORKER_REVISION" \
+        && "$actual_revision" != "$EXPECTED_WORKER_REVISION" ]]
+    then
+        printf 'ERROR: expected worker image revision label does not match\n' >&2
+        exit 1
+    fi
+}
+
+remove_created_worker() {
+    local container_id="$1"
+    if [[ "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        if ! docker rm --force "$container_id" >/dev/null 2>&1; then
+            WORKER_CLEANUP_FAILED=1
+            printf 'ERROR: unaccepted worker cleanup failed for exact container %s; stop and remove it before retry\n' \
+                "$container_id" >&2
+            return 0
+        fi
+        if docker inspect "$container_id" >/dev/null 2>&1 \
+            || ! docker info >/dev/null 2>&1
+        then
+            WORKER_CLEANUP_FAILED=1
+            printf 'ERROR: unaccepted worker absence could not be proven for exact container %s; stop and remove it before retry\n' \
+                "$container_id" >&2
+            return 0
+        fi
+        if [[ "$CREATED_WORKER_CONTAINER_ID" == "$container_id" ]]; then
+            CREATED_WORKER_CONTAINER_ID=""
+        fi
+    fi
+}
+
+verify_created_worker_image_identity() {
+    local container_id="$1"
+    local expected_state="$2"
+    local identity actual_container actual_id actual_image actual_revision
+    local actual_running actual_status actual_exit_code actual_started_at
+
+    if ! identity="$(
+        docker inspect --format \
+            '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{.State.Running}}|{{.State.Status}}|{{.State.ExitCode}}|{{.State.StartedAt}}' \
+            "$container_id" 2>/dev/null
+    )"
+    then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker identity is unavailable\n' >&2
+        exit 1
+    fi
+    IFS='|' read -r actual_container actual_id actual_image actual_revision \
+        actual_running actual_status actual_exit_code actual_started_at <<< "$identity"
+    if [[ "$actual_container" != "$container_id" ]]
+    then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker runtime identity changed\n' >&2
+        exit 1
+    fi
+    case "$expected_state" in
+        created)
+            if [[ "$actual_running" != "false" \
+                || "$actual_status" != "created" \
+                || "$actual_started_at" != "0001-01-01T00:00:00Z" ]]
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: worker executed before identity acceptance\n' >&2
+                exit 1
+            fi
+            ;;
+        continuous)
+            if [[ "$actual_running" != "true" \
+                || "$actual_status" != "running" ]]
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: continuous worker did not remain running after start\n' >&2
+                exit 1
+            fi
+            ;;
+        runonce)
+            if [[ "$actual_started_at" == "0001-01-01T00:00:00Z" ]] \
+                || { [[ "$actual_running" != "true" ]] \
+                    && { [[ "$actual_status" != "exited" ]] \
+                        || [[ "$actual_exit_code" != "0" ]]; }; }
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: run-once worker start was not observed\n' >&2
+                exit 1
+            fi
+            ;;
+        *)
+            printf 'ERROR: internal worker identity state is invalid\n' >&2
+            exit 1
+            ;;
+    esac
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        return 0
+    fi
+    if [[ "$actual_id" == "$EXPECTED_WORKER_IMAGE_ID" \
+        && "$actual_image" == "$EXPECTED_WORKER_IMAGE" ]] \
+        && { [[ -z "$EXPECTED_WORKER_REVISION" ]] \
+            || [[ "$actual_revision" == "$EXPECTED_WORKER_REVISION" ]]; }
+    then
+        return 0
+    fi
+    remove_created_worker "$container_id"
+    printf 'ERROR: created worker image identity does not match the approved image\n' >&2
+    exit 1
+}
+
+create_and_start_worker() {
+    local container_id post_start_state
+
+    PREVIOUS_WORKER_CONTAINER_ID="$(
+        docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+    )"
+    WORKER_CREATE_ATTEMPTED=1
+
+    if ! compose_snapshot true create --no-deps --force-recreate fstworker \
+        >/dev/null 2>&1
+    then
+        container_id="$(
+            compose_snapshot true ps --all --quiet fstworker 2>/dev/null \
+                | head -n 1 || true
+        )"
+        if [[ "$container_id" != "$PREVIOUS_WORKER_CONTAINER_ID" ]]; then
+            CREATED_WORKER_CONTAINER_ID="$container_id"
+            remove_created_worker "$container_id"
+        fi
+        printf 'ERROR: fstworker create failed\n' >&2
+        return 1
+    fi
+    if ! container_id="$(
+        compose_snapshot true ps --all --quiet fstworker \
+            | head -n 1
+    )"
+    then
+        container_id="$(
+            docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+        )"
+        CREATED_WORKER_CONTAINER_ID="$container_id"
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker container identity is unavailable\n' >&2
+        return 1
+    fi
+    if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker container identity is unavailable\n' >&2
+        return 1
+    fi
+    CREATED_WORKER_CONTAINER_ID="$container_id"
+    verify_created_worker_image_identity "$container_id" created
+    if ! docker start "$container_id" >/dev/null; then
+        remove_created_worker "$container_id"
+        printf 'ERROR: fstworker start failed\n' >&2
+        return 1
+    fi
+    post_start_state=continuous
+    if [[ "$ACTION" == "recreate-runonce" ]]; then
+        post_start_state=runonce
+    fi
+    verify_created_worker_image_identity "$container_id" "$post_start_state"
+    DIRECT_WORKER_START_ACCEPTED=1
+}
+
+verify_expected_worker_image_object
 
 inspect_container_state() {
     local container="$1"
@@ -1203,9 +1583,7 @@ recreate_unhealthy_effective_proxies() {
         return 2
     fi
     if ! (
-        cd "$compose_dir"
-        docker compose -f "$base_file" -f "$pia_overlay" \
-            up -d --no-deps --force-recreate \
+        compose_snapshot false up -d --no-deps --force-recreate \
             "${unhealthy_effective_nodes[@]}" >/dev/null 2>&1
     )
     then
@@ -1352,6 +1730,32 @@ raise SystemExit(0 if status == "idle" and frozen is False else 3)
 recovery_worker_start_attempted=0
 recovery_worker_accepted=0
 
+cleanup_unaccepted_direct_worker() {
+    local status=$?
+    local container_id="$CREATED_WORKER_CONTAINER_ID"
+
+    trap - EXIT INT TERM
+    if ((WORKER_CREATE_ATTEMPTED != 0 && DIRECT_WORKER_START_ACCEPTED == 0)); then
+        if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+            container_id="$(
+                docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+            )"
+            if [[ "$container_id" == "$PREVIOUS_WORKER_CONTAINER_ID" ]]; then
+                container_id=""
+            fi
+        fi
+        remove_created_worker "$container_id"
+    fi
+    exit "$status"
+}
+
+exit_direct_from_signal() {
+    local status="$1"
+
+    trap '' INT TERM
+    exit "$status"
+}
+
 cleanup_unaccepted_recovery_worker() {
     local status=$?
     local state runtime_status stop_safety_status
@@ -1393,6 +1797,12 @@ exit_recovery_from_signal() {
     trap '' INT TERM
     exit "$status"
 }
+
+if [[ "$ACTION" =~ ^(recreate|recreate-runonce)$ ]]; then
+    trap cleanup_unaccepted_direct_worker EXIT
+    trap 'exit_direct_from_signal 130' INT
+    trap 'exit_direct_from_signal 143' TERM
+fi
 
 if [[ "$ACTION" == "recover-start" ]]; then
     trap cleanup_unaccepted_recovery_worker EXIT
@@ -1651,15 +2061,14 @@ case "$ACTION" in
     check|check-runonce)
         ;;
     recreate)
-        cd "$compose_dir"
-        docker compose --profile worker -f "$base_file" -f "$pia_overlay" \
-            up -d --no-deps --force-recreate fstworker
+        verify_inherited_worker_mutation_lock
+        verify_expected_worker_image_object
+        create_and_start_worker
         ;;
     recreate-runonce)
-        cd "$compose_dir"
-        docker compose --profile worker \
-            -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
-            up -d --no-deps --force-recreate fstworker
+        verify_inherited_worker_mutation_lock
+        verify_expected_worker_image_object
+        create_and_start_worker
         ;;
     recover-start)
         if ! enforce_recovery_total_deadline; then
@@ -1681,12 +2090,9 @@ case "$ACTION" in
 
         printf 'compose_guard recovery=worker-start service=fstworker mode=continuous\n'
         recovery_worker_start_attempted=1
-        if ! (
-            cd "$compose_dir"
-            docker compose --profile worker -f "$base_file" -f "$pia_overlay" \
-                up -d --no-deps --force-recreate fstworker \
-                >/dev/null 2>&1
-        )
+        verify_inherited_worker_mutation_lock
+        verify_expected_worker_image_object
+        if ! create_and_start_worker
         then
             printf 'ERROR: fstworker recreate/start failed\n' >&2
             exit 1

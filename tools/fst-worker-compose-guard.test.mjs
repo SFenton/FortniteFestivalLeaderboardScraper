@@ -27,6 +27,10 @@ const sensitiveValues = [
   "test-vpn-password-sensitive",
   "test-epic-secret-sensitive"
 ];
+const expectedWorkerImageId = "sha256:" + "a".repeat(64);
+const expectedWorkerRevision = "1".repeat(40);
+const immutableWorkerImage =
+  "example.invalid/fstworker@sha256:" + "e".repeat(64);
 
 const fakeDockerSource = String.raw`#!/usr/bin/env node
 import {
@@ -49,6 +53,8 @@ const configPath = path.join(root, "compose.json");
 const scenario = JSON.parse(readFileSync(scenarioPath, "utf8"));
 const runtime = JSON.parse(readFileSync(runtimePath, "utf8"));
 const args = process.argv.slice(2);
+const defaultWorkerImageId = "sha256:" + "a".repeat(64);
+const defaultWorkerRevision = "1".repeat(40);
 
 function saveRuntime() {
   writeFileSync(runtimePath, JSON.stringify(runtime));
@@ -65,6 +71,22 @@ function workerProfileEnabled(commandArgs) {
   );
 }
 
+function assignWorkerIdentity() {
+  runtime.workerContainerId =
+    scenario.createdWorkerContainerId ?? "b".repeat(64);
+  runtime.workerImage =
+    JSON.parse(readFileSync(configPath, "utf8"))
+      .services.fstworker.image;
+  runtime.workerImageId =
+    scenario.createdWorkerImageId
+    ?? scenario.resolvedWorkerImageId
+    ?? defaultWorkerImageId;
+  runtime.workerRevision =
+    scenario.createdWorkerRevision
+    ?? scenario.resolvedWorkerRevision
+    ?? defaultWorkerRevision;
+}
+
 function containerState(name) {
   if (name === "fst-postgres" || name === "postgres") {
     return scenario.postgresState ?? "running|healthy";
@@ -72,7 +94,7 @@ function containerState(name) {
   if (name === "fstservice") {
     return scenario.serviceState ?? "running|healthy";
   }
-  if (name === "fstworker") {
+  if (name === "fstworker" || name === runtime.workerContainerId) {
     return runtime.workerState;
   }
   if (/^pia-gluetun-\d+$/.test(name)) {
@@ -122,12 +144,49 @@ function serviceInfo() {
 }
 
 if (args[0] === "compose") {
+  if (args.some((value, index) =>
+    value === "-f" && args[index + 1] === "-"
+  )) {
+    readFileSync(0, "utf8");
+  }
   if (args.includes("config")) {
     const config = JSON.parse(readFileSync(configPath, "utf8"));
     if (!workerProfileEnabled(args)) {
       delete config.services?.fstworker;
     }
     writeFileSync(1, JSON.stringify(config));
+    process.exit(0);
+  }
+
+  const createIndex = args.indexOf("create");
+  if (createIndex >= 0) {
+    const services = args
+      .slice(createIndex + 1)
+      .filter((value) => !value.startsWith("-"));
+    if (!services.includes("fstworker") || !workerProfileEnabled(args)) {
+      process.stderr.write("invalid worker create\n");
+      process.exit(96);
+    }
+    if (scenario.workerCreateFailsBeforeReplacement) {
+      process.exit(1);
+    }
+    runtime.workerStarted = false;
+    runtime.workerState = "created|none";
+    runtime.workerExitCode = 0;
+    runtime.workerStartedAt = "0001-01-01T00:00:00Z";
+    assignWorkerIdentity();
+    saveRuntime();
+    process.exit(scenario.workerCreateFails ? 1 : 0);
+  }
+
+  const psIndex = args.indexOf("ps");
+  if (psIndex >= 0) {
+    if (scenario.composePsFails) {
+      process.exit(1);
+    }
+    if (args.includes("fstworker") && runtime.workerContainerId) {
+      process.stdout.write(runtime.workerContainerId);
+    }
     process.exit(0);
   }
 
@@ -144,6 +203,9 @@ if (args[0] === "compose") {
       event("worker-start", ["fstworker"]);
       runtime.workerStarted = true;
       runtime.workerState = "running|healthy";
+      runtime.workerExitCode = 0;
+      runtime.workerStartedAt = "2026-08-11T20:39:00Z";
+      assignWorkerIdentity();
       saveRuntime();
       process.exit(scenario.workerStartFails ? 1 : 0);
     }
@@ -164,6 +226,22 @@ if (args[0] === "compose") {
   }
 }
 
+if (args[0] === "image" && args[1] === "inspect") {
+  const imageId = scenario.resolvedWorkerImageId ?? defaultWorkerImageId;
+  const revision =
+    scenario.resolvedWorkerRevision ?? defaultWorkerRevision;
+  if (args.includes("--format")) {
+    process.stdout.write(imageId + "|" + revision);
+  } else {
+    process.stdout.write(JSON.stringify([{ Id: imageId }]));
+  }
+  process.exit(0);
+}
+
+if (args[0] === "info") {
+  process.exit(scenario.dockerInfoFails ? 1 : 0);
+}
+
 if (args[0] === "inspect") {
   const name = args.at(-1);
   const state = containerState(name);
@@ -171,11 +249,53 @@ if (args[0] === "inspect") {
     process.exit(1);
   }
   if (args.includes("--format")) {
-    process.stdout.write(state);
+    const format = args[args.indexOf("--format") + 1] ?? "";
+    if (
+      (name === "fstworker" || name === runtime.workerContainerId)
+      && format.includes("{{.Id}}|{{.Image}}")
+    ) {
+      process.stdout.write([
+        runtime.workerContainerId,
+        runtime.workerImageId,
+        runtime.workerImage,
+        runtime.workerRevision,
+        runtime.workerStarted ? "true" : "false",
+        runtime.workerState.split("|", 1)[0],
+        String(runtime.workerExitCode ?? 0),
+        runtime.workerStartedAt ?? "0001-01-01T00:00:00Z"
+      ].join("|"));
+    } else if (
+      (name === "fstworker" || name === runtime.workerContainerId)
+      && format.includes("{{.Id}}")
+    ) {
+      process.stdout.write(runtime.workerContainerId ?? "");
+    } else {
+      process.stdout.write(state);
+    }
   } else {
     process.stdout.write("{}");
   }
   process.exit(0);
+}
+
+if (args[0] === "start" && args.at(-1) === runtime.workerContainerId) {
+  event("worker-start", ["fstworker"]);
+  runtime.workerStartedAt = "2026-08-11T20:39:00Z";
+  runtime.workerExitCode = scenario.workerExitCode ?? 0;
+  if (scenario.workerExitsImmediately) {
+    runtime.workerStarted = false;
+    runtime.workerState = "exited|none";
+  } else {
+    runtime.workerStarted = true;
+    runtime.workerState = "running|healthy";
+  }
+  saveRuntime();
+  if (scenario.workerStartDelayMs) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, scenario.workerStartDelayMs)
+    );
+  }
+  process.exit(scenario.workerStartFails ? 1 : 0);
 }
 
 if (args[0] === "exec") {
@@ -217,7 +337,25 @@ if (args[0] === "exec") {
   }
 }
 
-if (args[0] === "stop" && args.at(-1) === "fstworker") {
+if (args[0] === "rm" && args.at(-1) === runtime.workerContainerId) {
+  if (scenario.workerRemoveFails) {
+    process.exit(1);
+  }
+  event("worker-remove", ["fstworker"]);
+  runtime.workerStarted = false;
+  runtime.workerState = "missing|none";
+  runtime.workerContainerId = null;
+  saveRuntime();
+  process.exit(0);
+}
+
+if (
+  args[0] === "stop"
+  && (
+    args.at(-1) === "fstworker"
+    || args.at(-1) === runtime.workerContainerId
+  )
+) {
   event("worker-stop", ["fstworker"]);
   runtime.workerStarted = false;
   runtime.workerState = "exited|none";
@@ -227,6 +365,22 @@ if (args[0] === "stop" && args.at(-1) === "fstworker") {
 
 process.stderr.write("unexpected docker invocation: " + args.join(" ") + "\n");
 process.exit(97);
+`;
+
+const inheritedLockLauncherSource = String.raw`import fcntl
+import os
+import sys
+
+guard, lock_path, *arguments = sys.argv[1:]
+descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+fcntl.fcntl(descriptor, fcntl.F_SETFD, flags & ~fcntl.FD_CLOEXEC)
+os.execve(
+    guard,
+    [guard, *arguments, "--inherited-worker-lock-fd", str(descriptor)],
+    dict(os.environ),
+)
 `;
 
 function buildComposeConfig({
@@ -423,6 +577,10 @@ async function createHarness({
   const dockerPath = path.join(binDirectory, "docker");
   const lockPath = path.join(root, ".fst-worker-compose-guard.lock");
   const eventsPath = path.join(root, "events.log");
+  const inheritedLockLauncherPath = path.join(
+    root,
+    "inherited-lock-launcher.py"
+  );
 
   await mkdir(binDirectory);
   await Promise.all([
@@ -431,11 +589,26 @@ async function createHarness({
     writeFile(path.join(root, "docker-compose.runonce.yml"), "services: {}\n"),
     writeFile(path.join(root, "compose.json"), JSON.stringify(config)),
     writeFile(path.join(root, "scenario.json"), JSON.stringify(scenario)),
+    writeFile(inheritedLockLauncherPath, inheritedLockLauncherSource),
     writeFile(
       path.join(root, "runtime.json"),
       JSON.stringify({
         workerStarted: false,
         workerState: scenario.workerContainerState ?? "exited|none",
+        workerContainerId:
+          scenario.workerContainerId ?? "c".repeat(64),
+        workerImage:
+          config.services.fstworker.image,
+        workerImageId:
+          scenario.workerImageId
+          ?? scenario.resolvedWorkerImageId
+          ?? expectedWorkerImageId,
+        workerRevision:
+          scenario.workerRevision
+          ?? scenario.resolvedWorkerRevision
+          ?? expectedWorkerRevision,
+        workerExitCode: scenario.workerExitCode ?? 0,
+        workerStartedAt: "0001-01-01T00:00:00Z",
         proxyStates: scenario.proxyStates ?? {}
       })
     ),
@@ -472,6 +645,36 @@ async function createHarness({
           encoding: "utf8",
           maxBuffer: 1024 * 1024
         });
+        return {
+          code: 0,
+          stdout: result.stdout,
+          stderr: result.stderr
+        };
+      } catch (error) {
+        return {
+          code: error.code,
+          stdout: error.stdout ?? "",
+          stderr: error.stderr ?? ""
+        };
+      }
+    },
+    async runWithInheritedLock(args, overrides = {}) {
+      try {
+        const result = await execFileAsync(
+          "python3",
+          [
+            inheritedLockLauncherPath,
+            guardPath,
+            lockPath,
+            ...args
+          ],
+          {
+            cwd: repositoryRoot,
+            env: { ...environment, ...overrides },
+            encoding: "utf8",
+            maxBuffer: 1024 * 1024
+          }
+        );
         return {
           code: 0,
           stdout: result.stdout,
@@ -748,7 +951,7 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  it("stops a partially started worker when Compose reports failure", async () => {
+  it("removes a partially started worker when startup reports failure", async () => {
     const harness = await createHarness({
       scenario: {
         workerStartFails: true
@@ -759,7 +962,7 @@ describe("fstworker Compose startup recovery", () => {
       assert.notEqual(result.code, 0);
       assert.deepEqual(await harness.events(), [
         "worker-start|fstworker",
-        "worker-stop|fstworker"
+        "worker-remove|fstworker"
       ]);
       assert.match(result.stderr, /recreate\/start failed/);
     } finally {
@@ -976,6 +1179,183 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
+  it("binds a worker check to an exact image ID and revision", async () => {
+    const harness = await createHarness();
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects an image reference that resolves to another image ID", async () => {
+    const harness = await createHarness();
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-image-id",
+        "sha256:" + "d".repeat(64),
+        "--expected-worker-revision",
+        expectedWorkerRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /resolved to a different image ID/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("removes an unstarted worker whose image identity changed", async () => {
+    const harness = await createHarness({
+      scenario: {
+        createdWorkerImageId: "sha256:" + "d".repeat(64)
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), ["worker-remove|fstworker"]);
+      assert.match(result.stderr, /created worker image identity does not match/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("removes the created worker when Compose cannot return its ID", async () => {
+    const harness = await createHarness({
+      scenario: {
+        composePsFails: true
+      }
+    });
+    try {
+      const result = await harness.run(["--recreate"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), ["worker-remove|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("preserves the previous worker when create fails before replacement", async () => {
+    const harness = await createHarness({
+      scenario: {
+        workerCreateFailsBeforeReplacement: true
+      }
+    });
+    try {
+      const result = await harness.run(["--recreate"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /fstworker create failed/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("reports when unaccepted worker cleanup cannot be proven", async () => {
+    const harness = await createHarness({
+      scenario: {
+        createdWorkerImageId: "sha256:" + "d".repeat(64),
+        workerRemoveFails: true
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /unaccepted worker cleanup failed/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("preserves recovery cleanup remediation when containment fails", async () => {
+    const harness = await createHarness({
+      scenario: {
+        composePsFails: true,
+        workerRemoveFails: true
+      }
+    });
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /unaccepted worker cleanup failed for exact container [0-9a-f]{64}; stop and remove it before retry/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("removes an unaccepted direct worker when the guard is interrupted", async () => {
+    const harness = await createHarness({
+      scenario: {
+        workerStartDelayMs: 1000
+      }
+    });
+    const child = harness.spawnGuard(["--recreate"]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    try {
+      await waitFor(async () =>
+        (await harness.events()).includes("worker-start|fstworker")
+      );
+      const exitPromise = once(child, "exit");
+      assert.equal(child.kill("SIGTERM"), true);
+      const [code] = await exitPromise;
+      assert.equal(code, 143, stderr || stdout);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-remove|fstworker"
+      ]);
+    } finally {
+      if (child.exitCode == null && child.signalCode == null) {
+        child.kill("SIGTERM");
+        await once(child, "exit");
+      }
+      await harness.cleanup();
+    }
+  });
+
   it("shares one lock across every mutating worker action", async () => {
     const harness = await createHarness();
     const holder = spawn(
@@ -1015,6 +1395,93 @@ describe("fstworker Compose startup recovery", () => {
       assert.deepEqual(await harness.events(), []);
     } finally {
       await once(holder, "exit");
+      await harness.cleanup();
+    }
+  });
+
+  it("retains a same-process inherited canonical lock through startup", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({
+        workerImage: immutableWorkerImage
+      })
+    });
+    try {
+      const result = await harness.runWithInheritedLock([
+        "--recreate",
+        "--expected-worker-image",
+        immutableWorkerImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects an inherited descriptor that does not own the canonical lock", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({
+        workerImage: immutableWorkerImage
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--recreate",
+        "--expected-worker-image",
+        immutableWorkerImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision,
+        "--inherited-worker-lock-fd",
+        "9"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /inherited worker lock descriptor or path is invalid|Bad file descriptor/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects Compose and Docker routing environment overrides", async () => {
+    const harness = await createHarness();
+    try {
+      for (const overrides of [
+        { COMPOSE_PROJECT_NAME: "other-project" },
+        { DOCKER_HOST: "tcp://127.0.0.1:2375" }
+      ]) {
+        const result = await harness.run(
+          ["--check", "--config-only"],
+          overrides
+        );
+        assert.equal(result.code, 64);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(result.stderr, /routing environment overrides/);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a base Compose path outside the canonical directory", async () => {
+    const harness = await createHarness();
+    try {
+      const result = await harness.run(
+        ["--check", "--config-only"],
+        { BASE_FILE: "../docker-compose.yml" }
+      );
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /canonical base file must resolve/);
+    } finally {
       await harness.cleanup();
     }
   });
@@ -1460,6 +1927,55 @@ describe("fstworker Compose startup recovery", () => {
       ]);
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts a run-once worker that exits before post-start inspection", async () => {
+    const harness = await createHarness({
+      config: buildRunonceComposeConfig(),
+      scenario: {
+        workerExitsImmediately: true
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate-runonce",
+        "--data-profile",
+        "notification-db-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a run-once worker that immediately exits nonzero", async () => {
+    const harness = await createHarness({
+      config: buildRunonceComposeConfig(),
+      scenario: {
+        workerExitsImmediately: true,
+        workerExitCode: 2
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate-runonce",
+        "--data-profile",
+        "notification-db-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-remove|fstworker"
+      ]);
+      assert.match(result.stderr, /run-once worker start was not observed/);
     } finally {
       await harness.cleanup();
     }
