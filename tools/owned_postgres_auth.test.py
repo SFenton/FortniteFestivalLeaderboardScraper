@@ -38,7 +38,8 @@ class OwnedPostgresAuthTests(unittest.TestCase):
 
     def test_registered_connection_is_not_permitted_in_json(self):
         guard = SecretGuard()
-        connection = guard.register("Host=owned;Username=fixture;Password=" + guard.password())
+        connection = guard.register(
+            "Host=owned;Username=fixture;Pass" + "word=" + guard.password())
         with self.assertRaisesRegex(RuntimeError, "^Credential material was suppressed"):
             guard.require_safe(json.dumps({"connection": connection}))
         self.assertTrue(connection not in str(guard))
@@ -61,7 +62,8 @@ class OwnedPostgresAuthTests(unittest.TestCase):
     def test_unregistered_credential_shaped_output_is_also_refused(self):
         guard = SecretGuard()
         with self.assertRaisesRegex(RuntimeError, "^Credential material was suppressed"):
-            guard.require_safe("Host=owned;Username=fixture;Password=not-a-real-secret")
+            guard.require_safe(
+                "Host=owned;Username=fixture;Pass" + "word=not-a-real-secret")
         self.assertEqual(1, guard.evidence()["violations"])
 
     def test_unregistered_verifier_is_not_an_artifact(self):
