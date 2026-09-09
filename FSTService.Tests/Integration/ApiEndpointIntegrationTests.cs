@@ -10303,9 +10303,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
             builder.ConfigureServices(services =>
             {
-                // Override the NpgsqlDataSource that Program.cs creates eagerly
-                // from builder.Configuration (which still has appsettings.json values
-                // at that point, before test config overrides are applied).
+                // This fixture owns its initialized schema and bypasses production
+                // pre-pool selection; the executable drill covers that startup path.
                 services.RemoveAll<NpgsqlDataSource>();
                 var testDs = _rolloutReadOnly
                     ? NpgsqlDataSource.Create(_serviceConnectionString)
@@ -10316,6 +10315,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     SeedPublishedScopeSourceReadiness(testDs);
                 }
                 services.AddSingleton(testDs);
+                services.RemoveAll<StartupPublicationReadOnlyState>();
+                var startupState = StartupPublicationReadOnlyState.ForInitializedDatabase(_rolloutReadOnly);
+                startupState.MarkReady();
+                services.AddSingleton(startupState);
                 services.RemoveAll<
                     PostgresUnpooledConnectionFactory>();
                 services.AddSingleton(

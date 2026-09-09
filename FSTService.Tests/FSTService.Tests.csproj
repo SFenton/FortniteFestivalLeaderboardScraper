@@ -31,6 +31,7 @@
     <ProjectReference Include="..\tools\FstSnapshotGenerationRestoreAuthorization\FstSnapshotGenerationRestoreAuthorization.csproj" />
     <ProjectReference Include="..\tools\FstSnapshotGenerationRestoreContinuation\FstSnapshotGenerationRestoreContinuation.csproj" />
     <ProjectReference Include="..\tools\FstSnapshotGenerationRetirement\FstSnapshotGenerationRetirement.csproj" />
+    <ProjectReference Include="..\tools\FstSnapshotGenerationRetentionReport\FstSnapshotGenerationRetentionReport.csproj" />
   </ItemGroup>
 
   <ItemGroup>

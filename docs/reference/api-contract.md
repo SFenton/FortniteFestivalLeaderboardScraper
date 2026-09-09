@@ -1,12 +1,14 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-27
-last_verified_commit: e32e9d49
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/HealthEndpoints.cs
+  - FSTService/StartupPublicationReadOnlyState.cs
+  - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
   - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
@@ -317,6 +319,42 @@ version-1 field. Contract version 2 adds:
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+The additive `startup` object separates public-read availability from mutation
+admission. Its `state` is `initializing`, `ready` or `degraded_read_only`;
+`readServingReady` and `mutationReady` are independent booleans. Nullable
+`reason` identifies the sticky decision, and `diagnostics`/`warnings` contain
+`{ publicationId, code }` entries for current/working refusals and non-serving
+previous-binding warnings. The field is optional in shared client types for
+older-server compatibility; the browser client passes it through unchanged.
+Its shared type is `StartupPublicationReadOnlyStatus`, specifically owned by
+publication startup rather than execution admission.
+
+Automatic degraded startup is not a configured rollout violation.
+`rolloutReadOnlyStartup` and `readOnlyViolationDetected` retain their existing
+meaning. In degraded mode `/healthz` remains HTTP 200 and `/readyz` returns
+HTTP 200 after persisted reads load. This particular read-serving check reports
+`Healthy` with an explicit `degraded_read_only` description/reason. The global
+`Degraded` and `Unhealthy` mappings remain HTTP 503; an unrelated degraded
+check cannot become Docker/Compose healthy merely because publication reads
+remain available.
+
+`/readyz` now returns `ServiceReadinessResponse` JSON rather than a bare status
+string: aggregate `status` (`Healthy`, `Degraded`, `Unhealthy`), structured
+`startup`, and named `checks` containing status/description. `startup` has the
+same fields as service-info and is null if the database check is absent.
+Raw exceptions are not serialized. This response does not attest that
+mutations or every publication-bound data surface are ready. Invalid data
+still fails its existing route/source contract.
+
+The outer startup guard rejects non-GET/HEAD/OPTIONS methods, WebSocket
+upgrades, and write-capable GETs (`/api/admin/epic-token`,
+`/api/player/{accountId}/stats`, `/api/bands/{bandType}/{teamKey}/sync-status`)
+before writer resolution. Responses are HTTP 503, `Cache-Control: no-store`,
+`Retry-After: 1`, and `{ error, code }`, where `code` is
+`startup_initializing` or `startup_read_only`. Selected-profile headers never
+write through either normal routes or cached hits in this state. Ordinary
+safe GET/cache behavior and publication classification remain unchanged.
 
 The same operational-live response now includes additive `catalog` telemetry:
 

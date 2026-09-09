@@ -1029,7 +1029,9 @@ public static class PublicationGenerationSchema
             source_kind = COALESCE(
                 source_kind,
                 'legacy_columns_reconstructed'),
-            is_exact = COALESCE(is_exact, FALSE);
+            is_exact = COALESCE(is_exact, FALSE)
+        WHERE catalog_version IS NULL OR schema_version IS NULL
+           OR source_kind IS NULL OR is_exact IS NULL;
 
         ALTER TABLE live_song_catalog
             ALTER COLUMN catalog_version SET NOT NULL;
@@ -1067,7 +1069,9 @@ public static class PublicationGenerationSchema
             source_kind = COALESCE(
                 source_kind,
                 'legacy_publication_reconstructed'),
-            is_exact = COALESCE(is_exact, FALSE);
+            is_exact = COALESCE(is_exact, FALSE)
+        WHERE catalog_version IS NULL OR schema_version IS NULL
+           OR source_kind IS NULL OR is_exact IS NULL;
 
         ALTER TABLE publication_song_catalog
             ALTER COLUMN catalog_version SET NOT NULL;
@@ -1214,7 +1218,15 @@ public static class PublicationGenerationSchema
                 EXCLUDED.published_at),
             ready_at = COALESCE(
                 publication_generations.ready_at,
-                EXCLUDED.ready_at);
+                EXCLUDED.ready_at)
+        WHERE (
+            publication_generations.status,
+            publication_generations.published_at,
+            publication_generations.ready_at) IS DISTINCT FROM (
+                CASE WHEN publication_generations.status = 'retired'
+                    THEN publication_generations.status ELSE 'current' END,
+                COALESCE(publication_generations.published_at, EXCLUDED.published_at),
+                COALESCE(publication_generations.ready_at, EXCLUDED.ready_at));
 
         UPDATE scrape_publication_state publication
         SET current_publication_id = generation.publication_id,

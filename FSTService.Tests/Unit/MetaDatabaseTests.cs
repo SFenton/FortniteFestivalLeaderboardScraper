@@ -2388,7 +2388,11 @@ public sealed class MetaDatabaseTests : IDisposable
         using (var conn = DataSource.OpenConnection())
         using (var cmd = conn.CreateCommand())
         {
+            // This fixture predates path manifests; a modern ready path binding
+            // over its reconstructed catalog would correctly fail release validation.
             cmd.CommandText = """
+                DELETE FROM publication_surface_bindings
+                WHERE publication_id = @publicationId AND surface_name = 'path_artifacts';
                 DELETE FROM publication_song_catalog
                 WHERE publication_id = @publicationId;
                 DELETE FROM live_song_catalog
@@ -2499,6 +2503,8 @@ public sealed class MetaDatabaseTests : IDisposable
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
+                DELETE FROM publication_surface_bindings
+                WHERE publication_id = @publicationId AND surface_name = 'path_artifacts';
                 UPDATE publication_song_catalog
                 SET schema_version = 1,
                     source_kind = 'legacy_publication_reconstructed',
@@ -2549,6 +2555,8 @@ public sealed class MetaDatabaseTests : IDisposable
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
+                DELETE FROM publication_surface_bindings
+                WHERE publication_id = @publicationId AND surface_name = 'path_artifacts';
                 ALTER TABLE live_song_catalog
                     DROP CONSTRAINT ck_live_song_catalog_source_kind;
                 ALTER TABLE publication_song_catalog
@@ -2565,6 +2573,7 @@ public sealed class MetaDatabaseTests : IDisposable
                     DROP COLUMN source_kind,
                     DROP COLUMN is_exact;
                 """;
+            cmd.Parameters.AddWithValue("publicationId", publicationId);
             cmd.ExecuteNonQuery();
         }
 

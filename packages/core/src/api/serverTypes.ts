@@ -781,7 +781,26 @@ export type ServiceInfoResponse = {
     startedAtUtc: string;
   };
   readOnlyViolationDetected?: boolean;
+  startup?: StartupPublicationReadOnlyStatus;
   nextScheduledUpdateAt: string | null;
+};
+
+export type StartupPublicationReadOnlyStatus = {
+  state: 'initializing' | 'ready' | 'degraded_read_only';
+  readServingReady: boolean;
+  mutationReady: boolean;
+  reason?: string | null;
+  diagnostics: { publicationId: number; code: string }[];
+  warnings: { publicationId: number; code: string }[];
+};
+
+export type ServiceReadinessResponse = {
+  status: 'Healthy' | 'Degraded' | 'Unhealthy';
+  startup: StartupPublicationReadOnlyStatus | null;
+  checks: Record<string, {
+    status: 'Healthy' | 'Degraded' | 'Unhealthy';
+    description: string | null;
+  }>;
 };
 
 export type ServiceInfoPhaseDescriptor = {

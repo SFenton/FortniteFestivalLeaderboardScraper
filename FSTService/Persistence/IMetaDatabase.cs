@@ -10,6 +10,9 @@ namespace FSTService.Persistence;
 public interface IMetaDatabase : IDisposable
 {
     void EnsureSchema();
+    Task PublishRetentionWorkerConfigurationAsync(
+        string instanceId, bool reportOnlyEnabled, string workerCodeSha256,
+        CancellationToken ct = default);
 
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();

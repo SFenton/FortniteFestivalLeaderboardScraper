@@ -652,7 +652,7 @@ public sealed class PublicApiResponseCacheMiddleware
                         Microsoft.Extensions.Options
                             .IOptions<ScraperOptions>>()
                     ?.Value.RolloutReadOnlyStartup
-                == true,
+                == true || context.RequestServices.GetService<StartupPublicationReadOnlyState>() is { MutationsReady: false },
                 gate.GetState().MaxScoreMaintenance,
                 context.RequestAborted);
     }

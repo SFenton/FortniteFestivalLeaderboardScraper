@@ -13,15 +13,7 @@ public static partial class ApiEndpoints
            .WithTags("Health")
            .RequireRateLimiting("public");
 
-        app.MapHealthChecks("/readyz", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-        {
-            ResultStatusCodes =
-            {
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = 200,
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = 503,
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = 503,
-            },
-        });
+        app.MapHealthChecks("/readyz", CreateReadinessHealthCheckOptions());
 
         app.MapGet("/api/version", (HttpContext httpContext) =>
         {
@@ -321,12 +313,34 @@ public static partial class ApiEndpoints
                 postgresConnectionTarget = postgresRuntimeTarget,
                 serviceInstance,
                 readOnlyViolationDetected = readOnlyViolations.HasViolation,
+                startup = startup.PublicationStartupStatus,
                 nextScheduledUpdateAt,
             });
         })
         .WithTags("Health")
         .RequireRateLimiting("public");
     }
+
+    internal static Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions CreateReadinessHealthCheckOptions() =>
+        new()
+        {
+            ResultStatusCodes =
+            {
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = 200,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = 503,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = 503,
+            },
+            ResponseWriter = static (context, report) => context.Response.WriteAsJsonAsync(new
+            {
+                status = report.Status.ToString(),
+                startup = report.Entries.TryGetValue("database", out var database)
+                    && database.Data.TryGetValue("startup", out var value)
+                    && value is StartupPublicationReadOnlyStatus startup ? startup : null,
+                checks = report.Entries.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => new { status = pair.Value.Status.ToString(), description = pair.Value.Description }),
+            }, context.RequestAborted),
+        };
 
     private static object BuildWorkerStatus(WorkerStatusInfo? stored, DateTime nowUtc)
     {

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -29,6 +29,17 @@ sources:
   - tools/FstSnapshotGenerationRetirement/
   - tools/postgres-snapshot-generation-retirement.sh
   - tools/postgres-snapshot-generation-retirement-drill.sh
+  - tools/FstSnapshotGenerationRetentionReport/
+  - tools/postgres-snapshot-generation-retention-report.sh
+  - tools/postgres-snapshot-generation-retention-report-drill.py
+  - tools/snapshot_retention_schema_proof.py
+  - tools/snapshot_retention_deployment_parity.py
+  - tools/snapshot_retention_deployment_parity.test.py
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - tools/run-controlled-postgres-tests.py
+  - tools/owned_postgres_auth.py
+  - tools/owned_postgres_auth.test.py
+  - FSTService.Tests/Unit/HostConnectionOwnershipTests.cs
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -106,6 +117,84 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Current offline retention report
+
+`tools/postgres-snapshot-generation-retention-report.sh` invokes only a pinned
+self-contained host executable. `inspect` is read-only; `observe-current`
+requires exact identity assertions and persists the real planner's current
+report-only evidence after a separately established worker stop. It has no
+target/SQL/path selector, schema initializer, hosted service, notification,
+worker lifecycle, or archive/destructive command.
+
+The assertions include the immutable deployed worker-configuration receipt;
+an absent/disabled receipt refuses rather than self-enabling the local planner.
+Canonical identity is independent of worker/offline provenance. Loader
+injection is rejected, direct privileged-Bash startup ignores shell hooks and
+exported functions, required utilities use absolute paths, and the compiled
+Git probe receives a cleared fixed environment. Budget exhaustion and verified
+commit-with-cleanup-warning outcomes are explicit, with phase timings.
+
+The disposable drill uses a genuine initialized baseline,
+source-DML guards, source row/catalog parity, idempotency, and owned-resource
+cleanup. Its default trust/socket lane remains network-none. Add `--scram-tcp`
+for the required authenticated lane: a random process-memory password,
+SCRAM-only host rules and one owned loopback port, with no password in Docker
+configuration or artifact. Both `inspect` and `observe-current` exercise the
+actual pinned executable and wrong-password refusals. The same flag composes
+with `--schema-only-repair`.
+
+Host tools must create fresh connections from original private normalized
+factories, not `NpgsqlDataSource.ConnectionString`. That display property is
+sanitized with default `PersistSecurityInfo=false`; enabling security-info
+persistence is not a repair. The reporter's private factory supplies
+inspection, offline data/fence and cleanup-reconciliation connections, and
+offline execution refuses when no dedicated factory is supplied, when a
+multi-host/load-balanced target is configured, or when its independently
+opened fence connection does not match the data connection's full database
+signature. Other host
+tools' direct data-source opens and metadata-only property inspection remain
+safe; the source contract documents the deliberate owned negative probe.
+`owned_postgres_auth.py` provides in-memory output capture, runtime secret
+sentinels and artifact scans to the drill/controlled runner. It never imports
+operator connection/provider environments. See
+[the offline report guide](../database/SnapshotGenerationOfflineRetentionReport.md).
+
+Deployment initialization is the separate FSTService command
+`--initialize-snapshot-retention-schema-only`, not a new reporter capability.
+It runs only the accepted bounded retention schema step before any host or
+dotenv setup. Under external idle-stop exclusion, run it and prove
+its fresh-session version-2 combined zero-DML/table-identity proof with
+acknowledged commit and exact non-retention
+row/schema/source/path/control parity before recreating the service and guarded compatible
+worker. The drill's `--schema-only-repair` mode exercises this exact command,
+full path-binding idempotence, legacy upgrade, complete non-retention
+row/schema parity, causal DML/identity assertion and rollback, and mixed-command refusal.
+Cumulative counters remain non-causal telemetry. Optional hash-pinned
+baseline service input reproduces the former bootstrap mutation only inside
+the disposable fixture.
+
+The artifact-only comparator performs no SQL, Docker or lifecycle action:
+
+```bash
+python3 tools/snapshot_retention_deployment_parity.py \
+  --before <before-source.json> --after <after-source.json> \
+  --initializer-result <dedicated-command.stdout>
+```
+
+It requires `transactionCommitted=true`, the version-2 combined zero-DML/
+relation-identity proof and complete source evidence shape,
+compares actual source dimensions (including physical identity/bytes),
+and classifies cumulative table/topology counters separately as non-causal
+telemetry. Output never grants deployment authority; public-body,
+lock/resource, binary/source pin and ownership gates remain independent.
+Null/uncertain committed state never passes this comparator; it does not
+reconnect, retry or infer COMMIT success from an idempotent schema match.
+
+`tools/run-controlled-postgres-tests.py` runs focused, full, or exact
+base/candidate comparison tests through the ordinary loopback TCP fixture,
+with FST-drive PGDATA/scratch, Ryuk disabled, and explicit labelled cleanup.
+It never uses the production database or default Docker PGDATA.
 
 ### Publication API cache evidence
 

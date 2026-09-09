@@ -9,6 +9,7 @@ sources:
   - tools/FstSnapshotGenerationRetirement/
   - tools/postgres-snapshot-generation-retirement.sh
   - tools/postgres-snapshot-generation-retirement-drill.sh
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - FSTService.Tests/Unit/SnapshotGenerationRetirementPlanTests.cs
   - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/decisions/0008-snapshot-generation-retirement-plan-control-plane.md
@@ -47,8 +48,11 @@ largest-first planning only; no archive, detach, quarantine, drop, delete, trunc
 
 ## Durable state
 
-The existing report-only planner schema and evidence bytes are unchanged. The
-schema initializer adds four separate control-plane relations:
+The retirement control plane does not alter report-only planner evidence.
+The separate [offline report entry point](SnapshotGenerationOfflineRetentionReport.md)
+additively permits an explicit offline cycle kind while preserving existing
+cycle rows and hash encoding. The retirement schema initializer adds four
+separate control-plane relations:
 
 | Relation | Purpose |
 |---|---|
@@ -180,6 +184,14 @@ terminalizes a planned job with `operator_deactivated`, appends immutable
 events, and clears the active-policy pointer in the same transaction.
 
 ## Operator workflow
+
+`plan-cycle` consumes the newest accepted report; it does not generate that
+report. When the worker must be stopped during its prior idle interval, the
+separate pinned offline report tool can generate current evidence without
+another scrape. It requires its own reviewed schema/code/database assertions,
+an already-stopped worker, and a parent-approved canary. Do not hold the
+publication lock and then stop a worker that may already have frozen reads.
+See the [offline report boundary](SnapshotGenerationOfflineRetentionReport.md).
 
 Build the fixed-purpose tool:
 

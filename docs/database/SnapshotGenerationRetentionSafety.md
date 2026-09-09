@@ -53,6 +53,9 @@ sources:
   - tools/postgres-snapshot-generation-archive-drill.py
   - tools/FstSnapshotGenerationRetirement/
   - tools/postgres-snapshot-generation-retirement.sh
+  - tools/FstSnapshotGenerationRetentionReport/
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
   - tools/FstSnapshotGenerationQuarantine/
@@ -97,6 +100,23 @@ states are limited to `planned`, `expired`, and `superseded`; it has no
 archive/proof process state, lease, filesystem artifact, Docker identity,
 quarantine, DROP, or restore transition. The singleton starts disabled, and
 the host command can deactivate it immediately.
+
+The distinct [offline report command](SnapshotGenerationOfflineRetentionReport.md)
+can observe the current publication after an operator has already stopped the
+worker during a verified idle interval. It invokes the same planner/oracle and
+normal immutable persistence, not a clone or a synthetic cycle. Its explicit
+`operator_offline_post_publication` kind does not claim the worker's
+process-local broadcast/quiescence flags. Existing worker admission remains
+unchanged. One canonical cycle is keyed by scrape/publication across kinds;
+duplicate legacy evidence makes migration refuse rather than rewrite rows.
+An immutable receipt of the stopped worker's enabled configuration and
+canonical lookup protocol is required; the CLI cannot self-enable.
+Database-scoped schema admission and bounded transactional advisory/DDL
+fences retain mutable-state and publication protection through the real
+repeatable-read observation/persistence transaction. Publication ownership
+ends immediately after commit, before disposal. Production-scale budget
+evidence and explicit live canary remain separate gates, not archive
+authorization.
 
 The repository also contains a separate operator-facing archive-only tool.
 It reads one immutable candidate selected from the newest accepted cycle and

@@ -8,13 +8,18 @@ namespace FSTService.Api;
 public sealed class RolloutReadOnlyViolationMonitor
 {
     private Exception? _lastViolation;
+    private long _violationCount;
 
     public bool HasViolation => Volatile.Read(ref _lastViolation) is not null;
 
     public Exception? LastViolation => Volatile.Read(ref _lastViolation);
+    public long ViolationCount => Interlocked.Read(ref _violationCount);
 
-    public void Report(Exception exception) =>
+    public void Report(Exception exception)
+    {
         Interlocked.Exchange(ref _lastViolation, exception);
+        Interlocked.Increment(ref _violationCount);
+    }
 }
 
 public sealed class RolloutReadOnlyRequestGuardMiddleware
@@ -22,28 +27,42 @@ public sealed class RolloutReadOnlyRequestGuardMiddleware
     private readonly RequestDelegate _next;
     private readonly bool _enabled;
     private readonly RolloutReadOnlyViolationMonitor _violations;
+    private readonly StartupPublicationReadOnlyState? _publicationStartup;
 
     public RolloutReadOnlyRequestGuardMiddleware(
         RequestDelegate next,
         IOptions<ScraperOptions> options,
-        RolloutReadOnlyViolationMonitor violations)
+        RolloutReadOnlyViolationMonitor violations,
+        StartupPublicationReadOnlyState? publicationStartup = null)
     {
         _next = next;
         _enabled = options.Value.RolloutReadOnlyStartup;
         _violations = violations;
+        _publicationStartup = publicationStartup;
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (!_enabled)
+        var readOnly = _enabled || _publicationStartup?.IsLatched == true;
+        if (!readOnly && _publicationStartup is { MutationsReady: false })
+        {
+            if (IsMutationCapableRequest(context.Request) || context.WebSockets.IsWebSocketRequest)
+                await WriteUnavailableAsync(context, "startup_initializing", "Initialization has not admitted mutations.");
+            else
+                await _next(context);
+            return;
+        }
+        if (!readOnly)
         {
             await _next(context);
             return;
         }
 
-        if (IsMutationCapableRequest(context.Request))
+        if (IsMutationCapableRequest(context.Request) || context.WebSockets.IsWebSocketRequest)
         {
-            await WriteUnavailableAsync(context);
+            await WriteUnavailableAsync(context,
+                _enabled ? "rollout_read_only" : "startup_read_only",
+                _publicationStartup?.Reason ?? "Rollout read-only mode blocks mutation-capable requests.");
             return;
         }
 
@@ -56,8 +75,11 @@ public sealed class RolloutReadOnlyRequestGuardMiddleware
             var violation = FindReadOnlyViolation(exception);
             if (violation is null)
                 throw;
-            _violations.Report(violation);
-            await WriteUnavailableAsync(context);
+            if (_enabled)
+                _violations.Report(violation);
+            await WriteUnavailableAsync(context,
+                _enabled ? "rollout_read_only" : "startup_read_only",
+                _publicationStartup?.Reason ?? "Rollout read-only mode blocks mutation-capable requests.");
         }
     }
 
@@ -123,14 +145,16 @@ public sealed class RolloutReadOnlyRequestGuardMiddleware
         return canonical.Length == 0 ? "/" : canonical;
     }
 
-    private static async Task WriteUnavailableAsync(HttpContext context)
+    private static async Task WriteUnavailableAsync(HttpContext context, string code, string error)
     {
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.ContentType = "application/json; charset=utf-8";
         context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.RetryAfter = "1";
         await context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
-            error = "Rollout read-only mode blocks mutation-capable requests.",
+            error,
+            code,
         }));
     }
 }

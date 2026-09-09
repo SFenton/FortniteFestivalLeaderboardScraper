@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: 937868e0
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FSTService/Program.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/ScraperOptions.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -19,6 +20,8 @@ sources:
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
   - FSTService/Scraping/Replay/ReplayEntryPoint.cs
+  - tools/FstSnapshotGenerationRetentionReport/Program.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
 update_triggers:
   - A command-line flag, combination rule, one-shot mode, or phase expansion changes.
 ---
@@ -41,6 +44,13 @@ Use `dotnet FSTService.dll <flags>` in a built image or the equivalent
 | `--rollout-postgres-read-only` | Enforce the paired PostgreSQL read-only rollout mode |
 
 The two rollout read-only flags must be enabled together.
+
+The separate host-only
+[offline retention report executable](../database/SnapshotGenerationOfflineRetentionReport.md)
+is not an FSTService hosting flag. Its only commands are `inspect` and
+identity-asserted `observe-current`; it never starts the service/worker
+entry point, initializes schema, resumes a scrape, or sends notifications.
+`--once` remains a full scrape/publication pass, not an offline report mode.
 
 ## Isolated phase replay candidate
 
@@ -144,6 +154,7 @@ legacy fetch.
 | Command | Default behavior | Additional flags |
 |---|---|---|
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
+| `--initialize-snapshot-retention-schema-only` | Apply only the bounded snapshot-retention schema step and exit, without a host | Exactly one argument; all other flags/selectors are rejected |
 | `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
@@ -152,6 +163,81 @@ legacy fetch.
 Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
+
+`--initialize-snapshot-retention-schema-only` dispatches before replay,
+`.env`, `WebApplication`, options/host registration or startup work. Supply
+the existing database connection through `ConnectionStrings__PostgreSQL` in
+the process environment; command-line connection/target/path/SQL overrides
+are not accepted. It does not initialize FST prerequisites, mutate
+publication/path/catalog/registration data, operate Docker, start workers or
+publish their configuration receipts. It shares the exact retention schema
+step, with 2-second lock/15-second statement/20-second command limits, a
+10-second connect limit and a 30-second cancellation deadline.
+Its original normalized credential-bearing configuration passes directly to
+the dedicated initializer's private unpooled factory. It is never recovered
+from `NpgsqlDataSource.ConnectionString`, which omits passwords with default
+`PersistSecurityInfo=false`. The command keeps that setting off; credentials
+remain process-memory only and never enter output/evidence.
+
+Output is secret-free JSON with scope `snapshot_generation_retention`.
+Exit `0` means `schema_current`; `64` rejects arguments, `2` reports missing or
+invalid connection configuration or database refusal (including SQLSTATE),
+and `130` reports cancellation/deadline exhaustion. The fresh connection is disposed
+before success is emitted. Success additionally requires
+`transactionCommitted=true` and a version-2 combined `dmlProof` with
+`statisticsSource=pg_stat_xact_user_tables`,
+`backendScope=fresh_unpooled_single_transaction`,
+`allowedRetentionRelations=[]`, zero `nonRetentionDml` inserted/updated/deleted
+totals, `allowedRetentionChanges=[]`, exact schema SQL SHA-256,
+`nonRetentionRelationIdentity` before/after set-count and identity-digest
+parity, and a deterministic SHA-256 of all ordered proof fields. The identity
+scope covers non-system/non-temporary ordinary, partitioned, materialized and
+foreign-table metadata across user schemas, excluding only the six exact
+DDL-managed public retention tables. The exact step still has no user-table
+DML allowlist entries.
+Non-retention DML refuses/rolls back with code `non_retention_dml_detected`,
+attempted totals and `transactionCommitted=false`.
+`non_retention_relation_identity_changed` likewise refuses/rolls back
+TRUNCATE, rewrite or set/OID/relfilenode drift. The static step backstop rejects
+TRUNCATE/COPY FROM and INSERT/UPDATE/DELETE/MERGE without line-position
+assumptions; it exposes no operator SQL selector.
+`transaction_statistics_unavailable` and `transaction_dml_baseline_not_zero`
+refuse unusable evidence. No SQL/table selectors or test hooks are exposed
+by the CLI.
+
+Commit-attempt acknowledgement loss exits nonzero with `outcome=uncertain`,
+`code=commit_acknowledgement_unknown`, `transactionCommitted=null`, the
+precommit combined proof and `possibleSchemaProof` identities. There is no
+automatic retry or inference of success from already-existing schema.
+Acknowledged commit followed by cleanup failure instead retains
+`transactionCommitted=true` with nonzero
+`committed_cleanup_unconfirmed`/`post_commit_cleanup_failed`.
+
+The fresh backend prevents pending counts from earlier pooled-session work
+from contaminating PG17 xact statistics. Schema admission precedes exclusive
+canonical registration admission, held through the pre-commit assertion.
+Normal migration admission and incompatible-worker
+refusals remain those of `SnapshotGenerationRetentionSchema.Sql`; the external
+idle stop and restart exclusion are still operator responsibilities.
+Name resolution is pinned to `pg_catalog,public`, with explicit schema-qualified
+DDL and built-ins.
+
+General initialization now preserves a current valid path binding's complete
+provenance and `built_at`; it is still broader than this dedicated command.
+Future/malformed current/working manifest versions and invalid ready binding
+contracts fail closed without rewriting those bindings. The full
+`--initialize-schema-only` CLI returns exit `2` with
+`path_artifact_initialization_rejected` and publication/code pairs on stderr.
+Previous invalid bindings emit structured `previous_path_binding_invalid`
+warnings without rewriting rows or refusing normal initialization. Ordinary
+service startup handles current/working refusal before runtime pools by
+selecting sticky degraded/read-only serving, not by stopping the API. This
+does not change explicit schema CLI exit codes or expand the dedicated
+retention-only command. Read-serving health alone cannot accept a deployment:
+require mutation readiness and a fresh guarded restart after any correction.
+Catalog/publication/disabled-notification compatibility writes are skipped
+when their values are already correct.
+See the [source-preserving deployment order](../database/SnapshotGenerationOfflineRetentionReport.md).
 
 `--published-scrape-id` is parsed once for improvement-notification recovery
 and max-score maintenance. Both `--published-scrape-id 1296` and

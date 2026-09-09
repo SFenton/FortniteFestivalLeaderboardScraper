@@ -46,11 +46,20 @@ public static class DatabaseInitializer
         );
         """;
 
-    public static async Task EnsureSchemaAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
+    public static async Task EnsureSchemaAsync(
+        NpgsqlDataSource dataSource,
+        CancellationToken ct = default,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        bool initializePublicationPathArtifacts = true)
     {
+        if (initializePublicationPathArtifacts)
+            await PublicationPathArtifactReleaseGate.ValidateExistingBeforeInitializationAsync(dataSource, ct);
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         foreach (var step in GetSchemaInitializationPlan())
         {
+            if (!initializePublicationPathArtifacts
+                && step.Name == "publication-path-artifacts")
+                continue;
             if (step.UseConcurrentIndex)
             {
                 await ExecuteConcurrentIndexInitializationStepAsync(
@@ -63,7 +72,8 @@ public static class DatabaseInitializer
             await ExecuteSchemaInitializationStepAsync(
                 conn,
                 step,
-                ct);
+                ct,
+                reportWarning);
         }
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
@@ -75,6 +85,70 @@ public static class DatabaseInitializer
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
     }
+
+    internal static async Task<SnapshotRetentionSchemaDmlProof> EnsureSnapshotGenerationRetentionSchemaAsync(
+        string normalizedConnectionString,
+        CancellationToken ct = default,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeDmlAssertionForTest = null,
+        Func<CancellationToken, Task>? afterServerCommitForTest = null,
+        Func<Task>? beforeConnectionDisposeForTest = null)
+    {
+        ArgumentNullException.ThrowIfNull(normalizedConnectionString);
+        var step = SnapshotGenerationRetentionInitializationStep;
+        SnapshotRetentionSchemaSqlBackstop.RequireDdlOnly(step.Sql);
+        SnapshotRetentionSchemaDmlProof? proof = null;
+        var commitAttempted = false;
+        var commitAcknowledged = false;
+        try
+        {
+            // PG17's xact view can include older unflushed backend counts; never reuse a session here.
+            // The host passes its original normalized configuration, never the data source's sanitized display string.
+            await using var connection = new PostgresUnpooledConnectionFactory(normalizedConnectionString).CreateConnection();
+            await connection.OpenAsync(ct);
+            IReadOnlyList<SnapshotRetentionSchemaTableIdentity>? identitiesBefore = null;
+            await ExecuteSchemaInitializationStepAsync(
+                connection, step, ct,
+                beforeExecute: async (session, transaction, token) =>
+                {
+                    await SnapshotRetentionSchemaDmlAssertion.AcquireAdmissionAsync(session, transaction, token);
+                    identitiesBefore = await SnapshotRetentionSchemaRelationIdentity.CaptureAsync(session, transaction, token);
+                },
+                beforeCommit: async (session, transaction, token) =>
+                {
+                    if (beforeDmlAssertionForTest is not null)
+                        await beforeDmlAssertionForTest(session, transaction, token);
+                    proof = await SnapshotRetentionSchemaDmlAssertion.AssertBeforeCommitAsync(session, transaction,
+                        identitiesBefore ?? throw new InvalidOperationException("Source identity baseline is absent."), token);
+                },
+                commitTransaction: async (transaction, token) =>
+                {
+                    if (proof is null)
+                        throw new InvalidOperationException("The combined proof is absent before commit.");
+                    commitAttempted = true;
+                    await transaction.CommitAsync(token);
+                    if (afterServerCommitForTest is not null)
+                        await afterServerCommitForTest(token);
+                    commitAcknowledged = true;
+                });
+            if (beforeConnectionDisposeForTest is not null)
+                await beforeConnectionDisposeForTest();
+            return proof ?? throw new InvalidOperationException("The dedicated schema transaction did not produce its combined proof.");
+        }
+        catch (Exception exception) when (commitAttempted && proof is not null)
+        {
+            throw new SnapshotRetentionSchemaCommitOutcomeException(
+                commitAcknowledged ? true : null, proof, exception);
+        }
+    }
+
+    internal static DatabaseSchemaInitializationStep SnapshotGenerationRetentionInitializationStep =>
+        new(
+            Name: "snapshot-generation-retention-report-only",
+            Sql: Maintenance.SnapshotGenerationRetentionSchema.Sql,
+            CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+            UseShortTransaction: true,
+            LockTimeout: NotificationSchemaLockTimeout,
+            StatementTimeout: NotificationSchemaStatementTimeout);
 
     internal static async Task
         EnsurePublicationGenerationRetirementSchemaAsync(
@@ -144,8 +218,14 @@ public static class DatabaseInitializer
     private static async Task ExecuteSchemaInitializationStepAsync(
         NpgsqlConnection connection,
         DatabaseSchemaInitializationStep step,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeExecute = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeCommit = null,
+        Func<NpgsqlTransaction, CancellationToken, Task>? commitTransaction = null)
     {
+        if (!step.UseShortTransaction && (beforeExecute is not null || beforeCommit is not null || commitTransaction is not null))
+            throw new InvalidOperationException("Schema transaction hooks require a bounded transaction.");
         if (step.UseShortTransaction)
         {
             await using var transaction =
@@ -156,11 +236,11 @@ public static class DatabaseInitializer
                 timeout.CommandTimeout =
                     NotificationSchemaCommandTimeoutSeconds;
                 timeout.CommandText = """
-                    SELECT set_config(
+                    SELECT pg_catalog.set_config(
                         'lock_timeout',
                         @lockTimeout,
                         true);
-                    SELECT set_config(
+                    SELECT pg_catalog.set_config(
                         'statement_timeout',
                         @statementTimeout,
                         true);
@@ -176,6 +256,9 @@ public static class DatabaseInitializer
                 await timeout.ExecuteNonQueryAsync(ct);
             }
 
+            if (beforeExecute is not null)
+                await beforeExecute(connection, transaction, ct);
+
             await using (var command =
                          connection.CreateCommand())
             {
@@ -186,7 +269,31 @@ public static class DatabaseInitializer
                 await command.ExecuteNonQueryAsync(ct);
             }
 
-            await transaction.CommitAsync(ct);
+            if (step.Name == "publication-path-artifacts")
+            {
+                var warnings = await PublicationPathArtifactReleaseGate.ValidateInitializedActiveBindingsAsync(
+                    connection, transaction, ct);
+                foreach (var warning in warnings)
+                {
+                    if (reportWarning is not null)
+                        reportWarning(warning);
+                    else
+                        Console.Error.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            severity = "warning",
+                            code = "previous_path_binding_invalid",
+                            publicationId = warning.PublicationId,
+                            reason = warning.Code,
+                        }));
+                }
+            }
+
+            if (beforeCommit is not null)
+                await beforeCommit(connection, transaction, ct);
+            if (commitTransaction is not null)
+                await commitTransaction(transaction, ct);
+            else
+                await transaction.CommitAsync(ct);
             return;
         }
 
@@ -419,17 +526,7 @@ public static class DatabaseInitializer
                 UseShortTransaction: true,
                 LockTimeout: NotificationSchemaLockTimeout,
                 StatementTimeout: NotificationSchemaStatementTimeout),
-            new(
-                Name:
-                    "snapshot-generation-retention-report-only",
-                Sql: Maintenance
-                    .SnapshotGenerationRetentionSchema.Sql,
-                CommandTimeoutSeconds:
-                    NotificationSchemaCommandTimeoutSeconds,
-                UseShortTransaction: true,
-                LockTimeout: NotificationSchemaLockTimeout,
-                StatementTimeout:
-                    NotificationSchemaStatementTimeout),
+            SnapshotGenerationRetentionInitializationStep,
             new(
                 Name:
                     "snapshot-generation-retirement-control-plane",

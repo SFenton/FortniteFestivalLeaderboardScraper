@@ -8,7 +8,7 @@ using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
-public sealed class SnapshotGenerationRetentionPlannerTests
+public sealed partial class SnapshotGenerationRetentionPlannerTests
     : IDisposable
 {
     private const long CurrentScrapeId = 2000;
@@ -4316,7 +4316,7 @@ public sealed class SnapshotGenerationRetentionPlannerTests
         long resumeScrapeId = 0,
         ISnapshotGenerationRetentionOracle? oracle = null,
         int lockWaitMilliseconds = 100) =>
-        new(
+        SnapshotGenerationRetentionPlanner.CreateForOffline(
             _fixture.DataSource,
             new SnapshotGenerationRetentionRepository(
                 _fixture.DataSource),
@@ -4338,7 +4338,8 @@ public sealed class SnapshotGenerationRetentionPlannerTests
                     ResumeScrapeId = resumeScrapeId,
                 }),
             NullLogger<
-                SnapshotGenerationRetentionPlanner>.Instance);
+                SnapshotGenerationRetentionPlanner>.Instance,
+            new PostgresUnpooledConnectionFactory(SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource)));
 
     private static SnapshotGenerationRetentionPlanRequest
         CreateRequest(

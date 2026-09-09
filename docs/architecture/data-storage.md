@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-04
-last_verified_commit: f266ecb8
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Persistence/PublicationGeneration.cs
@@ -32,6 +33,9 @@ sources:
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetirementSchema.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOfflineDiagnostics.cs
+  - tools/FstSnapshotGenerationRetentionReport/OfflineReportDatabase.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
@@ -714,6 +718,106 @@ report-only. It stores immutable cycles, exact physical-child observations,
 safe-point deferrals, explicit holds, and append-only hash-chain evidence. It
 has no job relation, operation kind, lease, executor state, or service method
 that can archive, detach, rename, drop, truncate, or delete a child.
+
+The host-only [offline report entry point](../database/SnapshotGenerationOfflineRetentionReport.md)
+reuses that planner and persistence with explicit
+`operator_offline_post_publication` provenance. Canonical cycle identity is
+the scrape/publication trigger pair, not its kind; cycle and deferral checks
+admit both provenances. Upgrade refuses existing duplicates without rewriting
+immutable rows. Existing version `3`/`1` contracts and hash encoding remain
+valid. An immutable worker-configuration receipt independently authorizes
+reporting and binds the compatible lookup protocol to the stopped instance.
+A database-scoped shared schema fence serializes initialization. Bounded
+transactional advisory admission surrounds the real repeatable-read
+observation/persistence transaction and releases immediately after its commit.
+No pending-work flag, execution ledger, tool-owned schema repair, or
+leaderboard/publication mutation is introduced.
+
+Fresh host backends must retain authentication independently of Npgsql's
+sanitized `DataSource.ConnectionString`. The dedicated CLI forwards its
+original normalized environment configuration to the dedicated initializer;
+the reporter owns a private non-record unpooled factory and explicitly gives
+it to the offline-only planner. Inspection, data, fence and authoritative
+cleanup/reconciliation connections use that source with unchanged
+`pg_catalog,public` and purpose-specific bounds. Every host variant composes
+only unique positive-second timeouts with exactly one mandatory
+`row_security=off`; conflicting or unsupported options refuse. Host factories
+also reject multi-host or load-balanced targets. Before the separate fence
+connection acquires any advisory lock, its database name/OID, PostgreSQL
+system identifier, postmaster start, data directory, and role signature must
+exactly match the data connection. This raises
+rather than silently filtering RLS-protected rows and never bypasses privileges.
+The reporter data source and planner factory are tool-internal, not public
+credential-reconstruction surfaces. Missing offline factories
+refuse. Credentials stay in process memory, never artifacts; do not enable
+`PersistSecurityInfo` to recover them. Direct data-source opens and
+metadata-only property inspection remain safe, but the property is not a
+credential source. Ordinary worker `PlanAsync` is unchanged. PG17 SCRAM/TCP
+and separate trust/socket fixtures cover this boundary without claiming live
+deployment acceptance.
+
+Deployment uses the service's isolated
+`--initialize-snapshot-retention-schema-only` mode, not general database
+initialization. Its unchanged bounded step installs retention DDL and the
+existing publication-source helper index, but seeds/repairs no user-table
+rows. The dedicated DML allowlist is therefore empty. A fresh unpooled backend,
+zero entry baseline and schema-then-registration advisory admission make its
+pre-commit `pg_stat_xact_user_tables` assertion attributable to that one schema
+transaction. Any nonzero unauthorized insert/update/delete count refuses and
+rolls back. PG17's view also includes pending backend work, so a reused pooled
+session is not an acceptable proof boundary. The
+additive canonical schema is already present in production and is compatible;
+do not roll it back. The rejected deployment's path-binding refresh remains
+recorded and is not repaired by this change.
+
+The version-2 proof also captures the exact before-execute and pre-commit
+non-retention table identity set (schema/name/OID/relfilenode/kind), including
+ordinary/partitioned/materialized/foreign metadata across user schemas.
+System/temp and only the six exact public retention DDL tables are excluded.
+TRUNCATE and heap rewrites therefore cannot hide behind zero tuple counters.
+The schema SQL digest, tuple proof and identity digests share one combined
+hash. Unacknowledged COMMIT reports null committed state and possible
+identities, not false; no automatic retry or schema-presence inference is
+performed.
+
+General path bootstrap now inserts a current publication binding only when
+missing. A current-version canonical binding preserves its complete JSON,
+provenance and `built_at`; only unversioned/strictly older bindings upgrade.
+Intentional runtime publication/path rebinding is unchanged. Full schema
+initialization remains broader than retention-only deployment.
+Invalid future/malformed current/working versions and invalid ready binding
+contracts produce bounded, source-preserving initialization failures shared
+with release readiness; previous invalid bindings are structured warnings.
+Ordinary startup classifies that outcome before runtime pool construction
+only when `Scraper:UsePublicationPathArtifacts=true`. A feature-off schema
+owner skips the path-artifact migration step, and a feature-off skip-schema
+role skips its validation fence; inactive bindings remain unchanged and
+legacy live-row writers remain available. When enabled, selection uses a
+private unpooled bootstrap source and bounded SHARE locks on exactly
+`scrape_publication_state`, `publication_generations`,
+`publication_surface_bindings`, `publication_path_artifacts` and
+`publication_song_catalog`. Locks precede the repeatable-read snapshot and are
+released only once pool policy is fixed. `Program` eagerly resolves the main
+data source immediately after host build, keeping selection and release in
+one bounded construction path before pipeline or hosted writers. Selection
+loss forces read-only.
+Current/working refusal disables all runtime database writers, HTTP/selected
+profile mutations and background/recovery services without removing persisted
+public reads. The process cannot re-enable mutations until a guarded restart.
+No new durable execution/admission schema accompanies this startup state.
+Its type is `StartupPublicationReadOnlyState`, distinct from the separate
+execution-admission foundation; future composition must precede any shared
+pool construction and cannot clear either gate's refusal.
+Already-correct catalog, generation and disabled
+notification metadata are no longer subject to no-op compatibility updates.
+The executable parity proof covers causal dedicated-initializer DML and exact
+non-retention row hashes/schema, including the publication singleton, not only
+visible API content. Cumulative `pg_stat_user_tables` counters remain
+non-causal telemetry (including copies in source topology inventories).
+Ambient counter drift alone cannot reject when causal proof and exact source
+invariants pass; unexplained actual row/schema/physical-source drift still
+rejects. No claim identifies the exact origin of the prior delayed
+registration-family counter delta.
 
 A separate operator tool can copy one cryptographically authenticated planner
 candidate into a custom-format PostgreSQL archive and prove that package in an

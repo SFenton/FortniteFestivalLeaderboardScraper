@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using Npgsql;
 
 namespace FSTService.Persistence;
@@ -160,6 +161,7 @@ internal static class RegistrationMutationGate
 
 public sealed class PostgresUnpooledConnectionFactory
 {
+    // This is an original, private process-memory credential source, not NpgsqlDataSource.ConnectionString.
     private readonly string _connectionString;
 
     public PostgresUnpooledConnectionFactory(
@@ -171,11 +173,68 @@ public sealed class PostgresUnpooledConnectionFactory
                 Pooling = false,
                 Multiplexing = false,
             };
+        if (builder.LoadBalanceHosts
+            || builder.Host?.Contains(",", StringComparison.Ordinal) == true)
+        {
+            throw new ArgumentException(
+                "Host connections require a single PostgreSQL target.",
+                nameof(connectionString));
+        }
         _connectionString = builder.ConnectionString;
     }
 
     public NpgsqlConnection CreateConnection()
         => new(_connectionString);
+
+    internal NpgsqlConnection CreateHostConnection(
+        int timeoutSeconds,
+        int commandTimeoutSeconds,
+        string options)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(_connectionString)
+        {
+            Timeout = timeoutSeconds,
+            CommandTimeout = commandTimeoutSeconds,
+            SearchPath = "pg_catalog,public",
+            IncludeErrorDetail = false,
+            PersistSecurityInfo = false,
+            Options = NormalizeHostOptions(options),
+        };
+        return new(builder.ConnectionString);
+    }
+
+    private static string NormalizeHostOptions(string options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var tokens = options.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var normalized = new List<string> { "-c row_security=off" };
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (tokens.Length % 2 != 0)
+            throw InvalidOptions();
+        for (var i = 0; i < tokens.Length; i += 2)
+        {
+            if (tokens[i] != "-c")
+                throw InvalidOptions();
+            var setting = tokens[i + 1].Split('=', 2);
+            if (setting.Length != 2)
+                throw InvalidOptions();
+            if (setting[0] == "row_security" && setting[1] == "off")
+                continue;
+            if (setting[0] is not ("statement_timeout" or "lock_timeout"
+                or "idle_session_timeout" or "idle_in_transaction_session_timeout" or "transaction_timeout")
+                || !names.Add(setting[0])
+                || !setting[1].EndsWith('s')
+                || !int.TryParse(setting[1].AsSpan(0, setting[1].Length - 1),
+                    NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+                || seconds <= 0)
+                throw InvalidOptions();
+            normalized.Add("-c " + setting[0] + "=" + seconds.ToString(CultureInfo.InvariantCulture) + "s");
+        }
+        return string.Join(' ', normalized);
+
+        static ArgumentException InvalidOptions() =>
+            new("Host options must be unique positive-second timeouts or row_security=off.", nameof(options));
+    }
 }
 
 internal sealed class PostgresRegistrationMutationLease

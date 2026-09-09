@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-23
-last_verified_commit: 4c36926a
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
@@ -78,6 +78,53 @@ pipeline.
 | Admin regeneration race gate | `AdminPathRegenerationGate` |
 | Automatic-staging deferral state | `songs.path_generation_*` deferral columns + `PathDataStore` |
 | Readiness and source evidence | `PublicationReadinessEvaluator`, `MetaDatabase.GetPublicationSurfaceSourceEvidence` |
+
+Startup bootstrap is insert-only for the current `path_artifacts` binding.
+Full schema initialization preserves every field of an existing current-version
+binding, including arbitrary provenance JSON and `built_at`, regardless of
+whether its source is preparation, scrape-pass staging or a prior bootstrap.
+A missing current binding can still bootstrap from complete captured/live
+state. Unversioned legacy and strictly older positive-integer manifest
+versions use the explicit active-pointer upgrade path; future or malformed
+versions are not silently downgraded. Upgrade does not invent a missing
+non-current binding. Explicit runtime `RebindSql` callers
+retain their deliberate update semantics.
+
+After bootstrap/upgrade, bounded read-only validation checks every existing
+current/working binding. Future versions and explicit invalid
+manifest versions (including null, nonpositive, fractional and nonnumeric
+values) fail initialization; only an absent version in a legacy JSON object
+can enter the unversioned upgrade path. Ready bindings must satisfy canonical
+kind, JSON table/authority/source, publication/scrape identity, contract and
+manifest versions, JSON/catalog expected count, actual/binding row count and
+canonical hash invariants. The validator is shared with release readiness.
+It raises `PublicationPathArtifactInitializationException` with publication
+IDs and fixed reason codes before the path-schema transaction commits;
+invalid rows are not repaired or rewritten. Existing current/working invalid
+bindings are also checked before general schema mutations. The actual full
+schema CLI exits 2 and emits `path_artifact_initialization_rejected` JSON on
+stderr. Previous bindings are validated separately: invalid rows emit
+`previous_path_binding_invalid` structured warnings with publication ID and
+reason, without rewriting the row or aborting startup. A publication referenced
+by both previous and current/working pointers remains mutation-critical.
+
+Ordinary startup handles current/working refusal before constructing runtime
+pools. It selects sticky degraded/read-only serving instead of stopping the
+API or admitting writers; persisted public reads remain available subject to
+their existing source gates. See the [service startup contract](../components/service-api.md).
+This release gate is active only when
+`Scraper:UsePublicationPathArtifacts=true`. A feature-off schema owner skips
+the path-artifact migration step, and a feature-off skip-schema role skips the
+path-artifact validation fence. In both cases inactive path bindings remain
+byte-for-byte untouched and cannot degrade or suppress legacy live-row
+ingestion. Re-enabling publication-bound path reads requires a schema-owning
+role to apply and validate the current release before skip-schema readers are
+accepted.
+
+The source-preserving repair does not restore publication `223`'s binding
+refresh from the rejected retention deployment. Retention-only deployments
+must use the [dedicated initializer](SnapshotGenerationOfflineRetentionReport.md)
+rather than invoking this broader schema/data family.
 
 ## Schema
 
@@ -176,12 +223,14 @@ carries a content hash.
    short transaction under bounded lock/statement timeouts. It creates or
    alters the table, replaces the canonical hash function, backfills the
    **current publication only** from its exact `publication_song_catalog`
-   joined to live `songs`, emits the `legacy_live_backfill` binding, retires
+   joined to live `songs`, creates a `legacy_live_backfill` binding only when
+   the current binding is missing, retires
    superseded snapshots, and rebinds every retained active pointer publication
    (current, previous, and working when non-null) whose binding predates the
    current `manifestVersion`, using the `schema_manifest_upgrade` source. The
    backfill is skipped when the publication already has rows, so repeated
-   startups do not rewrite snapshot rows.
+   startups do not rewrite snapshot rows. Existing current-version binding
+   JSON, status, counts, hash and `built_at` are also preserved exactly.
 
    Because the function replacement and the rebinds share one transaction,
    there is no interval in which the new hash function is visible while an
@@ -502,31 +551,50 @@ instead of publishing stale path/cache state.
 
 ### Release readiness gate
 
-A role that sets `Scraper:ApiOnly=true`,
-`Scraper:SkipStartupSchemaInitialization=true`, or
-`Scraper:RolloutReadOnlyStartup=true` never runs DDL, so it can otherwise start
-against a database whose path artifact release has not been applied. When such
-a role also sets `Scraper:UsePublicationPathArtifacts=true`,
-`StartupInitializer` runs `PublicationPathArtifactReleaseGate` before
-signalling ready, including before the rollout read-only early return, so no
-publication-bound role starts against an unreleased database.
+A role that skips schema initialization never applies DDL. Ordinary startup
+still classifies current and working bindings before constructing runtime
+pools; missing/unready bindings, missing schema and invalid contracts disable
+mutation startup. Explicit rollout read-only startup selects the same
+write-blocked runtime policy without attempting schema repair.
 
-`ScraperOptions.SkipsStartupSchemaInitialization` and
-`ScraperOptions.RequiresPublicationPathArtifactReleaseGate` are the single
-source of truth for both decisions, so the schema-initialization branch and the
-readiness gate cannot drift apart.
-
-The gate is a single read-only query. It requires the current publication to
+The canonical gate requires each current/working publication to
 have a `generation_path_artifact_manifest` binding that is `ready`, at
 `contractVersion` 1 and the current `manifestVersion`, whose row count equals
 both the snapshot row count and the exact catalog song count, and whose
 `content_hash` equals the canonical manifest hash recomputed from the same
-function. A database with no current publication passes; a missing table or
-hash function fails with the schema error text.
+function. No current/working pointer means there is no binding to validate.
+Previous invalid bindings warn but do not prevent normal startup.
 
-Failure throws `PublicationPathArtifactReleaseException` with the specific
-mismatch and the operator instruction: start the API/schema-initializing role
-first, then this role. The gate never executes DDL.
+The authoritative runtime selection holds SHARE locks on publication state,
+generations, bindings, path artifacts and catalog after setting 2-second lock,
+5-second statement, 30-second transaction and 10-second idle-transaction
+timeouts. Locks precede the repeatable-read snapshot and remain held until the
+main runtime pool's writable/read-only policy is fixed. Fence loss before that
+point forces read-only selection. Public ACCESS SHARE reads remain compatible.
+This is a startup classification fence, not archive/execution admission or a
+long-lived lock against normal publication.
+`Program` eagerly resolves its runtime data source immediately after host
+build, so `StartupPublicationReadOnlyState` selects, seals and releases that
+fence before a slow pipeline or hosted-service construction can exhaust the
+idle-transaction timeout.
+
+The explicit `EnsureReleasedAsync` read gate still throws
+`PublicationPathArtifactReleaseException` for invalid current data. Ordinary
+startup instead exposes `degraded_read_only` with exact diagnostics, configures
+all runtime database connections read-only, suppresses hosted writers and
+recovery, and requires a fresh guarded restart to restore mutation admission.
+Read-serving health is not a valid path-release assertion.
+
+A previous warning does not authorize previous data or restore a stale
+preparation. A future-version previous binding still fails
+`PathDataStore.GetPublicationPathGenerationStates` for that publication;
+current reads remain valid. `PublicationReadinessEvaluator.ValidateGeneration`
+also rejects previous generations for current pinning.
+`MetaDatabase.CommitPreparedPublicationTransaction` rejects a reused
+preparation whose current/previous/working pointers changed. For a genuinely
+ready working preparation, `VerifyPreparedPathArtifacts` rechecks the current
+manifest version and hash before pointer movement. These gates remain separate
+from warning-only startup diagnosis; no warning promotes or rewrites a row.
 
 ### Rollout ordering
 
@@ -535,12 +603,12 @@ first, then this role. The gate never executes DDL.
    whose startup runs the `publication-path-artifacts` migration and rebinds
    active pointer snapshots to the current manifest version.
 2. Confirm the service role is healthy and serving publication-bound reads.
-3. Start `fstworker`, which sets `SkipStartupSchemaInitialization=true` and
-   fails fast through the release readiness gate if step 1 has not been
-   applied.
+3. Start `fstworker` through its guard. It skips schema and cannot run mutation
+   hosted services if startup classification is degraded. Require
+   `startup.mutationReady=true`, not merely HTTP 200, before accepting rollout.
 
-Reversing this order is safe but not useful: the worker refuses to start and
-logs the exact remediation.
+Reversing this order cannot enable the worker: it remains read-only and reports
+the exact remediation while the public API can keep serving persisted reads.
 
 ### Admin regeneration race gate
 

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-06
-last_verified_commit: 341d5e88
+last_verified: 2026-09-08
+last_verified_commit: 2a7783a9
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -53,6 +53,29 @@ sources:
   - tools/postgres-snapshot-generation-archive.test.sh
   - tools/postgres-snapshot-generation-archive-drill.py
   - tools/postgres-snapshot-generation-retirement-drill.sh
+  - tools/postgres-snapshot-generation-retention-report-drill.py
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionOfflineTests.cs
+  - FSTService.Tests/Unit/OfflineReportAttestationTests.cs
+  - FSTService.Tests/Unit/OfflineReportCommandTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaCommandTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaInitializationTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaDmlTests.cs
+  - FSTService.Tests/Unit/SnapshotRetentionSchemaCombinedProofTests.cs
+  - tools/snapshot_retention_deployment_parity.test.py
+  - FSTService.Tests/Unit/PublicationPathArtifactTests.cs
+  - FSTService.Tests/Unit/StartupPublicationReadOnlyStateTests.cs
+  - FSTService.Tests/Unit/ReadinessHealthTests.cs
+  - FSTService.Tests/Unit/RolloutReadOnlyRequestGuardTests.cs
+  - tools/snapshot_retention_schema_proof.py
+  - FSTService.Tests/Helpers/SharedPostgresContainer.cs
+  - FSTService.Tests/Helpers/ControlledPostgresTestFixture.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionRepairTests.cs
+  - FSTService.Tests/Helpers/AuthenticatedPostgresScope.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionAuthenticationTests.cs
+  - FSTService.Tests/Unit/HostConnectionOwnershipTests.cs
+  - tools/run-controlled-postgres-tests.py
+  - tools/owned_postgres_auth.py
+  - tools/owned_postgres_auth.test.py
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Fixture.csproj
   - tools/testdata/postgres-snapshot-generation-archive-csharp-fixture/Program.cs
   - tools/testdata/postgres-snapshot-generation-archive-extra-volume.Dockerfile
@@ -149,6 +172,262 @@ coverage because those commands do not exist in this slice.
 After committing the candidate, run the network-none drill described in
 [the control-plane guide](../database/SnapshotGenerationRetirementControlPlane.md)
 to exercise the clean-tree identity gate and published single-file wrapper.
+
+Focused offline report validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~SnapshotGenerationRetirementPlanTests|FullyQualifiedName~OfflineReportCommandTests'
+
+dotnet publish \
+  tools/FstSnapshotGenerationRetentionReport/FstSnapshotGenerationRetentionReport.csproj \
+  -c Release
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-run> \
+  --run-focused-tests
+```
+
+The drill requires an FST-drive worktree and creates only its own PostgreSQL
+17 network-none scope. It pins the real single-file wrapper, persists a
+genuine cycle, proves source/worker/publication parity and idempotency, rejects
+online-worker/forbidden-command admission, and removes owned PGDATA, socket,
+and containers.
+
+Authenticated fresh-connection validation (separate from trust/socket tests):
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode focused \
+  --work-root artifacts/offline-retention-report-repair/<new-auth-matrix> \
+  --filter 'FullyQualifiedName~SnapshotGenerationRetentionPlannerTests|FullyQualifiedName~SnapshotRetentionSchema|FullyQualifiedName~OfflineReport|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~HostConnectionOwnershipTests|FullyQualifiedName~RetentionConfigurationReloadTests'
+
+python3 -B tools/owned_postgres_auth.test.py
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-reporter> \
+  --scram-tcp
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-auth-schema> \
+  --scram-tcp --schema-only-repair
+```
+
+`AuthenticatedPostgresScope` creates a disposable SCRAM role with a nonempty
+random password held only in process memory. It does not inherit security-info
+persistence from legacy fixture configuration. Tests explicitly prove default
+`PersistSecurityInfo=false`, sanitized data-source output, failed sanitized
+reconstruction, successful direct/factory authentication, unchanged fresh
+backend/timeouts/v2 proof, wrong-password refusal, and real authenticated
+offline identity/fence/oracle/persistence/idempotence. Disposal and injected
+post-commit failures require exact-cycle/ended-owner reconciliation; failed
+authentication or unresolved ownership retains uncertainty. Missing dedicated
+offline factories refuse before connection. Ordinary worker planner behavior
+and source SQL remain unchanged.
+
+The executable `--scram-tcp` lane binds only loopback and replaces owned host
+rules with SCRAM. No plaintext password enters SQL, Docker configuration or a
+password file. Private administration supplies only a SCRAM verifier with
+statement/parameter logging suppressed. In-memory stdout/stderr capture and
+runtime sentinel scans cover JSON/console/TRX/PostgreSQL artifacts; sentinels
+and full credential strings are never written into evidence. The runner
+allowlists noncredential environment keys instead of copying operator
+credentials. The existing `--run-focused-tests` drill option is a separate
+trust/socket regression lane and excludes authenticated-role tests; use the
+controlled TCP runner for the latter.
+
+Source-preserving deployment validation:
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode focused \
+  --work-root artifacts/offline-retention-report-repair/<new-schema-matrix> \
+  --filter 'FullyQualifiedName~PublicationPathArtifactTests|FullyQualifiedName~PublicationPathPromotionTests|FullyQualifiedName~SnapshotRetentionSchemaCommandTests|FullyQualifiedName~SnapshotRetentionSchemaInitializationTests|FullyQualifiedName~SnapshotRetentionSchemaDmlTests|FullyQualifiedName~SnapshotRetentionSchemaCombinedProofTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~HostedWorkerModeResolverTests|FullyQualifiedName~StartupPublicationReadOnlyStateTests|FullyQualifiedName~ReadinessHealthTests|FullyQualifiedName~RolloutReadOnlyRequestGuardTests|FullyQualifiedName~PublicationRecoveryCoordinatorTests'
+
+python3 -B tools/snapshot_retention_deployment_parity.test.py
+
+python3 tools/postgres-snapshot-generation-retention-report-drill.py \
+  --work-root artifacts/offline-retention-report-drills/<new-schema-proof> \
+  --schema-only-repair
+```
+
+The matrix compares complete binding JSON/SHA-256 and `built_at` across first
+and repeated full initialization for nonlegacy and already-recorded legacy
+provenance. It covers missing current-binding bootstrap, intentional old
+manifest upgrade, no future/malformed downgrade, strict CLI exclusivity,
+early dispatch before replay/dotenv/hosting, cancellation, incompatible-worker
+and schema/registration-lock refusal, and no prerequisite creation in an empty database.
+Runtime deliberate rebinding remains covered by the existing path tests.
+Hostile `public` catalog/function shadows, including a preferred concrete
+`format` overload, cannot hijack dedicated DDL under exact
+`pg_catalog,public` resolution. Current/working invalid bindings produce
+stable source-preserving CLI refusals; previous invalid bindings produce
+structured warnings and permit normal startup. Runtime release readiness still
+rejects invalid current data.
+
+Dedicated DML tests require the exact empty allowlist, a fresh unpooled
+single-transaction backend, enabled PG17 statistics, zero entry baseline and
+pre-commit insert/update/delete totals. Reusing a pooled backend must not
+contaminate proof with earlier pending work. Injected insert/update/delete
+statements and a retention-like unreviewed table refuse and roll back both
+rows and missing schema objects. A test-only DDL hook exercises structured
+CLI refusal without adding any production selector.
+
+Combined-proof tests cover same-line, multiline, comment-separated and
+DO-body static mutation detection, including TRUNCATE and relation COPY FROM.
+Same-transaction hooks truncate/rewrite/rename a source table, copy rows from
+STDIN and refresh a materialized heap; refusal must restore exact rows and
+identities. Inventory tests cover all user schemas, partition parents/leaves,
+materialized and foreign metadata, system/temp exclusions and exact retention
+name exclusions (not prefixes).
+
+Commit hooks distinguish precommit failure/explicit rollback from a real
+server commit followed by simulated client acknowledgement loss. The latter
+must exit nonzero with null committed state and possible schema/proof
+identities while the committed fixture schema remains visible. Artifact
+tests reject version-1, missing/changed identity and null/uncertain commits
+even when other source snapshots match.
+
+The concurrency case uses the real registration coordinator. Its shared
+writer queues behind the initializer's exclusive registration lock, cannot
+touch a selected profile during the transaction, and proceeds after commit.
+The initializer still reports zero DML; later ambient row work/cumulative
+telemetry is distinguishable rather than attributed to it. Artifact tests
+accept delayed cumulative counter changes only with a valid causal proof
+and exact actual source state; missing/tampered proof or row/schema/topology/
+control drift rejects.
+
+Startup tests prove pre-pool selection, selection-fence ownership/loss,
+read-only PostgreSQL/auxiliary connection policy, no writer construction,
+mutation/recovery/registration/selected-profile suppression, and sticky
+read-only state even after a fixture repairs the database. Transient persisted
+load failures must retry completely rather than marking a partial load ready.
+They also cover eager source resolution without circular DI, release before
+an 11-second pipeline delay, and bounded refusal while a publication writer
+holds conflicting locks. Source-order checks pin eager resolution immediately
+after host build and preserve one-shot/schema exemptions. HTTP health tests
+require read-serving `Healthy`/200 with explicit structured detail while
+unrelated `Degraded`/`Unhealthy` remains 503. Previous-warning tests retain
+current rows/reads while rejecting previous path reads, current pinning and
+stale-preparation reuse; working cutover separately revalidates old/future
+manifest versions through `VerifyPreparedPathArtifacts`.
+
+The network-none repair drill invokes the actual service command, compares
+all non-retention table row hashes/identities and schema definitions,
+retains cumulative counters as explicitly non-causal telemetry, installs
+statement-level source-write traps, and captures
+publication/path/catalog/control state. It proves both a missing retention
+constraint/receipt-table upgrade and a repeat against the current schema.
+`--baseline-service <FST-drive-FSTService.dll>` plus
+`--baseline-service-sha256 <sha256>` optionally reproduces the old full
+initializer's mutation with an independently pinned binary. Its reset applies
+only to that disposable fixture; it is never a production repair.
+Four actual full `--initialize-schema-only` process launches must also retain
+all non-retention table rows/hashes and schema, not just path
+binding bytes. The proof catches and rejects no-op compatibility writes to
+catalog, publication-generation and disabled-notification state through
+fixture-only AFTER-row DML and BEFORE-TRUNCATE traps, not cumulative counters.
+Zero-row statements and conflict-do-nothing remain legal. Logical-schema
+arrays sort exact definitions rather than incidental catalog
+OID order, while source table OIDs/relfilenodes remain exact invariants. Separate
+actual CLI cases require visible structured refusals for future, malformed
+and invalid-ready bindings with their exact rows unchanged. Dedicated CLI
+runs must emit the committed causal proof; a separate actual executable
+invocation injects DML through a fixture event trigger and requires refusal/
+rollback with unchanged source rows.
+Actual CLI TRUNCATE and heap-rewrite hooks also require identity-drift
+refusal and source rollback with the combined version-2 proof.
+The actual ordinary service additionally runs current-ready/inexact-catalog,
+current-ready/missing-catalog and invalid-working cases. It must serve exact
+persisted GET/cache bytes in explicit degraded mode, reject mutation attempts,
+construct no expected hosted writer, and preserve all non-retention row hashes
+while recording counter telemetry without using it for acceptance. Degraded mutation refusal is not misclassified as a rollout
+violation. Owned service process groups, backend sessions and HOME/XDG/data
+paths are removed before the fixture is cleaned.
+Docker logging remains disabled and all PGDATA, sockets, logs and scratch
+remain on the FST drive, with exact cleanup and checksums.
+Fixture readiness uses the main postmaster's loopback TCP listener, not the
+entrypoint's temporary Unix-socket initialization server. Failed owned commands
+retain sanitized stdout/stderr as failure evidence before cleanup.
+
+If a shared host exhausts its per-user inotify instance quota while the
+integration suite constructs API hosts, use the process-local
+`DOTNET_USE_POLLING_FILE_WATCHER=1` setting for that validation run and record
+it with the evidence. This keeps file-change watching enabled without
+changing kernel limits or production configuration; it does not waive a
+failed test.
+
+For resource-isolated development, `--hold-for-tests` exposes only
+nonsecret `runtime.json` scope/transport metadata. The existing test helper can
+use `FST_TEST_POSTGRES_CONNECTION_STRING` plus `FST_TEST_POSTGRES_SCOPE`;
+it verifies the exact FST-drive short Unix socket, fixed disposable database
+and role, PostgreSQL 17, and matching server scope before creating any test
+database. Never point this override at production. Keep the connection string
+only in the child environment, never output or an artifact. After validation,
+`continue.requested` finishes the real wrapper proof and cleanup;
+`stop.requested` cleans up without claiming proof success.
+
+This Unix-socket override is not a TCP/container-binding fixture. Use the
+ordinary supported TCP fixture for the full service suite and stored-rank/
+Tier-1 transport contracts:
+
+```bash
+python3 tools/run-controlled-postgres-tests.py --mode full \
+  --work-root artifacts/offline-retention-report-repair/<new-full-run>
+```
+
+The runner leaves `FST_TEST_POSTGRES_CONNECTION_STRING` unset, disables Ryuk,
+binds only loopback ports, and configures `FST_TEST_PGDATA_ROOT` plus an exact
+resource scope. Both the primary and second-cluster fixture use owned
+FST-drive PGDATA/socket binds. Docker logging is disabled; PostgreSQL writes
+its logs under the owned FST-drive bind. Each fixture records its actual
+container ID, logging configuration, mounts and loopback ports at startup,
+including short-lived second-cluster fixtures. The runner seals log hashes,
+device/path inventory, console/TRX evidence and final cleanup state.
+The inventory distinguishes requested port bindings from the actual assigned
+loopback port and records PostgreSQL identity. The different-cluster fixture
+completes primary initialization before starting its clone, so simultaneous
+container PID/time namespaces cannot invalidate the distinct-identity premise.
+It explicitly removes all scoped containers, volumes and scratch. No default
+Docker PGDATA or unproven Docker-log placement is permitted.
+
+`--mode comparison` runs exactly the eight transport-dependent cases twice at
+base `880802ec` and twice at the candidate under identical environment and
+resource plumbing. The extracted base lives at
+`artifacts/offline-retention-report-repair/base-880802ec`; only the shared
+resource factory and two constructor substitutions may overlay that base.
+Record the overlay hash and compare candidate outcomes rather than weakening
+transport guards. `--mode focused --filter <selector>` uses the same controlled
+fixture for targeted checks.
+
+The offline tests cover every admission surface, current-cycle revalidation,
+real oracle agreement/mismatch/failure, bounded canonical-lock contention,
+mutable-state races, cancellation, source-DML refusal, schema drift/no repair,
+role/RLS visibility, and additive schema migration without changing existing
+report rows or hash chains. Uncommitted source is explicitly content-pinned;
+this does not relax the older retirement policy tool's clean-tree gate.
+
+Repair coverage additionally proves cross-kind orderings and duplicate
+refusal, exact deferral/cycle constraints and upgrade idempotency, deployed
+configuration disablement, database-scoped schema contention, bounded
+publication convoy release, explicit budget rollback/timing, loader/decoy
+environment rejection, and authoritative committed-success cleanup recovery.
+Production-scale acceptance remains a separate promotion gate. The adjudicated
+next measurement is a bounded live offline-report canary after reviewed
+deployment and the external idle-stop gates, not a capacity-risking full
+physical duplicate. Neither the small fixture nor a partial restore
+establishes that production budget.
+
+Final hardening coverage includes direct-binary fake-Git/PATH refusal,
+pre-migration legacy-writer exclusion, cached worker-option restart semantics,
+and a deterministic cross-connection marker proving the first repeatable-read
+snapshot follows every canonical fence lock. When prior fixture evidence lacks
+logging/storage proof, run only the affected tests and ordering/fixture drill
+at a production-idle and headroom-safe time; do not silently reuse incomplete
+evidence or compete with the active scrape.
+Lock inventory compares both unsigned 32-bit halves of PostgreSQL advisory
+keys, including negative hash-derived keys. The CLI smoke explicitly removes
+its process/runtime scratch and checks labeled volume absence before sealing;
+build/native-extraction caches and recorded decoy inputs remain separate
+retained artifacts on the FST drive.
 
 Pro-bass pilot structural and isolated lifecycle validation:
 

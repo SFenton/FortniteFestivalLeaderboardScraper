@@ -99,7 +99,8 @@ public class DatabaseInitializerTests : IDisposable
         var init = new StartupInitializer(
             _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         Assert.False(init.IsReady);
         var result = await init.CheckHealthAsync(new HealthCheckContext());
@@ -129,6 +130,7 @@ public class DatabaseInitializerTests : IDisposable
                 RolloutPostgresReadOnly = true,
             }),
             Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true),
             violations);
 
         var result = await initializer.CheckHealthAsync(
@@ -150,7 +152,8 @@ public class DatabaseInitializerTests : IDisposable
         var init = new StartupInitializer(
             _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         await init.StartAsync(CancellationToken.None);
 
@@ -212,7 +215,8 @@ public class DatabaseInitializerTests : IDisposable
             {
                 DataDirectory = _tempDir,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
@@ -259,7 +263,8 @@ public class DatabaseInitializerTests : IDisposable
             {
                 DataDirectory = _tempDir,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
@@ -369,6 +374,7 @@ public class DatabaseInitializerTests : IDisposable
                 DataDirectory = _tempDir,
             }),
             Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(),
             publicationCommitOptions:
                 Options.Create(new PublicationCommitOptions
                 {
@@ -448,6 +454,7 @@ public class DatabaseInitializerTests : IDisposable
                 DataDirectory = _tempDir,
             }),
             Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(),
             publicationCommitOptions:
                 Options.Create(new PublicationCommitOptions
                 {
@@ -509,7 +516,8 @@ public class DatabaseInitializerTests : IDisposable
                 {
                     DataDirectory = _tempDir,
                 }),
-                Substitute.For<ILogger<StartupInitializer>>());
+                Substitute.For<ILogger<StartupInitializer>>(),
+                StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
@@ -606,7 +614,8 @@ public class DatabaseInitializerTests : IDisposable
                 RolloutReadOnlyStartup = true,
                 RolloutPostgresReadOnly = true,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -653,7 +662,8 @@ public class DatabaseInitializerTests : IDisposable
                 RolloutReadOnlyStartup = true,
                 RolloutPostgresReadOnly = true,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await secondInitializer.StartAsync(CancellationToken.None);
         await secondInitializer.WaitForReadyAsync(cts.Token);
@@ -667,7 +677,7 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_RolloutReadOnlyStartup_RejectsUnreleasedPublicationPathArtifacts()
+    public async Task StartAsync_RolloutReadOnlyStartup_KeepsReadsAvailableWithoutReleasingInvalidPaths()
     {
         var song = new Song
         {
@@ -769,19 +779,23 @@ public class DatabaseInitializerTests : IDisposable
                 RolloutPostgresReadOnly = true,
                 UsePublicationPathArtifacts = true,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
             new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await Assert.ThrowsAsync<
-            PublicationPathArtifactReleaseException>(
-            () => initializer.WaitForReadyAsync(cts.Token));
-
-        Assert.False(initializer.IsReady);
+        await initializer.WaitForReadyAsync(cts.Token);
+        Assert.True(initializer.IsReady);
+        Assert.True(initializer.ReadOnlyServing);
+        Assert.False(initializer.MutationReady);
+        Assert.Equal(HealthStatus.Healthy,
+            (await initializer.CheckHealthAsync(new HealthCheckContext())).Status);
+        await Assert.ThrowsAsync<PublicationPathArtifactReleaseException>(
+            () => PublicationPathArtifactReleaseGate.EnsureReleasedAsync(readOnlyDataSource));
         Assert.True(
             initializer.PostgresDefaultTransactionReadOnly);
-        lifetime.Received(1).StopApplication();
+        lifetime.DidNotReceive().StopApplication();
     }
 
     [Fact]
@@ -806,7 +820,8 @@ public class DatabaseInitializerTests : IDisposable
                 RolloutReadOnlyStartup = true,
                 RolloutPostgresReadOnly = true,
             }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -866,7 +881,8 @@ public class DatabaseInitializerTests : IDisposable
                 {
                     DataDirectory = _tempDir,
                 }),
-                Substitute.For<ILogger<StartupInitializer>>());
+                Substitute.For<ILogger<StartupInitializer>>(),
+                StartupPublicationReadOnlyState.ForInitializedDatabase());
 
             await initializer.StartAsync(CancellationToken.None);
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -905,7 +921,8 @@ public class DatabaseInitializerTests : IDisposable
         var init = new StartupInitializer(
             _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
-            Substitute.For<ILogger<StartupInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
 
         await init.StopAsync(CancellationToken.None);
     }

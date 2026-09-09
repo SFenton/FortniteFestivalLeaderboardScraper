@@ -20,7 +20,7 @@ public sealed class SnapshotGenerationRetirementPlanCollection
 public sealed class SnapshotGenerationRetirementPlanTests
 {
     [Fact]
-    public async Task SchemaDefaultsOffAndPreservesReportOnlySchema()
+    public async Task SchemaDefaultsOffAndPreservesCurrentReportOnlySchema()
     {
         using var fixture = new InMemoryMetaDatabase();
         await using var database =
@@ -73,8 +73,9 @@ public sealed class SnapshotGenerationRetirementPlanTests
             "Persistence",
             "Maintenance",
             "SnapshotGenerationRetentionSchema.cs");
+        // This pin includes the reviewed pg_catalog/public name-resolution hardening.
         Assert.Equal(
-            "1111efef69b21fb2fc9b3a6b0076b119886dac82281e1c7b82a04b83ec504afd",
+            "4f4f5421b915b9017126db42df16f29f33feff39fd7d6dbb8ff78662585db020",
             Convert.ToHexString(
                     SHA256.HashData(
                         File.ReadAllBytes(

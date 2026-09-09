@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-30
-last_verified_commit: 21d7193c
+last_verified: 2026-09-07
+last_verified_commit: b1695507
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -32,6 +32,9 @@ sources:
   - tools/postgres-snapshot-generation-drop-drill.py
   - docs/database/SnapshotGenerationDropRunbook.md
   - tools/capture-publication-route-contract.sh
+  - tools/postgres-snapshot-generation-retention-report.sh
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
 update_triggers:
@@ -67,6 +70,92 @@ Check:
 7. CPU and memory pressure.
 
 Use bounded read-only probes first.
+
+## Offline report-only observation
+
+The shared publication advisory key is not a safe stop gate. The current
+worker freezes reads before its synchronous allocation-lock wait; stopping it
+there may prevent ordinary freeze and operation cleanup. Faster polling,
+completed-resume rejection, and manually clearing durable state are not
+substitutes for a verified terminal boundary.
+
+After independent review and an explicit candidate gate, an operator can stop
+the mutation worker during its natural idle/unfrozen interval, prove container
+absence/stopped state, and exclude concurrent guarded restart. The separate
+[offline retention report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+then verifies recent offline/null-operation metadata, current completed
+publication and notifications, exact runtime/schema pins, and bounded
+transactional mutation quiescence before persisting real report-only evidence.
+It does not operate Docker, change production Compose, initialize schema,
+freeze reads, or clear control state. Normal guarded worker recovery remains
+operator-owned after offline reporting/planning is complete.
+
+Offline reporting additionally requires the stopped worker's immutable enabled
+configuration receipt and compatible canonical-cycle lookup protocol. The CLI
+cannot enable reporting from a flag. Schema migration is database-scoped and
+nonblocking, rejects pre-existing duplicate trigger pairs without rewriting
+evidence, and must precede deployment of the compatible worker.
+
+For a reviewed deployment retry, finish publication and notifications, stop at
+the natural idle/unfrozen boundary and retain host restart exclusion. Run
+`--initialize-snapshot-retention-schema-only` from the candidate binary,
+require its fresh-session version-2 combined zero-DML/table-identity proof
+with acknowledged commit and
+exact non-retention row/schema/source/path/control identities, recreate the candidate
+service and restore the entire public path, then start the compatible worker
+through the canonical guard and verify its authentic receipt. Do not use the
+general `--initialize-schema-only` command for this retention-only boundary.
+General path bootstrap now preserves existing current-version bindings, but
+general initialization still owns unrelated schema/data work.
+
+The dedicated initializer holds schema then canonical registration admission
+through its DML assertion and transaction end. Its DML allowlist is empty:
+the schema step installs no user-table seed/repair rows. Cumulative
+`pg_stat_user_tables` deltas are asynchronously flushed/cached, non-causal
+telemetry; ambient counter drift alone must not reject a deployment when
+causal zero-DML, exact data/schema/public parity and resource/lock gates pass.
+Do not attribute the previously observed registration-family delta to a
+particular transaction or caller without evidence. Actual unexplained
+row/schema/source drift still rejects, and no counter rule waives bounded
+resources, healthy public reads or external worker ownership.
+
+Require the version-2 combined proof: zero tuple DML plus the same
+non-retention user-table set/schema/name/OID/relfilenode identities before
+execution and before commit. Ordinary/partitioned tables, materialized views
+and foreign-table metadata across user schemas are included; only system/temp
+and the six exact managed retention table families are excluded. Identity
+drift (including TRUNCATE/heap rewrite) refuses and rolls back.
+`transactionCommitted=null` with `commit_acknowledgement_unknown` is not a
+rollback claim and never admits a retry or deployment. Preserve the possible
+schema/proof identity and resolve the durable outcome and ownership
+authoritatively before further action. An already-matching idempotent schema
+alone is insufficient.
+
+Current/working path validation failures now keep ordinary service startup
+read-only rather than taking public reads offline. Previous invalid bindings
+warn without mutation. Publication read-only serving reports a `Healthy`
+check with explicit `degraded_read_only` details in readiness JSON; its HTTP
+200 means persisted-read availability only. Other `Degraded`/`Unhealthy`
+checks still return HTTP 503. Require `startup.mutationReady=true` and no mutation-pointer
+diagnostics before accepting deployment/worker restart. The read-only latch
+cannot be cleared by changing database rows under a running process: correction
+and a fresh guarded restart are required. It is not permission to repair the
+historically changed production binding or bypass the source-parity gate.
+
+The rejected scrape-`1362` deployment already installed the additive retention
+schema. Keep it; rollback of that schema is not part of retry. Publication
+`223`'s observed path-binding refresh was not manually repaired, and this
+source-preserving code change does not claim to repair that historical effect.
+
+The scale ruling permits a bounded first live offline-report canary after
+reviewed deployment and the fresh external stop/receipt gates. It does not
+require a capacity-risking full physical duplicate on the ext4 FST drive, and a
+partial historical artifact is not scale proof. Retain the fixed observation
+budget; budget exhaustion rolls back with phase timing, and no speculative
+limit increase is authorized. After a commit-side cleanup error, accept
+a warning-bearing result only when an authoritative reread confirms the exact
+cycle and all recorded ownership has ended. Otherwise preserve uncertainty and
+inspect the possible cycle ID; do not clear durable state.
 
 ## Snapshot-generation archive-only boundary
 

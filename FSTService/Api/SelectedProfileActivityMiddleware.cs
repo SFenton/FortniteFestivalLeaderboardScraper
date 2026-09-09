@@ -20,6 +20,8 @@ public sealed class SelectedProfileActivityMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         await _next(context);
+        if (context.RequestServices.GetService<StartupPublicationReadOnlyState>() is { MutationsReady: false })
+            return;
         var metaDatabase =
             context.RequestServices
                 .GetRequiredService<IMetaDatabase>();
