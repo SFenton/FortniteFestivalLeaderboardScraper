@@ -1,0 +1,424 @@
+{
+  "version": 3,
+  "project": "festival-score-tracker",
+  "qualification": {
+    "status": "provisional",
+    "minimumUnattendedCases": 30,
+    "automaticApplication": false
+  },
+  "triggerCatalog": [
+    {
+      "id": "approved-novel-public-research",
+      "category": "research",
+      "description": "The operator approved one novel public-research gap after repository and measured runtime evidence proved it unresolved."
+    },
+    {
+      "id": "binding-novel-spec-required",
+      "category": "specification",
+      "description": "Novel database, concurrency, storage, publication, provenance, or release evidence must be bound into an implementation-ready specification."
+    },
+    {
+      "id": "consequential-architecture-review",
+      "category": "specification",
+      "description": "A proposal crosses established service, worker, database, publication, provenance, or release ownership."
+    },
+    {
+      "id": "fst-live-data-loss-or-restore-conflict",
+      "category": "critical-review",
+      "description": "Evidence shows a live data-loss risk or contradictory restore, rollback, object, or publication state."
+    },
+    {
+      "id": "fst-publication-provenance-conflict",
+      "category": "critical-review",
+      "description": "Publication fingerprints, historical ownership, Epic provenance, or public-read state cannot be reconciled."
+    },
+    {
+      "id": "fst-unresolved-concurrency-corruption",
+      "category": "critical-review",
+      "description": "Matched interleavings still show unresolved corruption, duplicate publication, lost work, or deadlock risk."
+    },
+    {
+      "id": "fst-release-public-health-or-rollback-conflict",
+      "category": "critical-review",
+      "description": "Release image, public-health, publication parity, or rollback evidence conflicts after deterministic checks."
+    }
+  ],
+  "opportunities": [
+    {
+      "id": "focused-tests",
+      "label": "Focused test generation",
+      "triggers": ["focused test", "generate test", "add unit test"],
+      "evidence": "repository",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow"],
+      "team": {
+        "id": "fst-focused-tests-team",
+        "topology": "medium-owner-cheap-worker-medium-review",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "claude-sonnet-5", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "claude-sonnet-5", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": {
+          "role": "cheap-worker",
+          "enabled": true,
+          "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" },
+          "evidenceStatus": "provisional",
+          "currentCases": 3,
+          "capability": "fst-web-formatter-tests",
+          "sandboxProfile": "fst-web-formatter-tests",
+          "delegationClass": "test-generation",
+          "validators": ["test-web-formatters"],
+          "authority": "staging-only"
+        },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" },
+        { "id": "implement-bounded", "kind": "cheap-worker", "profileRef": "worker-candidate", "enabled": true },
+        { "id": "validate-focused-tests", "kind": "deterministic", "sideEffect": "workspace", "tool": "test-web-formatters" },
+        { "id": "review-bounded", "kind": "medium-review", "profileRef": "reviewer" }
+      ],
+      "rationale": "MAI Code 1.1 Flash may stage only pure formatter tests. A medium reviewer may direct one revision; no application or operational authority is granted."
+    },
+    {
+      "id": "database",
+      "label": "Database work",
+      "triggers": ["database", "postgres", "sql", "index", "migration"],
+      "evidence": "hybrid",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["database-management", "database-architecture-expert"],
+      "team": {
+        "id": "fst-database-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-database-contract", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-database-contracts" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "Known database work is medium-owned after deterministic local-container tests. Live loss or restore conflict is the max/long boundary."
+    },
+    {
+      "id": "concurrency",
+      "label": "Concurrency and race behavior",
+      "triggers": ["concurrency", "race condition", "deadlock", "parallel worker"],
+      "evidence": "runtime",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow", "database-management"],
+      "team": {
+        "id": "fst-concurrency-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true },
+        { "id": "critical-review", "kind": "risk-triggered-frontier-review", "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" }, "triggerIds": ["fst-unresolved-concurrency-corruption"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-interleavings", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-concurrency-contracts" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" },
+        { "id": "critical-review-if-triggered", "kind": "risk-triggered-frontier-review", "profileRef": "conditional:critical-review", "condition": { "triggerIds": ["fst-unresolved-concurrency-corruption"], "requiresTriggerReceipt": true } }
+      ],
+      "rationale": "Concurrency is sensitive medium work. Max/long requires a receipt proving corruption or deadlock remains after matched interleavings."
+    },
+    {
+      "id": "performance",
+      "label": "Performance optimization",
+      "triggers": ["performance", "compute time", "make faster", "latency", "throughput"],
+      "evidence": "hybrid",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["database-evaluation", "fst-budget-workflow"],
+      "team": {
+        "id": "fst-performance-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-service", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-service" },
+        { "id": "build-web", "kind": "deterministic", "sideEffect": "workspace", "tool": "build-web" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "Performance work requires matched deterministic evidence. Max/long is not a speed default and opens only for unresolved correctness conflict."
+    },
+    {
+      "id": "storage",
+      "label": "Storage and repack",
+      "triggers": ["storage", "disk", "repack", "archive", "retention"],
+      "evidence": "runtime",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["database-management", "database-improvement"],
+      "team": {
+        "id": "fst-storage-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-documentation", "kind": "deterministic", "sideEffect": "none", "tool": "check-docs" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "Storage analysis is medium-owned and read-only by default. Loss or restore contradictions require a critical trigger receipt."
+    },
+    {
+      "id": "publication",
+      "label": "Publication state",
+      "triggers": ["publication", "freeze", "unfreeze", "published scrape"],
+      "evidence": "runtime",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow"],
+      "team": {
+        "id": "fst-publication-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true },
+        { "id": "critical-review", "kind": "risk-triggered-frontier-review", "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" }, "triggerIds": ["fst-publication-provenance-conflict"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "preflight-publication", "kind": "deterministic", "sideEffect": "none", "tool": "preflight-publication" },
+        { "id": "validate-publication", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-publication-contracts" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" },
+        { "id": "critical-review-if-triggered", "kind": "risk-triggered-frontier-review", "profileRef": "conditional:critical-review", "condition": { "triggerIds": ["fst-publication-provenance-conflict"], "requiresTriggerReceipt": true } }
+      ],
+      "rationale": "Routine publication coordination is medium-owned after manifest and contract checks. Conflicting publication/provenance evidence is the only max/long route."
+    },
+    {
+      "id": "provenance",
+      "label": "Epic provenance and historical correctness",
+      "triggers": ["provenance", "epic source", "historical correctness", "source ownership"],
+      "evidence": "hybrid",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow"],
+      "team": {
+        "id": "fst-provenance-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true },
+        { "id": "critical-review", "kind": "risk-triggered-frontier-review", "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" }, "triggerIds": ["fst-publication-provenance-conflict"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "preflight-provenance", "kind": "deterministic", "sideEffect": "none", "tool": "preflight-provenance" },
+        { "id": "validate-provenance", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-provenance-contracts" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" },
+        { "id": "critical-review-if-triggered", "kind": "risk-triggered-frontier-review", "profileRef": "conditional:critical-review", "condition": { "triggerIds": ["fst-publication-provenance-conflict"], "requiresTriggerReceipt": true } }
+      ],
+      "rationale": "A sensitive medium coordinator owns known provenance synchronization. Max/long requires a concrete publication or historical ownership conflict."
+    },
+    {
+      "id": "cross-contract",
+      "label": "Cross-contract synchronization",
+      "triggers": ["api contract", "feature flag contract", "cross-contract", "synchronize contract"],
+      "evidence": "repository",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow"],
+      "team": {
+        "id": "fst-cross-contract-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "claude-sonnet-5", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "claude-sonnet-5", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-docs", "kind": "deterministic", "sideEffect": "none", "tool": "check-docs" },
+        { "id": "validate-service", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-cross-contracts" },
+        { "id": "build-web", "kind": "deterministic", "sideEffect": "workspace", "tool": "build-web" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "Cross-contract synchronization is a routine medium-owned pattern after deterministic documentation, service, and web checks."
+    },
+    {
+      "id": "debugging",
+      "label": "Service and web debugging",
+      "triggers": ["debug", "regression", "failing test", "outage", "stale"],
+      "evidence": "runtime",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["fst-budget-workflow", "database-probing-monitoring"],
+      "team": {
+        "id": "fst-debugging-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-service", "kind": "deterministic", "sideEffect": "local-container", "tool": "test-debugging-contracts" },
+        { "id": "build-web", "kind": "deterministic", "sideEffect": "workspace", "tool": "build-web" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "A sensitive medium coordinator owns ordinary debugging. Critical review requires reproduced corruption or publication/provenance conflict."
+    },
+    {
+      "id": "live-operations",
+      "label": "Live operations",
+      "triggers": ["live operation", "restart container", "production probe", "production maintenance"],
+      "evidence": "runtime",
+      "enabled": true,
+      "evaluationStatus": "provisional-three-cases",
+      "casePacketStatus": "provisional-three-cases",
+      "skills": ["autonomous-plan-executor", "database-management"],
+      "team": {
+        "id": "fst-live-operations-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "disabled", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "validate-contracts", "kind": "deterministic", "sideEffect": "none", "tool": "check-docs" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" }
+      ],
+      "rationale": "Model roles may prepare and review local artifacts only. Production commands require separate operator authorization and disabled real drivers remain unavailable."
+    },
+    {
+      "id": "release-destruction",
+      "label": "Release and destructive maintenance routing",
+      "triggers": ["release", "deploy", "destructive", "drop table", "delete data"],
+      "evidence": "runtime",
+      "enabled": false,
+      "evaluationStatus": "invalidated-missing-application-release-variant",
+      "casePacketStatus": "invalidated-missing-application-release-variant",
+      "skills": ["autonomous-plan-executor", "database-management"],
+      "variants": ["application-release", "destructive-maintenance"],
+      "executionEnabled": false,
+      "team": {
+        "id": "fst-release-destruction-team",
+        "topology": "medium-owner-only",
+        "trustTier": "provisional-staging",
+        "maxRevisions": 1,
+        "coordinator": { "role": "medium-coordinator", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "reviewer": { "role": "medium-review", "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" }, "evidenceStatus": "provisional" },
+        "workerCandidate": { "role": "cheap-worker", "enabled": false, "profile": { "model": "mai-code-1.1-flash", "effort": "medium", "context": "default" }, "evidenceStatus": "invalidated", "currentCases": 0, "authority": "staging-only" },
+        "repositoryApply": { "authority": "operator", "enabled": false }
+      },
+      "conditionalProfiles": [
+        { "id": "external-research", "kind": "research-frontier", "profile": { "model": "gpt-6-astra", "effort": "high", "context": "default" }, "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true },
+        { "id": "binding-spec", "kind": "spec-planner", "profile": { "model": "gpt-5.6-sol", "effort": "high", "context": "default" }, "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true },
+        { "id": "critical-review", "kind": "risk-triggered-frontier-review", "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" }, "triggerIds": ["fst-live-data-loss-or-restore-conflict", "fst-release-public-health-or-rollback-conflict"], "requiresTriggerReceipt": true }
+      ],
+      "phases": [
+        { "id": "preflight-application-release", "kind": "deterministic", "sideEffect": "none", "tool": "preflight-application-release", "variant": "application-release" },
+        { "id": "validate-application-release", "kind": "deterministic", "sideEffect": "workspace", "tool": "validate-publish-contract", "variant": "application-release" },
+        { "id": "build-application-web", "kind": "deterministic", "sideEffect": "workspace", "tool": "build-web", "variant": "application-release" },
+        { "id": "preflight-destructive-maintenance", "kind": "deterministic", "sideEffect": "none", "tool": "preflight-destructive-maintenance", "variant": "destructive-maintenance" },
+        { "id": "validate-destructive-docs", "kind": "deterministic", "sideEffect": "none", "tool": "check-docs", "variant": "destructive-maintenance" },
+        { "id": "research-if-triggered", "kind": "research-frontier", "profileRef": "conditional:external-research", "condition": { "triggerIds": ["approved-novel-public-research"], "requiresTriggerReceipt": true } },
+        { "id": "spec-if-triggered", "kind": "spec-planner", "profileRef": "conditional:binding-spec", "condition": { "triggerIds": ["binding-novel-spec-required", "consequential-architecture-review"], "requiresTriggerReceipt": true } },
+        { "id": "coordinate", "kind": "medium-coordinator", "profileRef": "coordinator" },
+        { "id": "critical-review-if-triggered", "kind": "risk-triggered-frontier-review", "profileRef": "conditional:critical-review", "condition": { "triggerIds": ["fst-live-data-loss-or-restore-conflict", "fst-release-public-health-or-rollback-conflict"], "requiresTriggerReceipt": true } },
+        { "id": "execute-application-release", "kind": "deterministic-release", "machine": ".github/release-machine.json", "operatorAuthorizationRequired": true, "sideEffect": "production", "variant": "application-release" },
+        { "id": "execute-destructive-maintenance", "kind": "deterministic-release", "machine": ".github/destructive-maintenance-machine.json", "operatorAuthorizationRequired": true, "sideEffect": "destructive", "variant": "destructive-maintenance" }
+      ],
+      "rationale": "Application release and destructive maintenance remain split and invalidated. Both machines are disabled; medium review is normal and max/long requires a named loss, public-health, or rollback conflict receipt."
+    }
+  ]
+}

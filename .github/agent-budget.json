@@ -1,6 +1,15 @@
 {
   "version": 1,
   "project": "festival-score-tracker",
+  "opportunityPolicy": ".github/agent-opportunities.json",
+  "toolRegistry": ".github/agent-tools.json",
+  "releaseMachine": ".github/release-machine.json",
+  "destructiveMaintenanceMachine": ".github/destructive-maintenance-machine.json",
+  "opportunityEvaluation": ".github/evals/agent-opportunity-cases.json",
+  "workerEvaluation": ".github/evals/agent-worker-cases.json",
+  "capabilityEvaluation": ".github/evals/capability-qualification.json",
+  "sandboxProfiles": ".github/sandbox-profiles.json",
+  "learningPolicy": ".github/agent-learning.json",
   "instructions": ["AGENTS.md", ".github/skills/fst-budget-workflow/SKILL.md"],
   "riskTerms": ["publication", "retention", "scrape", "provenance", "postgres", "storage", "repack", "performance", "compute"],
   "gates": [
@@ -11,6 +20,11 @@
     "Focused .NET or web tests; canonical documentation and node tools/check-docs.mjs",
     "Release and destructive work require existing authorization and parity gates"
   ],
+  "delegation": {
+    "allowedClasses": ["test-generation"],
+    "requireCleanTargets": true,
+    "requireDeterministicValidator": true
+  },
   "evidencePolicy": {
     "always": ["Keep secrets out of evidence; preserve historical correctness, Epic provenance and publication boundaries.", "Research grants no live mutation or destructive-operation authority; required FST data/scratch drive ownership remains unchanged."],
     "phases": {
