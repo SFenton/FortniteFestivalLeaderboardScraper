@@ -1357,7 +1357,12 @@ The worker guard has a dependency-free Node harness with stubbed Docker/Compose
 behavior, including lock contention, signal cleanup, overall deadlines,
 active/frozen cleanup boundaries, runtime qualification failures, dynamic lock
 derivation, and live-config-independent checks of repository worker profiles
-and restart policies. Its fake Compose implementation omits `fstworker` unless
+and restart policies. It also exercises same-process inherited-lock handoff,
+canonical path/inode verification, Docker/Compose routing refusal, pre-start
+image ID/revision resolution, post-start identity verification, and exact
+unstarted-container removal on mismatch. It also verifies that the worker is
+created, inspected, and only then started from the validated merged Compose
+snapshot. Its fake Compose implementation omits `fstworker` unless
 `--profile worker` is explicit, matching the integration boundary:
 
 ```bash

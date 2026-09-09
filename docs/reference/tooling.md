@@ -899,7 +899,28 @@ override and Unix owner.
 Pass `--expected-worker-image` for every candidate check or recreate. The guard
 compares it with the final merged `fstworker.image` even when no data profile is
 selected, so a later Compose overlay cannot silently replace the requested
-candidate. Named data profiles continue to require the option.
+candidate. Named data profiles continue to require the option. Promotion
+handoffs also pass `--expected-worker-image-id` and
+`--expected-worker-revision`; the guard resolves the image object under its
+lock immediately before startup. It renders one merged Compose JSON snapshot,
+uses that same snapshot for every later mutation, creates the worker without
+starting it, verifies the created container's image ID/reference/revision, and
+only then starts that exact container ID. A mismatch removes the unstarted
+container before the command fails.
+
+`--inherited-worker-lock-fd` is reserved for a same-process terminal-boundary
+handoff. The descriptor must already hold the canonical path's exact
+device/inode as a write `FLOCK` owned by the guard process. The guard opens the
+canonical path with `O_NOFOLLOW`, proves a second nonblocking acquisition is
+excluded, rechecks the inherited identity immediately before startup, and
+retains the descriptor through the Compose action. This removes the unlock /
+reacquire race; passing an FD from a different live process is rejected.
+Canonical base and PIA files must resolve inside the selected Compose
+directory. Docker/Compose daemon, project, file-list, environment-file, and
+profile routing overrides are rejected. The guard fixes the local daemon to
+`unix:///var/run/docker.sock`, uses the canonical
+`festivalservicetracker` project name and project directory, and does not
+reread mutable Compose pathnames for startup after validation.
 
 Recovery is effective-set-only, capped by stage windows and a 1,800-second
 default total deadline, and fail-closed. It does not accept `--config-only`,

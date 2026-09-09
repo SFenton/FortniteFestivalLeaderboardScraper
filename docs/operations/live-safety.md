@@ -480,6 +480,9 @@ Before proxy mutation it verifies:
 - the merged continuous configuration and exact effective arrays;
 - the final merged worker image whenever `--expected-worker-image` is supplied,
   including continuous actions without a data profile;
+- the exact local image ID and OCI revision when the corresponding promotion
+  assertions are supplied, both immediately before container creation and on
+  the unstarted created worker;
 - the guard-only `worker` profile and continuous `on-failure:5` policy;
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;
@@ -505,6 +508,15 @@ Size the production unit timeout above the total deadline plus cleanup margin.
 The shared lock defaults to `.fst-worker-compose-guard.lock` under the resolved
 Compose directory. Every unit and operator must use that same resolved
 directory and Unix owner, or configure the same explicit absolute lock path.
+An approved terminal-boundary owner may exec the guard with
+`--inherited-worker-lock-fd`; the FD must be held by that same process on the
+current canonical path/inode and remains held through startup. Never release a
+boundary lock and then invoke a second guard process. Promotion callers must
+also clear Docker/Compose routing overrides and use exact canonical base/PIA
+paths; the guard refuses redirected daemons, projects, file lists, env files,
+or profiles. It fixes the local Unix-socket daemon and canonical project,
+renders one merged Compose snapshot, creates without starting, verifies the
+exact container/image/revision, and starts only that inspected container ID.
 
 `on-failure:5` covers only bounded nonzero worker-process exits while the Docker
 daemon remains running. It does not authorize daemon-boot restart; the profiled
