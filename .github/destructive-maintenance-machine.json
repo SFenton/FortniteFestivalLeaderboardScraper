@@ -1,0 +1,28 @@
+{
+  "version": 3,
+  "project": "festival-score-tracker",
+  "opportunity": "release-destruction",
+  "variant": "destructive-maintenance",
+  "enabled": false,
+  "operatorAuthorizationRequired": true,
+  "reviewer": {
+    "role": "medium-review",
+    "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" },
+    "authority": "review-only"
+  },
+  "exception": {
+    "role": "risk-triggered-frontier-review",
+    "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" },
+    "triggerIds": ["fst-live-data-loss-or-restore-conflict"],
+    "requiresTriggerReceipt": true
+  },
+  "steps": [
+    { "id": "validate-contracts", "label": "Validate drop, restore, documentation and CLI contracts", "executor": "deterministic", "operation": "command", "tool": "preflight-destructive-maintenance", "failure": "rejected", "evidence": ["drop and restore contract receipts"] },
+    { "id": "capture-live-state", "label": "Capture fresh publication, freeze, health, lock and resource state", "executor": "deterministic", "operation": "verify", "tool": "capture-live-state-disabled", "failure": "blocked", "evidence": ["authorization-time live state", "publication parity", "public health"] },
+    { "id": "rehearse-restore", "label": "Rehearse the exact logical restore path", "executor": "deterministic", "operation": "verify", "tool": "restore-rehearsal-disabled", "failure": "blocked", "evidence": ["restored fixture parity", "archive hashes", "canary result"] },
+    { "id": "execute-maintenance", "label": "Execute only the authorized exact-object maintenance", "executor": "deterministic", "operation": "deploy", "tool": "destructive-maintenance-disabled", "failure": "rollback-logical-restore", "evidence": ["object manifest", "operation receipt", "post-operation catalog"] },
+    { "id": "verify-maintenance", "label": "Verify publication, historical, public-read, health and resource parity", "executor": "deterministic", "operation": "verify", "tool": "verify-production-disabled", "failure": "rollback-logical-restore", "evidence": ["55-route parity", "historical parity", "healthy public path"] },
+    { "id": "rollback-logical-restore", "label": "Restore from the authorized logical archive", "executor": "deterministic", "operation": "rollback", "tool": "rollback-logical-restore-disabled", "rollbackOnly": true, "rollbackVerificationTool": "verify-production-disabled", "failure": "abnormal", "evidence": ["logical restore receipt", "catalog parity", "healthy public path"] },
+    { "id": "cleanup-maintenance", "label": "Remove exact temporary artifacts and retain immutable evidence", "executor": "deterministic", "operation": "cleanup", "tool": "cleanup-release-disabled", "failure": "abnormal", "evidence": ["clean workspace", "retained authorization and receipts"] }
+  ]
+}

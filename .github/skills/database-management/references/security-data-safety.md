@@ -23,7 +23,7 @@ Before destructive or irreversible work, identify:
 
 ## Destructive maintenance gates
 
-FST destructive data/reclaim work is auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Before executing destructive or irreversible work, record the old-vs-new parity evidence, exact objects/actions, rollback or restore path, resource/disk risk, and post-action validation.
+FST destructive data/reclaim work requires matching live-scrape A/B evidence and fresh variant-bound frontier authorization. Parity is necessary evidence, never authorization. Before execution, bind the current publication, exact objects/actions, rollback or restore path, resource/disk risk, monitoring, and post-action validation.
 
 Require a completed live-scrape A/B data-parity gate for:
 

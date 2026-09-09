@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "opportunity": "focused-tests",
+  "cases": [
+    {
+      "id": "focused-tests-percentile",
+      "target": "packages/core/src/app/__tests__/formatters.test.ts",
+      "instruction": "Add focused tests for exact percentile formatting, including banker-rounding ties, sub-one-percent precision, floor clamping, and non-finite fallback.",
+      "sources": [
+        { "file": "packages/core/src/app/formatters.ts", "start": 55, "end": 74 },
+        { "file": "packages/core/src/app/__tests__/formatters.test.ts", "start": 43, "end": 60 }
+      ],
+      "failureCriteria": [
+        "Banker's rounding, the 0.01 percent floor, or N/A fallback is untested.",
+        "Exact Top-percent string formatting is untested."
+      ],
+      "requiredPatterns": ["formatPercentileTopExact", "expect("],
+      "validator": ["node", "FortniteFestivalWeb/node_modules/vitest/vitest.mjs", "run", "--config=FortniteFestivalWeb/vitest.shared.config.ts", "packages/core/src/app/__tests__/formatters.test.ts"]
+    },
+    {
+      "id": "focused-tests-rating",
+      "target": "packages/core/src/app/__tests__/formatters.test.ts",
+      "instruction": "Add focused tests for all formatRatingValue precision bands, trailing-zero stripping, threshold boundaries, and non-finite fallback.",
+      "sources": [
+        { "file": "packages/core/src/app/formatters.ts", "start": 196, "end": 212 },
+        { "file": "packages/core/src/app/__tests__/formatters.test.ts", "start": 150, "end": 158 }
+      ],
+      "failureCriteria": [
+        "One of the below-0.1, 0.1-to-1, or at-least-1 precision bands is untested.",
+        "Trailing-zero stripping, 0.0 handling, or N/A fallback is untested."
+      ],
+      "requiredPatterns": ["formatRatingValue", "expect("],
+      "validator": ["node", "FortniteFestivalWeb/node_modules/vitest/vitest.mjs", "run", "--config=FortniteFestivalWeb/vitest.shared.config.ts", "packages/core/src/app/__tests__/formatters.test.ts"]
+    },
+    {
+      "id": "focused-tests-color",
+      "target": "packages/core/src/app/__tests__/formatters.test.ts",
+      "instruction": "Add focused tests for accuracyColor endpoint clamping, exact midpoint interpolation, RGB channel math, and canonical rgb string formatting.",
+      "sources": [
+        { "file": "packages/core/src/app/formatters.ts", "start": 148, "end": 181 },
+        { "file": "packages/core/src/app/__tests__/formatters.test.ts", "start": 112, "end": 147 }
+      ],
+      "failureCriteria": [
+        "Below-zero and above-100 clamps are untested.",
+        "Exact midpoint channels or canonical rgb formatting is untested."
+      ],
+      "requiredPatterns": ["accuracyColor", "expect("],
+      "validator": ["node", "FortniteFestivalWeb/node_modules/vitest/vitest.mjs", "run", "--config=FortniteFestivalWeb/vitest.shared.config.ts", "packages/core/src/app/__tests__/formatters.test.ts"]
+    }
+  ]
+}

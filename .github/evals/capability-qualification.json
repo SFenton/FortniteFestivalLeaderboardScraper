@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "capabilities": [
+    {
+      "id": "fst-web-formatter-tests",
+      "status": "provisional",
+      "trustTier": "provisional-staging",
+      "reviewedApplication": false,
+      "unattendedApplication": false,
+      "currentCases": 3,
+      "minimumCases": 30,
+      "remainingCases": 27,
+      "automaticApplication": false,
+      "scope": "Pure shared TypeScript formatter tests only; no .NET, database, concurrency, publication, release, or live authority",
+      "allLegBenchmark": "planned-no-run",
+      "studyBudget": { "missingCases": 27, "modelCalls": 0, "maximumCredits": 0, "maximumTokens": 0, "selected": false, "runStudy": false, "reason": "complete mandatory production topology evidence is unavailable" },
+      "sandbox": {
+        "status": "qualified",
+        "provider": "docker",
+        "image": "node:22-bookworm-slim",
+        "profile": ".github/sandbox-profiles.json#fst-web-formatter-tests",
+        "profileHash": "3be4fb4d4ada1c28224c331a5539ef0046828dc1481d293cea53ebdaf75775bb",
+        "network": "none",
+        "imageId": "sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5",
+        "dependencyPolicyHash": "24e2295a23c27145a9c33adc4925a5872622e4b85c774f2d1f44634aaafe8c02",
+        "dependencyMode": "read-only FortniteFestivalWeb node_modules with isolated Vite caches",
+        "qualification": "25 formatter tests pass with Yarn-lock-bound dependency evidence"
+      }
+    }
+  ]
+}

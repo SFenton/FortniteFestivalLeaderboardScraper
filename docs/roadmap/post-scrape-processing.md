@@ -101,8 +101,9 @@ update_triggers:
   BandMaintenance target remains current projection refresh.
 
 Implementation is approved after this plan is rendered to the local autonomous
-agent outbox. All implementation, evaluation, deployment, and promotion
-decisions remain GPT-5.6 Sol owned.
+agent outbox. Known-pattern implementation and review resolve through the
+project's exact medium pipeline; deployment and promotion remain separately
+operator-authorized deterministic actions.
 
 This approval is limited to the operator-approved roadmap. It never bypasses
 the active live-safety, publication-parity, provider, storage, rollback, or
@@ -113,15 +114,18 @@ maintenance gates for a future action.
 | Field | Required value |
 |---|---|
 | Model | `gpt-5.6-sol` |
-| Reasoning effort | `max` |
-| Context tier | `long_context` |
+| Reasoning effort | `medium` |
+| Context tier | `default` |
+| Conditional critical model | `gpt-5.6-sol`, `max`, `long_context` |
+| Critical trigger IDs | `fst-live-data-loss-or-restore-conflict`, `fst-publication-provenance-conflict`, `fst-unresolved-concurrency-corruption`, `fst-release-public-health-or-rollback-conflict` |
 
 This table records the active operator-approved autonomous run's execution
 metadata. It is not standing repository authorization for a future live,
 destructive, or parity-gated action.
 
-No implementation agent may silently substitute another model, lower effort,
-or shorter context.
+No implementation agent may silently substitute another model. Sol max/long
+requires an evidence-bound listed trigger receipt; the roadmap title or
+consequence terminology is not sufficient.
 
 ## Tandem decision quality
 
