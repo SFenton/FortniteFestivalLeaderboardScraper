@@ -741,7 +741,11 @@ it to the offline-only planner. Inspection, data, fence and authoritative
 cleanup/reconciliation connections use that source with unchanged
 `pg_catalog,public` and purpose-specific bounds. Every host variant composes
 only unique positive-second timeouts with exactly one mandatory
-`row_security=off`; conflicting or unsupported options refuse. This raises
+`row_security=off`; conflicting or unsupported options refuse. Host factories
+also reject multi-host or load-balanced targets. Before the separate fence
+connection acquires any advisory lock, its database name/OID, PostgreSQL
+system identifier, postmaster start, data directory, and role signature must
+exactly match the data connection. This raises
 rather than silently filtering RLS-protected rows and never bypasses privileges.
 The reporter data source and planner factory are tool-internal, not public
 credential-reconstruction surfaces. Missing offline factories
@@ -784,8 +788,12 @@ initialization remains broader than retention-only deployment.
 Invalid future/malformed current/working versions and invalid ready binding
 contracts produce bounded, source-preserving initialization failures shared
 with release readiness; previous invalid bindings are structured warnings.
-Ordinary startup classifies that outcome before runtime pool construction,
-using a private unpooled bootstrap source and bounded SHARE locks on exactly
+Ordinary startup classifies that outcome before runtime pool construction
+only when `Scraper:UsePublicationPathArtifacts=true`. A feature-off schema
+owner skips the path-artifact migration step, and a feature-off skip-schema
+role skips its validation fence; inactive bindings remain unchanged and
+legacy live-row writers remain available. When enabled, selection uses a
+private unpooled bootstrap source and bounded SHARE locks on exactly
 `scrape_publication_state`, `publication_generations`,
 `publication_surface_bindings`, `publication_path_artifacts` and
 `publication_song_catalog`. Locks precede the repeatable-read snapshot and are
