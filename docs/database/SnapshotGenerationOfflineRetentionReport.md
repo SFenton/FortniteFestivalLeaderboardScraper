@@ -401,6 +401,11 @@ After preflight identity/configuration checks, a dedicated bounded transaction
 holds the canonical advisory chain. The real repeatable-read transaction on a
 second connection holds report-schema tables and the mutable
 writer-failure, retention-hold, worker-status, and publication-state surfaces.
+Before any advisory lock is acquired, the fence connection must report the
+exact same database name/OID, PostgreSQL system identifier, postmaster start,
+data directory, and role signature as the data connection. Host factories
+reject multi-host and load-balanced connection strings; a mismatched resolved
+target refuses with `offline_database_identity_changed`.
 These locks precede its first data snapshot. Admission, the real planner/oracle
 read, normal report persistence, and final boundary validation remain inside
 that data transaction. The advisory transaction commits immediately after the
@@ -434,11 +439,13 @@ DDL fence.
 
 ## Idempotency and failure
 
-An accepted newest cycle for the current scrape/publication is fully
-reobserved using its original safe-point identity. Matching hashes return
-`Existing` without inserting another cycle. Drift, an unaccepted current
-cycle, or invalid admission refuses; callers must not edit or delete durable
-evidence to force a retry.
+The locked transaction looks up the canonical current scrape/publication pair
+directly, independently of the global newest-cycle query. An accepted current
+pair must also be the global newest cycle and is fully reobserved using its
+original safe-point identity. Matching hashes return `Existing` without
+inserting another cycle. A non-newest current pair, a uniqueness conflict that
+does not pass the same acceptance/hash checks, drift, or invalid admission
+refuses; callers must not edit or delete durable evidence to force a retry.
 
 Real oracle mismatch/global blockers retain normal fail-closed report
 classifications. Observation exceptions can persist a sanitized normal failed
@@ -487,12 +494,18 @@ The wrapper verifies the prebuilt self-contained single-file hash; the process
 independently verifies its exact wrapper-provided executable path and hash.
 CLR native extraction is fixed under
 `artifacts/offline-retention-report-runtime` in that FST-drive worktree.
-The wrapper uses `/bin/bash`, rejects nonempty `LD_PRELOAD`,
-`LD_LIBRARY_PATH`, and `LD_AUDIT` before external utilities, clears
-`DOTNET_ROOT` variants and managed startup/profiler hooks, and fixes PATH to
-`/usr/bin:/bin`. Decoy utilities cannot affect hashing or Git identity. The
-host launcher must itself be trusted: a shell cannot undo native code already
-loaded into its interpreter before the script begins.
+Execute the wrapper directly; do not invoke it as `bash <wrapper>`. Its
+`#!/bin/bash -p` launcher requires privileged Bash mode, which ignores
+`BASH_ENV`, `ENV`, and exported shell functions before line 1. The wrapper
+then rejects nonempty `LD_PRELOAD`, `LD_LIBRARY_PATH`, and `LD_AUDIT`, clears
+managed startup/profiler and Bash/Git override variables, fixes PATH and IFS,
+uses absolute utility paths, and verifies the pinned binary before execution.
+The compiled identity provider clears the entire inherited Git subprocess
+environment, supplies only fixed noninteractive values, disables system/global
+Git configuration and fsmonitor, and invokes exact `/usr/bin/git`. Decoy
+utilities, shell startup hooks, and inherited Git variables cannot affect
+hashing or repository identity. The host process that performs the initial
+`execve` remains part of the trusted operator boundary.
 
 The code identity provider independently validates and invokes exact
 `/usr/bin/git`, with its subprocess PATH fixed to `/usr/bin:/bin`. This applies

@@ -285,6 +285,24 @@ public sealed class SnapshotGenerationRetentionRepository
             : null;
     }
 
+    internal static Task<SnapshotGenerationRetentionCycle?> GetCycleForTriggerAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long triggerScrapeId,
+        long triggerPublicationId,
+        int commandTimeoutSeconds,
+        CancellationToken ct) =>
+        GetCycleForSafePointAsync(
+            connection,
+            transaction,
+            new SnapshotGenerationRetentionSafePoint(
+                triggerScrapeId,
+                triggerPublicationId,
+                DateTime.UnixEpoch,
+                SnapshotGenerationRetentionContract.TerminalWorkerSafePoint),
+            commandTimeoutSeconds,
+            ct);
+
     public async Task<IReadOnlyList<
         SnapshotGenerationRetentionObservation>>
         GetObservationsAsync(

@@ -173,6 +173,13 @@ public sealed class PostgresUnpooledConnectionFactory
                 Pooling = false,
                 Multiplexing = false,
             };
+        if (builder.LoadBalanceHosts
+            || builder.Host?.Contains(",", StringComparison.Ordinal) == true)
+        {
+            throw new ArgumentException(
+                "Host connections require a single PostgreSQL target.",
+                nameof(connectionString));
+        }
         _connectionString = builder.ConnectionString;
     }
 

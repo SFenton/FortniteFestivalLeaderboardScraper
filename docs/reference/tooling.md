@@ -130,7 +130,9 @@ worker lifecycle, or archive/destructive command.
 The assertions include the immutable deployed worker-configuration receipt;
 an absent/disabled receipt refuses rather than self-enabling the local planner.
 Canonical identity is independent of worker/offline provenance. Loader
-injection is rejected and PATH is fixed. Budget exhaustion and verified
+injection is rejected, direct privileged-Bash startup ignores shell hooks and
+exported functions, required utilities use absolute paths, and the compiled
+Git probe receives a cleared fixed environment. Budget exhaustion and verified
 commit-with-cleanup-warning outcomes are explicit, with phase timings.
 
 The disposable drill uses a genuine initialized baseline,
@@ -147,7 +149,10 @@ factories, not `NpgsqlDataSource.ConnectionString`. That display property is
 sanitized with default `PersistSecurityInfo=false`; enabling security-info
 persistence is not a repair. The reporter's private factory supplies
 inspection, offline data/fence and cleanup-reconciliation connections, and
-offline execution refuses when no dedicated factory is supplied. Other host
+offline execution refuses when no dedicated factory is supplied, when a
+multi-host/load-balanced target is configured, or when its independently
+opened fence connection does not match the data connection's full database
+signature. Other host
 tools' direct data-source opens and metadata-only property inspection remain
 safe; the source contract documents the deliberate owned negative probe.
 `owned_postgres_auth.py` provides in-memory output capture, runtime secret

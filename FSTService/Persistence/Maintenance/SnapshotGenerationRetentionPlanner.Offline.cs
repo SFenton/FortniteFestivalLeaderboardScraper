@@ -172,6 +172,11 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         await fenceConnection.OpenAsync(ct);
         await using var fenceTransaction = await fenceConnection.BeginTransactionAsync(
             IsolationLevel.ReadCommitted, ct);
+        await RequireOfflineDatabaseSignatureAsync(
+            fenceConnection,
+            fenceTransaction,
+            databaseSignature,
+            ct);
         var fenceOwner = await CaptureOfflineOwnerAsync(fenceConnection, fenceTransaction, ct);
         using (timing.Measure("transactional_admission"))
         {
@@ -216,13 +221,17 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         var boundary = await ReadOfflineBoundaryAsync(connection, transaction, ct);
         var newest = await SnapshotGenerationRetentionRepository.GetNewestCycleAsync(
             connection, transaction, OfflineCommandTimeoutSeconds, ct);
-        var existing = newest is not null
-            && newest.TriggerScrapeId == boundary.ScrapeId
-            && newest.TriggerPublicationId == boundary.PublicationId
-                ? newest
-                : null;
+        var existing = await SnapshotGenerationRetentionRepository.GetCycleForTriggerAsync(
+            connection,
+            transaction,
+            boundary.ScrapeId,
+            boundary.PublicationId,
+            OfflineCommandTimeoutSeconds,
+            ct);
         if (existing is not null && !IsAcceptedOfflineExistingCycle(existing))
             throw new SnapshotGenerationRetentionOfflineRefusal("current_cycle_not_accepted");
+        if (existing is not null && newest?.CycleId != existing.CycleId)
+            throw new SnapshotGenerationRetentionOfflineRefusal("current_cycle_not_newest");
 
         var safePoint = new SnapshotGenerationRetentionSafePoint(
             boundary.ScrapeId,
@@ -280,9 +289,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         }
         if (existing is not null)
         {
-            if (persistence.Status != SnapshotGenerationRetentionCycleStatus.Observed
-                || persistence.CandidateIdentityHash != existing.CandidateIdentityHash
-                || persistence.ObservationHash != existing.ObservationHash)
+            if (!MatchesAcceptedOfflineObservation(existing, persistence))
             {
                 throw new SnapshotGenerationRetentionOfflineRefusal(
                     "current_cycle_observation_changed");
@@ -313,8 +320,42 @@ public sealed partial class SnapshotGenerationRetentionPlanner
                 connection, transaction, persistence, OfflineCommandTimeoutSeconds, ct);
         finalBoundary = await ReadOfflineBoundaryAsync(connection, transaction, ct);
         await CaptureOfflineOwnerAsync(fenceConnection, fenceTransaction, ct);
+        SnapshotGenerationRetentionPlanResult persistedResult;
+        if (persisted.Inserted)
+        {
+            persistedResult = CompletePersistedObservation(persisted, persistence);
+        }
+        else
+        {
+            var newestAfterConflict =
+                await SnapshotGenerationRetentionRepository.GetNewestCycleAsync(
+                    connection,
+                    transaction,
+                    OfflineCommandTimeoutSeconds,
+                    ct);
+            if (!IsAcceptedOfflineExistingCycle(persisted.Cycle))
+            {
+                throw new SnapshotGenerationRetentionOfflineRefusal(
+                    "current_cycle_not_accepted");
+            }
+            if (newestAfterConflict?.CycleId != persisted.Cycle.CycleId)
+            {
+                throw new SnapshotGenerationRetentionOfflineRefusal(
+                    "current_cycle_not_newest");
+            }
+            if (!MatchesAcceptedOfflineObservation(persisted.Cycle, persistence))
+            {
+                throw new SnapshotGenerationRetentionOfflineRefusal(
+                    "current_cycle_observation_changed");
+            }
+            persistedResult = BuildResult(
+                persisted.Cycle,
+                SnapshotGenerationRetentionPlanDisposition.Existing,
+                "the current accepted cycle was revalidated; no new cycle was written",
+                Retryable: false);
+        }
         var completed = new SnapshotGenerationRetentionOfflineResult(
-            CompletePersistedObservation(persisted, persistence),
+            persistedResult,
             persisted.Cycle,
             finalBoundary)
         {
@@ -344,6 +385,13 @@ public sealed partial class SnapshotGenerationRetentionPlanner
         && cycle.PlannerChildSetJson == cycle.OracleChildSetJson
         && cycle.PlannerLiveSetJson == cycle.OracleLiveSetJson
         && cycle.PlannerCandidateSetJson == cycle.OracleCandidateSetJson;
+
+    private static bool MatchesAcceptedOfflineObservation(
+        SnapshotGenerationRetentionCycle cycle,
+        SnapshotGenerationRetentionPersistRequest persistence) =>
+        persistence.Status == SnapshotGenerationRetentionCycleStatus.Observed
+        && persistence.CandidateIdentityHash == cycle.CandidateIdentityHash
+        && persistence.ObservationHash == cycle.ObservationHash;
 
     private static async Task<SnapshotGenerationRetentionOfflineBoundary>
         ReadOfflineBoundaryAsync(

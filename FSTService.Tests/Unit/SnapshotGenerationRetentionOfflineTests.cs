@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FSTService.Persistence.Maintenance;
+using FSTService.Tests.Helpers;
 using Npgsql;
 
 namespace FSTService.Tests.Unit;
@@ -64,6 +65,81 @@ public sealed partial class SnapshotGenerationRetentionPlannerTests
         Assert.Equal(SnapshotGenerationRetentionContract.TerminalWorkerSafePoint, offline.Cycle.SafePointKind);
         Assert.Equal(SnapshotGenerationRetentionPlanDisposition.Existing, offline.Result.Disposition);
         Assert.Equal(1, Scalar<long>("SELECT count(*) FROM snapshot_generation_retention_cycles"));
+    }
+
+    [Fact]
+    public async Task OfflineReportRejectsCurrentCycleThatIsNotTheNewestCycle()
+    {
+        SeedOfflineBaseline(("Solo_Guitar", 1307));
+        var first = await CreatePlanner()
+            .ObserveCurrentOfflineAsync(new OfflineTestAttestation());
+        Execute("""
+            INSERT INTO publication_generations (
+                publication_id,scrape_id,status,created_at,ready_at,published_at)
+            VALUES (
+                9001,1307,'retired',now()-interval '1 day',
+                now()-interval '23 hours',now()-interval '23 hours');
+            INSERT INTO snapshot_generation_retention_cycles (
+                trigger_scrape_id,trigger_publication_id,safe_point_kind,safe_point_at,
+                planner_version,config_version,report_only,status,oracle_agreement,
+                candidate_identity_hash,observation_hash,
+                planner_child_set,planner_live_set,planner_candidate_set,
+                oracle_child_set,oracle_live_set,oracle_candidate_set,
+                candidate_count,protected_count,blocked_count,candidate_bytes,
+                global_blockers,anomalies,error_message,created_at)
+            SELECT
+                1307,9001,safe_point_kind,safe_point_at,
+                planner_version,config_version,report_only,status,oracle_agreement,
+                candidate_identity_hash,observation_hash,
+                planner_child_set,planner_live_set,planner_candidate_set,
+                oracle_child_set,oracle_live_set,oracle_candidate_set,
+                candidate_count,protected_count,blocked_count,candidate_bytes,
+                global_blockers,anomalies,error_message,clock_timestamp()+interval '1 second'
+            FROM snapshot_generation_retention_cycles
+            WHERE cycle_id=@cycleId
+            """, command => command.Parameters.AddWithValue(
+                "cycleId",
+                first.Cycle.CycleId));
+
+        var error = await Assert.ThrowsAsync<
+            SnapshotGenerationRetentionOfflineRefusal>(() =>
+            CreatePlanner().ObserveCurrentOfflineAsync(
+                new OfflineTestAttestation()));
+
+        Assert.Equal("current_cycle_not_newest", error.Code);
+        Assert.Equal(
+            2,
+            Scalar<long>(
+                "SELECT count(*) FROM snapshot_generation_retention_cycles"));
+    }
+
+    [Fact]
+    public async Task OfflineFenceRejectsDifferentDatabaseIdentity()
+    {
+        await using var primary = await _fixture.DataSource.OpenConnectionAsync();
+        await using var primaryTransaction =
+            await primary.BeginTransactionAsync();
+        var signature =
+            await SnapshotGenerationRetentionPlanner
+                .CaptureOfflineDatabaseSignatureAsync(
+                    primary,
+                    primaryTransaction,
+                    CancellationToken.None);
+        using var other = SharedPostgresContainer.CreateDatabase();
+        await using var otherConnection = await other.OpenConnectionAsync();
+        await using var otherTransaction =
+            await otherConnection.BeginTransactionAsync();
+
+        var error = await Assert.ThrowsAsync<
+            SnapshotGenerationRetentionOfflineRefusal>(() =>
+            SnapshotGenerationRetentionPlanner
+                .RequireOfflineDatabaseSignatureAsync(
+                    otherConnection,
+                    otherTransaction,
+                    signature,
+                    CancellationToken.None));
+
+        Assert.Equal("offline_database_identity_changed", error.Code);
     }
 
     [Fact]

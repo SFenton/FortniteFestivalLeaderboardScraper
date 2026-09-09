@@ -49,12 +49,17 @@ public static class DatabaseInitializer
     public static async Task EnsureSchemaAsync(
         NpgsqlDataSource dataSource,
         CancellationToken ct = default,
-        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null)
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        bool initializePublicationPathArtifacts = true)
     {
-        await PublicationPathArtifactReleaseGate.ValidateExistingBeforeInitializationAsync(dataSource, ct);
+        if (initializePublicationPathArtifacts)
+            await PublicationPathArtifactReleaseGate.ValidateExistingBeforeInitializationAsync(dataSource, ct);
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         foreach (var step in GetSchemaInitializationPlan())
         {
+            if (!initializePublicationPathArtifacts
+                && step.Name == "publication-path-artifacts")
+                continue;
             if (step.UseConcurrentIndex)
             {
                 await ExecuteConcurrentIndexInitializationStepAsync(

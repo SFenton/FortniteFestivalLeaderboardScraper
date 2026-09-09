@@ -112,6 +112,14 @@ Ordinary startup handles current/working refusal before constructing runtime
 pools. It selects sticky degraded/read-only serving instead of stopping the
 API or admitting writers; persisted public reads remain available subject to
 their existing source gates. See the [service startup contract](../components/service-api.md).
+This release gate is active only when
+`Scraper:UsePublicationPathArtifacts=true`. A feature-off schema owner skips
+the path-artifact migration step, and a feature-off skip-schema role skips the
+path-artifact validation fence. In both cases inactive path bindings remain
+byte-for-byte untouched and cannot degrade or suppress legacy live-row
+ingestion. Re-enabling publication-bound path reads requires a schema-owning
+role to apply and validate the current release before skip-schema readers are
+accepted.
 
 The source-preserving repair does not restore publication `223`'s binding
 refresh from the rejected retention deployment. Retention-only deployments

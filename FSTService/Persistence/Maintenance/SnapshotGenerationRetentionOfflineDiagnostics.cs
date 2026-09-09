@@ -43,7 +43,7 @@ public sealed partial class SnapshotGenerationRetentionPlanner
     internal Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>?
         OfflineFenceAdmittedTestHook { get; set; }
 
-    private static async Task<string> CaptureOfflineDatabaseSignatureAsync(
+    internal static async Task<string> CaptureOfflineDatabaseSignatureAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
@@ -60,6 +60,25 @@ public sealed partial class SnapshotGenerationRetentionPlanner
             """;
         return (string)(await command.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("Offline database identity is unavailable."));
+    }
+
+    internal static async Task RequireOfflineDatabaseSignatureAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string expected,
+        CancellationToken ct)
+    {
+        if (!string.Equals(
+                await CaptureOfflineDatabaseSignatureAsync(
+                    connection,
+                    transaction,
+                    ct),
+                expected,
+                StringComparison.Ordinal))
+        {
+            throw new SnapshotGenerationRetentionOfflineRefusal(
+                "offline_database_identity_changed");
+        }
     }
 
     private static async Task<SnapshotGenerationRetentionTransactionOwner> CaptureOfflineOwnerAsync(

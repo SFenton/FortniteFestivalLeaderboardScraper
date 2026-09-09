@@ -72,6 +72,63 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
     }
 
     [Fact]
+    public async Task Disabled_path_artifact_mode_preserves_invalid_bindings_and_starts_writable()
+    {
+        var publication = Publish();
+        Execute("""
+            UPDATE publication_surface_bindings
+            SET binding_json=jsonb_set(binding_json,'{manifestVersion}','3'::jsonb)
+            WHERE publication_id=@target AND surface_name='path_artifacts'
+            """, command => command.Parameters.AddWithValue("target", publication));
+        var before = Binding(publication);
+
+        await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions { UsePublicationPathArtifacts = false },
+            NullLogger.Instance);
+        await using var source = StartupPublicationReadOnlyState.CreateDataSource(
+            _fixture.DataSource.ConnectionString,
+            state);
+
+        Assert.False(state.IsLatched);
+        Assert.Empty(state.Failures);
+        Assert.Equal(before, Binding(publication));
+        using var connection = source.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SHOW default_transaction_read_only";
+        Assert.Equal("off", command.ExecuteScalar());
+        state.MarkReady();
+        Assert.True(state.MutationsReady);
+    }
+
+    [Fact]
+    public async Task Disabled_skip_schema_mode_does_not_require_path_artifact_schema()
+    {
+        Publish();
+        Execute(
+            "DROP TABLE public.publication_path_artifacts CASCADE",
+            _ => { });
+
+        await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions
+            {
+                ApiOnly = true,
+                UsePublicationPathArtifacts = false,
+            },
+            NullLogger.Instance);
+        await using var source = StartupPublicationReadOnlyState.CreateDataSource(
+            _fixture.DataSource.ConnectionString,
+            state);
+
+        Assert.False(state.IsLatched);
+        using var connection = source.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SHOW default_transaction_read_only";
+        Assert.Equal("off", command.ExecuteScalar());
+    }
+
+    [Fact]
     public async Task Invalid_previous_is_a_structured_warning_and_normal_startup_succeeds()
     {
         var previous = Publish();
@@ -83,7 +140,7 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
             """, command => command.Parameters.AddWithValue("target", previous));
         var before = Binding(previous);
         var log = Substitute.For<ILogger>();
-        var options = new ScraperOptions();
+        var options = new ScraperOptions { UsePublicationPathArtifacts = true };
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
             _fixture.DataSource.ConnectionString, options, log);
         Assert.False(state.IsLatched);
@@ -122,7 +179,13 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
         var before = Binding(target);
 
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
-            _fixture.DataSource.ConnectionString, new ScraperOptions { ApiOnly = true }, NullLogger.Instance);
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions
+            {
+                ApiOnly = true,
+                UsePublicationPathArtifacts = true,
+            },
+            NullLogger.Instance);
 
         Assert.True(state.IsLatched);
         Assert.Contains(state.Failures, failure => failure.PublicationId == target
@@ -155,7 +218,9 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
     {
         Publish();
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
-            _fixture.DataSource.ConnectionString, new ScraperOptions(), NullLogger.Instance);
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions { UsePublicationPathArtifacts = true },
+            NullLogger.Instance);
         using var connection = _fixture.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -176,7 +241,7 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
         var publication = Publish();
         Execute("UPDATE publication_song_catalog SET is_exact=FALSE WHERE publication_id=@id",
             command => command.Parameters.AddWithValue("id", publication));
-        var options = new ScraperOptions();
+        var options = new ScraperOptions { UsePublicationPathArtifacts = true };
         await using var oldState = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
             _fixture.DataSource.ConnectionString, options, NullLogger.Instance);
         await using var oldSource = StartupPublicationReadOnlyState.CreateDataSource(
@@ -224,7 +289,9 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
     {
         Publish();
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
-            _fixture.DataSource.ConnectionString, new ScraperOptions(), NullLogger.Instance);
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions { UsePublicationPathArtifacts = true },
+            NullLogger.Instance);
         Assert.False(state.IsLatched);
         await state.DisposeAsync();
 
@@ -244,7 +311,9 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
     {
         Publish();
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
-            _fixture.DataSource.ConnectionString, new ScraperOptions(), NullLogger.Instance);
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions { UsePublicationPathArtifacts = true },
+            NullLogger.Instance);
         await state.DisposeAsync();
         var calls = new HostedCalls();
         var services = new ServiceCollection().AddLogging();
@@ -314,7 +383,12 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
         }
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var state = await StartupPublicationReadOnlyState.PrepareRuntimeAsync(
-            _fixture.DataSource.ConnectionString, new ScraperOptions { ApiOnly = true },
+            _fixture.DataSource.ConnectionString,
+            new ScraperOptions
+            {
+                ApiOnly = true,
+                UsePublicationPathArtifacts = true,
+            },
             NullLogger.Instance, deadline.Token);
         await using var source = StartupPublicationReadOnlyState.CreateDataSource(
             _fixture.DataSource.ConnectionString, state);
@@ -453,6 +527,7 @@ public sealed class StartupPublicationReadOnlyStateTests : IDisposable
                 services.PostConfigure<ScraperOptions>(options =>
                 {
                     options.ApiOnly = true;
+                    options.UsePublicationPathArtifacts = true;
                     options.DataDirectory = _dataDirectory;
                 });
                 services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(_dataDirectory));

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using FstSnapshotGenerationRetentionReport;
@@ -58,6 +59,69 @@ public sealed class HostConnectionOwnershipTests
     }
 
     [Fact]
+    public void HostConnectionsRejectMultiHostAndLoadBalancedTargets()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new PostgresUnpooledConnectionFactory("Host=one,two"));
+        Assert.Throws<ArgumentException>(() =>
+            new PostgresUnpooledConnectionFactory(
+                "Host=one,two;Load Balance Hosts=true"));
+    }
+
+    [Fact]
+    public async Task OfflineWrapperIgnoresBashStartupHooks()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+        var root = RepositoryRoot();
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "offline-wrapper-startup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var hook = Path.Combine(directory, "bash-env");
+        var marker = Path.Combine(directory, "startup-ran");
+        await File.WriteAllTextAsync(
+            hook,
+            "/usr/bin/touch -- \"$WRAPPER_INJECTION_MARKER\"\n");
+        try
+        {
+            var start = new ProcessStartInfo(
+                Path.Combine(
+                    root,
+                    "tools/postgres-snapshot-generation-retention-report.sh"))
+            {
+                WorkingDirectory = root,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            start.Environment.Clear();
+            start.Environment["PATH"] = "/usr/bin:/bin";
+            start.Environment["BASH_ENV"] = hook;
+            start.Environment["WRAPPER_INJECTION_MARKER"] = marker;
+            start.Environment["FST_SNAPSHOT_RETENTION_REPORT_BINARY_SHA256"] =
+                "invalid";
+            using var process = Process.Start(start)
+                ?? throw new InvalidOperationException(
+                    "Offline wrapper test process did not start.");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            await stdout;
+            Assert.Equal(64, process.ExitCode);
+            Assert.Contains(
+                "must be a lowercase SHA-256",
+                await stderr,
+                StringComparison.Ordinal);
+            Assert.False(File.Exists(marker));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void OfflineHostDoesNotExposeDataSourceOrPlannerConstructionPublicly()
     {
         var type = typeof(OfflineReportDatabase);
@@ -98,6 +162,18 @@ public sealed class HostConnectionOwnershipTests
             }
             Assert.False(reconstruction.IsMatch(source), "A host tool acquired a data-source credential dependency: " + relative);
         }
+    }
+
+    [Fact]
+    public void OfflineGitIdentityClearsInheritedConfiguration()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(),
+            "tools/FstSnapshotGenerationRetentionReport/OfflineReportCodeIdentityProvider.cs"));
+        Assert.Contains("start.Environment.Clear()", source, StringComparison.Ordinal);
+        Assert.Contains("GIT_CONFIG_NOSYSTEM", source, StringComparison.Ordinal);
+        Assert.Contains("GIT_CONFIG_GLOBAL", source, StringComparison.Ordinal);
+        Assert.Contains("core.fsmonitor=false", source, StringComparison.Ordinal);
     }
 
     [Fact]

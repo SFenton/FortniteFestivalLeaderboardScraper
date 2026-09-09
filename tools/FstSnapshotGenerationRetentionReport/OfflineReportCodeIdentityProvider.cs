@@ -125,7 +125,16 @@ public sealed class OfflineReportCodeIdentityProvider : IOfflineReportCodeIdenti
             WorkingDirectory = _root, UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
+        start.Environment.Clear();
         start.Environment["PATH"] = "/usr/bin:/bin";
+        start.Environment["HOME"] = "/nonexistent";
+        start.Environment["XDG_CONFIG_HOME"] = "/nonexistent";
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.ArgumentList.Add("--no-optional-locks");
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("core.fsmonitor=false");
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
         using var process = Process.Start(start)

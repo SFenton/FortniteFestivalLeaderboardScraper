@@ -59,8 +59,11 @@ does not release an invalid path binding.
 
 `StartupPublicationReadOnlyState` selects its database policy before runtime pools and hosted
 writers exist. A private unpooled source applies general schema only for roles
-that own it, then revalidates current/working path bindings under a bounded
-selection fence. Invalid bindings or unavailable admission select
+that own it. When `Scraper:UsePublicationPathArtifacts=true`, it then
+revalidates current/working path bindings under a bounded selection fence.
+Feature-off roles skip that path migration and fence, preserve inactive
+bindings unchanged, and retain writable legacy live-row operation. Invalid
+bindings or unavailable admission while the feature is enabled select
 `publication_path_artifact_validation_failed` or a specific database/fence
 reason, not `StopApplication`. All runtime pools, unpooled registration
 connections, publication-read locks and path-admission connections then use

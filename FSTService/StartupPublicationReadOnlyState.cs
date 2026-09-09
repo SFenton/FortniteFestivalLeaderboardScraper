@@ -39,7 +39,10 @@ public sealed class StartupPublicationReadOnlyState : IAsyncDisposable
         ILogger log,
         CancellationToken ct = default)
     {
-        var state = new StartupPublicationReadOnlyState { _runtimeSelection = true };
+        var state = new StartupPublicationReadOnlyState
+        {
+            _runtimeSelection = options.UsePublicationPathArtifacts,
+        };
         if (options.RolloutReadOnlyStartup)
         {
             state.Latch("configured_read_only", []);
@@ -60,7 +63,17 @@ public sealed class StartupPublicationReadOnlyState : IAsyncDisposable
             await using var source = NpgsqlDataSource.Create(bootstrap.ConnectionString);
             if (!options.SkipsStartupSchemaInitialization)
             {
-                await DatabaseInitializer.EnsureSchemaAsync(source, ct, state.RecordWarning);
+                await DatabaseInitializer.EnsureSchemaAsync(
+                    source,
+                    ct,
+                    state.RecordWarning,
+                    initializePublicationPathArtifacts:
+                        options.UsePublicationPathArtifacts);
+            }
+            if (!options.UsePublicationPathArtifacts)
+            {
+                state._selected = true;
+                return state;
             }
             state._selectionConnection = new NpgsqlConnection(bootstrap.ConnectionString);
             await state._selectionConnection.OpenAsync(ct);
