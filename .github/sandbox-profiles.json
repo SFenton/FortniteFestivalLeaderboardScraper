@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "profiles": [
+    {
+      "id": "fst-web-formatter-tests",
+      "capability": "fst-web-formatter-tests",
+      "candidateFile": "packages/core/src/app/__tests__/formatters.test.ts",
+      "validator": {
+        "argv": ["node", "FortniteFestivalWeb/node_modules/vitest/vitest.mjs", "run", "--config=FortniteFestivalWeb/vitest.shared.config.ts", "packages/core/src/app/__tests__/formatters.test.ts"],
+        "timeoutSeconds": 900
+      },
+      "sandbox": {
+        "provider": "docker",
+        "image": "node:22-bookworm-slim",
+        "expectedImageId": "sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5",
+        "memoryMb": 1024,
+        "pidsLimit": 128,
+        "allowedCollateralPaths": [".cache/vitest", "node_modules/.vite/vitest"],
+        "includePaths": [
+          "packages",
+          "FortniteFestivalWeb/package.json",
+          "FortniteFestivalWeb/scripts",
+          "FortniteFestivalWeb/vitest.shared.config.ts"
+        ],
+        "containerEnvironment": { "CI": "1" },
+        "tmpfsMounts": ["/workspace/FortniteFestivalWeb/node_modules/.vite-temp"],
+        "dependencyMounts": [
+          {
+            "sourceKind": "repository",
+            "source": "FortniteFestivalWeb/node_modules",
+            "siblingFallback": true,
+            "target": "FortniteFestivalWeb/node_modules",
+            "readOnly": true,
+            "evidenceFile": "FortniteFestivalWeb/yarn.lock",
+            "fingerprintMode": "tree",
+            "fingerprintFiles": ["vitest/package.json", "vite/package.json", "typescript/package.json"]
+          }
+        ],
+        "runtimeChecks": [
+          {
+            "argv": ["node", "-e", "require('node:fs').accessSync('FortniteFestivalWeb/node_modules/vitest/vitest.mjs')"],
+            "timeoutSeconds": 30
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "project": "festival-score-tracker",
+  "opportunity": "release-destruction",
+  "variant": "application-release",
+  "enabled": false,
+  "operatorAuthorizationRequired": true,
+  "reviewer": {
+    "role": "medium-review",
+    "profile": { "model": "gpt-5.6-sol", "effort": "medium", "context": "default" },
+    "authority": "review-only"
+  },
+  "exception": {
+    "role": "risk-triggered-frontier-review",
+    "profile": { "model": "gpt-5.6-sol", "effort": "max", "context": "long_context" },
+    "triggerIds": ["fst-release-public-health-or-rollback-conflict"],
+    "requiresTriggerReceipt": true
+  },
+  "steps": [
+    { "id": "validate-contracts", "label": "Validate application release and publish workflow contracts", "executor": "deterministic", "operation": "command", "tool": "preflight-application-release", "failure": "rejected", "evidence": ["application release and workflow contracts"] },
+    { "id": "validate-service", "label": "Run service tests", "executor": "deterministic", "operation": "command", "tool": "test-service", "failure": "rejected", "evidence": ["service and publication results"] },
+    { "id": "validate-web", "label": "Build the web application", "executor": "deterministic", "operation": "command", "tool": "build-web", "failure": "rejected", "evidence": ["web build and compatibility results"] },
+    { "id": "create-merge-pr", "label": "Create and merge the exact pull request", "executor": "deterministic", "operation": "git-release", "tool": "git-release-disabled", "failure": "rollback-git", "evidence": ["branch", "commit", "pull request", "merge commit"] },
+    { "id": "publish-images", "label": "Publish immutable images for the authorized SHA", "executor": "deterministic", "operation": "github-release", "tool": "publish-images-disabled", "failure": "rollback-publication", "evidence": ["target SHA", "image digests", "workflow run"] },
+    { "id": "deploy-production", "label": "Deploy the accepted immutable images", "executor": "deterministic", "operation": "deploy", "tool": "deploy-production-disabled", "failure": "rollback-production", "evidence": ["service and web digests", "deployment receipt"] },
+    { "id": "verify-public-path", "label": "Verify public health and publication parity", "executor": "deterministic", "operation": "verify", "tool": "verify-production-disabled", "failure": "rollback-production", "evidence": ["container health", "readyz", "web, API and publication fingerprints"] },
+    { "id": "rollback-production", "label": "Restore prior immutable images and public health", "executor": "deterministic", "operation": "rollback", "tool": "rollback-production-disabled", "rollbackOnly": true, "rollbackVerificationTool": "verify-production-disabled", "failure": "abnormal", "evidence": ["restored digests", "healthy public path", "publication state"] },
+    { "id": "rollback-publication", "label": "Cancel or supersede failed image publication", "executor": "deterministic", "operation": "rollback", "tool": "publish-images-disabled", "rollbackOnly": true, "rollbackVerificationTool": "publish-images-disabled", "failure": "abnormal", "evidence": ["workflow state", "retained accepted images"] },
+    { "id": "rollback-git", "label": "Close the release or create the authorized revert", "executor": "deterministic", "operation": "rollback", "tool": "git-release-disabled", "rollbackOnly": true, "rollbackVerificationTool": "git-release-disabled", "failure": "abnormal", "evidence": ["closed pull request or revert commit"] },
+    { "id": "cleanup-release", "label": "Remove exact temporary release artifacts", "executor": "deterministic", "operation": "cleanup", "tool": "cleanup-release-disabled", "failure": "abnormal", "evidence": ["clean workspace", "retained evidence"] }
+  ]
+}

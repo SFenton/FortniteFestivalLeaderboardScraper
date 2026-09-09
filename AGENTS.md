@@ -28,6 +28,16 @@ Current architecture and ownership are indexed in `docs/README.md`.
 - Use `.github/agent-budget.json` and `fst-budget-workflow` for bounded generic
   research and delivery. Tandem and autonomous-plan execution are explicit-only.
   A budget route never changes the live-safety or specialist contract.
+- The overall interactive model may be Sol, HydraFusion, or another model.
+  Identity never bypasses deterministic version 3 routing or exact project
+  pins. Unqualified models may orchestrate/read but gain no semantic,
+  repository-apply, database, production, release, or destructive authority.
+- The installed continuous-improvement observer follows
+  `.github/agent-learning.json`, stores sanitized metadata only, and silently
+  no-ops when no reusable pattern qualifies. Automatic build requests are
+  repository-local and medium-owned; automatic promotion remains disabled. It
+  grants no live, database, publication, release, destructive, or
+  repository-apply authority.
 
 ## Live safety
 
