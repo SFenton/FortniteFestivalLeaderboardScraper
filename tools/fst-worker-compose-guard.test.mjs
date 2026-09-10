@@ -200,6 +200,18 @@ if (args[0] === "compose") {
         process.stderr.write("worker profile was not explicitly enabled\n");
         process.exit(96);
       }
+      if (args.includes("--no-start")) {
+        if (scenario.workerCreateFailsBeforeReplacement) {
+          process.exit(1);
+        }
+        runtime.workerStarted = false;
+        runtime.workerState = "created|none";
+        runtime.workerExitCode = 0;
+        runtime.workerStartedAt = "0001-01-01T00:00:00Z";
+        assignWorkerIdentity();
+        saveRuntime();
+        process.exit(scenario.workerCreateFails ? 1 : 0);
+      }
       event("worker-start", ["fstworker"]);
       runtime.workerStarted = true;
       runtime.workerState = "running|healthy";
@@ -737,6 +749,18 @@ function composeServiceBlock(compose, serviceName) {
 }
 
 describe("fstworker Compose startup recovery", () => {
+  it("creates the worker without starting it using supported Compose up flags", async () => {
+    const source = await readFile(guardPath, "utf8");
+    assert.match(
+      source,
+      /compose_snapshot true up --no-start --no-deps --force-recreate/
+    );
+    assert.doesNotMatch(
+      source,
+      /compose_snapshot true create --no-deps/
+    );
+  });
+
   it("keeps bare repository template startup worker-free and crash-bounded", async () => {
     const [rootCompose, deployCompose] = await Promise.all([
       readFile(path.join(repositoryRoot, "docker-compose.yml"), "utf8"),
