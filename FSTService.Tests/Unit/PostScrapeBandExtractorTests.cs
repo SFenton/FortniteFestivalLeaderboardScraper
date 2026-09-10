@@ -393,6 +393,74 @@ public sealed class PostScrapeBandExtractorTests : IDisposable
         Assert.True(reader.GetBoolean(2));
     }
 
+    [Fact]
+    public async Task Failed_song_still_rebuilds_successful_membership_and_preserves_original_failure()
+    {
+        var members = SerializeMembers("acct-good-a", "acct-good-b");
+        InsertLegacyBandRow("a-song-good", "acct-good-a", members);
+        InsertLegacyBandRow("z-song-fail", "acct-fail-a", SerializeMembers("acct-fail-a", "acct-fail-b"));
+
+        using (var connection = _fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE OR REPLACE FUNCTION fail_selected_band_entry()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF NEW.song_id = 'z-song-fail' THEN
+                        RAISE EXCEPTION 'synthetic extraction failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+
+                CREATE TRIGGER trg_fail_selected_band_entry
+                BEFORE INSERT OR UPDATE ON band_entries
+                FOR EACH ROW
+                EXECUTE FUNCTION fail_selected_band_entry();
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var pathDataStore = Substitute.For<IPathDataStore>();
+        pathDataStore.GetAllMaxScores().Returns(
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase));
+        var extractor = new PostScrapeBandExtractor(
+            _fixture.DataSource,
+            pathDataStore,
+            Substitute.For<ILogger<PostScrapeBandExtractor>>(),
+            options: Options.Create(new ScraperOptions
+            {
+                BandExtractionParallelism = 1,
+                BandMembershipRebuildBatchSize = 1,
+            }));
+
+        var failure = await Assert.ThrowsAsync<
+            PartialResultFailureException<BandExtractionResult>>(
+            () => extractor.RunAsync(CancellationToken.None));
+
+        Assert.Contains(
+            "synthetic extraction failure",
+            failure.InnerException?.Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "acct-good-a:acct-good-b",
+            failure.PartialResultValue.ImpactedTeamsByBandType["Band_Duets"]);
+
+        using var readConnection = _fixture.DataSource.OpenConnection();
+        using var readCommand = readConnection.CreateCommand();
+        readCommand.CommandText = """
+            SELECT COUNT(*)
+            FROM band_team_membership
+            WHERE band_type = 'Band_Duets'
+              AND team_key = 'acct-good-a:acct-good-b'
+            """;
+        Assert.Equal(2L, (long)readCommand.ExecuteScalar()!);
+    }
+
     private void InsertLegacyBandRow(string songId, string accountId, string members)
     {
         using var connection = _fixture.DataSource.OpenConnection();

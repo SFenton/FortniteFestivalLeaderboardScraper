@@ -16,6 +16,19 @@ namespace FSTService.Tests.Unit;
 
 public class GlobalLeaderboardScraperTests
 {
+    [Fact]
+    public void InvalidLeaderboardClassification_requires_exact_error_code()
+    {
+        Assert.True(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard_later"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"message":"com.epicgames.events.invalid_leaderboard"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            "not-json com.epicgames.events.invalid_leaderboard"));
+    }
+
     private readonly ILogger<GlobalLeaderboardScraper> _log = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
     private readonly ScrapeProgressTracker _progress = new();
 

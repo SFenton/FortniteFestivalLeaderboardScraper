@@ -4273,6 +4273,38 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.ExecuteNonQuery();
     }
 
+    public void MarkRegisteredPlayerBandDiscoveryAttempted(
+        string accountId,
+        string songId,
+        string bandType,
+        string scope,
+        int season,
+        string? windowId = null)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO registered_player_band_discovery_progress
+                (account_id, song_id, band_type, scope, season, checked, entry_found, checked_at, window_id)
+            VALUES (@accountId, @songId, @bandType, @scope, @season, 0, 0, @now, @windowId)
+            ON CONFLICT (account_id, song_id, band_type, scope, season) DO UPDATE SET
+                checked = 0,
+                entry_found = 0,
+                checked_at = EXCLUDED.checked_at,
+                window_id = EXCLUDED.window_id
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", scope);
+        cmd.Parameters.AddWithValue("season", season);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue(
+            "windowId",
+            RegisteredBandLookupIdentity.ResolveWindowId(scope, season, windowId));
+        cmd.ExecuteNonQuery();
+    }
+
     public List<RegisteredPlayerBandDiscoveryProgressInfo> GetCheckedRegisteredPlayerBandDiscoveryLookups(string accountId)
     {
         using var conn = _ds.OpenConnection();

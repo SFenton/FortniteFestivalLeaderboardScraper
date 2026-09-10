@@ -158,76 +158,31 @@ public sealed class RegisteredBandProcessingOrchestrator
         if (intents.Count == 0)
             return RegisteredBandProcessingResult.Empty;
 
-        _progress.SetAdaptiveLimiter(pool.Limiter);
         var maxBands = _options.RegisteredBandProcessingMaxBandsPerPass;
-        var plannedBandCount = maxBands > 0
-            ? Math.Min(maxBands, registeredBands.Count)
-            : registeredBands.Count;
-        _progress.BeginPhaseProgress(plannedBandCount);
+        var admittedBands = (maxBands > 0
+            ? registeredBands.Take(maxBands)
+            : registeredBands)
+            .ToArray();
+        var plannedBandCount = admittedBands.Length;
+        var maxLookupsPerPass = _options.RegisteredBandProcessingMaxLookupsPerPass;
+        var admittedLookups = CountAdmittedLookups(
+            admittedBands,
+            intents,
+            maxLookupsPerPass);
+        _progress.SetAdaptiveLimiter(pool.Limiter);
+        _progress.BeginPhaseProgress(admittedLookups);
         _progress.SetPhaseAccounts(plannedBandCount);
 
         var impactedTeams = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
         int bandsAttempted = 0;
         int bandsProcessed = 0;
+        int lookupsAttemptedTotal = 0;
         int lookupsCheckedTotal = 0;
         int entriesFoundTotal = 0;
         int entriesPersistedTotal = 0;
-        var maxLookupsPerPass = _options.RegisteredBandProcessingMaxLookupsPerPass;
 
-        foreach (var registeredBand in registeredBands)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (maxBands > 0 && bandsAttempted >= maxBands)
-                break;
-            if (maxLookupsPerPass > 0 && lookupsCheckedTotal >= maxLookupsPerPass)
-                break;
-
-            bandsAttempted++;
-            var remainingLookups = maxLookupsPerPass > 0
-                ? maxLookupsPerPass - lookupsCheckedTotal
-                : 0;
-
-            var bandResult = await ProcessBandAsync(
-                registeredBand,
-                intents,
-                accessToken,
-                callerAccountId,
-                pool,
-                remainingLookups,
-                ct);
-
-            _progress.ReportPhaseItemComplete();
-            if (bandResult.LookupsChecked == 0)
-                continue;
-
-            bandsProcessed++;
-            lookupsCheckedTotal += bandResult.LookupsChecked;
-            entriesFoundTotal += bandResult.EntriesFound;
-            entriesPersistedTotal += bandResult.EntriesPersisted;
-
-            if (bandResult.EntriesPersisted > 0)
-            {
-                if (!impactedTeams.TryGetValue(registeredBand.BandType, out var teams))
-                {
-                    teams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    impactedTeams[registeredBand.BandType] = teams;
-                }
-                teams.Add(registeredBand.TeamKey);
-
-                foreach (var scope in bandResult.ImpactedCurrentProjectionScopes)
-                    impactedCurrentProjectionScopes.Add(scope);
-            }
-
-        }
-
-        _progress.SetAdaptiveLimiter(null);
-
-        _log.LogInformation(
-            "Registered-band targeted processing complete: {Attempted} attempted band(s), {Processed} progressed band(s), {Lookups} lookup(s), {Entries} entrie(s), {Persisted} persisted row(s).",
-            bandsAttempted, bandsProcessed, lookupsCheckedTotal, entriesFoundTotal, entriesPersistedTotal);
-
-        return new RegisteredBandProcessingResult
+        RegisteredBandProcessingResult BuildResult() => new()
         {
             BandsProcessed = bandsProcessed,
             LookupsChecked = lookupsCheckedTotal,
@@ -237,8 +192,137 @@ public sealed class RegisteredBandProcessingOrchestrator
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
                 StringComparer.OrdinalIgnoreCase),
-            ImpactedCurrentProjectionScopes = BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes),
+            ImpactedCurrentProjectionScopes =
+                BandCurrentProjectionScopeTracker.OrderedDistinct(
+                    impactedCurrentProjectionScopes),
         };
+
+        void MergeBandResult(
+            RegisteredBandInfo registeredBand,
+            BandProcessingRunResult bandResult)
+        {
+            if (bandResult.LookupsChecked > 0)
+                bandsProcessed++;
+            lookupsAttemptedTotal += bandResult.LookupsAttempted;
+            lookupsCheckedTotal += bandResult.LookupsChecked;
+            entriesFoundTotal += bandResult.EntriesFound;
+            entriesPersistedTotal += bandResult.EntriesPersisted;
+
+            if (bandResult.HasImpact)
+            {
+                if (!impactedTeams.TryGetValue(
+                        registeredBand.BandType,
+                        out var teams))
+                {
+                    teams = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    impactedTeams[registeredBand.BandType] = teams;
+                }
+                teams.Add(registeredBand.TeamKey);
+            }
+
+            foreach (var scope in bandResult.ImpactedCurrentProjectionScopes)
+                impactedCurrentProjectionScopes.Add(scope);
+        }
+
+        try
+        {
+            foreach (var registeredBand in admittedBands)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (maxLookupsPerPass > 0
+                    && lookupsAttemptedTotal >= maxLookupsPerPass)
+                {
+                    break;
+                }
+
+                bandsAttempted++;
+                var remainingLookups = maxLookupsPerPass > 0
+                    ? maxLookupsPerPass - lookupsAttemptedTotal
+                    : 0;
+
+                try
+                {
+                    var bandResult = await ProcessBandAsync(
+                        registeredBand,
+                        intents,
+                        accessToken,
+                        callerAccountId,
+                        pool,
+                        remainingLookups,
+                        ct);
+                    MergeBandResult(registeredBand, bandResult);
+                }
+                catch (PartialResultOperationCanceledException<BandProcessingRunResult> ex)
+                {
+                    MergeBandResult(registeredBand, ex.PartialResult);
+                    throw;
+                }
+                catch (PartialResultFailureException<BandProcessingRunResult> ex)
+                {
+                    MergeBandResult(registeredBand, ex.PartialResultValue);
+                    throw;
+                }
+
+                _progress.ReportPhaseAccountComplete();
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new PartialResultOperationCanceledException<RegisteredBandProcessingResult>(
+                BuildResult(),
+                ex);
+        }
+        catch (Exception ex)
+        {
+            throw new PartialResultFailureException<RegisteredBandProcessingResult>(
+                BuildResult(),
+                ex);
+        }
+        finally
+        {
+            _progress.SetAdaptiveLimiter(null);
+        }
+
+        _log.LogInformation(
+            "Registered-band targeted processing complete: {Attempted} attempted band(s), {Processed} progressed band(s), {Lookups} lookup(s), {Entries} entrie(s), {Persisted} persisted row(s).",
+            bandsAttempted, bandsProcessed, lookupsCheckedTotal, entriesFoundTotal, entriesPersistedTotal);
+
+        return BuildResult();
+    }
+
+    private int CountAdmittedLookups(
+        IReadOnlyList<RegisteredBandInfo> registeredBands,
+        IReadOnlyList<RegisteredBandLookupIntent> intents,
+        int maxLookupsPerPass)
+    {
+        var total = 0;
+        foreach (var registeredBand in registeredBands)
+        {
+            var checkedKeys = _metaDb.GetCheckedRegisteredBandLookups(
+                    registeredBand.SourceId,
+                    registeredBand.BandType,
+                    registeredBand.TeamKey)
+                .Select(static row => (
+                    row.SongId,
+                    row.Scope,
+                    row.Season,
+                    WindowId: RegisteredBandLookupIdentity.ResolveWindowId(
+                        row.Scope,
+                        row.Season,
+                        row.WindowId)))
+                .ToHashSet();
+            var pending = intents.Count(intent =>
+                !checkedKeys.Contains(intent.ProgressKey));
+            var perBand = _options.RegisteredBandProcessingMaxLookupsPerBand;
+            if (perBand > 0)
+                pending = Math.Min(pending, perBand);
+            total += pending;
+            if (maxLookupsPerPass > 0 && total >= maxLookupsPerPass)
+                return maxLookupsPerPass;
+        }
+
+        return total;
     }
 
     private async Task<BandProcessingRunResult> ProcessBandAsync(
@@ -308,7 +392,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                     entriesFound);
             }
 
-            return new BandProcessingRunResult(0, 0, 0, []);
+            return new BandProcessingRunResult(0, 0, 0, 0, false, []);
         }
 
         _metaDb.StartRegisteredBandProcessing(
@@ -330,94 +414,145 @@ public sealed class RegisteredBandProcessingOrchestrator
         };
 
         int lookupsChecked = 0;
+        int lookupsAttempted = 0;
         int entriesPersisted = 0;
         var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
-        foreach (var intent in pendingIntents)
+        BandProcessingRunResult BuildResult() => new(
+            lookupsAttempted,
+            lookupsChecked,
+            entriesFound,
+            entriesPersisted,
+            entriesPersisted > 0,
+            BandCurrentProjectionScopeTracker.OrderedDistinct(
+                impactedCurrentProjectionScopes));
+
+        try
         {
-            ct.ThrowIfCancellationRequested();
-
-            Func<Task<RegisteredBandLookupResult>> work = () =>
+            foreach (var intent in pendingIntents)
             {
-                _progress.ReportPhaseRequest();
-                return _lookupStrategy.FetchAsync(
-                    band,
-                    intent,
-                    accessToken,
-                    callerAccountId,
-                    pool.Limiter,
-                    ct);
-            };
+                ct.ThrowIfCancellationRequested();
+                lookupsAttempted++;
 
-            var lookupResult = await _lookupRunner.TryRunAsync(
-                pool,
-                isHighPriority: false,
-                EpicTrafficKind.Background,
-                ct,
-                work,
-                ex => _log.LogDebug(ex, "Registered-band lookup failed for {BandType}/{TeamKey}/{Song}/{Scope}/{Season}.",
-                    registeredBand.BandType, registeredBand.TeamKey, intent.SongId, intent.ProgressScope, intent.Season));
+                Func<Task<RegisteredBandLookupResult>> work = () =>
+                {
+                    _progress.ReportPhaseRequest();
+                    return _lookupStrategy.FetchAsync(
+                        band,
+                        intent,
+                        accessToken,
+                        callerAccountId,
+                        pool.Limiter,
+                        ct);
+                };
 
-            if (!lookupResult.Succeeded || lookupResult.Value is null)
-            {
-                _metaDb.FailRegisteredBandProcessing(
+                var stopwatch = RegisteredLookupInstrumentation.Start();
+                SongMachineLookupResult<RegisteredBandLookupResult> lookupResult;
+                try
+                {
+                    lookupResult = await _lookupRunner.TryRunAsync(
+                        pool,
+                        isHighPriority: false,
+                        EpicTrafficKind.Background,
+                        ct,
+                        work,
+                        ex => _log.LogDebug(
+                            ex,
+                            "Registered-band targeted lookup failed."));
+                }
+                catch (OperationCanceledException)
+                {
+                    RegisteredLookupInstrumentation.Record(
+                        stopwatch,
+                        "targeted",
+                        RegisteredLookupOutcome.Cancelled);
+                    throw;
+                }
+
+                if (!lookupResult.Succeeded || lookupResult.Value is null)
+                {
+                    var outcome = RegisteredLookupInstrumentation.ClassifyFailure(
+                        lookupResult.Exception);
+                    RegisteredLookupInstrumentation.Record(
+                        stopwatch,
+                        "targeted",
+                        outcome);
+                    _metaDb.FailRegisteredBandProcessing(
+                        registeredBand.SourceId,
+                        registeredBand.BandType,
+                        registeredBand.TeamKey,
+                        outcome == RegisteredLookupOutcome.InvalidLeaderboard
+                            ? "Epic leaderboard is not currently available."
+                            : "Registered-band lookup failed.");
+                    break;
+                }
+
+                var entries = lookupResult.Value.Entries;
+                var found = entries.Count > 0;
+                if (found)
+                {
+                    var persisted = _bandPersistence.UpsertBandEntries(intent.SongId, registeredBand.BandType, entries);
+                    entriesPersisted += persisted;
+                    entriesFound += entries.Count;
+                    if (persisted > 0)
+                    {
+                        _progress.ReportPhaseEntryUpdated(persisted);
+                        foreach (var entry in entries)
+                            BandCurrentProjectionScopeTracker.AddScopes(impactedCurrentProjectionScopes, intent.SongId, registeredBand.BandType, entry.InstrumentCombo);
+                    }
+                }
+
+                _metaDb.MarkRegisteredBandLookupChecked(
                     registeredBand.SourceId,
                     registeredBand.BandType,
                     registeredBand.TeamKey,
-                    $"Lookup failed for {intent.SongId}/{intent.ProgressScope}/{intent.Season}.");
-                break;
-            }
+                    intent.SongId,
+                    intent.ProgressScope,
+                    intent.Season,
+                    found,
+                    intent.WindowId);
 
-            var entries = lookupResult.Value.Entries;
-            var found = entries.Count > 0;
-            if (found)
-            {
-                var persisted = _bandPersistence.UpsertBandEntries(intent.SongId, registeredBand.BandType, entries);
-                entriesPersisted += persisted;
-                entriesFound += entries.Count;
-                if (persisted > 0)
-                {
-                    _progress.ReportPhaseEntryUpdated(persisted);
-                    foreach (var entry in entries)
-                        BandCurrentProjectionScopeTracker.AddScopes(impactedCurrentProjectionScopes, intent.SongId, registeredBand.BandType, entry.InstrumentCombo);
-                }
-            }
-
-            _metaDb.MarkRegisteredBandLookupChecked(
-                registeredBand.SourceId,
-                registeredBand.BandType,
-                registeredBand.TeamKey,
-                intent.SongId,
-                intent.ProgressScope,
-                intent.Season,
-                found,
-                intent.WindowId);
-
-            lookupsChecked++;
-            var totalChecked = matchedCheckedCount + lookupsChecked;
-            _metaDb.UpdateRegisteredBandProcessingProgress(
-                registeredBand.SourceId,
-                registeredBand.BandType,
-                registeredBand.TeamKey,
-                totalChecked,
-                entriesFound,
-                allIntents.Count);
-
-            if (totalChecked >= allIntents.Count)
-            {
-                _metaDb.CompleteRegisteredBandProcessing(
+                lookupsChecked++;
+                _progress.ReportPhaseItemComplete();
+                RegisteredLookupInstrumentation.Record(
+                    stopwatch,
+                    "targeted",
+                    found
+                        ? RegisteredLookupOutcome.Success
+                        : RegisteredLookupOutcome.NotFound);
+                var totalChecked = matchedCheckedCount + lookupsChecked;
+                _metaDb.UpdateRegisteredBandProcessingProgress(
                     registeredBand.SourceId,
                     registeredBand.BandType,
                     registeredBand.TeamKey,
                     totalChecked,
-                    entriesFound);
+                    entriesFound,
+                    allIntents.Count);
+
+                if (totalChecked >= allIntents.Count)
+                {
+                    _metaDb.CompleteRegisteredBandProcessing(
+                        registeredBand.SourceId,
+                        registeredBand.BandType,
+                        registeredBand.TeamKey,
+                        totalChecked,
+                        entriesFound);
+                }
             }
         }
+        catch (OperationCanceledException ex)
+        {
+            throw new PartialResultOperationCanceledException<BandProcessingRunResult>(
+                BuildResult(),
+                ex);
+        }
+        catch (Exception ex)
+        {
+            throw new PartialResultFailureException<BandProcessingRunResult>(
+                BuildResult(),
+                ex);
+        }
 
-        return new BandProcessingRunResult(
-            lookupsChecked,
-            entriesFound,
-            entriesPersisted,
-            BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes));
+        return BuildResult();
     }
 
     internal static List<RegisteredBandLookupIntent> BuildLookupIntents(
@@ -438,19 +573,21 @@ public sealed class RegisteredBandProcessingOrchestrator
                 "alltime"));
 
         foreach (var window in windows)
-        foreach (var songId in distinctSongIds)
-            intents.Add(new RegisteredBandLookupIntent(
-                songId,
-                RegisteredBandLookupScope.Season,
-                window.SeasonNumber,
-                HistoryReconstructor.GetSeasonLookupId(window)));
+            foreach (var songId in distinctSongIds)
+                intents.Add(new RegisteredBandLookupIntent(
+                    songId,
+                    RegisteredBandLookupScope.Season,
+                    window.SeasonNumber,
+                    HistoryReconstructor.GetSeasonLookupId(window)));
 
         return intents;
     }
 
     private sealed record BandProcessingRunResult(
+        int LookupsAttempted,
         int LookupsChecked,
         int EntriesFound,
         int EntriesPersisted,
+        bool HasImpact,
         IReadOnlyCollection<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes);
 }

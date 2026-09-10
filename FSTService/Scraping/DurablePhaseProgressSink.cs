@@ -532,6 +532,13 @@ public sealed class DurablePhaseProgressSink
             var normalizedTotal = observation.UnitsTotal ?? state.UnitsTotal;
             var normalizedTotalFinal = observation.UnitsTotalFinal
                 ?? state.UnitsTotalFinal;
+            if (normalizedTotalFinal
+                && normalizedTotal.HasValue
+                && normalizedCompleted.HasValue
+                && normalizedCompleted.Value > normalizedTotal.Value)
+            {
+                normalizedTotal = normalizedCompleted.Value;
+            }
             double? exactPercent = normalizedTotalFinal
                 && normalizedTotal is > 0
                 && normalizedCompleted.HasValue
@@ -602,6 +609,15 @@ public sealed class DurablePhaseProgressSink
                     : null;
                 var subphaseUnitsTotalFinal = subphaseKind == "exact"
                     && subphaseObservation.UnitsTotalFinal;
+                if (subphaseUnitsTotalFinal
+                    && subphaseUnitsTotal.HasValue
+                    && subphaseUnitsCompleted.HasValue
+                    && subphaseUnitsCompleted.Value
+                        > subphaseUnitsTotal.Value)
+                {
+                    subphaseUnitsTotal =
+                        subphaseUnitsCompleted.Value;
+                }
 
                 if (subphaseKind == "exact"
                     && (!subphaseUnitsTotalFinal
@@ -624,6 +640,14 @@ public sealed class DurablePhaseProgressSink
                     subphaseUnitsCompleted = Math.Max(
                         state.SubphaseUnitsCompleted ?? 0,
                         subphaseUnitsCompleted.Value);
+                    if (subphaseUnitsTotalFinal
+                        && subphaseUnitsTotal.HasValue
+                        && subphaseUnitsCompleted.Value
+                            > subphaseUnitsTotal.Value)
+                    {
+                        subphaseUnitsTotal =
+                            subphaseUnitsCompleted.Value;
+                    }
                 }
 
                 double? subphasePercent = subphaseKind == "exact"
@@ -813,6 +837,15 @@ public sealed class DurablePhaseProgressSink
         OperationSnapshot snapshot,
         PhaseProgressDescriptor descriptor)
     {
+        if (descriptor.Id == "post.band_extraction")
+        {
+            return new PhaseProgressObservation(
+                snapshot.SubOperation,
+                UnitsKind: null,
+                UnitsCompleted: null,
+                UnitsTotal: null,
+                UnitsTotalFinal: false);
+        }
         if (snapshot.Leaderboards is not null)
         {
             return new PhaseProgressObservation(
@@ -1053,7 +1086,9 @@ public sealed class DurablePhaseProgressSink
         {
             return ExactSubphase(
                 id,
-                descriptor.DefaultUnitsKind ?? "items",
+                id == "extracting_band_context"
+                    ? "songs"
+                    : "batches",
                 snapshot.WorkItems.Completed,
                 snapshot.WorkItems.Total,
                 snapshot.WorkItemsTotalFinal == true);

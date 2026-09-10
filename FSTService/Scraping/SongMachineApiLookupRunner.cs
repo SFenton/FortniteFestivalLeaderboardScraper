@@ -1,6 +1,10 @@
 namespace FSTService.Scraping;
 
-internal sealed record SongMachineLookupResult<T>(bool Succeeded, T? Value) where T : class;
+internal sealed record SongMachineLookupResult<T>(
+    bool Succeeded,
+    T? Value,
+    Exception? Exception = null)
+    where T : class;
 
 /// <summary>
 /// Shared DOP-slot and CDN-resilience wrapper for song-machine API calls.
@@ -56,7 +60,7 @@ internal sealed class SongMachineApiLookupRunner
         {
             onFailure(ex);
             _progress.ReportPhaseRetry();
-            return new SongMachineLookupResult<T>(false, null);
+            return new SongMachineLookupResult<T>(false, null, ex);
         }
     }
 

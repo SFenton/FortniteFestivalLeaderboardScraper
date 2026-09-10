@@ -361,8 +361,8 @@ Exact catalog selection
   -> registered-user recurring refresh
   -> early snapshot activation
   -> BandExtraction:
-       derive band rows
-       -> team membership/configuration summary rebuild
+       derive band rows (exact song subphase; indeterminate parent)
+       -> team membership/configuration summary rebuild (new exact batch epoch)
   -> registered-player band discovery
   -> registered-band targeted processing
   -> BandMaintenance:
@@ -455,7 +455,7 @@ required before performance acceptance.
 | Early snapshot activation | Use expected/manifests rather than scanning candidate snapshot rows; evaluate one activation | Potential query rewrite; final activation removal requires separate proof | Bounded plan and isolated current-state checksums | At least 30% phase reduction; exact snapshot state and current reads | Restore existing SQL/calls | `full-scrape-ab` |
 | `BandExtraction` | Make impacted teams/scopes reflect actual changed rows | Already parallel; do not increase DOP first | Same input rows, compare impacted-key sets and band outputs | Exact band rows; fewer downstream scopes | Keep broad-impact mode | `full-scrape-ab` |
 | `LegacyBandScrape` | Retain direct `--band-post-scrape`; remove only duplicate await | Mode audit proved the direct legacy launch remains supported | CLI/config matrix plus targeted tests | No supported mode loses band acquisition | Revert duplicate-await deletion | `full-scrape-ab` |
-| Band discovery/targeting | Add lookup budgets, results, retry, and checkpoint timings | Low priority; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase | Restore serial order | `full-scrape-ab` |
+| Band discovery/targeting | Use identifier-free logical lookup duration/outcome evidence to select PR B thresholds; add network-attempt/send/proxy-wait/persistence timing only if a typed existing abstraction can expose it | PR A retains serial execution and existing hard limits; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase; evidence-backed threshold | Restore serial order | `full-scrape-ab` |
 | Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Secondary measured target: `1,144,264 ms` (`14.41%`) in scrape `1293` | Isolated changed-scope A/B after current projection analysis | Exact retained entries/members; ≥20% subphase reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
 | BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; separate from BandMaintenance timing and optimization | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
 | BandMaintenance current projection refresh | Analyze unchanged-scope selection and replace/delete volume before changing the algorithm | First measured target: `6,049,933 ms` (`76.20%`), `53,543` considered scopes, `8,020` refreshed | Bounded query/plan and same-input checksum probe, then one-variable full-scrape A/B | Exact current/public DTO hashes; materially fewer than `14,179,946` writes and `14,189,655` deletes; no >10% resource regression | Existing broad current refresh | `full-scrape-ab` |

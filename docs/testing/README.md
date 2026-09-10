@@ -130,6 +130,18 @@ The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
 
+Focused registered-band correctness and progress validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~RegisteredPlayerBandDiscoveryOrchestratorTests|FullyQualifiedName~RegisteredBandProcessingOrchestratorTests|FullyQualifiedName~DurablePhaseProgressSinkTests|FullyQualifiedName~PostScrapeBandExtractorTests|FullyQualifiedName~PostScrapeOrchestratorTests|FullyQualifiedName~GlobalLeaderboardScraperTests'
+```
+
+This covers exact lookup checkpoint progress, attempted-subject fairness,
+retryable exact invalid-leaderboard handling, adaptive-limiter cleanup,
+BandExtraction subphase resets and final-total invariants, typed partial-result
+failure accounting, and caller cancellation.
+
 Focused snapshot-retention policy validation:
 
 ```bash
