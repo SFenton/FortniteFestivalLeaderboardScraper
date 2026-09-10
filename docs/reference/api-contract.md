@@ -394,6 +394,14 @@ during a rolling upgrade; consumers must retain the existing version-2 fields
 and treat a named legacy subphase as indeterminate rather than fabricating an
 exact value.
 
+`post.band_extraction` keeps parent progress indeterminate because its
+`extracting_band_context` and `rebuilding_band_membership_summary` subphases
+use exact `songs` and `batches` epochs respectively. The registered discovery
+and targeted phase descriptors use `lookups`; completion means the Epic lookup
+and every required durable checkpoint write succeeded. Attempted
+account/band counters remain secondary telemetry and do not inflate the
+primary percentage.
+
 For `post.leaderboard_rivals`, plan-v2 parent units remain `accounts`.
 Scheduled batched processing exposes the additive
 `leaderboard_rivals_account_instruments` subphase with exact

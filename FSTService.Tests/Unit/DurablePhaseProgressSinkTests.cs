@@ -218,6 +218,9 @@ public sealed class DurablePhaseProgressSinkTests
                 },
                 WorkItemsTotalFinal = true,
             }));
+        Assert.Null(extraction.PhasePercent);
+        Assert.False(extraction.UnitsTotalFinal);
+        Assert.Equal("songs", extraction.SubphaseProgress?.UnitsKind);
         Assert.Equal(100, extraction.SubphaseProgress?.Percent);
 
         sink.TransitionSubphase(
@@ -238,9 +241,63 @@ public sealed class DurablePhaseProgressSinkTests
             }));
 
         Assert.Equal(25, membership.SubphaseProgress?.Percent);
+        Assert.Equal("batches", membership.SubphaseProgress?.UnitsKind);
+        Assert.Null(membership.PhasePercent);
         Assert.NotEqual(
             extraction.SubphaseProgress?.Epoch,
             membership.SubphaseProgress?.Epoch);
+    }
+
+    [Fact]
+    public void Final_total_shrink_never_persists_completed_above_total()
+    {
+        var (sink, metaDb, clock) = CreateSink();
+        sink.AttachScrape(1376, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "RegisteredBandTargetedProcessing")!;
+        sink.StartPhase(descriptor, "registered_band_targeted_processing");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var productionShaped = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation = "registered_band_targeted_processing",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 77,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Equal(77, productionShaped.UnitsCompleted);
+        Assert.Equal(80, productionShaped.UnitsTotal);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var defensive = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation = "registered_band_targeted_processing",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 4,
+                    Total = 4,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+
+        Assert.Equal(77, defensive.UnitsCompleted);
+        Assert.Equal(77, defensive.UnitsTotal);
+        Assert.Equal(100, defensive.PhasePercent);
+        Assert.Equal(77, defensive.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(77, defensive.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(100, defensive.SubphaseProgress?.Percent);
+        metaDb.Received().UpdateScrapePhaseAttemptProgress(
+            Arg.Is<ScrapePhaseAttemptProgress>(progress =>
+                progress.UnitsCompleted == 77
+                && progress.UnitsTotal == 77
+                && progress.UnitsCompleted <= progress.UnitsTotal));
     }
 
     [Fact]

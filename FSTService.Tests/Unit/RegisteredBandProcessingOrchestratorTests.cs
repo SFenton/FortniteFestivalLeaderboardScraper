@@ -337,6 +337,78 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_exact_invalid_leaderboard_is_retryable()
+    {
+        const string teamKey = "acct1:acct2";
+        InsertBandProjection("Band_Duets", teamKey, ["acct1", "acct2"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", teamKey);
+        var strategy = new InvalidThenSuccessBandStrategy();
+        var orchestrator = CreateOrchestrator(
+            strategy,
+            maxLookupsPerBand: 1);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+
+        var first = await orchestrator.RunAsync(
+            ["song-a"],
+            [],
+            "token",
+            "caller",
+            pool);
+
+        Assert.Equal(0, first.LookupsChecked);
+        Assert.Empty(Db.GetCheckedRegisteredBandLookups(
+            "web-band-tracker",
+            "Band_Duets",
+            teamKey));
+        Assert.Equal(
+            "error",
+            Db.GetRegisteredBandProcessingStatus(
+                "web-band-tracker",
+                "Band_Duets",
+                teamKey)?.Status);
+
+        var second = await orchestrator.RunAsync(
+            ["song-a"],
+            [],
+            "token",
+            "caller",
+            pool);
+
+        Assert.Equal(1, second.LookupsChecked);
+        Assert.Equal(1, second.EntriesPersisted);
+        Assert.Single(Db.GetCheckedRegisteredBandLookups(
+            "web-band-tracker",
+            "Band_Duets",
+            teamKey));
+    }
+
+    [Fact]
+    public async Task RunAsync_caller_cancellation_stays_cancellation_and_clears_limiter()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+        var tracker = new ScrapeProgressTracker();
+        var orchestrator = CreateOrchestrator(
+            new CancellingBandStrategy(),
+            maxLookupsPerBand: 1,
+            tracker: tracker);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            orchestrator.RunAsync(
+                ["song-a"],
+                [],
+                "token",
+                "caller",
+                pool,
+                cts.Token));
+
+        Assert.Null(tracker.GetProgressResponse().Current?.CurrentDop);
+    }
+
+    [Fact]
     public void GetRegisteredBands_PrioritizesPendingOverOlderError()
     {
         const string errorTeam =
@@ -402,7 +474,8 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
     private RegisteredBandProcessingOrchestrator CreateOrchestrator(
         IRegisteredBandLookupStrategy strategy,
         int maxLookupsPerBand,
-        int maxLookupsPerPass = 80)
+        int maxLookupsPerPass = 80,
+        ScrapeProgressTracker? tracker = null)
     {
         var bandPersistence = new BandLeaderboardPersistence(
             _fixture.DataSource,
@@ -419,7 +492,7 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             Db,
             bandPersistence,
             strategy,
-            new ScrapeProgressTracker(),
+            tracker ?? new ScrapeProgressTracker(),
             options,
             Substitute.For<ILogger<RegisteredBandProcessingOrchestrator>>(),
             new RegistrationMutationCoordinator(
@@ -506,5 +579,64 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             throw new HttpRequestException(
                 "Synthetic invalid leaderboard.");
         }
+    }
+
+    private sealed class InvalidThenSuccessBandStrategy
+            : IRegisteredBandLookupStrategy
+    {
+        private int _calls;
+
+        public Task<RegisteredBandLookupResult> FetchAsync(
+            BandWorkItem band,
+            RegisteredBandLookupIntent intent,
+            string accessToken,
+            string callerAccountId,
+            AdaptiveConcurrencyLimiter? limiter,
+            CancellationToken ct)
+        {
+            if (_calls++ == 0)
+                throw new EpicLeaderboardUnavailableException();
+
+            return Task.FromResult(new RegisteredBandLookupResult(
+            [
+                new BandLeaderboardEntry
+                    {
+                        TeamKey = band.TeamKey,
+                        TeamMembers = band.MemberAccountIds.ToArray(),
+                        InstrumentCombo = "0:1",
+                        Score = 100,
+                        MemberStats =
+                        [
+                            new BandMemberStats
+                            {
+                                MemberIndex = 0,
+                                AccountId = band.MemberAccountIds[0],
+                                InstrumentId = 0,
+                                Score = 50,
+                            },
+                            new BandMemberStats
+                            {
+                                MemberIndex = 1,
+                                AccountId = band.MemberAccountIds[1],
+                                InstrumentId = 1,
+                                Score = 50,
+                            },
+                        ],
+                    },
+                ]));
+        }
+    }
+
+    private sealed class CancellingBandStrategy
+            : IRegisteredBandLookupStrategy
+    {
+        public Task<RegisteredBandLookupResult> FetchAsync(
+            BandWorkItem band,
+            RegisteredBandLookupIntent intent,
+            string accessToken,
+            string callerAccountId,
+            AdaptiveConcurrencyLimiter? limiter,
+            CancellationToken ct) =>
+            Task.FromCanceled<RegisteredBandLookupResult>(ct);
     }
 }

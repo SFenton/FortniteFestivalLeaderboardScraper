@@ -1823,6 +1823,42 @@ public sealed class PostScrapeOrchestrator
             _phaseFaultInjector?.BeforePhase(phaseName);
             result = await phase();
         }
+        catch (PartialResultFailureException<T> ex)
+        {
+            result = ex.PartialResultValue;
+            sw.Stop();
+            var error = ex.InnerException?.Message ?? ex.Message;
+            CompleteDurablePhase(
+                phaseName,
+                "failed",
+                criticality == PostScrapePhaseCriticality.BestEffort
+                    ? error
+                    : null,
+                criticality == PostScrapePhaseCriticality.PublicationCritical
+                    ? error
+                    : null);
+            UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {error}");
+            RecordPhaseOutcome(
+                ctx,
+                phaseName,
+                criticality,
+                false,
+                startedAt,
+                sw.Elapsed,
+                error);
+            _log.LogWarning(
+                ex.InnerException ?? ex,
+                "PostScrape phase [{Phase}] failed ({Criticality}) after producing a partial result. Will retry next pass.",
+                phaseName,
+                criticality);
+            if (criticality == PostScrapePhaseCriticality.PublicationCritical
+                && (alwaysPropagateFailure
+                    || _persistence.EnforcePublicationCriticalPhases))
+            {
+                throw;
+            }
+            return result;
+        }
         catch (OperationCanceledException)
         {
             CompleteDurablePhase(phaseName, "cancelled");
@@ -1991,6 +2027,13 @@ public sealed class PostScrapeOrchestrator
         bool alwaysPropagateFailure = false) =>
         RunPhaseAsync(ctx, phaseName, phase, alwaysPropagateFailure);
 
+    internal Task<T> RunClassifiedResultPhaseForTestAsync<T>(
+        ScrapePassContext ctx,
+        string phaseName,
+        Func<Task<T>> phase,
+        T defaultValue = default!) =>
+        RunPhaseAsync(ctx, phaseName, phase, defaultValue);
+
     private void RecordPhaseOutcome(
         ScrapePassContext ctx,
         string phaseName,
@@ -2072,6 +2115,20 @@ public sealed class PostScrapeOrchestrator
         try
         {
             return await operation(timeoutCts?.Token ?? ct);
+        }
+        catch (PartialResultOperationCanceledException<T> ex)
+            when (timeoutCts?.IsCancellationRequested == true
+                  && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Post-scrape {OperationName} timed out after {Timeout}. Continuing with downstream phases using the partial result; work will retry next pass.",
+                operationName,
+                timeout);
+            throw new PartialResultFailureException<T>(
+                ex.PartialResult,
+                new TimeoutException(
+                    $"Post-scrape {operationName} timed out after {timeout}.",
+                    ex));
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true && !ct.IsCancellationRequested)
         {

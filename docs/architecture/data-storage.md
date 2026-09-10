@@ -628,6 +628,26 @@ Timing persistence is best effort and cannot change phase failure,
 cancellation, or publication behavior. Retention remains owned by the existing
 service-level metadata cleanup.
 
+Registered lookup progress distinguishes successful durable checkpoints from
+attempts. Exact Epic `invalid_leaderboard` responses remain retryable:
+discovery upserts `checked=0` with a refreshed `checked_at`, while targeted
+processing leaves the lookup unchecked and the band status retryable. A later
+successful lookup may therefore discover a board that was not instantiated on
+the earlier pass.
+
+Result-bearing post-scrape failures carry their accumulated entries, impacted
+teams/scopes, counters, and instrumentation through a typed partial-result
+failure. `scrape_phase_outcomes` and `scrape_phase_attempts` still persist
+`failed`; partial impacts are merged into downstream BandMaintenance rather
+than being replaced by an empty result.
+
+For extraction, successfully persisted teams still receive their membership
+summary rebuild before an earlier per-song failure is rethrown. For discovery,
+the partial-impact set is advanced immediately after `band_entries`
+persistence; registration and lookup-checkpoint failures therefore cannot hide
+already-written band rows, but they also cannot increment successful lookup
+progress.
+
 For BandMaintenance timing rows, `success=false` means the subphase did not
 complete successfully, including cancellation. Optional row/scope metrics are
 null on failure because partial work may have occurred. Successful no-work

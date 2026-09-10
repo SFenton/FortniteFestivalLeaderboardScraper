@@ -207,10 +207,18 @@ first on the next pass.
 | `Scraper__RegisteredBandProcessingMaxBandsPerPass` | `10` |
 | `Scraper__RegisteredBandProcessingMaxLookupsPerPass` | `80` |
 
-The discovery timeout has one minute of headroom above the observed 80-lookup
-runtime. Scrape `1277` completed all 80 lookups in 291,752 ms, while scrape
-`1278` checkpointed 78 lookups before the former five-minute limit expired.
-The per-pass lookup cap and per-request cancellation remain the primary bounds.
+The hard limits remain six minutes for discovery and five minutes for targeted
+processing; they are failure boundaries, not promised headroom. Later
+production evidence falsified the earlier headroom claim: successful
+checkpoint gaps reached `72.707 s`, scrape `1375` targeted processing stopped
+at `77/80` after `300.009 s`, and scrape `1376` discovery stopped at `77/80`
+after `360.017 s`. The per-pass admitted-lookup cap and per-request
+cancellation remain the primary bounds.
+
+Primary progress is successful durable lookup checkpoints (`lookups`), not
+attempted accounts or bands. A finite pass denominator is the exact admitted
+pending lookup count capped by the option. Failed lookups do not advance it;
+attempted subjects remain secondary telemetry and consume their subject caps.
 The registered-band count cap applies to attempted bands, including a band
 whose first lookup fails. Failed bands remain retryable, but a run of invalid
 or unavailable Epic leaderboards cannot bypass the ten-band bound, starve the
@@ -293,6 +301,13 @@ the exact lookup ID so an ID change reopens that season. Legacy and batched
 history reconstruction likewise remain pending when any required window is
 missing or its lookup fails, and version/fingerprint changes invalidate prior
 completion.
+
+The exact Epic `com.epicgames.events.invalid_leaderboard` response is
+retryable unavailable state, not permanent absence. Discovery records an
+unchecked attempted row and stops that account for the pass; targeted
+processing leaves the intent unchecked and advances to the next band.
+Arbitrary sequences of unavailable intents are not consumed within one
+subject.
 
 The cyclical machine snapshots the active season/window fingerprint. Late
 attachments requesting a different fingerprint wait for a new cycle rather

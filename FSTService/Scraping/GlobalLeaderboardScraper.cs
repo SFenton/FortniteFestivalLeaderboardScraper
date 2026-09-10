@@ -1102,6 +1102,11 @@ public class GlobalLeaderboardScraper
                 res.Dispose();
                 return null;
             }
+            if (EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(body))
+            {
+                res.Dispose();
+                throw new EpicLeaderboardUnavailableException();
+            }
 
             _log.LogWarning("Band lookup failed for {TeamKey} on {Song}/{BandType}/{Window}: {Status} {Body}",
                 string.Join(':', teamAccountIds), songId, bandType, windowId, res.StatusCode, body);
@@ -1156,6 +1161,11 @@ public class GlobalLeaderboardScraper
                     targetAccountId, songId, bandType, windowId);
                 res.Dispose();
                 return null;
+            }
+            if (EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(body))
+            {
+                res.Dispose();
+                throw new EpicLeaderboardUnavailableException();
             }
 
             _log.LogWarning("Band findTeams lookup failed for {Account} on {Song}/{BandType}/{Window}: {Status} {Body}",
@@ -2140,156 +2150,156 @@ public class GlobalLeaderboardScraper
             _log, maxRequestsPerSecond);
         try
         {
-        _progress.SetAdaptiveLimiter(limiter);
-        var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
+            _progress.SetAdaptiveLimiter(limiter);
+            var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
 
-        _log.LogInformation("Starting multi-song scrape: {SongCount} songs, DOP={MaxConcurrency} (adaptive)",
-            requests.Count, maxConcurrency);
+            _log.LogInformation("Starting multi-song scrape: {SongCount} songs, DOP={MaxConcurrency} (adaptive)",
+                requests.Count, maxConcurrency);
 
-        var tasks = requests.Select(async req =>
-        {
-            var songResults = await ScrapeSongAsync(
-                req.SongId, accessToken, accountId,
-                instruments: req.Instruments,
-                sharedLimiter: limiter,
-                ct: ct,
-                label: req.Label,
-                maxPages: maxPages,
-                maxScores: req.MaxScores,
-                overThresholdMultiplier: overThresholdMultiplier,
-                overThresholdExtraPages: overThresholdExtraPages,
-                validEntryTarget: validEntryTarget,
-                deferDeepScrape: deferDeepScrape,
-                validCutoffMultiplier: validCutoffMultiplier,
-                accessTokenProvider: accessTokenProvider);
-
-            results[req.SongId] = songResults;
-
-            // Deferred scopes must retain their wave-1 rows until the coordinated
-            // deep result is merged. Persist every other scope immediately.
-            var immediateResults = songResults
-                .Where(static result => result.DeferredDeepScrape is null)
-                .ToList();
-            if (onSongComplete is not null && immediateResults.Count > 0)
-                await onSongComplete(req.SongId, immediateResults);
-
-            foreach (var r in immediateResults)
+            var tasks = requests.Select(async req =>
             {
-                r.Entries = [];
-            }
+                var songResults = await ScrapeSongAsync(
+                    req.SongId, accessToken, accountId,
+                    instruments: req.Instruments,
+                    sharedLimiter: limiter,
+                    ct: ct,
+                    label: req.Label,
+                    maxPages: maxPages,
+                    maxScores: req.MaxScores,
+                    overThresholdMultiplier: overThresholdMultiplier,
+                    overThresholdExtraPages: overThresholdExtraPages,
+                    validEntryTarget: validEntryTarget,
+                    deferDeepScrape: deferDeepScrape,
+                    validCutoffMultiplier: validCutoffMultiplier,
+                    accessTokenProvider: accessTokenProvider);
 
-            _progress.ReportSongComplete();
-        }).ToList();
+                results[req.SongId] = songResults;
 
-        await Task.WhenAll(tasks);
+                // Deferred scopes must retain their wave-1 rows until the coordinated
+                // deep result is merged. Persist every other scope immediately.
+                var immediateResults = songResults
+                    .Where(static result => result.DeferredDeepScrape is null)
+                    .ToList();
+                if (onSongComplete is not null && immediateResults.Count > 0)
+                    await onSongComplete(req.SongId, immediateResults);
 
-        // ── Phase 2: Coordinated deep scrape ──
-        // Collect deferred deep scrape metadata from wave 1 results.
-        // Run them breadth-first through the coordinator so lowest pages
-        // across all combos are fetched first, keeping the DOP saturated.
-        if (deferDeepScrape && validEntryTarget > 0)
-        {
-            var deferredMetadata = results.Values
-                .SelectMany(songResults => songResults)
-                .Where(r => r.DeferredDeepScrape is not null)
-                .Select(r => r.DeferredDeepScrape!)
-                .ToList();
-
-            if (deferredMetadata.Count > 0)
-            {
-                _log.LogInformation(
-                    "Starting coordinated deep scrape: {Count} combos deferred from wave 1.",
-                    deferredMetadata.Count);
-
-                _progress.SetSubOperation("deep_scraping");
-
-                var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
-                var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
-                long completedDeepJobs = 0;
-                _progress.SetDeepScrapeProgress(0, deepJobs.Count);
-
-                var deepResults = await coordinator.RunAsync(
-                    deepJobs, limiter, accessToken, accountId,
-                    seedBatch: overThresholdExtraPages,
-                    onJobComplete: _ =>
-                    {
-                        _progress.SetDeepScrapeProgress(
-                            Interlocked.Increment(ref completedDeepJobs),
-                            deepJobs.Count);
-                        return ValueTask.CompletedTask;
-                    },
-                    ct,
-                    accessTokenProvider);
-
-                var deepResultsByScope = deepResults.ToDictionary(
-                    static result => (result.SongId, result.Instrument));
-                var mergedResultsBySong = new Dictionary<string, List<GlobalLeaderboardResult>>(
-                    StringComparer.OrdinalIgnoreCase);
-
-                foreach (var (songId, songResults) in results)
+                foreach (var r in immediateResults)
                 {
-                    for (var index = 0; index < songResults.Count; index++)
+                    r.Entries = [];
+                }
+
+                _progress.ReportSongComplete();
+            }).ToList();
+
+            await Task.WhenAll(tasks);
+
+            // ── Phase 2: Coordinated deep scrape ──
+            // Collect deferred deep scrape metadata from wave 1 results.
+            // Run them breadth-first through the coordinator so lowest pages
+            // across all combos are fetched first, keeping the DOP saturated.
+            if (deferDeepScrape && validEntryTarget > 0)
+            {
+                var deferredMetadata = results.Values
+                    .SelectMany(songResults => songResults)
+                    .Where(r => r.DeferredDeepScrape is not null)
+                    .Select(r => r.DeferredDeepScrape!)
+                    .ToList();
+
+                if (deferredMetadata.Count > 0)
+                {
+                    _log.LogInformation(
+                        "Starting coordinated deep scrape: {Count} combos deferred from wave 1.",
+                        deferredMetadata.Count);
+
+                    _progress.SetSubOperation("deep_scraping");
+
+                    var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
+                    var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
+                    long completedDeepJobs = 0;
+                    _progress.SetDeepScrapeProgress(0, deepJobs.Count);
+
+                    var deepResults = await coordinator.RunAsync(
+                        deepJobs, limiter, accessToken, accountId,
+                        seedBatch: overThresholdExtraPages,
+                        onJobComplete: _ =>
+                        {
+                            _progress.SetDeepScrapeProgress(
+                                Interlocked.Increment(ref completedDeepJobs),
+                                deepJobs.Count);
+                            return ValueTask.CompletedTask;
+                        },
+                        ct,
+                        accessTokenProvider);
+
+                    var deepResultsByScope = deepResults.ToDictionary(
+                        static result => (result.SongId, result.Instrument));
+                    var mergedResultsBySong = new Dictionary<string, List<GlobalLeaderboardResult>>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var (songId, songResults) in results)
                     {
-                        var wave1 = songResults[index];
-                        if (wave1.DeferredDeepScrape is null)
-                            continue;
-
-                        if (!deepResultsByScope.TryGetValue((wave1.SongId, wave1.Instrument), out var deep))
-                            throw new InvalidOperationException(
-                                $"Coordinated deep scrape returned no result for {wave1.SongId}/{wave1.Instrument}.");
-
-                        var mergedEntries = new List<LeaderboardEntry>(
-                            wave1.Entries.Count + deep.Entries.Count);
-                        mergedEntries.AddRange(wave1.Entries);
-                        mergedEntries.AddRange(deep.Entries);
-
-                        var merged = new GlobalLeaderboardResult
+                        for (var index = 0; index < songResults.Count; index++)
                         {
-                            SongId = wave1.SongId,
-                            Instrument = wave1.Instrument,
-                            Entries = mergedEntries,
-                            EntriesCount = mergedEntries.Count,
-                            TotalPages = Math.Max(wave1.TotalPages, deep.TotalPages),
-                            ReportedTotalPages = Math.Max(
-                                wave1.ReportedTotalPages,
-                                deep.ReportedTotalPages),
-                            PagesScraped = wave1.PagesScraped + deep.PagesScraped,
-                            Requests = wave1.Requests + deep.Requests,
-                            BytesReceived = wave1.BytesReceived + deep.BytesReceived,
-                            CompletenessManifest =
-                                wave1.CompletenessManifest is not null
-                                && deep.CompletenessManifest is not null
-                                    ? ScopeCompletenessManifest.Merge(
-                                        wave1.CompletenessManifest,
-                                        deep.CompletenessManifest,
-                                        mergedEntries)
-                                    : null,
-                        };
+                            var wave1 = songResults[index];
+                            if (wave1.DeferredDeepScrape is null)
+                                continue;
 
-                        songResults[index] = merged;
-                        if (!mergedResultsBySong.TryGetValue(songId, out var pending))
-                        {
-                            pending = [];
-                            mergedResultsBySong[songId] = pending;
+                            if (!deepResultsByScope.TryGetValue((wave1.SongId, wave1.Instrument), out var deep))
+                                throw new InvalidOperationException(
+                                    $"Coordinated deep scrape returned no result for {wave1.SongId}/{wave1.Instrument}.");
+
+                            var mergedEntries = new List<LeaderboardEntry>(
+                                wave1.Entries.Count + deep.Entries.Count);
+                            mergedEntries.AddRange(wave1.Entries);
+                            mergedEntries.AddRange(deep.Entries);
+
+                            var merged = new GlobalLeaderboardResult
+                            {
+                                SongId = wave1.SongId,
+                                Instrument = wave1.Instrument,
+                                Entries = mergedEntries,
+                                EntriesCount = mergedEntries.Count,
+                                TotalPages = Math.Max(wave1.TotalPages, deep.TotalPages),
+                                ReportedTotalPages = Math.Max(
+                                    wave1.ReportedTotalPages,
+                                    deep.ReportedTotalPages),
+                                PagesScraped = wave1.PagesScraped + deep.PagesScraped,
+                                Requests = wave1.Requests + deep.Requests,
+                                BytesReceived = wave1.BytesReceived + deep.BytesReceived,
+                                CompletenessManifest =
+                                    wave1.CompletenessManifest is not null
+                                    && deep.CompletenessManifest is not null
+                                        ? ScopeCompletenessManifest.Merge(
+                                            wave1.CompletenessManifest,
+                                            deep.CompletenessManifest,
+                                            mergedEntries)
+                                        : null,
+                            };
+
+                            songResults[index] = merged;
+                            if (!mergedResultsBySong.TryGetValue(songId, out var pending))
+                            {
+                                pending = [];
+                                mergedResultsBySong[songId] = pending;
+                            }
+                            pending.Add(merged);
                         }
-                        pending.Add(merged);
+                    }
+
+                    foreach (var (songId, mergedResults) in mergedResultsBySong)
+                    {
+                        if (onSongComplete is not null)
+                            await onSongComplete(songId, mergedResults);
+
+                        foreach (var result in mergedResults)
+                            result.Entries = [];
                     }
                 }
-
-                foreach (var (songId, mergedResults) in mergedResultsBySong)
-                {
-                    if (onSongComplete is not null)
-                        await onSongComplete(songId, mergedResults);
-
-                    foreach (var result in mergedResults)
-                        result.Entries = [];
-                }
             }
-        }
 
-        _progress.SetAdaptiveLimiter(null);
+            _progress.SetAdaptiveLimiter(null);
 
-        return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
+            return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
         }
         finally
         {
@@ -2333,78 +2343,78 @@ public class GlobalLeaderboardScraper
             requests.Count, effectiveSongConcurrency, limiter.MaxDop);
         try
         {
-        _progress.SetAdaptiveLimiter(limiter);
+            _progress.SetAdaptiveLimiter(limiter);
 
-        using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
+            using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
 
-        var tasks = requests.Select(async req =>
-        {
-            await songSemaphore.WaitAsync(ct);
-            List<GlobalLeaderboardResult> songResults;
-            try
+            var tasks = requests.Select(async req =>
             {
-                var instTasks = req.Instruments.Select(async inst =>
+                await songSemaphore.WaitAsync(ct);
+                List<GlobalLeaderboardResult> songResults;
+                try
                 {
-                    int? choptMax = req.MaxScores?.GetByInstrument(inst);
-                    var result = await ScrapeLeaderboardSequentialAsync(
-                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
-                        choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
-                        overThresholdExtraPages: overThresholdExtraPages,
-                        validEntryTarget: validEntryTarget,
-                        validCutoffMultiplier: validCutoffMultiplier,
-                        onPageScraped: onPageScraped,
-                        onBandPageScraped: onBandPageScraped,
-                        maxScores: req.MaxScores,
-                        accessTokenProvider: accessTokenProvider);
-
-                    // When entries accumulated in-memory (onPageScraped was null),
-                    // enqueue per-instrument immediately so memory is freed before
-                    // waiting for sibling instruments to finish. This keeps peak
-                    // memory proportional to one instrument's pages (~6 MB) rather
-                    // than an entire song's (~36 MB) or all concurrent songs.
-                    if (result.Entries.Count > 0 && onSongComplete is not null)
+                    var instTasks = req.Instruments.Select(async inst =>
                     {
-                        await onSongComplete(req.SongId, [result]);
-                        result.Entries = [];
-                    }
+                        int? choptMax = req.MaxScores?.GetByInstrument(inst);
+                        var result = await ScrapeLeaderboardSequentialAsync(
+                            req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
+                            choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
+                            overThresholdExtraPages: overThresholdExtraPages,
+                            validEntryTarget: validEntryTarget,
+                            validCutoffMultiplier: validCutoffMultiplier,
+                            onPageScraped: onPageScraped,
+                            onBandPageScraped: onBandPageScraped,
+                            maxScores: req.MaxScores,
+                            accessTokenProvider: accessTokenProvider);
 
-                    return result;
-                }).ToList();
+                        // When entries accumulated in-memory (onPageScraped was null),
+                        // enqueue per-instrument immediately so memory is freed before
+                        // waiting for sibling instruments to finish. This keeps peak
+                        // memory proportional to one instrument's pages (~6 MB) rather
+                        // than an entire song's (~36 MB) or all concurrent songs.
+                        if (result.Entries.Count > 0 && onSongComplete is not null)
+                        {
+                            await onSongComplete(req.SongId, [result]);
+                            result.Entries = [];
+                        }
 
-                songResults = (await Task.WhenAll(instTasks)).ToList();
-            }
-            finally
-            {
-                songSemaphore.Release();
-            }
+                        return result;
+                    }).ToList();
 
-            results[req.SongId] = songResults;
+                    songResults = (await Task.WhenAll(instTasks)).ToList();
+                }
+                finally
+                {
+                    songSemaphore.Release();
+                }
 
-            // For the onPageScraped path, entries are already persisted per-page
-            // and result.Entries is empty. For the in-memory path, entries were
-            // already enqueued per-instrument above and cleared.
-            // Call onSongComplete only if there are leftover entries (shouldn't
-            // happen, but safety net for non-sequential callers).
-            if (onSongComplete is not null)
-            {
-                var remaining = songResults.Where(r => r.Entries.Count > 0).ToList();
-                if (remaining.Count > 0)
-                    await onSongComplete(req.SongId, remaining);
-            }
+                results[req.SongId] = songResults;
 
-            // Release entry data after persistence callback
-            foreach (var r in songResults)
-            {
-                r.Entries = [];
-                r.DeferredDeepScrape = null;
-            }
+                // For the onPageScraped path, entries are already persisted per-page
+                // and result.Entries is empty. For the in-memory path, entries were
+                // already enqueued per-instrument above and cleared.
+                // Call onSongComplete only if there are leftover entries (shouldn't
+                // happen, but safety net for non-sequential callers).
+                if (onSongComplete is not null)
+                {
+                    var remaining = songResults.Where(r => r.Entries.Count > 0).ToList();
+                    if (remaining.Count > 0)
+                        await onSongComplete(req.SongId, remaining);
+                }
 
-            _progress.ReportSongComplete();
-        }).ToList();
+                // Release entry data after persistence callback
+                foreach (var r in songResults)
+                {
+                    r.Entries = [];
+                    r.DeferredDeepScrape = null;
+                }
 
-        await Task.WhenAll(tasks);
+                _progress.ReportSongComplete();
+            }).ToList();
 
-        return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
+            await Task.WhenAll(tasks);
+
+            return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
         }
         finally
         {
@@ -2567,44 +2577,44 @@ public class GlobalLeaderboardScraper
                     }
                     else
                     {
-                    var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
-                        work: () => FetchPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token, accessTokenProvider),
-                        pageCts.Token,
-                        acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, pageCts.Token) : null,
-                        releaseSlot: limiter is not null ? limiter.Release : null);
-                    Interlocked.Increment(ref requestCount);
-                    Interlocked.Add(ref totalBytes, bodyLen);
-                    _progress.ReportPageFetched(bodyLen);
+                        var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
+                            work: () => FetchPageAsync(
+                                songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token, accessTokenProvider),
+                            pageCts.Token,
+                            acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, pageCts.Token) : null,
+                            releaseSlot: limiter is not null ? limiter.Release : null);
+                        Interlocked.Increment(ref requestCount);
+                        Interlocked.Add(ref totalBytes, bodyLen);
+                        _progress.ReportPageFetched(bodyLen);
 
-                    if (parsed is not null)
-                    {
-                        if (onPageScraped is not null)
-                            await onPageScraped(songId, instrument, parsed.Entries);
-                        else
-                            allEntries![pageNum] = parsed.Entries;
-                        Interlocked.Add(ref entriesCount, parsed.Entries.Count);
-                        Interlocked.Increment(ref pagesScraped);
-                        Interlocked.Exchange(ref consecutive403s, 0);
-                    }
-                    else if (status == FetchStatus.Forbidden)
-                    {
-                        var count = Interlocked.Increment(ref consecutive403s);
-                        if (count >= ForbiddenThreshold &&
-                            Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
+                        if (parsed is not null)
                         {
-                            _log.LogInformation(
-                                "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
-                                "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
-                                label ?? songId, songId, instrument, pageNum,
-                                reportedPages, pagesScraped, entriesCount);
-                            try { pageCts.Cancel(); } catch { }
+                            if (onPageScraped is not null)
+                                await onPageScraped(songId, instrument, parsed.Entries);
+                            else
+                                allEntries![pageNum] = parsed.Entries;
+                            Interlocked.Add(ref entriesCount, parsed.Entries.Count);
+                            Interlocked.Increment(ref pagesScraped);
+                            Interlocked.Exchange(ref consecutive403s, 0);
                         }
-                        else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
+                        else if (status == FetchStatus.Forbidden)
                         {
-                            try { pageCts.Cancel(); } catch { }
+                            var count = Interlocked.Increment(ref consecutive403s);
+                            if (count >= ForbiddenThreshold &&
+                                Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
+                            {
+                                _log.LogInformation(
+                                    "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
+                                    "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
+                                    label ?? songId, songId, instrument, pageNum,
+                                    reportedPages, pagesScraped, entriesCount);
+                                try { pageCts.Cancel(); } catch { }
+                            }
+                            else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
+                            {
+                                try { pageCts.Cancel(); } catch { }
+                            }
                         }
-                    }
                     } // end solo branch
                 }
                 catch (OperationCanceledException) when (pageCts.IsCancellationRequested && !ct.IsCancellationRequested)
@@ -2674,8 +2684,13 @@ public class GlobalLeaderboardScraper
                 }
             }
 
-            return new ParsedPage { Page = page, TotalPages = totalPages, Entries = entries,
-                EstimatedBytes = entries.Count * 350 /* rough per-entry estimate */ };
+            return new ParsedPage
+            {
+                Page = page,
+                TotalPages = totalPages,
+                Entries = entries,
+                EstimatedBytes = entries.Count * 350 /* rough per-entry estimate */
+            };
         }
         catch
         {

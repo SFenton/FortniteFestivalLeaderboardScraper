@@ -597,6 +597,46 @@ remain explicitly indeterminate. Timeout/cancel transition states are also
 `not_applicable`; parent phase progress is never relabeled as subphase
 progress.
 
+`BandExtraction` intentionally has no exact parent percentage because song
+extraction and membership-summary rebuild use unrelated units. Its subphase
+epochs are exact `songs` and `batches` counters and reset at the stage
+transition. If a producer reports a shrinking final total, the durable sink
+preserves monotonic completion and raises the effective total to at least the
+completed count, so neither the parent nor a subphase can persist
+`completed > total`.
+
+Registered-player discovery and targeted registered-band processing use
+successful durable lookup checkpoints as their parent `lookups` units.
+Finite admitted work has an exact denominator capped by the configured
+per-pass limit; failed or unavailable lookups never advance completion.
+Attempted accounts/bands remain secondary counters. Discovery consumes the
+account-attempt budget even when a subject has no pending lookup, and both
+orchestrators always clear adaptive-limiter telemetry on success, failure, or
+cancellation.
+
+Identifier-free metrics record end-to-end logical lookup duration with only
+phase (`discovery`/`targeted`) and typed outcome tags
+(`success`, `notfound`, `invalidleaderboard`, `httpfailure`,
+`transportfailure`, or `cancelled`). The current abstraction does not expose a
+reliable per-logical-lookup network-attempt count, cumulative send time,
+proxy-wait time, persistence time, or caller-versus-phase cancellation split;
+those remain evidence gaps for PR B rather than inferred measurements.
+
+The exact Epic error
+`com.epicgames.events.invalid_leaderboard` is retryable unavailable state.
+Discovery refreshes an unchecked attempted row and rotates to the next fair
+account; targeted processing retains retryable error state and moves to the
+next band. Neither path permanently marks the intent absent. Result-bearing
+phase failures retain partial impacts for BandMaintenance while the phase
+ledger and durable attempt remain failed.
+
+Band extraction rebuilds membership summaries for successfully accumulated
+teams even when another song fails. The original extraction exception remains
+the phase failure; a secondary rebuild failure is logged and attached without
+replacing it. Discovery records impacted teams/scopes immediately after band
+entry persistence, before later registration/checkpoint metadata writes, while
+lookup completion still waits for every required durable write.
+
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
 overall/ETA metadata, heartbeat, and last-progress timestamps. Overall progress

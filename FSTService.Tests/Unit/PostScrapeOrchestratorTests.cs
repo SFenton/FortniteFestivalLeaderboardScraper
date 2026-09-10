@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Diagnostics;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Scraping;
@@ -1464,8 +1464,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 20).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"p_{i}", Score = 1000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"p_{i}",
+                Score = 1000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -1506,8 +1509,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"p_{i}", Score = 10000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"p_{i}",
+                Score = 10000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -1564,7 +1570,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
-                Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log, _registrationMutations, null);
+                Substitute.For<ILogger<BandScrapePhase>>()), new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()), opts, _log, _registrationMutations, null);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 â†’ no-op
@@ -1587,8 +1593,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 5).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"rank_{i}", Score = 10000 - i * 100,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"rank_{i}",
+                Score = 10000 - i * 100,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("rankSong", entries);
 
@@ -2443,8 +2452,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 50).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"prune_{i}", Score = 10000 - i * 100,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"prune_{i}",
+                Score = 10000 - i * 100,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -2778,16 +2790,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         var overEntries = Enumerable.Range(0, 150).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"exploiter_{i}", Score = 5000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"exploiter_{i}",
+                Score = 5000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
 
         // 200 valid entries (scores 1000 down to 5, all â‰¤ raw CHOpt max 1000)
         var validEntries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"valid_{i}", Score = 1000 - i * 5,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"valid_{i}",
+                Score = 1000 - i * 5,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
 
         db.UpsertEntries("song1", overEntries);
@@ -3463,6 +3481,64 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal("failed", reader.GetString(0));
         Assert.Equal("first-seen failed", reader.GetString(1));
         Assert.True(reader.IsDBNull(2));
+    }
+
+    [Fact]
+    public async Task ResultBearingFailurePreservesPartialImpactAndRecordsFailure()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.AttachScrape(scrapeId);
+        var ctx = CreateContext(scrapeId);
+        var partial = new RegisteredBandProcessingResult
+        {
+            BandsProcessed = 1,
+            LookupsChecked = 77,
+            EntriesPersisted = 1,
+            ImpactedTeamsByBandType =
+                new Dictionary<string, IReadOnlyCollection<string>>
+                {
+                    ["Band_Duets"] = ["team-a"],
+                },
+            ImpactedCurrentProjectionScopes =
+            [
+                new BandCurrentProjectionScopeKey(
+                    "song-a",
+                    "Band_Duets",
+                    "combo",
+                    "0:1"),
+            ],
+        };
+
+        var result = await _sut.RunClassifiedResultPhaseForTestAsync(
+            ctx,
+            "RegisteredBandTargetedProcessing",
+            () => throw new PartialResultFailureException<RegisteredBandProcessingResult>(
+                partial,
+                new TimeoutException("phase budget elapsed")),
+            RegisteredBandProcessingResult.Empty);
+
+        Assert.Same(partial, result);
+        Assert.Contains(
+            "team-a",
+            result.ImpactedTeamsByBandType["Band_Duets"]);
+        Assert.Single(result.ImpactedCurrentProjectionScopes);
+        var failed = Assert.Single(ctx.PostScrapeOutcomes.FailedBestEffortPhases);
+        Assert.False(failed.Success);
+        Assert.Equal("failed", failed.Status);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT status, error_message
+            FROM scrape_phase_outcomes
+            WHERE scrape_id = @scrapeId
+              AND phase = 'RegisteredBandTargetedProcessing'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("failed", reader.GetString(0));
+        Assert.Equal("phase budget elapsed", reader.GetString(1));
     }
 
     [Fact]
