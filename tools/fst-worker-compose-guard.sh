@@ -14,6 +14,7 @@ DATA_PROFILE="none"
 EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
 EXPECTED_WORKER_IMAGE_ID=""
 EXPECTED_WORKER_REVISION=""
+EXPECTED_WORKER_CONFIG_SHA256=""
 WORKER_MUTATION_LOCK_PATH="${FST_WORKER_COMPOSE_GUARD_LOCK_PATH:-}"
 INHERITED_WORKER_LOCK_FD=""
 WORKER_LOCK_FD=""
@@ -78,6 +79,9 @@ Options:
   --expected-worker-revision R
                            Require the image and started worker OCI revision
                            label to match the exact 40-hex commit R.
+  --expected-worker-config-sha256 H
+                           Require the canonical resolved fstworker service
+                           configuration, excluding only image, to hash to H.
   --inherited-worker-lock-fd N
                            For a mutating action, require descriptor N to
                            already own the canonical worker lock in this same
@@ -100,6 +104,7 @@ while [[ $# -gt 0 ]]; do
         --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
         --expected-worker-image-id) EXPECTED_WORKER_IMAGE_ID="$2"; shift 2 ;;
         --expected-worker-revision) EXPECTED_WORKER_REVISION="$2"; shift 2 ;;
+        --expected-worker-config-sha256) EXPECTED_WORKER_CONFIG_SHA256="$2"; shift 2 ;;
         --inherited-worker-lock-fd) INHERITED_WORKER_LOCK_FD="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -207,6 +212,12 @@ then
     printf 'ERROR: --expected-worker-revision must be a lowercase 40-hex commit\n' >&2
     exit 64
 fi
+if [[ -n "$EXPECTED_WORKER_CONFIG_SHA256" \
+    && ! "$EXPECTED_WORKER_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]]
+then
+    printf 'ERROR: --expected-worker-config-sha256 must be a lowercase SHA-256\n' >&2
+    exit 64
+fi
 if [[ -n "$EXPECTED_WORKER_IMAGE_ID" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
     printf 'ERROR: --expected-worker-image-id requires --expected-worker-image\n' >&2
     exit 64
@@ -235,9 +246,10 @@ if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
         exit 64
     fi
     if [[ -z "$EXPECTED_WORKER_IMAGE_ID" \
-        || -z "$EXPECTED_WORKER_REVISION" ]]
+        || -z "$EXPECTED_WORKER_REVISION" \
+        || -z "$EXPECTED_WORKER_CONFIG_SHA256" ]]
     then
-        printf 'ERROR: inherited worker handoff requires exact image ID and revision assertions\n' >&2
+        printf 'ERROR: inherited worker handoff requires exact image ID, revision, and configuration assertions\n' >&2
         exit 64
     fi
     if [[ ! "$EXPECTED_WORKER_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
@@ -587,6 +599,7 @@ fi
 
 validation="$(
     python3 -c '
+import hashlib
 import json
 import re
 import sys
@@ -600,7 +613,8 @@ profile_exact = sys.argv[5].casefold() == "true"
 require_run_once = sys.argv[6].casefold() == "true"
 data_profile = sys.argv[7]
 expected_worker_image = sys.argv[8]
-action = sys.argv[9]
+expected_worker_config_sha256 = sys.argv[9]
+action = sys.argv[10]
 recovery_mode = action == "recover-start"
 continuous_mode = not require_run_once
 
@@ -745,6 +759,19 @@ if expected_worker_image:
         raise SystemExit(
             "ERROR: resolved fstworker image must match "
             f"{expected_worker_image}, found {display_actual}")
+if expected_worker_config_sha256:
+    normalized_worker = dict(worker)
+    normalized_worker.pop("image", None)
+    actual_worker_config_sha256 = hashlib.sha256(
+        json.dumps(
+            normalized_worker,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if actual_worker_config_sha256 != expected_worker_config_sha256:
+        raise SystemExit(
+            "ERROR: resolved fstworker non-image configuration hash does not match")
 
 if data_profile == "publication-cache-generation":
     exact_value("Scraper__EnabledPhases", "All")
@@ -1091,7 +1118,7 @@ if recovery_mode:
         "$PROFILE_MAX_PER_ENDPOINT_RPS" \
         "$PROFILE_MAX_PER_ENDPOINT_CONCURRENCY" "$PROFILE_EXACT" \
         "$REQUIRE_RUN_ONCE" "$DATA_PROFILE" \
-        "$EXPECTED_WORKER_IMAGE" "$ACTION" \
+        "$EXPECTED_WORKER_IMAGE" "$EXPECTED_WORKER_CONFIG_SHA256" "$ACTION" \
         <<< "$compose_json"
 )"
 

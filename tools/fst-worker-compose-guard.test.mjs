@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
   chmod,
@@ -31,6 +32,27 @@ const expectedWorkerImageId = "sha256:" + "a".repeat(64);
 const expectedWorkerRevision = "1".repeat(40);
 const immutableWorkerImage =
   "example.invalid/fstworker@sha256:" + "e".repeat(64);
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort()
+        .map((key) => [key, canonicalize(value[key])])
+    );
+  }
+  return value;
+}
+
+function workerConfigSha256(config) {
+  const worker = structuredClone(config.services.fstworker);
+  delete worker.image;
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(worker)))
+    .digest("hex");
+}
 
 const fakeDockerSource = String.raw`#!/usr/bin/env node
 import {
@@ -1204,7 +1226,8 @@ describe("fstworker Compose startup recovery", () => {
   });
 
   it("binds a worker check to an exact image ID and revision", async () => {
-    const harness = await createHarness();
+    const config = buildComposeConfig();
+    const harness = await createHarness({ config });
     try {
       const result = await harness.run([
         "--check",
@@ -1214,7 +1237,9 @@ describe("fstworker Compose startup recovery", () => {
         "--expected-worker-image-id",
         expectedWorkerImageId,
         "--expected-worker-revision",
-        expectedWorkerRevision
+        expectedWorkerRevision,
+        "--expected-worker-config-sha256",
+        workerConfigSha256(config)
       ]);
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), []);
@@ -1239,6 +1264,26 @@ describe("fstworker Compose startup recovery", () => {
       assert.notEqual(result.code, 0);
       assert.deepEqual(await harness.events(), []);
       assert.match(result.stderr, /resolved to a different image ID/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects a mismatched resolved worker configuration hash", async () => {
+    const config = buildComposeConfig();
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check",
+        "--config-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-config-sha256",
+        "f".repeat(64)
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /non-image configuration hash does not match/);
     } finally {
       await harness.cleanup();
     }
@@ -1424,11 +1469,10 @@ describe("fstworker Compose startup recovery", () => {
   });
 
   it("retains a same-process inherited canonical lock through startup", async () => {
-    const harness = await createHarness({
-      config: buildComposeConfig({
-        workerImage: immutableWorkerImage
-      })
+    const config = buildComposeConfig({
+      workerImage: immutableWorkerImage
     });
+    const harness = await createHarness({ config });
     try {
       const result = await harness.runWithInheritedLock([
         "--recreate",
@@ -1437,7 +1481,9 @@ describe("fstworker Compose startup recovery", () => {
         "--expected-worker-image-id",
         expectedWorkerImageId,
         "--expected-worker-revision",
-        expectedWorkerRevision
+        expectedWorkerRevision,
+        "--expected-worker-config-sha256",
+        workerConfigSha256(config)
       ]);
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
@@ -1447,11 +1493,10 @@ describe("fstworker Compose startup recovery", () => {
   });
 
   it("rejects an inherited descriptor that does not own the canonical lock", async () => {
-    const harness = await createHarness({
-      config: buildComposeConfig({
-        workerImage: immutableWorkerImage
-      })
+    const config = buildComposeConfig({
+      workerImage: immutableWorkerImage
     });
+    const harness = await createHarness({ config });
     try {
       const result = await harness.run([
         "--recreate",
@@ -1461,6 +1506,8 @@ describe("fstworker Compose startup recovery", () => {
         expectedWorkerImageId,
         "--expected-worker-revision",
         expectedWorkerRevision,
+        "--expected-worker-config-sha256",
+        workerConfigSha256(config),
         "--inherited-worker-lock-fd",
         "9"
       ]);
