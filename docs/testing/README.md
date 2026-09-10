@@ -1374,7 +1374,8 @@ canonical path/inode verification, Docker/Compose routing refusal, pre-start
 image ID/revision resolution, post-start identity verification, and exact
 unstarted-container removal on mismatch. It also verifies that the worker is
 created, inspected, and only then started from the validated merged Compose
-snapshot. Its fake Compose implementation omits `fstworker` unless
+snapshot, and rejects a mismatch in the full resolved worker configuration
+hash. Its fake Compose implementation omits `fstworker` unless
 `--profile worker` is explicit, matching the integration boundary:
 
 ```bash

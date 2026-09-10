@@ -483,6 +483,8 @@ Before proxy mutation it verifies:
 - the exact local image ID and OCI revision when the corresponding promotion
   assertions are supplied, both immediately before container creation and on
   the unstarted created worker;
+- the canonical SHA-256 of the complete resolved worker service configuration,
+  excluding only its separately pinned image;
 - the guard-only `worker` profile and continuous `on-failure:5` policy;
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;
@@ -512,7 +514,8 @@ An approved terminal-boundary owner may exec the guard with
 `--inherited-worker-lock-fd`; the FD must be held by that same process on the
 current canonical path/inode and remains held through startup. Never release a
 boundary lock and then invoke a second guard process. Promotion callers must
-also clear Docker/Compose routing overrides and use exact canonical base/PIA
+also supply the image ID, revision, and resolved worker-config hash, clear
+Docker/Compose routing overrides, and use exact canonical base/PIA
 paths; the guard refuses redirected daemons, projects, file lists, env files,
 or profiles. It fixes the local Unix-socket daemon and canonical project,
 renders one merged Compose snapshot, creates without starting, verifies the
