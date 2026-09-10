@@ -1256,8 +1256,8 @@ create_and_start_worker() {
     )"
     WORKER_CREATE_ATTEMPTED=1
 
-    if ! compose_snapshot true create --no-deps --force-recreate fstworker \
-        >/dev/null 2>&1
+    if ! compose_snapshot true up --no-start --no-deps --force-recreate \
+        --pull never fstworker >/dev/null 2>&1
     then
         container_id="$(
             compose_snapshot true ps --all --quiet fstworker 2>/dev/null \
