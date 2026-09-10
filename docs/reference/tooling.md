@@ -901,8 +901,10 @@ compares it with the final merged `fstworker.image` even when no data profile is
 selected, so a later Compose overlay cannot silently replace the requested
 candidate. Named data profiles continue to require the option. Promotion
 handoffs also pass `--expected-worker-image-id` and
-`--expected-worker-revision`; the guard resolves the image object under its
-lock immediately before startup. It renders one merged Compose JSON snapshot,
+`--expected-worker-revision` plus
+`--expected-worker-config-sha256`; the guard resolves the image object and
+hashes the complete resolved worker service configuration excluding only
+`image` under its lock immediately before startup. It renders one merged Compose JSON snapshot,
 uses that same snapshot for every later mutation, creates the worker without
 starting it, verifies the created container's image ID/reference/revision, and
 only then starts that exact container ID. A mismatch removes the unstarted
@@ -915,6 +917,8 @@ canonical path with `O_NOFOLLOW`, proves a second nonblocking acquisition is
 excluded, rechecks the inherited identity immediately before startup, and
 retains the descriptor through the Compose action. This removes the unlock /
 reacquire race; passing an FD from a different live process is rejected.
+Inherited handoffs require all three exact image ID, revision, and resolved
+worker-configuration assertions.
 Canonical base and PIA files must resolve inside the selected Compose
 directory. Docker/Compose daemon, project, file-list, environment-file, and
 profile routing overrides are rejected. The guard fixes the local daemon to
