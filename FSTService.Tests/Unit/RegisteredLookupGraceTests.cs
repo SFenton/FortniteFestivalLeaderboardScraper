@@ -31,8 +31,30 @@ public sealed class RegisteredLookupGraceTests
         Assert.Equal(0, snapshot.InFlight);
         Assert.Equal(2, snapshot.DurableCompleted);
         Assert.Equal(1, snapshot.FinishedWithoutCheckpoint);
+        Assert.Equal(0, snapshot.Unattempted);
         Assert.Equal(TimeSpan.FromSeconds(12), snapshot.MaximumDurableCompletionGap);
         Assert.Equal(12_000, snapshot.ObservedMeanDurableIntervalMilliseconds);
+    }
+
+    [Fact]
+    public void PassState_clamps_backward_wall_clock_and_ignores_extra_finish()
+    {
+        var time = CreateTime();
+        var state = new RegisteredLookupPassState(time);
+        state.Initialize(2);
+        using (var first = state.BeginAttempt())
+            first.CompleteDurable();
+        var firstCompletion = state.Snapshot.LastDurableCompletionTimestamp;
+
+        time.Advance(TimeSpan.FromSeconds(-5));
+        using (var second = state.BeginAttempt())
+            second.CompleteDurable();
+        state.FinishAttempt(durable: true);
+
+        var snapshot = state.Snapshot;
+        Assert.Equal(firstCompletion, snapshot.LastDurableCompletionTimestamp);
+        Assert.Equal(TimeSpan.Zero, snapshot.MaximumDurableCompletionGap);
+        Assert.Equal(2, snapshot.DurableCompleted);
     }
 
     [Fact]
@@ -51,6 +73,25 @@ public sealed class RegisteredLookupGraceTests
         Assert.Equal(1, snapshot.FinishedWithoutCheckpoint);
         Assert.Equal(0, snapshot.DurableCompleted);
         Assert.True(snapshot.StateIsValid);
+    }
+
+    [Fact]
+    public void PassState_rejects_invalid_lifecycle_transitions()
+    {
+        var uninitialized = new RegisteredLookupPassState();
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => uninitialized.Initialize(-1));
+        Assert.Throws<InvalidOperationException>(
+            () => uninitialized.BeginAttempt());
+
+        var state = new RegisteredLookupPassState();
+        state.Initialize(1);
+        var lease = state.BeginAttempt();
+        Assert.Throws<InvalidOperationException>(
+            () => state.BeginAttempt());
+        lease.CompleteDurable();
+        Assert.Throws<InvalidOperationException>(
+            () => state.BeginAttempt());
     }
 
     [Fact]
@@ -159,6 +200,224 @@ public sealed class RegisteredLookupGraceTests
                 Policy(),
                 snapshot,
                 TimeSpan.FromSeconds(90) + TimeSpan.FromTicks(1)).Granted);
+    }
+
+    [Fact]
+    public void Policy_reports_structural_denial_reasons()
+    {
+        var valid = new RegisteredLookupPassSnapshot(
+            1,
+            true,
+            2,
+            1,
+            1,
+            0,
+            0,
+            null,
+            null,
+            null,
+            1);
+
+        Assert.Equal(
+            RegisteredLookupGraceDecisionReason.Disabled,
+            RegisteredLookupGraceDecision.Evaluate(
+                Policy() with { Enabled = false },
+                valid,
+                TimeSpan.Zero).Reason);
+        Assert.Equal(
+            RegisteredLookupGraceDecisionReason.Uninitialized,
+            RegisteredLookupGraceDecision.Evaluate(
+                Policy(),
+                valid with { Initialized = false },
+                TimeSpan.Zero).Reason);
+        Assert.Equal(
+            RegisteredLookupGraceDecisionReason.InvalidState,
+            RegisteredLookupGraceDecision.Evaluate(
+                Policy(),
+                valid with { AttemptsStarted = 0 },
+                TimeSpan.Zero).Reason);
+        Assert.Equal(
+            RegisteredLookupGraceDecisionReason.StaleDurableProgress,
+            RegisteredLookupGraceDecision.Evaluate(
+                Policy(),
+                valid,
+                TimeSpan.FromTicks(-1)).Reason);
+    }
+
+    [Fact]
+    public void Lookup_helpers_expose_fallback_outcome_and_partial_result()
+    {
+        Assert.Equal(
+            RegisteredLookupOutcome.TransportFailure,
+            RegisteredLookupInstrumentation.ClassifyFailure(
+                new InvalidOperationException()));
+
+        var failure = new PartialResultFailureException<int>(
+            19,
+            new TimeoutException("synthetic"));
+        Assert.Equal(19, ((IPartialResultFailure)failure).PartialResult);
+    }
+
+    [Fact]
+    public async Task Controller_operation_completes_before_base_timeout()
+    {
+        var controller = CreateController(CreateTime());
+
+        var result = await controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(baseTimeout: TimeSpan.FromSeconds(10)),
+            (state, token) =>
+            {
+                state.Initialize(0);
+                return Task.FromResult(17);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(17, result);
+    }
+
+    [Fact]
+    public async Task Controller_pregrant_internal_cancellation_propagates()
+    {
+        var controller = CreateController(CreateTime());
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => controller.RunAsync(
+                "phase",
+                "operation",
+                Policy(baseTimeout: TimeSpan.FromSeconds(10)),
+                (state, token) =>
+                {
+                    state.Initialize(0);
+                    return Task.FromCanceled<int>(cancelled.Token);
+                },
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Controller_base_timeout_preserves_normal_partial_result()
+    {
+        var time = CreateTime();
+        var controller = CreateController(time);
+        RegisteredLookupPassState? observedState = null;
+
+        var run = controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(baseTimeout: TimeSpan.FromSeconds(10)),
+            async (state, token) =>
+            {
+                observedState = state;
+                state.Initialize(5);
+                using (var first = state.BeginAttempt())
+                    first.CompleteDurable();
+                try
+                {
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        time,
+                        token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return 31;
+                }
+
+                return 0;
+            },
+            CancellationToken.None);
+
+        await WaitForAsync(
+            () => observedState?.Snapshot.DurableCompleted == 1);
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        var exception =
+            await Assert.ThrowsAsync<PartialResultFailureException<int>>(
+                () => run);
+        Assert.Equal(31, exception.PartialResultValue);
+    }
+
+    [Fact]
+    public async Task Controller_base_timeout_preserves_cancelled_partial_result()
+    {
+        var time = CreateTime();
+        var controller = CreateController(time);
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var run = controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(baseTimeout: TimeSpan.FromSeconds(10)),
+            async (state, token) =>
+            {
+                started.TrySetResult();
+                try
+                {
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        time,
+                        token);
+                    return 0;
+                }
+                catch (OperationCanceledException ex)
+                {
+                    throw new PartialResultOperationCanceledException<int>(
+                        37,
+                        ex);
+                }
+            },
+            CancellationToken.None);
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        var exception =
+            await Assert.ThrowsAsync<PartialResultFailureException<int>>(
+                () => run);
+        Assert.Equal(37, exception.PartialResultValue);
+    }
+
+    [Fact]
+    public async Task Controller_base_timeout_accepts_full_durable_unwind()
+    {
+        var time = CreateTime();
+        var controller = CreateController(time);
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var run = controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(baseTimeout: TimeSpan.FromSeconds(10)),
+            async (state, token) =>
+            {
+                state.Initialize(1);
+                started.TrySetResult();
+                try
+                {
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        time,
+                        token);
+                }
+                catch (OperationCanceledException)
+                {
+                    using var lease = state.BeginAttempt();
+                    lease.CompleteDurable();
+                }
+
+                return 41;
+            },
+            CancellationToken.None);
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(41, await run);
     }
 
     [Fact]
@@ -722,6 +981,130 @@ public sealed class RegisteredLookupGraceTests
             logger,
             "caller_cancelled",
             "planned=2 durableCompleted=1 attemptsStarted=2 inFlight=0 finishedWithoutCheckpoint=1");
+    }
+
+    [Fact]
+    public async Task Controller_caller_cancellation_during_budget_unwind_wins()
+    {
+        var time = CreateTime();
+        var logger = new TestLogger<RegisteredLookupGraceController>();
+        var controller = CreateController(time, logger);
+        using var caller = new CancellationTokenSource();
+        var budgetCancellationSeen = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseUnwind = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        RegisteredLookupPassState? observedState = null;
+
+        var run = controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(
+                baseTimeout: TimeSpan.FromSeconds(10),
+                maxGrace: TimeSpan.FromSeconds(20),
+                recent: TimeSpan.FromSeconds(15)),
+            async (state, token) =>
+            {
+                observedState = state;
+                state.Initialize(2);
+                using (var lease = state.BeginAttempt())
+                    lease.CompleteDurable();
+                try
+                {
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        time,
+                        token);
+                    return 0;
+                }
+                catch (OperationCanceledException ex)
+                {
+                    budgetCancellationSeen.TrySetResult();
+                    await releaseUnwind.Task;
+                    throw new OperationCanceledException(
+                        ex.Message,
+                        ex,
+                        token);
+                }
+            },
+            caller.Token);
+
+        await WaitForAsync(
+            () => observedState?.Snapshot.DurableCompleted == 1);
+        time.Advance(TimeSpan.FromSeconds(10));
+        await WaitForGrantAsync(logger);
+        time.Advance(TimeSpan.FromSeconds(15));
+        await budgetCancellationSeen.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        caller.Cancel();
+        releaseUnwind.TrySetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => run);
+        AssertTerminal(
+            logger,
+            "caller_cancelled",
+            "planned=2 durableCompleted=1 attemptsStarted=1 inFlight=0 finishedWithoutCheckpoint=0");
+    }
+
+    [Fact]
+    public async Task Controller_budget_unwind_accepts_full_durable_completion()
+    {
+        var time = CreateTime();
+        var logger = new TestLogger<RegisteredLookupGraceController>();
+        var controller = CreateController(time, logger);
+        var budgetCancellationSeen = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseUnwind = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        RegisteredLookupPassState? observedState = null;
+
+        var run = controller.RunAsync(
+            "phase",
+            "operation",
+            Policy(
+                baseTimeout: TimeSpan.FromSeconds(10),
+                maxGrace: TimeSpan.FromSeconds(20),
+                recent: TimeSpan.FromSeconds(15)),
+            async (state, token) =>
+            {
+                observedState = state;
+                state.Initialize(2);
+                using (var first = state.BeginAttempt())
+                    first.CompleteDurable();
+                try
+                {
+                    await Task.Delay(
+                        Timeout.InfiniteTimeSpan,
+                        time,
+                        token);
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    budgetCancellationSeen.TrySetResult();
+                    await releaseUnwind.Task;
+                    using var second = state.BeginAttempt();
+                    second.CompleteDurable();
+                    return 43;
+                }
+            },
+            CancellationToken.None);
+
+        await WaitForAsync(
+            () => observedState?.Snapshot.DurableCompleted == 1);
+        time.Advance(TimeSpan.FromSeconds(10));
+        await WaitForGrantAsync(logger);
+        time.Advance(TimeSpan.FromSeconds(15));
+        await budgetCancellationSeen.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        releaseUnwind.TrySetResult();
+
+        Assert.Equal(43, await run);
+        AssertTerminal(
+            logger,
+            "completed",
+            "planned=2 durableCompleted=2 attemptsStarted=2 inFlight=0 finishedWithoutCheckpoint=0");
     }
 
     private static RegisteredLookupGracePolicy Policy(
