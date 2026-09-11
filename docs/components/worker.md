@@ -609,10 +609,15 @@ Registered-player discovery and targeted registered-band processing use
 successful durable lookup checkpoints as their parent `lookups` units.
 Finite admitted work has an exact denominator capped by the configured
 per-pass limit; failed or unavailable lookups never advance completion.
-Attempted accounts/bands remain secondary counters. Discovery consumes the
-account-attempt budget even when a subject has no pending lookup, and both
-orchestrators always clear adaptive-limiter telemetry on success, failure, or
-cancellation.
+Discovery also publishes a schema-versioned per-pass attempt summary through
+the current-operation JSON. `attemptedThisPass` counts logical lookup intents
+started during the phase, while `retryableUnavailableThisPass` counts typed
+`invalid_leaderboard` outcomes that remain pending. These counters advance
+the progress timestamp and watchdog evidence without inflating durable
+completion. Attempted accounts/bands remain secondary counters. Discovery
+consumes the account-attempt budget even when a subject has no pending lookup,
+and both orchestrators always clear adaptive-limiter telemetry on success,
+failure, or cancellation.
 
 Identifier-free metrics record end-to-end logical lookup duration with only
 phase (`discovery`/`targeted`) and typed outcome tags
@@ -639,8 +644,16 @@ lookup completion still waits for every required durable write.
 
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
-overall/ETA metadata, heartbeat, and last-progress timestamps. Overall progress
-starts as `indeterminate`. ETA is omitted unless at least five successful
+overall/ETA metadata, optional per-pass attempt progress, heartbeat, and
+last-progress timestamps. The normalized phase-attempt row remains
+authoritative for durable completion; the optional attempt summary is carried
+in the instance-fenced worker JSON and is reset with a new phase attempt.
+Worker JSON also carries the attached scrape ID. The publisher rejects bridge
+views from another scrape and rejects older phase/attempt/timestamp/subphase
+sequences, so a delayed prior-scrape view cannot overwrite current progress.
+Scrape attachment updates every current operation directly, including
+descriptor-free parent operations such as `scrape.pass`.
+Overall progress starts as `indeterminate`. ETA is omitted unless at least five successful
 same-plan/same-config durations have the same final units kind and a workload
 total within 10%, then pass the `0.35` coefficient-of-variation gate. Emitted
 ranges are monotonic and carry model version, confidence, and sample count.

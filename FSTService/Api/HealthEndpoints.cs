@@ -144,6 +144,11 @@ public static partial class ApiEndpoints
                         currentAttempt.SubphaseLastProgressAtUtc,
                 }
                 : durableV2Operation?.SubphaseProgress;
+            var currentAttemptProgress = SelectAttemptProgress(
+                currentAttempt,
+                durableV2Operation,
+                localCurrent,
+                activeScrape?.Id);
             var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
                 runtime,
                 currentStatus,
@@ -289,6 +294,7 @@ public static partial class ApiEndpoints
                     etaConfidence = currentAttempt?.EtaConfidence ?? durableV2Operation?.EtaConfidence,
                     etaSampleCount = currentAttempt?.EtaSampleCount ?? durableV2Operation?.EtaSampleCount,
                     subphaseProgress = currentSubphaseProgress,
+                    attemptProgress = currentAttemptProgress,
                     heartbeatAt = FormatUtc(storedWorker?.LastHeartbeatAtUtc),
                     lastProgressAt = FormatUtc(currentAttempt?.LastProgressAtUtc)
                         ?? FormatUtc(durableV2Operation?.LastProgressAtUtc)
@@ -476,6 +482,7 @@ public static partial class ApiEndpoints
             operationKey = operation.OperationKey,
             operationLabel = operation.OperationLabel,
             status = operation.Status,
+            scrapeId = operation.ScrapeId,
             phase = operation.Phase,
             subOperation = operation.SubOperation,
             detail = operation.Detail,
@@ -508,7 +515,40 @@ public static partial class ApiEndpoints
                 ?? FormatUtc(heartbeatAtUtc),
             lastProgressAt = FormatUtc(operation.LastProgressAtUtc)
                 ?? FormatUtc(operation.UpdatedAtUtc),
+            subphaseProgress = operation.SubphaseProgress,
+            attemptProgress = operation.AttemptProgress,
         };
+    }
+
+    private static PhaseAttemptProgressInfo?
+        SelectAttemptProgress(
+            ScrapePhaseAttemptInfo? currentAttempt,
+            WorkerOperationInfo? operation,
+            OperationSnapshot? localCurrent,
+            long? activeScrapeId)
+    {
+        if (currentAttempt is null)
+        {
+            if (operation?.AttemptProgress is not null
+                && (!activeScrapeId.HasValue
+                    || operation.ScrapeId
+                        == activeScrapeId.Value))
+            {
+                return operation.AttemptProgress;
+            }
+            return localCurrent?.AttemptProgress;
+        }
+
+        return operation?.ScrapeId
+                    == currentAttempt.ScrapeId
+               && string.Equals(
+                   operation.PhaseId,
+                   currentAttempt.PhaseId,
+                   StringComparison.Ordinal)
+               && operation.PhaseAttempt
+                    == currentAttempt.Attempt
+            ? operation.AttemptProgress
+            : null;
     }
 
     private static string? FormatUtc(DateTime? value)

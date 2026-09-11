@@ -1019,6 +1019,82 @@ describe('SettingsPage', () => {
     expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
   });
 
+  it('shows registered discovery attempts separately from durable completion', async () => {
+    mockServiceInfoResponse({
+      ...defaultServiceInfo,
+      contractVersion: 2,
+      activeScrapeId: 1379,
+      phasePlan: {
+        version: 'fst.scrape-plan.v2',
+        phases: [{
+          id: 'post.registered_player_band_discovery',
+          label: 'Discovering registered-player bands',
+          legacyPhase: 'RegisteredPlayerBandDiscovery',
+          ordinal: 270,
+          defaultUnitsKind: 'lookups',
+        }],
+      },
+      currentUpdate: {
+        status: 'updating',
+        scrapeId: 1379,
+        startedAt: '2026-09-11T03:16:00Z',
+        phase: 'SongMachine',
+        subOperation: 'registered_player_band_discovery',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'post.registered_player_band_discovery',
+        phaseStatus: 'running',
+        subphaseId: 'registered_player_band_discovery',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        phaseOrdinal: 270,
+        phaseAttempt: 1,
+        unitsKind: 'lookups',
+        unitsCompleted: 0,
+        unitsTotal: 80,
+        unitsTotalFinal: true,
+        phasePercent: 0,
+        overallPercentKind: 'indeterminate',
+        subphaseProgress: {
+          schemaVersion: 1,
+          id: 'registered_player_band_discovery',
+          epoch: 1,
+          sequence: 10,
+          kind: 'exact',
+          unitsKind: 'lookups',
+          unitsCompleted: 0,
+          unitsTotal: 80,
+          unitsTotalFinal: true,
+          percent: 0,
+        },
+        attemptProgress: {
+          schemaVersion: 1,
+          attemptedThisPass: 10,
+          retryableUnavailableThisPass: 10,
+        },
+        lastProgressAt: '2026-09-11T03:16:37Z',
+        branches: null,
+      },
+    });
+
+    renderSettings();
+
+    const summary = await screen.findByTestId(
+      'settings-service-discovery-attempt-progress',
+    );
+    expect(summary).toHaveTextContent(
+      '10 attempted this pass · 10 temporarily unavailable · 0 of 80 completed',
+    );
+    const progress = screen.getByRole(
+      'progressbar',
+      { name: 'Current phase progress' },
+    );
+    expect(progress).toHaveAttribute('aria-valuenow', '0');
+    expect(progress).toHaveAttribute(
+      'aria-valuetext',
+      expect.stringContaining('10 temporarily unavailable'),
+    );
+  });
+
   it('keeps v2 progress indeterminate while the denominator is not final', async () => {
     const discoveringServiceInfo = {
       ...defaultServiceInfo,

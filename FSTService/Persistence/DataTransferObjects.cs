@@ -980,6 +980,7 @@ public sealed class WorkerOperationInfo
     public string OperationKey { get; init; } = "";
     public string OperationLabel { get; init; } = "";
     public string Status { get; init; } = "running";
+    public long? ScrapeId { get; init; }
     public string? Phase { get; init; }
     public string? SubOperation { get; init; }
     public string? Detail { get; init; }
@@ -1011,6 +1012,14 @@ public sealed class WorkerOperationInfo
     public DateTime? LastProgressAtUtc { get; init; }
     public DateTime? HeartbeatAtUtc { get; init; }
     public SubphaseProgressInfo? SubphaseProgress { get; init; }
+    public PhaseAttemptProgressInfo? AttemptProgress { get; init; }
+}
+
+public sealed record PhaseAttemptProgressInfo
+{
+    public int SchemaVersion { get; init; } = 1;
+    public long AttemptedThisPass { get; init; }
+    public long RetryableUnavailableThisPass { get; init; }
 }
 
 public sealed record SubphaseProgressInfo

@@ -73,6 +73,7 @@ internal sealed class DirectRegisteredPlayerBandDiscoveryStrategy : IRegisteredP
 public sealed class RegisteredPlayerBandDiscoveryResult
 {
     public int AccountsProcessed { get; init; }
+    public int LookupsAttempted { get; init; }
     public int LookupsChecked { get; init; }
     public int EntriesFound { get; init; }
     public int EntriesPersisted { get; init; }
@@ -166,6 +167,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         RegisteredPlayerBandDiscoveryResult BuildResult() => new()
         {
             AccountsProcessed = accountsAttempted,
+            LookupsAttempted = lookupsAttemptedTotal,
             LookupsChecked = lookupsCheckedTotal,
             EntriesFound = entriesFoundTotal,
             EntriesPersisted = entriesPersistedTotal,
@@ -391,6 +393,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
             {
                 ct.ThrowIfCancellationRequested();
                 lookupsAttempted++;
+                _progress.ReportPhaseAttempt();
 
                 Func<Task<RegisteredPlayerBandDiscoveryLookupResult>> work = () =>
                 {
@@ -431,6 +434,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
                         outcome);
                     if (outcome == RegisteredLookupOutcome.InvalidLeaderboard)
                     {
+                        _progress.ReportPhaseRetryableUnavailable();
                         _metaDb.MarkRegisteredPlayerBandDiscoveryAttempted(
                             accountId,
                             intent.SongId,

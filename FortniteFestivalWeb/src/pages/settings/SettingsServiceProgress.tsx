@@ -197,6 +197,35 @@ function barUnitsText(
   });
 }
 
+function discoveryAttemptText(
+  t: TFunction,
+  display: ServiceProgressDisplay,
+): string | null {
+  if (
+    display.phaseId !== 'post.registered_player_band_discovery'
+    || !display.attemptProgress
+  ) {
+    return null;
+  }
+  const values = {
+    attempted:
+      display.attemptProgress.attemptedThisPass.toLocaleString(),
+    unavailable:
+      display.attemptProgress.retryableUnavailableThisPass
+        .toLocaleString(),
+    completed: (display.unitsCompleted ?? 0).toLocaleString(),
+  };
+  return display.unitsTotal == null
+    ? t(
+      'settings.serviceInfo.registeredBandDiscoveryAttemptsWithoutTotal',
+      values,
+    )
+    : t('settings.serviceInfo.registeredBandDiscoveryAttempts', {
+      ...values,
+      total: display.unitsTotal.toLocaleString(),
+    });
+}
+
 function ServiceInfoRow({
   label,
   description,
@@ -295,6 +324,7 @@ export function SettingsServiceProgressCard({
     })
     : t('settings.serviceInfo.progressIndeterminate');
   const barUnits = barUnitsText(t, barProgress);
+  const attemptText = discoveryAttemptText(t, display);
   const progressAriaText = [
     phaseLabel,
     subphaseLabel,
@@ -302,6 +332,7 @@ export function SettingsServiceProgressCard({
       ? progressText
       : t('settings.serviceInfo.progressUnknownTotal'),
     barUnits,
+    attemptText,
   ].filter(Boolean).join('. ');
   const publishedAt = serviceInfo.lastCompletedUpdate?.publishedAt
     ?? serviceInfo.publication?.publishedAt;
@@ -347,6 +378,15 @@ export function SettingsServiceProgressCard({
                         />
                       ) : null}
                     </div>
+                    {attemptText ? (
+                      <div
+                        className={styles.attemptProgress}
+                        style={modalCss.toggleDesc}
+                        data-testid="settings-service-discovery-attempt-progress"
+                      >
+                        {attemptText}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </ServiceInfoRow>

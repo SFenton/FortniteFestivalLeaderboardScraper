@@ -654,6 +654,12 @@ export type ServiceInfoSubphaseProgress = {
   lastProgressAt?: string | null;
 };
 
+export type ServiceInfoPhaseAttemptProgress = {
+  schemaVersion: number;
+  attemptedThisPass: number;
+  retryableUnavailableThisPass: number;
+};
+
 export type ServiceInfoResponse = {
   contractVersion?: 2 | number;
   phasePlan?: {
@@ -727,6 +733,7 @@ export type ServiceInfoResponse = {
     etaConfidence?: 'low' | 'medium' | 'high' | string | null;
     etaSampleCount?: number | null;
     subphaseProgress?: ServiceInfoSubphaseProgress | null;
+    attemptProgress?: ServiceInfoPhaseAttemptProgress | null;
     heartbeatAt?: string | null;
     lastProgressAt?: string | null;
     branches?: Array<{
@@ -817,6 +824,7 @@ export type ServiceInfoWorkerOperation = {
   operationKey: string;
   operationLabel: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' | string;
+  scrapeId?: number | null;
   phase?: string | null;
   subOperation?: string | null;
   detail?: string | null;
@@ -848,6 +856,7 @@ export type ServiceInfoWorkerOperation = {
   heartbeatAt?: string | null;
   lastProgressAt?: string | null;
   subphaseProgress?: ServiceInfoSubphaseProgress | null;
+  attemptProgress?: ServiceInfoPhaseAttemptProgress | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */
