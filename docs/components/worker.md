@@ -619,6 +619,35 @@ consumes the account-attempt budget even when a subject has no pending lookup,
 and both orchestrators always clear adaptive-limiter telemetry on success,
 failure, or cancellation.
 
+Each run also keeps an identifier-free in-process partition:
+planned admitted lookups (`P`), logical attempts started (`A`), the single
+in-flight attempt (`I`), durable completions (`C`), and attempts finished
+without the authoritative checkpoint (`F`). An attempt becomes durable only
+after `MarkRegisteredPlayerBandDiscoveryChecked` or
+`MarkRegisteredBandLookupChecked` succeeds. Transport retries remain inside
+one logical attempt. Unavailable, failed, cancelled, and metadata-failed
+attempts are non-durable and remain retryable under the existing subject-break
+and fairness rules.
+
+The remaining-work grace controller is registered-phase-only and independently
+disabled by default for discovery and targeted processing. At the base timeout
+it may grant once only when state is valid, `P > 0`, `C > 0`, `F == 0`,
+`0 <= P-C <= 3`, and the last durable checkpoint is no older than 90 seconds.
+Zero remaining is eligible so final metadata/unwind can finish. A grant has an
+immutable hard deadline of phase start plus base timeout plus at most 120
+seconds. Its idle deadline starts at grant plus 90 seconds and moves only when
+a new durable checkpoint completes, never beyond the hard deadline. A new
+non-durable finish revokes immediately. The operation is never reinvoked or
+detached; cancellation unwind is awaited and typed partial impacts continue to
+BandMaintenance.
+
+Attempt starts, retries, requests, account/band completion, heartbeat, and
+grace evaluation do not move either grace deadline or durable phase progress.
+They therefore do not synthesize
+`scrape_phase_attempts.last_progress_at`; the existing no-progress watchdog
+continues to use durable checkpoints. Structured evaluation, terminal, and
+phase-summary logs contain only aggregate state and timing fields.
+
 Identifier-free metrics record end-to-end logical lookup duration with only
 phase (`discovery`/`targeted`) and typed outcome tags
 (`success`, `notfound`, `invalidleaderboard`, `httpfailure`,

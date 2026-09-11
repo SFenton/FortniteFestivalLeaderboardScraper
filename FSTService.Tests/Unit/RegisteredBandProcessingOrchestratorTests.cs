@@ -40,14 +40,24 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
         });
         var orchestrator = CreateOrchestrator(strategy, maxLookupsPerBand: 1);
         using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+        var passState = new RegisteredLookupPassState();
 
-        var result = await orchestrator.RunAsync(["song-a"], Db.GetSeasonWindows(), "token", "caller", pool);
+        var result = await orchestrator.RunAsync(
+            ["song-a"],
+            Db.GetSeasonWindows(),
+            "token",
+            "caller",
+            pool,
+            passState);
 
         Assert.Equal(1, result.BandsProcessed);
         Assert.Equal(1, result.LookupsChecked);
         Assert.Equal(1, result.EntriesFound);
         Assert.Equal(1, result.EntriesPersisted);
         Assert.Contains("acct1:acct2", result.ImpactedTeamsByBandType["Band_Duets"]);
+        Assert.Equal(1, passState.Snapshot.Planned);
+        Assert.Equal(1, passState.Snapshot.DurableCompleted);
+        Assert.Equal(0, passState.Snapshot.FinishedWithoutCheckpoint);
 
         var status = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
         Assert.Equal("in_progress", status?.Status);
@@ -347,15 +357,19 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             strategy,
             maxLookupsPerBand: 1);
         using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+        var passState = new RegisteredLookupPassState();
 
         var first = await orchestrator.RunAsync(
             ["song-a"],
             [],
             "token",
             "caller",
-            pool);
+            pool,
+            passState);
 
         Assert.Equal(0, first.LookupsChecked);
+        Assert.Equal(1, passState.Snapshot.FinishedWithoutCheckpoint);
+        Assert.Equal(0, passState.Snapshot.DurableCompleted);
         Assert.Empty(Db.GetCheckedRegisteredBandLookups(
             "web-band-tracker",
             "Band_Duets",

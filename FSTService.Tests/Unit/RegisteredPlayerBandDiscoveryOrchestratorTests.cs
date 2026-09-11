@@ -37,8 +37,15 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
         });
         var orchestrator = CreateOrchestrator(strategy, maxLookupsPerAccount: 1);
         using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+        var passState = new RegisteredLookupPassState();
 
-        var result = await orchestrator.RunAsync(["song-a"], Db.GetSeasonWindows(), "token", "caller", pool);
+        var result = await orchestrator.RunAsync(
+            ["song-a"],
+            Db.GetSeasonWindows(),
+            "token",
+            "caller",
+            pool,
+            passState);
 
         Assert.Equal(1, result.AccountsProcessed);
         Assert.Equal(1, result.LookupsChecked);
@@ -49,6 +56,9 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
         Assert.Equal("acct1", strategy.Calls[0].AccountId);
         Assert.Equal("Band_Duets", strategy.Calls[0].Intent.BandType);
         Assert.Equal(RegisteredBandLookupScope.AllTime, strategy.Calls[0].Intent.Scope);
+        Assert.Equal(1, passState.Snapshot.Planned);
+        Assert.Equal(1, passState.Snapshot.DurableCompleted);
+        Assert.Equal(0, passState.Snapshot.FinishedWithoutCheckpoint);
 
         var discoveryProgress = Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1");
         var discoveryRow = Assert.Single(discoveryProgress);
@@ -262,16 +272,20 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             maxLookupsPerAccount: 1,
             tracker: tracker);
         using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+        var passState = new RegisteredLookupPassState();
 
         var first = await orchestrator.RunAsync(
             ["song-a"],
             [],
             "token",
             "caller",
-            pool);
+            pool,
+            passState);
 
         Assert.Equal(1, first.LookupsAttempted);
         Assert.Equal(0, first.LookupsChecked);
+        Assert.Equal(1, passState.Snapshot.FinishedWithoutCheckpoint);
+        Assert.Equal(0, passState.Snapshot.DurableCompleted);
         Assert.Equal(
             1,
             tracker.GetProgressResponse().Current

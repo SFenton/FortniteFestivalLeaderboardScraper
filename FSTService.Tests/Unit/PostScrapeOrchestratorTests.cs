@@ -201,6 +201,70 @@ public class PostScrapeOrchestratorTests : IDisposable
         return new SongProcessingMachine.MachineResult();
     }
 
+    [Fact]
+    public async Task RegisteredLookupGraceDisabledUsesLegacyOperationPath()
+    {
+        var calls = 0;
+
+        var result = await _sut.RunRegisteredLookupPhaseWithTimeoutAsync(
+            "RegisteredPlayerBandDiscovery",
+            "registered-player band discovery",
+            new RegisteredLookupGracePolicy(
+                false,
+                TimeSpan.FromSeconds(1),
+                TimeSpan.FromMinutes(2),
+                TimeSpan.FromSeconds(90),
+                3),
+            (state, token) =>
+            {
+                calls++;
+                state.Initialize(0);
+                return Task.FromResult(17);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(17, result);
+        Assert.Equal(1, calls);
+        Assert.DoesNotContain(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "registered_lookup_grace_evaluation",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RegisteredLookupGraceWithZeroBaseIsUnlimitedAndUnevaluated()
+    {
+        var completion = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var run = _sut.RunRegisteredLookupPhaseWithTimeoutAsync(
+            "RegisteredBandTargetedProcessing",
+            "registered-band targeted processing",
+            new RegisteredLookupGracePolicy(
+                true,
+                TimeSpan.Zero,
+                TimeSpan.FromMinutes(2),
+                TimeSpan.FromSeconds(90),
+                3),
+            (state, token) =>
+            {
+                state.Initialize(0);
+                return completion.Task;
+            },
+            CancellationToken.None);
+
+        await Task.Delay(20);
+        Assert.False(run.IsCompleted);
+        completion.SetResult(23);
+        Assert.Equal(23, await run);
+        Assert.DoesNotContain(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "registered_lookup_grace_evaluation",
+                StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

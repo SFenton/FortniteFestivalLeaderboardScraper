@@ -140,6 +140,23 @@ public sealed class RegisteredBandProcessingOrchestrator
         string callerAccountId,
         SharedDopPool pool,
         CancellationToken ct = default)
+        => await RunAsync(
+            songIds,
+            seasonWindows,
+            accessToken,
+            callerAccountId,
+            pool,
+            new RegisteredLookupPassState(),
+            ct);
+
+    internal async Task<RegisteredBandProcessingResult> RunAsync(
+        IReadOnlyList<string> songIds,
+        IReadOnlyList<SeasonWindowInfo> seasonWindows,
+        string accessToken,
+        string callerAccountId,
+        SharedDopPool pool,
+        RegisteredLookupPassState passState,
+        CancellationToken ct = default)
     {
         if (!_options.EnableRegisteredBandTargetedProcessing)
             return RegisteredBandProcessingResult.Empty;
@@ -169,6 +186,7 @@ public sealed class RegisteredBandProcessingOrchestrator
             admittedBands,
             intents,
             maxLookupsPerPass);
+        passState.Initialize(admittedLookups);
         _progress.SetAdaptiveLimiter(pool.Limiter);
         _progress.BeginPhaseProgress(admittedLookups);
         _progress.SetPhaseAccounts(plannedBandCount);
@@ -250,6 +268,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                         callerAccountId,
                         pool,
                         remainingLookups,
+                        passState,
                         ct);
                     MergeBandResult(registeredBand, bandResult);
                 }
@@ -282,6 +301,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         finally
         {
             _progress.SetAdaptiveLimiter(null);
+            LogPassSummary(passState.Snapshot);
         }
 
         _log.LogInformation(
@@ -332,6 +352,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         string callerAccountId,
         SharedDopPool pool,
         int remainingPassLookups,
+        RegisteredLookupPassState passState,
         CancellationToken ct)
     {
         _metaDb.EnsureRegisteredBandProcessingStatus(
@@ -432,6 +453,7 @@ public sealed class RegisteredBandProcessingOrchestrator
             {
                 ct.ThrowIfCancellationRequested();
                 lookupsAttempted++;
+                using var attemptLease = passState.BeginAttempt();
 
                 Func<Task<RegisteredBandLookupResult>> work = () =>
                 {
@@ -510,6 +532,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                     intent.Season,
                     found,
                     intent.WindowId);
+                attemptLease.CompleteDurable();
 
                 lookupsChecked++;
                 _progress.ReportPhaseItemComplete();
@@ -553,6 +576,25 @@ public sealed class RegisteredBandProcessingOrchestrator
         }
 
         return BuildResult();
+    }
+
+    private void LogPassSummary(RegisteredLookupPassSnapshot snapshot)
+    {
+        _log.LogInformation(
+            "registered_lookup_phase_summary phase={Phase} initialized={Initialized} valid={Valid} planned={Planned} durableCompleted={DurableCompleted} attemptsStarted={AttemptsStarted} inFlight={InFlight} finishedWithoutCheckpoint={FinishedWithoutCheckpoint} durableRemaining={DurableRemaining} firstDurableCompletionTimestamp={FirstDurableCompletionTimestamp} lastDurableCompletionTimestamp={LastDurableCompletionTimestamp} observedMeanDurableIntervalMs={ObservedMeanDurableIntervalMs} maximumDurableGapMs={MaximumDurableGapMs}",
+            "RegisteredBandTargetedProcessing",
+            snapshot.Initialized,
+            snapshot.StateIsValid,
+            snapshot.Planned,
+            snapshot.DurableCompleted,
+            snapshot.AttemptsStarted,
+            snapshot.InFlight,
+            snapshot.FinishedWithoutCheckpoint,
+            snapshot.DurableRemaining,
+            snapshot.FirstDurableCompletionTimestamp,
+            snapshot.LastDurableCompletionTimestamp,
+            snapshot.ObservedMeanDurableIntervalMilliseconds,
+            snapshot.MaximumDurableCompletionGap?.TotalMilliseconds);
     }
 
     internal static List<RegisteredBandLookupIntent> BuildLookupIntents(

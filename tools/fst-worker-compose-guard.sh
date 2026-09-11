@@ -745,6 +745,21 @@ if data_profile == "notification-db-only":
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:06:00")
     exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
+    exact_value(
+        "Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace",
+        "false")
+    exact_value(
+        "Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace",
+        "false")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxDuration",
+        "00:02:00")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow",
+        "00:01:30")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups",
+        "3")
     for name in (
         "Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass",
         "Scraper__RegisteredBandProcessingMaxLookupsPerPass",

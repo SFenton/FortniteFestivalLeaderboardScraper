@@ -36,6 +36,14 @@ public sealed class ScraperOptions
     public static readonly TimeSpan
         MaximumScrapePassPathGenerationTimeout =
             TimeSpan.FromHours(6);
+    public static readonly TimeSpan
+        DefaultRegisteredBandRemainingWorkGraceMaxDuration =
+            TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan
+        DefaultRegisteredBandRemainingWorkGraceRecentProgressWindow =
+            TimeSpan.FromSeconds(90);
+    public const int
+        DefaultRegisteredBandRemainingWorkGraceMaxRemainingLookups = 3;
 
     /// <summary>
     /// How often to run a full score scrape (default: 4 hours).
@@ -590,6 +598,30 @@ public sealed class ScraperOptions
     public TimeSpan? RegisteredBandTargetedProcessingTimeout { get; set; }
 
     /// <summary>
+    /// Enables remaining-work-gated timeout grace for registered-player band
+    /// discovery. Disabled by default.
+    /// </summary>
+    public bool EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace { get; set; }
+
+    /// <summary>
+    /// Enables remaining-work-gated timeout grace for registered-band targeted
+    /// processing. Disabled by default.
+    /// </summary>
+    public bool EnableRegisteredBandTargetedProcessingRemainingWorkGrace { get; set; }
+
+    /// <summary>Immutable maximum extension beyond the registered phase base timeout.</summary>
+    public TimeSpan RegisteredBandRemainingWorkGraceMaxDuration { get; set; } =
+        DefaultRegisteredBandRemainingWorkGraceMaxDuration;
+
+    /// <summary>Maximum age of the last durable lookup checkpoint.</summary>
+    public TimeSpan RegisteredBandRemainingWorkGraceRecentProgressWindow { get; set; } =
+        DefaultRegisteredBandRemainingWorkGraceRecentProgressWindow;
+
+    /// <summary>Maximum exact durable lookups remaining when grace is evaluated.</summary>
+    public int RegisteredBandRemainingWorkGraceMaxRemainingLookups { get; set; } =
+        DefaultRegisteredBandRemainingWorkGraceMaxRemainingLookups;
+
+    /// <summary>
     /// Enables low-priority direct V2 lookups for registered bands. This is a
     /// parallel band lifecycle that reuses the song-machine DOP/CDN wrapper.
     /// </summary>
@@ -891,6 +923,67 @@ internal sealed class ScraperOptionsValidator
                 + ScraperOptions.MinimumScrapePassPathGenerationTimeout
                 + " and "
                 + ScraperOptions.MaximumScrapePassPathGenerationTimeout
+                + ".");
+        }
+
+        if (options.RegisteredBandRemainingWorkGraceMaxDuration
+                < TimeSpan.FromSeconds(1)
+            || options.RegisteredBandRemainingWorkGraceMaxDuration
+                > TimeSpan.FromSeconds(120))
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(options.RegisteredBandRemainingWorkGraceMaxDuration)
+                + " must be between 00:00:01 and 00:02:00.");
+        }
+
+        if (options.RegisteredBandRemainingWorkGraceRecentProgressWindow
+                < TimeSpan.FromSeconds(1)
+            || options.RegisteredBandRemainingWorkGraceRecentProgressWindow
+                > options.RegisteredBandRemainingWorkGraceMaxDuration)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(options.RegisteredBandRemainingWorkGraceRecentProgressWindow)
+                + " must be between 00:00:01 and "
+                + nameof(options.RegisteredBandRemainingWorkGraceMaxDuration)
+                + ".");
+        }
+
+        if (options.RegisteredBandRemainingWorkGraceMaxRemainingLookups
+                is < 1 or > 3)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(options.RegisteredBandRemainingWorkGraceMaxRemainingLookups)
+                + " must be between 1 and 3.");
+        }
+
+        var discoveryTimeout =
+            options.RegisteredPlayerBandDiscoveryTimeout
+            ?? options.PostScrapeRefreshTimeout;
+        if (options.EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace
+            && discoveryTimeout <= TimeSpan.Zero)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(options.EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace)
+                + " requires a positive resolved "
+                + nameof(options.RegisteredPlayerBandDiscoveryTimeout)
+                + ".");
+        }
+
+        var targetedTimeout =
+            options.RegisteredBandTargetedProcessingTimeout
+            ?? options.PostScrapeRefreshTimeout;
+        if (options.EnableRegisteredBandTargetedProcessingRemainingWorkGrace
+            && targetedTimeout <= TimeSpan.Zero)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(options.EnableRegisteredBandTargetedProcessingRemainingWorkGrace)
+                + " requires a positive resolved "
+                + nameof(options.RegisteredBandTargetedProcessingTimeout)
                 + ".");
         }
 

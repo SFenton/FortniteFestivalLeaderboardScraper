@@ -501,6 +501,11 @@ function buildRunonceComposeConfig() {
     Scraper__RegisteredUserRefreshTimeout: "00:00:00",
     Scraper__RegisteredPlayerBandDiscoveryTimeout: "00:06:00",
     Scraper__RegisteredBandTargetedProcessingTimeout: "00:05:00",
+    Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace: "false",
+    Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace: "false",
+    Scraper__RegisteredBandRemainingWorkGraceMaxDuration: "00:02:00",
+    Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow: "00:01:30",
+    Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups: "3",
     Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass: "80",
     Scraper__RegisteredBandProcessingMaxLookupsPerPass: "80",
     ImprovementNotifications__Enabled: "true",
@@ -1647,6 +1652,32 @@ describe("fstworker Compose startup recovery", () => {
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), []);
       assert.match(result.stdout, /run_once=true/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects enabled registered lookup grace in the locked notification profile", async () => {
+    const config = buildRunonceComposeConfig();
+    config.services.fstworker.environment[
+      "Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace"
+    ] = "true";
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "notification-db-only",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace=false/
+      );
     } finally {
       await harness.cleanup();
     }

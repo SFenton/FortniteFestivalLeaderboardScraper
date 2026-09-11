@@ -203,12 +203,24 @@ first on the next pass.
 | `Scraper__RegisteredUserRefreshTimeout` | `00:00:00` (progress watchdog owns hangs) |
 | `Scraper__RegisteredPlayerBandDiscoveryTimeout` | `00:06:00` |
 | `Scraper__RegisteredBandTargetedProcessingTimeout` | `00:05:00` |
+| `Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace` | `false` |
+| `Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace` | `false` |
+| `Scraper__RegisteredBandRemainingWorkGraceMaxDuration` | `00:02:00` |
+| `Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow` | `00:01:30` |
+| `Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups` | `3` |
 | `Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass` | `80` |
 | `Scraper__RegisteredBandProcessingMaxBandsPerPass` | `10` |
 | `Scraper__RegisteredBandProcessingMaxLookupsPerPass` | `80` |
 
-The hard limits remain six minutes for discovery and five minutes for targeted
-processing; they are failure boundaries, not promised headroom. Later
+With tracked grace flags off, the hard limits remain six minutes for discovery
+and five minutes for targeted processing; they are failure boundaries, not
+promised headroom. If separately enabled after a matched canary, maximum
+network/await budgets are eight and seven minutes respectively. Grace is
+considered once at the base deadline only after recent durable progress, with
+no failed/non-durable logical attempt and at most three durable lookups
+remaining. Its hard deadline never moves; only another authoritative lookup
+checkpoint may move the 90-second idle deadline, and never past the hard
+deadline. Later
 production evidence falsified the earlier headroom claim: successful
 checkpoint gaps reached `72.707 s`, scrape `1375` targeted processing stopped
 at `77/80` after `300.009 s`, and scrape `1376` discovery stopped at `77/80`
@@ -225,6 +237,27 @@ or unavailable Epic leaderboards cannot bypass the ten-band bound, starve the
 phase denominator at zero, and consume the entire wall-clock timeout. Pending
 bands sort ahead of persisted `error` bands, so a failing target set cannot
 starve untouched registered bands on later passes.
+
+For a candidate, hold provider, DOP, RPS, per-pass, publication, database, and
+worker settings constant. First enable targeted only; discovery is a separate
+one-variable A/B. Every grant must show valid `P/A/I/C/F`, `F=0`, one to three
+or zero durable remaining, recent progress within 90 seconds, exactly one
+grant, and the immutable base-plus-120-second hard deadline. A zero-grant run
+proves regression safety only, not efficacy. Require normal publication,
+notifications, unfreeze, public health, unchanged retryability/partial impacts,
+and no watchdog progress from attempts, retries, heartbeat, or grace logs.
+
+Rollback is phase-specific configuration:
+
+```text
+EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace=false
+EnableRegisteredBandTargetedProcessingRemainingWorkGrace=false
+```
+
+Apply rollback only through the canonical worker ownership/guard path at a safe
+terminal boundary; do not stop a healthy scrape solely to disable grace.
+Preserve base timeouts and all durable lookup rows. The next attempt must use a
+distinct disabled `config_id`; no schema or data rollback exists.
 
 ### Accepted attempted-band canary
 

@@ -134,13 +134,16 @@ Focused registered-band correctness and progress validation:
 
 ```bash
 dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
-  --filter 'FullyQualifiedName~RegisteredPlayerBandDiscoveryOrchestratorTests|FullyQualifiedName~RegisteredBandProcessingOrchestratorTests|FullyQualifiedName~DurablePhaseProgressSinkTests|FullyQualifiedName~PostScrapeBandExtractorTests|FullyQualifiedName~PostScrapeOrchestratorTests|FullyQualifiedName~GlobalLeaderboardScraperTests'
+  --filter 'FullyQualifiedName~RegisteredLookupGraceTests|FullyQualifiedName~RegisteredPlayerBandDiscoveryOrchestratorTests|FullyQualifiedName~RegisteredBandProcessingOrchestratorTests|FullyQualifiedName~PostScrapeOrchestratorTests|FullyQualifiedName~DurablePhaseProgressSinkTests|FullyQualifiedName~ScraperOptionsAndModelsTests|FullyQualifiedName~ResilientHttpExecutorTests'
 ```
 
-This covers exact lookup checkpoint progress, attempted-subject fairness,
-retryable exact invalid-leaderboard handling, adaptive-limiter cleanup,
-BandExtraction subphase resets and final-total invariants, typed partial-result
-failure accounting, and caller cancellation.
+This covers the atomic `P/A/I/C/F` state and no-lost-wakeup observation,
+conservative grace policy boundaries, deterministic idle/hard deadline races,
+caller cancellation and typed partial-result preservation, exact lookup
+checkpoint progress, attempted-subject fairness, retryable exact
+invalid-leaderboard handling, adaptive-limiter cleanup, durable configuration
+identity, option validation, and the unchanged resilient HTTP cancellation
+contract.
 
 Focused snapshot-retention policy validation:
 
