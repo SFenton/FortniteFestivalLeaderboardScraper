@@ -124,6 +124,23 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         string callerAccountId,
         SharedDopPool pool,
         CancellationToken ct = default)
+        => await RunAsync(
+            songIds,
+            seasonWindows,
+            accessToken,
+            callerAccountId,
+            pool,
+            new RegisteredLookupPassState(),
+            ct);
+
+    internal async Task<RegisteredPlayerBandDiscoveryResult> RunAsync(
+        IReadOnlyList<string> songIds,
+        IReadOnlyList<SeasonWindowInfo> seasonWindows,
+        string accessToken,
+        string callerAccountId,
+        SharedDopPool pool,
+        RegisteredLookupPassState passState,
+        CancellationToken ct = default)
     {
         if (!_options.EnableRegisteredPlayerBandDiscovery)
             return RegisteredPlayerBandDiscoveryResult.Empty;
@@ -159,6 +176,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
             admittedAccounts,
             intents,
             maxLookupsPerPass);
+        passState.Initialize(admittedLookups);
         _progress.SetAdaptiveLimiter(pool.Limiter);
         _progress.BeginPhaseProgress(admittedLookups);
         _progress.SetPhaseAccounts(admittedAccounts.Length);
@@ -227,6 +245,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
                         callerAccountId,
                         pool,
                         remainingLookups,
+                        passState,
                         ct);
                     MergeAccountResult(accountResult);
                 }
@@ -259,6 +278,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         finally
         {
             _progress.SetAdaptiveLimiter(null);
+            LogPassSummary(passState.Snapshot);
         }
 
         _log.LogInformation(
@@ -341,6 +361,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         string callerAccountId,
         SharedDopPool pool,
         int remainingPassLookups,
+        RegisteredLookupPassState passState,
         CancellationToken ct)
     {
         var checkedProgress = _metaDb.GetCheckedRegisteredPlayerBandDiscoveryLookups(accountId);
@@ -391,6 +412,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
             {
                 ct.ThrowIfCancellationRequested();
                 lookupsAttempted++;
+                using var attemptLease = passState.BeginAttempt();
 
                 Func<Task<RegisteredPlayerBandDiscoveryLookupResult>> work = () =>
                 {
@@ -495,6 +517,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
                     intent.Season,
                     found,
                     intent.WindowId);
+                attemptLease.CompleteDurable();
 
                 lookupsChecked++;
                 _progress.ReportPhaseItemComplete();
@@ -520,6 +543,25 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         }
 
         return BuildResult();
+    }
+
+    private void LogPassSummary(RegisteredLookupPassSnapshot snapshot)
+    {
+        _log.LogInformation(
+            "registered_lookup_phase_summary phase={Phase} initialized={Initialized} valid={Valid} planned={Planned} durableCompleted={DurableCompleted} attemptsStarted={AttemptsStarted} inFlight={InFlight} finishedWithoutCheckpoint={FinishedWithoutCheckpoint} durableRemaining={DurableRemaining} firstDurableCompletionTimestamp={FirstDurableCompletionTimestamp} lastDurableCompletionTimestamp={LastDurableCompletionTimestamp} observedMeanDurableIntervalMs={ObservedMeanDurableIntervalMs} maximumDurableGapMs={MaximumDurableGapMs}",
+            "RegisteredPlayerBandDiscovery",
+            snapshot.Initialized,
+            snapshot.StateIsValid,
+            snapshot.Planned,
+            snapshot.DurableCompleted,
+            snapshot.AttemptsStarted,
+            snapshot.InFlight,
+            snapshot.FinishedWithoutCheckpoint,
+            snapshot.DurableRemaining,
+            snapshot.FirstDurableCompletionTimestamp,
+            snapshot.LastDurableCompletionTimestamp,
+            snapshot.ObservedMeanDurableIntervalMilliseconds,
+            snapshot.MaximumDurableCompletionGap?.TotalMilliseconds);
     }
 
     private sealed record AccountDiscoveryRunResult(

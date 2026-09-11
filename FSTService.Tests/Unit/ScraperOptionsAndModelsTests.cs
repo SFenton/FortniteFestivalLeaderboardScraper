@@ -16,6 +16,19 @@ public class ScraperOptionsAndModelsTests
 
         Assert.Equal(TimeSpan.FromHours(4), opts.ScrapeInterval);
         Assert.Equal(16, opts.DegreeOfParallelism);
+        Assert.False(
+            opts.EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace);
+        Assert.False(
+            opts.EnableRegisteredBandTargetedProcessingRemainingWorkGrace);
+        Assert.Equal(
+            TimeSpan.FromMinutes(2),
+            opts.RegisteredBandRemainingWorkGraceMaxDuration);
+        Assert.Equal(
+            TimeSpan.FromSeconds(90),
+            opts.RegisteredBandRemainingWorkGraceRecentProgressWindow);
+        Assert.Equal(
+            3,
+            opts.RegisteredBandRemainingWorkGraceMaxRemainingLookups);
         Assert.Equal(1, opts.RankHistorySnapshotMaxDegreeOfParallelism);
         Assert.Equal(4, opts.LeaderboardRivalsMaxDegreeOfParallelism);
         Assert.Equal(
@@ -165,6 +178,74 @@ public class ScraperOptionsAndModelsTests
             });
 
         Assert.False(result.Failed);
+    }
+
+    [Fact]
+    public void ScraperOptionsValidator_AcceptsRemainingWorkGraceBounds()
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace = true,
+                EnableRegisteredBandTargetedProcessingRemainingWorkGrace = true,
+                RegisteredPlayerBandDiscoveryTimeout = TimeSpan.FromSeconds(1),
+                RegisteredBandTargetedProcessingTimeout = TimeSpan.FromSeconds(1),
+                RegisteredBandRemainingWorkGraceMaxDuration = TimeSpan.FromSeconds(120),
+                RegisteredBandRemainingWorkGraceRecentProgressWindow = TimeSpan.FromSeconds(120),
+                RegisteredBandRemainingWorkGraceMaxRemainingLookups = 3,
+            });
+
+        Assert.False(result.Failed);
+    }
+
+    [Theory]
+    [InlineData(0, 90, 3)]
+    [InlineData(121, 90, 3)]
+    [InlineData(120, 0, 3)]
+    [InlineData(60, 61, 3)]
+    [InlineData(120, 90, 0)]
+    [InlineData(120, 90, 4)]
+    public void ScraperOptionsValidator_RejectsInvalidRemainingWorkGraceBounds(
+        int maxSeconds,
+        int recentSeconds,
+        int maxRemaining)
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                RegisteredBandRemainingWorkGraceMaxDuration =
+                    TimeSpan.FromSeconds(maxSeconds),
+                RegisteredBandRemainingWorkGraceRecentProgressWindow =
+                    TimeSpan.FromSeconds(recentSeconds),
+                RegisteredBandRemainingWorkGraceMaxRemainingLookups =
+                    maxRemaining,
+            });
+
+        Assert.True(result.Failed);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ScraperOptionsValidator_RejectsEnabledGraceWithUnlimitedBase(
+        bool discovery,
+        bool targeted)
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace =
+                    discovery,
+                EnableRegisteredBandTargetedProcessingRemainingWorkGrace =
+                    targeted,
+                RegisteredPlayerBandDiscoveryTimeout = TimeSpan.Zero,
+                RegisteredBandTargetedProcessingTimeout = TimeSpan.Zero,
+            });
+
+        Assert.True(result.Failed);
     }
 
     [Theory]

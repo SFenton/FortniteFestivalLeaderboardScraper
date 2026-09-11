@@ -41,6 +41,22 @@ public sealed class DurablePhaseProgressSinkTests
         Assert.NotEqual(baseline, candidate);
     }
 
+    [Theory]
+    [InlineData("Scraper:EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace", "true")]
+    [InlineData("Scraper:EnableRegisteredBandTargetedProcessingRemainingWorkGrace", "true")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceMaxDuration", "00:01:59")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceRecentProgressWindow", "00:01:29")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceMaxRemainingLookups", "2")]
+    public void RemainingWorkGraceOptionsChangeDurableConfigurationIdentity(
+        string key,
+        string value)
+    {
+        var baseline = CaptureConfigIdForValue(key, "");
+        var candidate = CaptureConfigIdForValue(key, value);
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
     [Fact]
     public void Reattaching_same_scrape_and_instance_is_idempotent()
     {
@@ -970,6 +986,39 @@ public sealed class DurablePhaseProgressSinkTests
                 {
                     ["Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation"] =
                         enabled.ToString(),
+                })
+            .Build();
+        var sink = new DurablePhaseProgressSink(
+            metaDb,
+            configuration,
+            NullLogger<DurablePhaseProgressSink>.Instance,
+            new FakePhaseProgressClock());
+
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0]);
+
+        return Assert.IsType<string>(captured?.ConfigId);
+    }
+
+    private static string CaptureConfigIdForValue(string key, string value)
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        ScrapePhaseAttemptStart? captured = null;
+        metaDb.StartScrapePhaseAttempt(
+                Arg.Do<ScrapePhaseAttemptStart>(
+                    start => captured = start))
+            .Returns(1);
+        metaDb.GetSuccessfulPhaseDurationSamples(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>(),
+                Arg.Any<int>())
+            .Returns([]);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    [key] = value,
                 })
             .Build();
         var sink = new DurablePhaseProgressSink(

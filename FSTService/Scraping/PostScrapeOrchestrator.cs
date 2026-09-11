@@ -81,6 +81,7 @@ public sealed class PostScrapeOrchestrator
     private readonly DurablePhaseProgressSink? _phaseProgress;
     private readonly RegistrationMutationCoordinator
         _registrationMutations;
+    private readonly TimeProvider _timeProvider;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -119,7 +120,8 @@ public sealed class PostScrapeOrchestrator
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         WorkerStatusPublisher? workerStatus = null,
         ImprovementNotificationRecoveryService? improvementNotificationRecovery = null,
-        DurablePhaseProgressSink? phaseProgress = null)
+        DurablePhaseProgressSink? phaseProgress = null,
+        TimeProvider? timeProvider = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -157,6 +159,7 @@ public sealed class PostScrapeOrchestrator
         _workerStatus = workerStatus;
         _phaseProgress = phaseProgress;
         _registrationMutations = registrationMutations;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -275,16 +278,23 @@ public sealed class PostScrapeOrchestrator
                 registeredPlayerBandDiscoveryResult = await RunPhaseAsync(
                     ctx,
                     "RegisteredPlayerBandDiscovery",
-                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                    () => RunRegisteredLookupPhaseWithTimeoutAsync(
+                        "RegisteredPlayerBandDiscovery",
                         "registered-player band discovery",
-                        _options.Value.RegisteredPlayerBandDiscoveryTimeout
-                            ?? _options.Value.PostScrapeRefreshTimeout,
-                        phaseCt => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
+                        new RegisteredLookupGracePolicy(
+                            _options.Value.EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace,
+                            _options.Value.RegisteredPlayerBandDiscoveryTimeout
+                                ?? _options.Value.PostScrapeRefreshTimeout,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxDuration,
+                            _options.Value.RegisteredBandRemainingWorkGraceRecentProgressWindow,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxRemainingLookups),
+                        (passState, phaseCt) => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
                             bandAccessToken,
                             _tokenManager.AccountId!,
                             _pool,
+                            passState,
                             phaseCt),
                         ct),
                     RegisteredPlayerBandDiscoveryResult.Empty);
@@ -314,16 +324,23 @@ public sealed class PostScrapeOrchestrator
                 registeredBandProcessingResult = await RunPhaseAsync(
                     ctx,
                     "RegisteredBandTargetedProcessing",
-                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                    () => RunRegisteredLookupPhaseWithTimeoutAsync(
+                        "RegisteredBandTargetedProcessing",
                         "registered-band targeted processing",
-                        _options.Value.RegisteredBandTargetedProcessingTimeout
-                            ?? _options.Value.PostScrapeRefreshTimeout,
-                        phaseCt => registeredBandProcessingOrchestrator.RunAsync(
+                        new RegisteredLookupGracePolicy(
+                            _options.Value.EnableRegisteredBandTargetedProcessingRemainingWorkGrace,
+                            _options.Value.RegisteredBandTargetedProcessingTimeout
+                                ?? _options.Value.PostScrapeRefreshTimeout,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxDuration,
+                            _options.Value.RegisteredBandRemainingWorkGraceRecentProgressWindow,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxRemainingLookups),
+                        (passState, phaseCt) => registeredBandProcessingOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
                             bandAccessToken,
                             _tokenManager.AccountId!,
                             _pool,
+                            passState,
                             phaseCt),
                         ct),
                     RegisteredBandProcessingResult.Empty);
@@ -2139,6 +2156,39 @@ public sealed class PostScrapeOrchestrator
             throw new TimeoutException(
                 $"Post-scrape {operationName} timed out after {timeout}.");
         }
+    }
+
+    internal Task<T> RunRegisteredLookupPhaseWithTimeoutAsync<T>(
+        string phase,
+        string operationName,
+        RegisteredLookupGracePolicy policy,
+        Func<RegisteredLookupPassState, CancellationToken, Task<T>> operation,
+        CancellationToken callerToken)
+    {
+        if (!policy.Enabled)
+        {
+            var state = new RegisteredLookupPassState(_timeProvider);
+            return RunWithPostScrapeNetworkTimeoutAsync(
+                operationName,
+                policy.BaseTimeout,
+                phaseToken => operation(state, phaseToken),
+                callerToken);
+        }
+
+        if (policy.BaseTimeout <= TimeSpan.Zero)
+        {
+            return operation(
+                new RegisteredLookupPassState(_timeProvider),
+                callerToken);
+        }
+
+        return new RegisteredLookupGraceController(_timeProvider, _log)
+            .RunAsync(
+                phase,
+                operationName,
+                policy,
+                operation,
+                callerToken);
     }
 
     /// <summary>

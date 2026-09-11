@@ -225,6 +225,32 @@ rollback. Enabling it in production requires a capacity-safe matched full
 scrape A/B and exact publication/data parity; isolated replay timing is not
 promotion evidence.
 
+## Registered-band remaining-work grace
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace` | `false` | Boolean | Enables one remaining-work-gated extension for discovery |
+| `Scraper:EnableRegisteredBandTargetedProcessingRemainingWorkGrace` | `false` | Boolean | Enables one remaining-work-gated extension for targeted processing |
+| `Scraper:RegisteredBandRemainingWorkGraceMaxDuration` | `00:02:00` | `00:00:01`-`00:02:00` | Immutable maximum extension beyond the base timeout |
+| `Scraper:RegisteredBandRemainingWorkGraceRecentProgressWindow` | `00:01:30` | `00:00:01` through max duration | Maximum durable-checkpoint age and grace-idle interval |
+| `Scraper:RegisteredBandRemainingWorkGraceMaxRemainingLookups` | `3` | `1`-`3` | Maximum exact `planned - durable completed` work at the base deadline |
+
+Compose maps these to
+`ENABLE_REGISTERED_PLAYER_BAND_DISCOVERY_REMAINING_WORK_GRACE`,
+`ENABLE_REGISTERED_BAND_TARGETED_PROCESSING_REMAINING_WORK_GRACE`,
+`REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_DURATION`,
+`REGISTERED_BAND_REMAINING_WORK_GRACE_RECENT_PROGRESS_WINDOW`, and
+`REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_REMAINING_LOOKUPS`.
+All tracked enable defaults remain false. Enabling either phase requires its
+resolved discovery/targeted base timeout to be positive; zero retains the
+legacy unlimited wait only while grace is disabled. Invalid thresholds fail
+startup. All five values participate in durable phase `config_id`.
+
+With the bounded defaults, enabled maximum network/await budgets are eight
+minutes for discovery (`6m + 2m`) and seven minutes for targeted processing
+(`5m + 2m`). Production enablement requires a separate matched full-scrape A/B;
+configuration rollback is independently setting each enable flag to `false`.
+
 ## Player rivals
 
 | Key | Default | Valid range | Purpose |

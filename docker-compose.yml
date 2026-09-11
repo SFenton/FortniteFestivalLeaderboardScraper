@@ -93,6 +93,11 @@ services:
       - Scraper__RegisteredUserRefreshTimeout=${REGISTERED_USER_REFRESH_TIMEOUT:-00:00:00}
       - Scraper__RegisteredPlayerBandDiscoveryTimeout=${REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT:-00:06:00}
       - Scraper__RegisteredBandTargetedProcessingTimeout=${REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT:-00:05:00}
+      - Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace=${ENABLE_REGISTERED_PLAYER_BAND_DISCOVERY_REMAINING_WORK_GRACE:-false}
+      - Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace=${ENABLE_REGISTERED_BAND_TARGETED_PROCESSING_REMAINING_WORK_GRACE:-false}
+      - Scraper__RegisteredBandRemainingWorkGraceMaxDuration=${REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_DURATION:-00:02:00}
+      - Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow=${REGISTERED_BAND_REMAINING_WORK_GRACE_RECENT_PROGRESS_WINDOW:-00:01:30}
+      - Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups=${REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_REMAINING_LOOKUPS:-3}
       - Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass=${REGISTERED_PLAYER_BAND_DISCOVERY_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__RegisteredBandProcessingMaxLookupsPerPass=${REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
