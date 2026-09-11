@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
+using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
@@ -168,6 +169,8 @@ public sealed class ScrapeProgressTracker
     private int _phaseRequests;
     private int _phaseRetries;
     private int _phaseUpdated;
+    private int _phaseAttempts;
+    private int _phaseRetryableUnavailable;
 
     // ─── Adaptive concurrency ───────────────────────────────
 
@@ -841,6 +844,8 @@ public sealed class ScrapeProgressTracker
         _phaseRequests = 0;
         _phaseRetries = 0;
         _phaseUpdated = 0;
+        _phaseAttempts = 0;
+        _phaseRetryableUnavailable = 0;
     }
 
     /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>
@@ -871,6 +876,20 @@ public sealed class ScrapeProgressTracker
         Interlocked.Increment(ref _changeSequence);
     }
 
+    /// <summary>Report one logical work-item attempt in the current pass.</summary>
+    public void ReportPhaseAttempt()
+    {
+        Interlocked.Increment(ref _phaseAttempts);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Report one attempted item that remains pending after a retryable unavailable response.</summary>
+    public void ReportPhaseRetryableUnavailable()
+    {
+        Interlocked.Increment(ref _phaseRetryableUnavailable);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
     /// <summary>Report one account-level unit completed.</summary>
     public void ReportPhaseAccountComplete() { Interlocked.Increment(ref _phaseAccountsCompleted); Interlocked.Increment(ref _changeSequence); }
 
@@ -893,6 +912,8 @@ public sealed class ScrapeProgressTracker
         _phaseRequests = 0;
         _phaseRetries = 0;
         _phaseUpdated = 0;
+        _phaseAttempts = 0;
+        _phaseRetryableUnavailable = 0;
         lock (_completedAttachments) { _completedAttachments.Clear(); }
     }
 
@@ -1232,6 +1253,9 @@ public sealed class ScrapeProgressTracker
         var requests = _phaseRequests;
         var retries = _phaseRetries;
         var updated = _phaseUpdated;
+        var attempts = Volatile.Read(ref _phaseAttempts);
+        var retryableUnavailable =
+            Volatile.Read(ref _phaseRetryableUnavailable);
 
         double? progressPercent = null;
         TimeSpan? estimatedRemaining = null;
@@ -1274,6 +1298,14 @@ public sealed class ScrapeProgressTracker
             Requests = requests > 0 ? requests : null,
             Retries = retries > 0 ? retries : null,
             EntriesUpdated = updated > 0 ? updated : null,
+            AttemptProgress = attempts > 0 || retryableUnavailable > 0
+                ? new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = attempts,
+                    RetryableUnavailableThisPass =
+                        Math.Min(attempts, retryableUnavailable),
+                }
+                : null,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
             InFlight = _adaptiveLimiter?.InFlight,
             MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
@@ -1454,6 +1486,7 @@ public sealed class OperationSnapshot
     [JsonIgnore]
     public bool? WorkItemsTotalFinal { get; init; }
     public int? EntriesUpdated { get; init; }
+    public PhaseAttemptProgressInfo? AttemptProgress { get; init; }
 
     // ── Sub-operation detail ──
     public SubOperationDetail? Detail { get; init; }

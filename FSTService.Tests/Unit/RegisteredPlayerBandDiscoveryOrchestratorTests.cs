@@ -254,9 +254,13 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
     {
         Db.RegisterUser("web-tracker", "acct1");
         var strategy = new InvalidThenSuccessDiscoveryStrategy();
+        var tracker = new ScrapeProgressTracker();
+        tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        tracker.SetSubOperation("registered_player_band_discovery");
         var orchestrator = CreateOrchestrator(
             strategy,
-            maxLookupsPerAccount: 1);
+            maxLookupsPerAccount: 1,
+            tracker: tracker);
         using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
 
         var first = await orchestrator.RunAsync(
@@ -266,7 +270,16 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             "caller",
             pool);
 
+        Assert.Equal(1, first.LookupsAttempted);
         Assert.Equal(0, first.LookupsChecked);
+        Assert.Equal(
+            1,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.AttemptedThisPass);
+        Assert.Equal(
+            1,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.RetryableUnavailableThisPass);
         Assert.Empty(Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1"));
         using (var conn = _fixture.DataSource.OpenConnection())
         using (var cmd = conn.CreateCommand())
@@ -286,8 +299,17 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             "caller",
             pool);
 
+        Assert.Equal(1, second.LookupsAttempted);
         Assert.Equal(1, second.LookupsChecked);
         Assert.Equal(1, second.EntriesPersisted);
+        Assert.Equal(
+            1,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.AttemptedThisPass);
+        Assert.Equal(
+            0,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.RetryableUnavailableThisPass);
         Assert.Single(Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1"));
     }
 
@@ -313,9 +335,18 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             "caller",
             pool);
 
+        Assert.Equal(78, result.LookupsAttempted);
         Assert.Equal(77, result.LookupsChecked);
         Assert.Equal(77, tracker.GetProgressResponse().Current?.WorkItems?.Completed);
         Assert.Equal(80, tracker.GetProgressResponse().Current?.WorkItems?.Total);
+        Assert.Equal(
+            78,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.AttemptedThisPass);
+        Assert.Equal(
+            0,
+            tracker.GetProgressResponse().Current
+                ?.AttemptProgress?.RetryableUnavailableThisPass);
         Assert.Null(tracker.GetProgressResponse().Current?.CurrentDop);
     }
 

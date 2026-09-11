@@ -55,6 +55,7 @@ public sealed class WorkerStatusPublisherTests
         var publisher = new WorkerStatusPublisher(
             metaDb,
             NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.AttachScrape(42);
         publisher.BeginOperation(
             "scrape.post_process",
             "Post-processing leaderboard update",
@@ -89,6 +90,7 @@ public sealed class WorkerStatusPublisherTests
         var publisher = new WorkerStatusPublisher(
             metaDb,
             NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.AttachScrape(42);
         publisher.BeginOperation(
             "scrape.post_process",
             "Post-processing leaderboard update",
@@ -119,7 +121,12 @@ public sealed class WorkerStatusPublisherTests
             null,
             null,
             progressAt,
-            progressAt));
+            progressAt,
+            AttemptProgress: new PhaseAttemptProgressInfo
+            {
+                AttemptedThisPass = 7,
+                RetryableUnavailableThisPass = 2,
+            }));
 
         metaDb.Received(1).UpdateWorkerActivity(
             WorkerStatusPublisher.ScraperWorkerKey,
@@ -132,6 +139,9 @@ public sealed class WorkerStatusPublisherTests
                 && operation.PhaseId == "post.band_maintenance"
                 && operation.SubphaseId == "current_projection_refresh"
                 && operation.PhasePercent == 50
+                && operation.AttemptProgress!.AttemptedThisPass == 7
+                && operation.AttemptProgress
+                    .RetryableUnavailableThisPass == 2
                 && operation.LastProgressAtUtc == progressAt),
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
@@ -187,12 +197,57 @@ public sealed class WorkerStatusPublisherTests
     }
 
     [Fact]
+    public void Attaching_tags_operation_without_phase_descriptor()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publisher = new WorkerStatusPublisher(
+            metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.BeginOperation(
+            "scrape.pass",
+            "Running leaderboard update",
+            phase: "Initializing");
+        metaDb.ClearReceivedCalls();
+
+        publisher.AttachScrape(1380);
+
+        metaDb.Received(1).UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Is<WorkerOperationInfo>(operation =>
+                operation.OperationKey == "scrape.pass"
+                && operation.ScrapeId == 1380
+                && operation.PhaseId == null),
+            Arg.Any<WorkerOperationInfo?>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
+
+        metaDb.ClearReceivedCalls();
+        publisher.CompleteOperation("scrape.pass");
+
+        metaDb.Received(1).UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Is<WorkerOperationInfo?>(
+                operation => operation == null),
+            Arg.Is<WorkerOperationInfo>(operation =>
+                operation.OperationKey == "scrape.pass"
+                && operation.Status == "completed"
+                && operation.ScrapeId == 1380),
+            "running",
+            null,
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
+    }
+
+    [Fact]
     public void New_phase_clears_weak_estimates_from_previous_phase()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         var publisher = new WorkerStatusPublisher(
             metaDb,
             NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.AttachScrape(42);
         publisher.BeginOperation(
             "scrape.post_process",
             "Post-processing leaderboard update",
@@ -219,6 +274,245 @@ public sealed class WorkerStatusPublisherTests
                 && operation.EtaUpperSeconds == null
                 && operation.EtaConfidence == null
                 && operation.EtaSampleCount == null),
+            Arg.Any<WorkerOperationInfo?>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
+            Arg.Any<DateTime?>(),
+            publisher.InstanceId);
+    }
+
+    [Fact]
+    public void Stale_durable_view_cannot_regress_terminal_attempt_progress()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publisher = new WorkerStatusPublisher(
+            metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.AttachScrape(1379);
+        publisher.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        var completedAt = DateTime.UtcNow;
+        publisher.ApplyDurableProgress(
+            new DurablePhaseProgressView(
+                1379,
+                "scrape.update",
+                "post.registered_player_band_discovery",
+                "completed",
+                "registered_player_band_discovery",
+                PhaseProgressCatalog.PlanVersion,
+                270,
+                1,
+                "lookups",
+                0,
+                80,
+                true,
+                0,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                completedAt,
+                completedAt,
+                new SubphaseProgressInfo
+                {
+                    Id =
+                        "registered_player_band_discovery",
+                    Epoch = 1,
+                    Sequence = 10,
+                    Kind = "exact",
+                    UnitsKind = "lookups",
+                    UnitsCompleted = 0,
+                    UnitsTotal = 80,
+                    UnitsTotalFinal = true,
+                    Percent = 0,
+                },
+                new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 10,
+                    RetryableUnavailableThisPass = 10,
+                }));
+        metaDb.ClearReceivedCalls();
+
+        publisher.ApplyDurableProgress(
+            new DurablePhaseProgressView(
+                1379,
+                "scrape.update",
+                "post.registered_player_band_discovery",
+                "running",
+                "registered_player_band_discovery",
+                PhaseProgressCatalog.PlanVersion,
+                270,
+                1,
+                "lookups",
+                0,
+                80,
+                true,
+                0,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                completedAt.AddSeconds(-1),
+                completedAt.AddSeconds(-1),
+                new SubphaseProgressInfo
+                {
+                    Id =
+                        "registered_player_band_discovery",
+                    Epoch = 1,
+                    Sequence = 9,
+                    Kind = "exact",
+                    UnitsKind = "lookups",
+                    UnitsCompleted = 0,
+                    UnitsTotal = 80,
+                    UnitsTotalFinal = true,
+                    Percent = 0,
+                },
+                new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 5,
+                    RetryableUnavailableThisPass = 5,
+                }));
+
+        metaDb.DidNotReceive().UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Any<WorkerOperationInfo>(),
+            Arg.Any<WorkerOperationInfo?>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
+            Arg.Any<DateTime?>(),
+            Arg.Any<string?>());
+        publisher.PublishHeartbeat();
+        metaDb.Received(1).UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            Arg.Any<string>(),
+            Arg.Any<DateTime>(),
+            Arg.Any<DateTime>(),
+            null,
+            Arg.Is<WorkerOperationInfo>(operation =>
+                operation.PhaseStatus == "completed"
+                && operation.AttemptProgress!
+                    .AttemptedThisPass == 10
+                && operation.AttemptProgress
+                    .RetryableUnavailableThisPass
+                    == 10));
+    }
+
+    [Fact]
+    public void Previous_scrape_view_cannot_override_new_scrape_progress()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publisher = new WorkerStatusPublisher(
+            metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
+        var now = DateTime.UtcNow;
+        publisher.AttachScrape(1379);
+        publisher.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        publisher.ApplyDurableProgress(
+            new DurablePhaseProgressView(
+                1379,
+                "scrape.update",
+                "publication.commit",
+                "completed",
+                null,
+                PhaseProgressCatalog.PlanVersion,
+                900,
+                1,
+                null,
+                null,
+                null,
+                false,
+                null,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now,
+                now));
+        publisher.AttachScrape(1380);
+        metaDb.ClearReceivedCalls();
+
+        publisher.ApplyDurableProgress(
+            new DurablePhaseProgressView(
+                1379,
+                "scrape.update",
+                "publication.commit",
+                "completed",
+                null,
+                PhaseProgressCatalog.PlanVersion,
+                900,
+                1,
+                null,
+                null,
+                null,
+                false,
+                null,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now,
+                now));
+
+        metaDb.DidNotReceive().UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Any<WorkerOperationInfo>(),
+            Arg.Any<WorkerOperationInfo?>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
+            Arg.Any<DateTime?>(),
+            Arg.Any<string?>());
+
+        publisher.ApplyDurableProgress(
+            new DurablePhaseProgressView(
+                1380,
+                "scrape.update",
+                "scrape.leaderboards",
+                "running",
+                "fetching_leaderboards",
+                PhaseProgressCatalog.PlanVersion,
+                100,
+                1,
+                "leaderboards",
+                5,
+                100,
+                true,
+                5,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now.AddSeconds(1),
+                now.AddSeconds(1)));
+
+        metaDb.Received(1).UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Is<WorkerOperationInfo>(operation =>
+                operation.ScrapeId == 1380
+                && operation.PhaseId
+                    == "scrape.leaderboards"
+                && operation.PhaseOrdinal == 100),
             Arg.Any<WorkerOperationInfo?>(),
             Arg.Any<string?>(),
             Arg.Any<string?>(),
