@@ -185,6 +185,76 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void Attempt_progress_advances_without_false_durable_completion()
+    {
+        var (sink, metaDb, clock) = CreateSink();
+        sink.AttachScrape(1379, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "RegisteredPlayerBandDiscovery")!;
+        sink.StartPhase(
+            descriptor,
+            "registered_player_band_discovery");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var baseline = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation =
+                    "registered_player_band_discovery",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 0,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Equal(0, baseline.UnitsCompleted);
+        Assert.Equal(0, baseline.PhasePercent);
+        metaDb.ClearReceivedCalls();
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var attempted = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation =
+                    "registered_player_band_discovery",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 0,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+                AttemptProgress = new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 10,
+                    RetryableUnavailableThisPass = 10,
+                },
+            }));
+
+        Assert.Equal(0, attempted.UnitsCompleted);
+        Assert.Equal(0, attempted.PhasePercent);
+        Assert.Equal(
+            10,
+            attempted.AttemptProgress?.AttemptedThisPass);
+        Assert.Equal(
+            10,
+            attempted.AttemptProgress
+                ?.RetryableUnavailableThisPass);
+        Assert.True(
+            attempted.LastProgressAtUtc
+            > baseline.LastProgressAtUtc);
+        metaDb.Received(1).UpdateScrapePhaseAttemptProgress(
+            Arg.Is<ScrapePhaseAttemptProgress>(progress =>
+                progress.UnitsCompleted == 0
+                && progress.UnitsTotal == 80
+                && progress.PhasePercent == 0
+                && progress.LastProgressAtUtc
+                    == attempted.LastProgressAtUtc));
+    }
+
+    [Fact]
     public void Persisting_scores_does_not_inherit_fetch_completion()
     {
         var (sink, _, clock) = CreateSink();

@@ -61,7 +61,8 @@ public sealed record DurablePhaseProgressView(
     int? EtaSampleCount,
     DateTime StartedAtUtc,
     DateTime LastProgressAtUtc,
-    SubphaseProgressInfo? SubphaseProgress = null);
+    SubphaseProgressInfo? SubphaseProgress = null,
+    PhaseAttemptProgressInfo? AttemptProgress = null);
 
 public static class PhaseEtaEstimator
 {
@@ -390,7 +391,8 @@ public sealed class DurablePhaseProgressSink
             var view = Observe(
                 primary,
                 BuildObservation(snapshot, primary.Descriptor),
-                BuildSubphaseObservation(snapshot, primary.Descriptor));
+                BuildSubphaseObservation(snapshot, primary.Descriptor),
+                attemptProgress: snapshot.AttemptProgress);
             if (view is not null)
                 writes.Add(view);
         }
@@ -518,7 +520,8 @@ public sealed class DurablePhaseProgressSink
         ActiveAttempt state,
         PhaseProgressObservation observation,
         SubphaseProgressObservation? subphaseObservation = null,
-        bool force = false)
+        bool force = false,
+        PhaseAttemptProgressInfo? attemptProgress = null)
     {
         var now = _clock.UtcNow;
         lock (_gate)
@@ -554,6 +557,30 @@ public sealed class DurablePhaseProgressSink
                     : null;
             if (state.PhasePercent.HasValue && exactPercent.HasValue)
                 exactPercent = Math.Max(state.PhasePercent.Value, exactPercent.Value);
+
+            var normalizedAttemptedThisPass =
+                state.AttemptedThisPass;
+            var normalizedRetryableUnavailableThisPass =
+                state.RetryableUnavailableThisPass;
+            if (attemptProgress?.SchemaVersion == 1)
+            {
+                normalizedAttemptedThisPass = Math.Max(
+                    state.AttemptedThisPass ?? 0,
+                    Math.Max(0, attemptProgress.AttemptedThisPass));
+                normalizedRetryableUnavailableThisPass = Math.Min(
+                    normalizedAttemptedThisPass.Value,
+                    Math.Max(
+                        state.RetryableUnavailableThisPass ?? 0,
+                        Math.Max(
+                            0,
+                            attemptProgress
+                                .RetryableUnavailableThisPass)));
+            }
+            var attemptProgressMeaningful =
+                normalizedAttemptedThisPass
+                    != state.AttemptedThisPass
+                || normalizedRetryableUnavailableThisPass
+                    != state.RetryableUnavailableThisPass;
 
             var subphaseIdChanged = !string.Equals(
                 state.SubphaseId,
@@ -700,7 +727,9 @@ public sealed class DurablePhaseProgressSink
                 subphaseMeaningful |= observationMeaningful;
             }
 
-            var meaningful = phaseMeaningful || subphaseMeaningful;
+            var meaningful = phaseMeaningful
+                || subphaseMeaningful
+                || attemptProgressMeaningful;
             var pendingFlushDue = state.PendingProgressAtUtc.HasValue
                 && now - state.LastPersistedAtUtc >= ProgressWriteInterval;
             if (!meaningful && !pendingFlushDue)
@@ -713,6 +742,13 @@ public sealed class DurablePhaseProgressSink
                 state.UnitsTotal = normalizedTotal;
                 state.UnitsTotalFinal = normalizedTotalFinal;
                 state.PhasePercent = exactPercent;
+            }
+            if (attemptProgressMeaningful)
+            {
+                state.AttemptedThisPass =
+                    normalizedAttemptedThisPass;
+                state.RetryableUnavailableThisPass =
+                    normalizedRetryableUnavailableThisPass;
             }
             if (meaningful)
             {
@@ -1205,7 +1241,16 @@ public sealed class DurablePhaseProgressSink
                 Percent = state.SubphasePercent,
                 StartedAtUtc = state.SubphaseStartedAtUtc,
                 LastProgressAtUtc = state.SubphaseLastProgressAtUtc,
-            });
+            },
+            state.AttemptedThisPass.HasValue
+                ? new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass =
+                        state.AttemptedThisPass.Value,
+                    RetryableUnavailableThisPass =
+                        state.RetryableUnavailableThisPass ?? 0,
+                }
+                : null);
 
     private static string NormalizeTerminalStatus(string status) =>
         status.ToLowerInvariant() switch
@@ -1295,6 +1340,8 @@ public sealed class DurablePhaseProgressSink
         public double? EtaUpperSeconds { get; set; }
         public string? EtaConfidence { get; set; }
         public int? EtaSampleCount { get; set; }
+        public long? AttemptedThisPass { get; set; }
+        public long? RetryableUnavailableThisPass { get; set; }
         public IReadOnlyList<PhaseDurationSample> DurationSamples { get; }
     }
 }

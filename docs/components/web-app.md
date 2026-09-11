@@ -366,7 +366,9 @@ subtitle, spacing, and trailing-value treatment as the rest of Settings:
 1. `Leaderboard Service State`, with the friendly phase as its subtitle and
    `Updating` plus the shared spinner, `Idle`, or `Stopped` on the right.
 2. The friendly `Phase · Subphase` label, followed only by the progress bar.
-   Identical labels collapse to one.
+   Identical labels collapse to one. Registered-player band discovery adds one
+   muted line below the bar with attempted-this-pass, temporarily unavailable,
+   and durable completed lookup counts.
 3. `Last Successful Publication`, with browser-local date/time and the local
    short timezone abbreviation as its subtitle.
 
@@ -379,13 +381,15 @@ a valid percentage. `indeterminate` keeps the animated bar, while
 `not_applicable` omits the bar. Legacy named-subphase payloads remain
 indeterminate.
 
-The progress row intentionally has no visible percentage, unit count, ETA,
-overall estimate, phase-state subtitle, or other status text. Exact counts
-remain available through the progress bar's accessible value text. Display
-memory is keyed by operation, scrape, plan, phase attempt, subphase ID, and
-subphase epoch; lower sequences and older timestamps cannot regress the bar,
-while a new identity can reset from a higher percentage to a lower truthful
-value.
+The progress row intentionally has no visible percentage, generic unit count,
+ETA, overall estimate, phase-state subtitle, or other status text. The sole
+phase-specific exception is registered-player band discovery, whose concise
+attempt summary explains why durable progress can remain at 0% after Epic
+returns retryable unavailable responses. Exact counts remain available through
+the progress bar's accessible value text. Display memory is keyed by operation,
+scrape, plan, phase attempt, subphase ID, and subphase epoch; lower sequences
+and older timestamps cannot regress the bar or attempt summary, while a new
+identity can reset from a higher value to a lower truthful value.
 
 Operational IDs, raw timestamps, attempts, model diagnostics, technical
 disclosures, current-update timing, next-schedule timing, and selected-profile

@@ -28,6 +28,8 @@
   "leaderboardsRetrieved": "{{completed}} leaderboards retrieved",
   "leaderboardsRetrievedOfTotal": "{{completed}} of {{total}} leaderboards retrieved",
   "leaderboardsRetrievedDiscovering": "{{completed}} leaderboards retrieved; {{total}} discovered so far",
+  "registeredBandDiscoveryAttempts": "{{attempted}} attempted this pass · {{unavailable}} temporarily unavailable · {{completed}} of {{total}} completed",
+  "registeredBandDiscoveryAttemptsWithoutTotal": "{{attempted}} attempted this pass · {{unavailable}} temporarily unavailable · {{completed}} completed",
   "unitsGeneric": "items",
   "unitsCompleted": "{{completed}} {{unit}} completed",
   "unitsCompletedOfTotal": "{{completed}} of {{total}} {{unit}} completed",

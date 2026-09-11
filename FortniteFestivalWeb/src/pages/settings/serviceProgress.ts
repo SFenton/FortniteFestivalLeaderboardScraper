@@ -20,6 +20,11 @@ export type ServiceBarProgress = {
   unitsTotalFinal: boolean;
 };
 
+export type ServiceAttemptProgress = {
+  attemptedThisPass: number;
+  retryableUnavailableThisPass: number;
+};
+
 export type ServiceProgressDisplay = {
   isV2: boolean;
   isDeterminate: boolean;
@@ -38,6 +43,7 @@ export type ServiceProgressDisplay = {
   stalePayloadIgnored: boolean;
   eta: TrustedServiceEta | null;
   barProgress: ServiceBarProgress | null;
+  attemptProgress: ServiceAttemptProgress | null;
 };
 
 export type ServiceProgressMemory = {
@@ -98,6 +104,32 @@ function emptyDisplay(isV2: boolean): ServiceProgressDisplay {
     stalePayloadIgnored: false,
     eta: null,
     barProgress: null,
+    attemptProgress: null,
+  };
+}
+
+function normalizeAttemptProgress(
+  value: ServiceInfoResponse['currentUpdate']['attemptProgress'],
+): ServiceAttemptProgress | null {
+  if (!value || value.schemaVersion !== 1) return null;
+  const attemptedThisPass = finiteNumber(value.attemptedThisPass);
+  const retryableUnavailableThisPass = finiteNumber(
+    value.retryableUnavailableThisPass,
+  );
+  if (
+    attemptedThisPass == null
+    || retryableUnavailableThisPass == null
+    || !Number.isInteger(attemptedThisPass)
+    || !Number.isInteger(retryableUnavailableThisPass)
+    || attemptedThisPass < 0
+    || retryableUnavailableThisPass < 0
+    || retryableUnavailableThisPass > attemptedThisPass
+  ) {
+    return null;
+  }
+  return {
+    attemptedThisPass,
+    retryableUnavailableThisPass,
   };
 }
 
@@ -306,6 +338,24 @@ export function reduceServiceProgress(
   const overallPercent = rawOverallPercent != null && previousOverallPercent != null
     ? Math.max(previousOverallPercent, rawOverallPercent)
     : rawOverallPercent;
+  const rawAttemptProgress = normalizeAttemptProgress(
+    current.attemptProgress,
+  );
+  const previousAttemptProgress = samePhase && !restarted
+    ? previous?.display.attemptProgress ?? null
+    : null;
+  const attemptProgress = rawAttemptProgress
+    ? {
+      attemptedThisPass: Math.max(
+        previousAttemptProgress?.attemptedThisPass ?? 0,
+        rawAttemptProgress.attemptedThisPass,
+      ),
+      retryableUnavailableThisPass: Math.max(
+        previousAttemptProgress?.retryableUnavailableThisPass ?? 0,
+        rawAttemptProgress.retryableUnavailableThisPass,
+      ),
+    }
+    : null;
 
   const display: ServiceProgressDisplay = {
     isV2,
@@ -324,6 +374,7 @@ export function reduceServiceProgress(
     restarted,
     stalePayloadIgnored: false,
     eta: getTrustedEta(serviceInfo),
+    attemptProgress,
     barProgress: reduceBarProgress(
       previous?.display.barProgress ?? null,
       serviceInfo,

@@ -27,6 +27,10 @@
   margin-top: var(--gap-xs);
 }
 
+.attemptProgress {
+  margin-top: var(--gap-xs);
+}
+
 .progressTrack {
   position: relative;
   width: 100%;

@@ -12,6 +12,9 @@ sources:
   - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/ScrapeProgressTracker.cs
+  - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/WorkerStatusPublisher.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
@@ -400,7 +403,12 @@ use exact `songs` and `batches` epochs respectively. The registered discovery
 and targeted phase descriptors use `lookups`; completion means the Epic lookup
 and every required durable checkpoint write succeeded. Attempted
 account/band counters remain secondary telemetry and do not inflate the
-primary percentage.
+primary percentage. During `post.registered_player_band_discovery`,
+`currentUpdate.attemptProgress` is an optional schema-versioned summary with
+`attemptedThisPass` and `retryableUnavailableThisPass`. It advances
+`lastProgressAt` through the existing worker bridge even when durable
+completion remains unchanged, but it never changes `unitsCompleted`,
+`phasePercent`, or retry eligibility.
 
 For `post.leaderboard_rivals`, plan-v2 parent units remain `accounts`.
 Scheduled batched processing exposes the additive
@@ -425,9 +433,12 @@ remain available for version-1 browser fallback.
 
 The Settings client consumes this additive payload through the existing shared
 service-info React Query request. It uses stable IDs for translated labels and
-renders a bare exact, indeterminate, or absent subphase bar. It does not display
-numeric progress, derive browser-weighted overall progress, promote legacy
-`progressPercent`, or use parent `phasePercent` for a named subphase.
+renders an exact, indeterminate, or absent subphase bar. Registered-player band
+discovery adds one concise line distinguishing attempted-this-pass,
+temporarily unavailable, and durable completed lookups. Other phases do not
+display numeric progress or unit counts. The client does not derive
+browser-weighted overall progress, promote legacy `progressPercent`, or use
+parent `phasePercent` for a named subphase.
 
 Live web validation of commit `0af25b3f` accepted this browser consumption
 contract while publication `1296` stayed idle and unfrozen. Across
@@ -440,7 +451,12 @@ diagnostics. The measured evidence is under
 `service_worker_status.current_operation_json` carries the same additive v2
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
-backward-compatible operation JSON for rolling upgrades.
+backward-compatible operation JSON for rolling upgrades. Attempt-progress
+counters are projected beside a normalized attempt only when worker JSON has
+the same scrape ID, phase ID, and attempt number; a transition window omits
+the optional summary rather than combining identities. The browser clears a
+previous attempt summary when a later version-2 payload omits it, so rejected
+counters are not restored from local display memory.
 
 When parallel phase attempts are active, service-info selects the lowest phase
 ordinal deterministically, then the newest attempt for that phase. Worker JSON

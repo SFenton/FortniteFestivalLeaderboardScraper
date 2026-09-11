@@ -89,6 +89,55 @@ function runningServiceInfo(unitsTotalFinal: boolean): ServiceInfoResponse {
   };
 }
 
+function discoveryProgressServiceInfo(): ServiceInfoResponse {
+  const running = runningServiceInfo(true);
+  return {
+    ...running,
+    phasePlan: {
+      version: 'fst.scrape-plan.v2',
+      phases: [{
+        id: 'post.registered_player_band_discovery',
+        label: 'Discovering registered-player bands',
+        legacyPhase: 'RegisteredPlayerBandDiscovery',
+        ordinal: 270,
+        defaultUnitsKind: 'lookups',
+      }],
+    },
+    currentUpdate: {
+      ...running.currentUpdate,
+      phase: 'SongMachine',
+      subOperation: 'registered_player_band_discovery',
+      phaseId: 'post.registered_player_band_discovery',
+      subphaseId: 'registered_player_band_discovery',
+      phaseOrdinal: 270,
+      unitsKind: 'lookups',
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      overallPercentKind: 'indeterminate',
+      overallPercent: null,
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'registered_player_band_discovery',
+        epoch: 1,
+        sequence: 10,
+        kind: 'exact',
+        unitsKind: 'lookups',
+        unitsCompleted: 0,
+        unitsTotal: 80,
+        unitsTotalFinal: true,
+        percent: 0,
+      },
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 10,
+        retryableUnavailableThisPass: 10,
+      },
+    },
+  };
+}
+
 function failedServiceInfo(): ServiceInfoResponse {
   return {
     ...idleServiceInfo,
@@ -280,6 +329,48 @@ for (const width of [375, 1440]) {
     });
   });
 }
+
+test('registered discovery attempt summary fits the 320px Settings card', async ({
+  page,
+  appState,
+  api,
+  scenario,
+}, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  api.use({
+    ...scenario,
+    serviceInfo: discoveryProgressServiceInfo(),
+  });
+  await appState.reset();
+  await gotoAppRoute(page, '/settings');
+
+  const summary = page.getByTestId(
+    'settings-service-discovery-attempt-progress',
+  );
+  await expect(summary).toContainText(
+    '10 attempted this pass · 10 temporarily unavailable · 0 of 80 completed',
+  );
+  const progress = page.getByRole(
+    'progressbar',
+    { name: 'Current phase progress' },
+  );
+  await expect(progress).toHaveAttribute('aria-valuenow', '0');
+
+  const card = page.getByTestId('settings-service-info-list')
+    .locator(':scope > div');
+  const geometry = await card.evaluate(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(
+    geometry.clientWidth + 1,
+  );
+
+  await testInfo.attach('settings-discovery-attempt-progress-320', {
+    body: await card.screenshot(),
+    contentType: 'image/png',
+  });
+});
 
 test('v2 unknown totals stay indeterminate without numeric progress', async ({
   page,

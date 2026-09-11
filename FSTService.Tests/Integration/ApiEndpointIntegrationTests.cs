@@ -2190,20 +2190,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             "durable-progress-v2",
             now.AddMinutes(-1),
             now);
-        metaDb.UpdateWorkerActivity(
-            WorkerStatusPublisher.ScraperWorkerKey,
-            new WorkerOperationInfo
-            {
-                ContractVersion = 2,
-                OperationKey = "scrape.post_process",
-                OperationLabel = "Post-processing leaderboard update",
-                Status = "running",
-                Phase = "PostScrapeEnrichment",
-                SubOperation = "BandMaintenance",
-                StartedAtUtc = now.AddMinutes(-1),
-                UpdatedAtUtc = now.AddSeconds(-10),
-            },
-            updatedAtUtc: now.AddSeconds(-10));
         var attempt = metaDb.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
             scrapeId,
             "post.band_maintenance",
@@ -2240,6 +2226,31 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             SubphasePercent: 25,
             SubphaseStartedAtUtc: now.AddMinutes(-1),
             SubphaseLastProgressAtUtc: now.AddSeconds(-10)));
+        WorkerOperationInfo Operation(int phaseAttempt) =>
+            new()
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.post_process",
+                OperationLabel =
+                    "Post-processing leaderboard update",
+                Status = "running",
+                ScrapeId = scrapeId,
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "BandMaintenance",
+                PhaseId = "post.band_maintenance",
+                PhaseAttempt = phaseAttempt,
+                AttemptProgress = new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 10,
+                    RetryableUnavailableThisPass = 10,
+                },
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now.AddSeconds(-10),
+            };
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Operation(attempt),
+            updatedAtUtc: now.AddSeconds(-10));
 
         try
         {
@@ -2300,6 +2311,21 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(25, subphaseProgress.GetProperty("percent").GetDouble());
             Assert.Equal("indeterminate", current.GetProperty("overallPercentKind").GetString());
             Assert.False(current.TryGetProperty("overallPercent", out _));
+            var attemptProgress =
+                current.GetProperty("attemptProgress");
+            Assert.Equal(
+                1,
+                attemptProgress.GetProperty("schemaVersion")
+                    .GetInt32());
+            Assert.Equal(
+                10,
+                attemptProgress.GetProperty("attemptedThisPass")
+                    .GetInt64());
+            Assert.Equal(
+                10,
+                attemptProgress.GetProperty(
+                        "retryableUnavailableThisPass")
+                    .GetInt64());
             Assert.Equal(JsonValueKind.String, current.GetProperty("heartbeatAt").ValueKind);
             Assert.Equal(JsonValueKind.String, current.GetProperty("lastProgressAt").ValueKind);
 
@@ -2307,6 +2333,24 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal("Post-processing leaderboard update", operation.GetProperty("operationLabel").GetString());
             Assert.Equal(2, operation.GetProperty("contractVersion").GetInt32());
             Assert.Equal(JsonValueKind.String, operation.GetProperty("heartbeatAt").ValueKind);
+            Assert.Equal(
+                10,
+                operation.GetProperty("attemptProgress")
+                    .GetProperty("attemptedThisPass")
+                    .GetInt64());
+
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                Operation(attempt + 1),
+                updatedAtUtc: now);
+            var mismatched = (await (await _client.GetAsync(
+                    "/api/service-info"))
+                .Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("currentUpdate");
+            Assert.False(
+                mismatched.TryGetProperty(
+                    "attemptProgress",
+                    out _));
         }
         finally
         {

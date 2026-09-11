@@ -878,6 +878,7 @@ metrics. Correctness/publication differences reject regardless of speed.
 | Parallel resource behavior | Unknown | Isolated same-input resource-capped A/B | Any >10% regression rejects |
 | ETA accuracy | Unknown | Backtest phase-boundary history, then collect within-phase checkpoints | Hide ETA until confidence gate |
 | Phase-attempt lifecycle | Unknown | Measure row growth and scrape-log deletion/lock behavior before proposing an FK or explicit retention | Separate evidence; no locking FK or cleanup by default |
+| Registered discovery attempt breakdown | Candidate implemented | Validate `attemptedThisPass`, `retryableUnavailableThisPass`, and durable completion on a full official scrape | Preserve retry semantics, plan v2 descriptors, publication parity, and the simplified Settings surface |
 | Future overlap benefit | Deferred unknown | Only after isolated capture and publication redesign | Research-only |
 
 ## Implementation gate

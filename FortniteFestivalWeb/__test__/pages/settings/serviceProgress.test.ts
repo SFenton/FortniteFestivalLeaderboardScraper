@@ -234,6 +234,103 @@ describe('service progress display reducer', () => {
     expect(next.display.overallPercent).toBe(45);
   });
 
+  it('keeps attempt progress monotonic and resets it for a new phase attempt', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 10,
+        retryableUnavailableThisPass: 10,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const lower = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 5,
+        retryableUnavailableThisPass: 5,
+      },
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+    const restarted = reduceServiceProgress(lower.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 2,
+      unitsCompleted: 1,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 1.25,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 1,
+        retryableUnavailableThisPass: 0,
+      },
+      lastProgressAt: '2026-08-13T17:04:00Z',
+    }));
+
+    expect(first.display.attemptProgress).toEqual({
+      attemptedThisPass: 10,
+      retryableUnavailableThisPass: 10,
+    });
+    expect(lower.display.attemptProgress).toEqual(
+      first.display.attemptProgress,
+    );
+    expect(restarted.display.attemptProgress).toEqual({
+      attemptedThisPass: 1,
+      retryableUnavailableThisPass: 0,
+    });
+  });
+
+  it('clears attempt progress when a v2 payload omits rejected counters', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 10,
+        retryableUnavailableThisPass: 10,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const omitted = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: null,
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+
+    expect(first.display.attemptProgress).not.toBeNull();
+    expect(omitted.display.attemptProgress).toBeNull();
+  });
+
   it('suppresses incomplete or invalid ETA evidence', () => {
     expect(getTrustedEta(serviceInfo({
       etaLowerSeconds: 30,
