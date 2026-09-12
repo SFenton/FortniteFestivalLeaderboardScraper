@@ -1,9 +1,14 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-09-12
+last_verified_commit: 84b020e8
 sources:
+  - FSTService/Scraping/Replay/CapturePackageModels.cs
+  - FSTService/Scraping/Replay/CapturePackageContract.cs
+  - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
+  - FSTService/Scraping/Replay/CapturePackageWriter.cs
+  - FSTService/Scraping/Replay/CapturePackageReader.cs
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
   - FSTService/Scraping/Replay/TierZeroConfigurationFingerprinter.cs
@@ -13,6 +18,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService.Tests/Unit/TierZeroEvidenceContractTests.cs
   - FSTService.Tests/Unit/TierZeroPackageTests.cs
+  - FSTService.Tests/Unit/CapturePackageContractTests.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
   - FSTService/Scraping/Replay/ReplaySecurity.cs
   - FSTService/Scraping/Replay/TierOneReplayModels.cs
@@ -33,9 +39,12 @@ verification primitives. It does **not** capture a live scrape, export
 PostgreSQL, import into an isolated database, invoke a phase, replay a phase,
 publish data, or grant an artifact authority over public reads.
 
-PR-4 and PR-5 are accepted repository contracts. No replay producer or
-consumer is deployed in production. PostgreSQL remains the durable source of
-truth.
+`fst.capture-package.v1` now defines the first capture-specific contract on top
+of those Tier-0 primitives. It is a library and test fixture only: there is no
+`--capture-only` mode, provider invocation, scheduler, database import,
+publication allocation, freeze behavior, or production wiring. PR-4 and PR-5
+remain accepted repository contracts, no replay producer or consumer is
+deployed in production, and PostgreSQL remains the durable source of truth.
 
 ## Ownership and location
 
@@ -44,10 +53,13 @@ consumer workflow. Future production-derived packages, replay scratch, and
 exports must remain on the 4 TB FST drive. Unit-test fixtures stay under the
 repository test/session workspace and are bounded.
 
-No automatic retention policy exists yet. A sealed package must not be
-overwritten or deleted by generic scrape-log cleanup. A future capture or
-replay implementation must define package admission, retention, capacity,
-rollback, and lineage ownership before creating live artifacts.
+The capture library has a deterministic numeric admission contract for maximum
+package bytes, minimum post-admission free-space reserve, and maximum retained
+sealed packages. It performs no filesystem probe, has no production defaults,
+and enables no retention action. A sealed package must not be overwritten or
+deleted by generic scrape-log cleanup. Future capture or replay wiring must
+supply accepted values and define retention, capacity, rollback, and lineage
+ownership before creating live artifacts.
 
 ### Caller-root policy
 
@@ -71,6 +83,117 @@ The root policy also binds every input/output path to the configured filesystem
 device, rejects generic temporary and PostgreSQL-data paths, and requires
 non-overlapping immutable attempts. Tests inject isolated roots directly; the
 runtime path has no weakening flag.
+
+## Capture package v1
+
+Format `fst.capture-package.v1`, version `1`, is a canonical capture manifest
+and descriptor family stored inside a sealed Tier-0 envelope. The canonical
+artifact paths are:
+
+```text
+capture/catalog.json
+capture/responses/<zero-padded-shard-ordinal>.jsonl
+capture/request-plan.jsonl
+capture/scope-completeness.jsonl
+capture/manifest.json
+```
+
+`capture/catalog.json` has its own canonical
+`fst.capture-catalog.v1` schema. It records a positive catalog version, exact
+song count, ordinally sorted unique song IDs, and an explicit
+`supported`/`unsupported` decision for every fixed v1 solo and band type on
+every song. The writer and reader parse those exact bytes, reject unknown
+fields and noncanonical serialization, and bind their schema, count, byte
+length, and SHA-256 to both the capture manifest and Tier-0 source identity.
+Scope validation is derived from this artifact; a different same-count song
+set is not interchangeable.
+
+Response shards are bounded to 64 MiB and contain canonical JSON Lines records
+using the versioned `fst.capture-response.v1` DTO. Each record binds its request
+and scope ordinals, response kind, song/type identity, page coordinate and
+size, provider page/entry totals, explicit entry count, and entry array. Every
+record is validated on write and read, including byte-for-byte canonical
+serialization. Request descriptors point to the containing shard plus the
+member offset, length, and SHA-256. Offsets begin at zero, advance by the exact
+member length plus the single LF separator, and cover each shard without gaps
+or overlaps. Shard ordinals are contiguous, and each Tier-0 shard descriptor
+binds the exact member count and physical bytes.
+
+The capture manifest repeats and must exactly match the Tier-0 package ID,
+attempt, producer, creation timestamp, source, build/OCI identity, database
+schema identity, allowlisted scrape-configuration fingerprint, and parent root
+hashes. It additionally binds the fixed `epic-games` provider identity,
+capture ID, exact catalog version/schema/hash/song count/byte count, enabled
+solo instruments and band types, UTC capture start/completion timestamps,
+aggregate scope/page/entry/request/response-byte and response-shard counts, and exact
+hash/count/byte references to the ordered request and scope descriptor sets.
+The catalog hash must equal the Tier-0 source-catalog hash.
+
+Request descriptors use contiguous zero-based global and per-scope ordinals.
+They identify the exact song, solo instrument or band type, zero-based page and
+page size, provider-reported page/entry totals, captured
+page/entry/request/response-byte counts, terminal status, canonical response
+shard path, member offset/length, and member SHA-256. Scope descriptors use contiguous zero-based
+ordinals and bind declared, provider-reported, and captured totals plus a
+SHA-256 over a fixed-width digest sequence for their ordered request
+descriptors. Scope order follows the exact canonical catalog song sequence,
+then the protocol's solo-instrument order, then band-type order. Version 1
+requires exactly one scope for every catalog song and enabled type.
+
+The validator rejects duplicate or missing request/scope ordinals, duplicate
+or missing scope identities, unknown types or statuses, noncanonical order,
+malformed or non-lowercase SHA-256 values, negative counts, mismatched
+request/scope/package aggregates, and any `incomplete` or `failed` member of a
+package presented for sealing. A `complete` scope must match both its declared
+and provider-reported totals. A provider `0` page/`0` entry result is represented
+by one canonical empty page-zero discovery response while the declared and
+provider page counts remain zero. An `unsupported` scope is sealable only when
+the exact catalog support record says `unsupported`, and it has zero pages,
+entries, requests, and response bytes. Version 1 rejects a zero-request or
+all-unsupported package even when the catalog proves every enabled scope is
+unsupported. Contract metadata reuses the Tier-0
+credential/endpoint/authorization screening, and response paths are generated
+from bounded shard ordinals rather than caller text.
+
+`CapturePackageWriter` delegates content writes, hashing, journaling, path
+confinement, locking, resume, checksum generation, and atomic final sealing to
+`TierZeroPackageWriter`. Catalog and response-shard bytes are validated before
+their artifact transaction is accepted. Request/scope JSON Lines are measured
+and written record-by-record rather than as a package-sized string. After the
+three capture metadata artifacts exist, Tier-0 refreshes its state while
+holding the package lock, runs the capture closed-set/content validator under
+that same lock, and only then writes checksums and the seal marker. Content
+addition performs its metadata-start guard after the same locked refresh, so a
+second writer cannot insert an artifact between capture validation and
+sealing. Exact partially written metadata remains resumable.
+
+`CapturePackageReader` first runs Tier-0 structure verification without hashing
+large payload artifacts, then applies the capture closed-set path, owner, media
+type, schema, count, and byte bounds before any payload scan. It opens artifacts
+through the Tier-0 regular-file identity checks, incrementally parses and hashes
+bounded JSON Lines once, rechecks catalog/response/descriptor/envelope
+bindings, and requires the package inventory to remain unchanged through the
+read. Catalog and response structural preflight rejects duplicate or
+case-aliased JSON properties before typed collection materialization, including
+bounded per-song support arrays and recursively checked response-entry objects.
+Manifest record ceilings are checked against conservative byte lower bounds
+before list growth; no list capacity is taken directly from an untrusted count.
+The request and scope descriptor files remain capped at 512 MiB, while the
+Tier-0 state and manifest retain their 4 MiB limits and the checksum manifest
+retains its 16 MiB limit. Capture reads also cap filesystem inventory before
+accumulating entries, using the maximum response-shard count plus the fixed
+metadata files/directories. The deterministic scale fixture covers 8,500
+scopes, 612,000 request descriptors, and 598 response shards within those
+bounds.
+
+The numeric storage-admission result distinguishes committed state from
+counterfactual `Projected...IfAdmitted` values. A rejection leaves committed
+free-space and retained-package counts unchanged.
+
+This contract does not authorize capture, import, retention deletion,
+publication, or access to provider credentials/endpoints. Any future
+production capture package, scratch space, or retained artifact must stay on
+the 4 TB FST drive.
 
 ## Tier-1 phase input
 
@@ -312,8 +435,9 @@ Verification returns typed failures rather than swallowing errors. It detects:
 - expected parent, configuration, schema, or phase-plan mismatch.
 
 The verifier can validate internal package integrity without expectations, or
-apply consumer-provided immutable expectations before a later import/replay
-step. No such import/replay step exists yet.
+apply consumer-provided immutable expectations before a later consumer step.
+Tier-1 has a bounded isolated replay consumer; capture packages have no import
+or production consumer.
 
 ## Validation fixture
 
@@ -324,4 +448,11 @@ determinism, cultures, reordered inputs, large and empty count boundaries,
 path/secret rejection, pending-artifact crash recovery, interruption/resume,
 exact state-byte commitment, atomic sealing, corruption, empty-directory and
 lineage mismatches, and stable phase descriptors without network or database
-access.
+access. `CapturePackageContractTests` adds canonical v1 round trips, complete
+sealing, exact catalog support proof, canonical response semantics, bounded
+shard/member layout, zero-result and all-unsupported rules, closed-set and
+aggregate validation, counterfeit-count and duplicate/case-aliased JSON
+rejection, canonical descriptor metadata, a two-writer seal race,
+deterministic storage admission, Tier-0 structure preflight plus semantic
+tamper detection, partial-metadata resume, and the synthetic
+8,500-scope/612,000-request capacity check.
