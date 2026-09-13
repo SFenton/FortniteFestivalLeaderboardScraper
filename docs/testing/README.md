@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-08
-last_verified_commit: 2a7783a9
+last_verified: 2026-09-12
+last_verified_commit: 84b020e8
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -43,6 +43,7 @@ sources:
   - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
   - FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
+  - FSTService.Tests/Unit/CapturePackageContractTests.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
@@ -977,6 +978,25 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj \
 bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
+
+Focused capture-package contract and inherited Tier-0 safety validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~CapturePackageContractTests|FullyQualifiedName~TierZeroPackageTests|FullyQualifiedName~TierZeroEvidenceContractTests'
+```
+
+This contract-only matrix covers canonical `fst.capture-package.v1` round
+trips, exact canonical catalog song/support proof, canonical versioned
+response DTO validation on write and read, bounded response-shard member
+offset/length/hash coverage, coherent zero-page and all-unsupported behavior,
+record ceilings, exact Tier-0 identity binding, and complete package sealing.
+It also covers duplicate/missing/misordered/count/hash rejection, unchanged
+committed admission state on rejection, a two-writer atomic-seal race, Tier-0
+tamper detection, partial-metadata resume, and a deterministic no-live-I/O
+8,500-scope/612,000-request capacity and validation bound. It performs no
+provider, filesystem-capacity, database, publication, freeze, or production
+operation.
 
 Focused Band current-projection candidate validation:
 

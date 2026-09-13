@@ -440,7 +440,7 @@ internal static class TierZeroRegularFile
     internal static void DeleteDirectory(string path) =>
         DeleteEntry(path, removeDirectory: true);
 
-    private static OpenedRegularFile OpenRead(
+    internal static OpenedRegularFile OpenRead(
         string path,
         TierZeroFileSnapshot? expected)
     {
@@ -944,7 +944,7 @@ internal static class TierZeroRegularFile
         }
     }
 
-    private sealed class OpenedRegularFile : IAsyncDisposable
+    internal sealed class OpenedRegularFile : IAsyncDisposable
     {
         private readonly string _path;
         private readonly SafeFileHandle _handle;

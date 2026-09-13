@@ -28,6 +28,7 @@ public sealed class TierZeroPackageWriter
     public bool IsSealed => _sealed;
     public IReadOnlyList<TierZeroArtifactDescriptor> Artifacts =>
         _state.Artifacts;
+    internal TierZeroPackageDraft Draft => _state.Draft;
 
     public static async Task<TierZeroPackageWriter> CreateAsync(
         string rootPath,
@@ -192,19 +193,61 @@ public sealed class TierZeroPackageWriter
         ReadOnlyMemory<byte> content,
         CancellationToken cancellationToken = default)
     {
-        using var stream = new MemoryStream(
-            content.ToArray(),
-            writable: false);
         return await AddArtifactAsync(
             registration,
-            stream,
+            content,
+            stateValidator: null,
             cancellationToken);
     }
 
-    public async Task<TierZeroArtifactDescriptor> AddArtifactAsync(
+    internal async Task<TierZeroArtifactDescriptor> AddArtifactAsync(
+        TierZeroArtifactRegistration registration,
+        ReadOnlyMemory<byte> content,
+        Func<IReadOnlyList<TierZeroArtifactDescriptor>,
+            CancellationToken,
+            Task>? stateValidator,
+        CancellationToken cancellationToken)
+    {
+        using var stream = new MemoryStream(
+            content.ToArray(),
+            writable: false);
+        return await AddArtifactCoreAsync(
+            registration,
+            stream,
+            stateValidator,
+            cancellationToken);
+    }
+
+    public Task<TierZeroArtifactDescriptor> AddArtifactAsync(
         TierZeroArtifactRegistration registration,
         Stream content,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        AddArtifactCoreAsync(
+            registration,
+            content,
+            stateValidator: null,
+            cancellationToken);
+
+    internal Task<TierZeroArtifactDescriptor> AddArtifactAsync(
+        TierZeroArtifactRegistration registration,
+        Stream content,
+        Func<IReadOnlyList<TierZeroArtifactDescriptor>,
+            CancellationToken,
+            Task>? stateValidator,
+        CancellationToken cancellationToken) =>
+        AddArtifactCoreAsync(
+            registration,
+            content,
+            stateValidator,
+            cancellationToken);
+
+    private async Task<TierZeroArtifactDescriptor> AddArtifactCoreAsync(
+        TierZeroArtifactRegistration registration,
+        Stream content,
+        Func<IReadOnlyList<TierZeroArtifactDescriptor>,
+            CancellationToken,
+            Task>? stateValidator,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(registration);
         ArgumentNullException.ThrowIfNull(content);
@@ -221,6 +264,12 @@ public sealed class TierZeroPackageWriter
                 cancellationToken: cancellationToken);
             await RefreshStateAsync(cancellationToken);
             EnsureMutable();
+            if (stateValidator is not null)
+            {
+                await stateValidator(
+                    _state.Artifacts,
+                    cancellationToken);
+            }
             var normalized = TierZeroPackageModel.NormalizeRegistration(
                 registration);
             if (_state.Artifacts.Any(
@@ -400,6 +449,23 @@ public sealed class TierZeroPackageWriter
         string? error = null,
         CancellationToken cancellationToken = default)
     {
+        return await SealAsync(
+            sealedAtUtc,
+            status,
+            error,
+            preSealValidator: null,
+            cancellationToken);
+    }
+
+    internal async Task<TierZeroEvidenceManifest> SealAsync(
+        DateTimeOffset sealedAtUtc,
+        TierZeroPackageStatus status,
+        string? error,
+        Func<IReadOnlyList<TierZeroArtifactDescriptor>,
+            CancellationToken,
+            Task>? preSealValidator,
+        CancellationToken cancellationToken)
+    {
         await _gate.WaitAsync(cancellationToken);
         try
         {
@@ -442,6 +508,12 @@ public sealed class TierZeroPackageWriter
             ValidateSummaryReferences(
                 _state.Draft.SummaryReferences,
                 _state.Artifacts);
+            if (preSealValidator is not null)
+            {
+                await preSealValidator(
+                    _state.Artifacts,
+                    cancellationToken);
+            }
 
             var checksumBytes = CreateChecksumManifest(_state.Artifacts);
             var checksum = new TierZeroChecksumManifest(
@@ -1859,8 +1931,12 @@ internal sealed record TierZeroPackageInventory(
 internal static class TierZeroPackageFileEnumerator
 {
     internal static TierZeroPackageInventory Enumerate(
-        string rootPath)
+        string rootPath,
+        int maximumEntries = int.MaxValue,
+        CancellationToken cancellationToken = default)
     {
+        if (maximumEntries <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumEntries));
         var root = Path.GetFullPath(rootPath);
         var files = new List<TierZeroPackageFile>();
         var packageDirectories = new List<TierZeroPackageDirectory>();
@@ -1868,6 +1944,7 @@ internal static class TierZeroPackageFileEnumerator
         directories.Push(new DirectoryInfo(root));
         while (directories.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var directory = directories.Pop();
             if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
             {
@@ -1878,6 +1955,14 @@ internal static class TierZeroPackageFileEnumerator
 
             foreach (var entry in directory.EnumerateFileSystemInfos())
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (files.Count + packageDirectories.Count >=
+                    maximumEntries)
+                {
+                    throw new TierZeroPackageException(
+                        TierZeroPackageError.InvalidMetadata,
+                        $"Tier-0 package contains more than {maximumEntries} filesystem entries.");
+                }
                 if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
                 {
                     throw new TierZeroPackageException(

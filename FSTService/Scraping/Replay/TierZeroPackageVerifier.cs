@@ -56,10 +56,54 @@ public static class TierZeroPackageVerifier
     private static readonly UTF8Encoding StrictUtf8 =
         new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public static async Task<TierZeroVerificationResult> VerifyAsync(
+    public static Task<TierZeroVerificationResult> VerifyAsync(
         string rootPath,
         TierZeroVerificationExpectations? expectations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        VerifyCoreAsync(
+            rootPath,
+            expectations,
+            verifyArtifactHashes: true,
+            maximumFileSystemEntries: int.MaxValue,
+            initialInventory: null,
+            cancellationToken);
+
+    internal static Task<TierZeroVerificationResult>
+        VerifyStructureAsync(
+            string rootPath,
+            TierZeroVerificationExpectations? expectations = null,
+            int maximumFileSystemEntries = int.MaxValue,
+            CancellationToken cancellationToken = default) =>
+        VerifyCoreAsync(
+            rootPath,
+            expectations,
+            verifyArtifactHashes: false,
+            maximumFileSystemEntries,
+            initialInventory: null,
+            cancellationToken);
+
+    internal static Task<TierZeroVerificationResult>
+        VerifyStructureAsync(
+            string rootPath,
+            TierZeroPackageInventory initialInventory,
+            TierZeroVerificationExpectations? expectations = null,
+            int maximumFileSystemEntries = int.MaxValue,
+            CancellationToken cancellationToken = default) =>
+        VerifyCoreAsync(
+            rootPath,
+            expectations,
+            verifyArtifactHashes: false,
+            maximumFileSystemEntries,
+            initialInventory,
+            cancellationToken);
+
+    private static async Task<TierZeroVerificationResult> VerifyCoreAsync(
+        string rootPath,
+        TierZeroVerificationExpectations? expectations,
+        bool verifyArtifactHashes,
+        int maximumFileSystemEntries,
+        TierZeroPackageInventory? initialInventory,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         var failures = new List<TierZeroVerificationFailure>();
@@ -79,7 +123,11 @@ public static class TierZeroPackageVerifier
                 root,
                 root,
                 includeCandidate: true);
-            inventory = TierZeroPackageFileEnumerator.Enumerate(root);
+            inventory = initialInventory ??
+                TierZeroPackageFileEnumerator.Enumerate(
+                    root,
+                    maximumFileSystemEntries,
+                    cancellationToken);
         }
         catch (TierZeroPackageException exception)
         {
@@ -222,6 +270,7 @@ public static class TierZeroPackageVerifier
             manifest,
             byPath,
             failures,
+            verifyArtifactHashes,
             cancellationToken);
         await VerifyStateAsync(
             root,
@@ -233,7 +282,12 @@ public static class TierZeroPackageVerifier
         VerifySummaryReferences(manifest, failures);
         VerifyExpectations(manifest, expectations, failures);
         VerifyExtraFiles(manifest, inventory, failures);
-        VerifyStableFinalInventory(root, inventory, failures);
+        VerifyStableFinalInventory(
+            root,
+            inventory,
+            failures,
+            maximumFileSystemEntries,
+            cancellationToken);
 
         return new TierZeroVerificationResult(manifest, failures);
     }
@@ -241,11 +295,16 @@ public static class TierZeroPackageVerifier
     internal static void VerifyStableFinalInventory(
         string root,
         TierZeroPackageInventory initial,
-        List<TierZeroVerificationFailure> failures)
+        List<TierZeroVerificationFailure> failures,
+        int maximumFileSystemEntries = int.MaxValue,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var final = TierZeroPackageFileEnumerator.Enumerate(root);
+            var final = TierZeroPackageFileEnumerator.Enumerate(
+                root,
+                maximumFileSystemEntries,
+                cancellationToken);
             if (!initial.Files.SequenceEqual(final.Files) ||
                 !initial.Directories.SequenceEqual(final.Directories))
             {
@@ -498,6 +557,7 @@ public static class TierZeroPackageVerifier
         TierZeroEvidenceManifest manifest,
         IReadOnlyDictionary<string, TierZeroPackageFile> files,
         List<TierZeroVerificationFailure> failures,
+        bool verifyArtifactHashes,
         CancellationToken cancellationToken)
     {
         foreach (var artifact in manifest.Artifacts)
@@ -519,6 +579,8 @@ public static class TierZeroPackageVerifier
                     $"Tier-0 artifact size changed: {artifact.Path}",
                     artifact.Path));
             }
+            if (!verifyArtifactHashes)
+                continue;
             try
             {
                 var hash = await TierZeroPackageWriter.HashFileAsync(
