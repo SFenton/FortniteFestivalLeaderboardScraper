@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-09-04
-last_verified_commit: f266ecb8
+last_verified: 2026-09-12
+last_verified_commit: 84b020e8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -13,6 +13,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/Replay/
+  - FSTService.Tests/Unit/CapturePackageContractTests.cs
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/InstrumentDatabase.cs
@@ -53,8 +54,10 @@ update_triggers:
   new runner project.
 - Keep PostgreSQL as the durable source of truth. DuckDB and Parquet remain
   bounded artifact/replay companions.
-- Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
-  raw-HTTP capture as current implementation directions.
+- Reject microservices, runtime-loaded plugins, and direct concurrent
+  `RunScrapePassAsync` execution. The capture-package contract is now the
+  first non-production prerequisite for a future artifact-backed overlap
+  design; capture execution remains absent.
 - The one-instrument-at-a-time snapshot-generation conversion is accepted.
   Scrape `1310` proved all nine generation writer paths through publication,
   notifications, registration drain, and worker exit.
@@ -511,8 +514,14 @@ See
 - **Post-phase replay** validates SQL, algorithms, projections, rankings,
   rivals, precompute, cleanup, and publication preparation.
 
-No raw HTTP capture will be implemented until a parser/network requirement and
-storage budget exist.
+The repository now has the versioned `fst.capture-package.v1` contract for
+exact catalog support evidence, canonical response DTOs, bounded response
+shards with per-request member references, exact request/scope provenance, and
+bounded admission decisions. Its synthetic capacity fixture proves the
+descriptor and Tier-0 metadata shape at roughly 8,500 scopes and 612,000
+requests, but it does not capture HTTP traffic. A future producer remains
+blocked on parser parity, accepted capacity/retention values, and the later
+overlap gates below.
 
 ### Artifact tiers
 
@@ -667,6 +676,14 @@ Full scrape N+1 during post-processing N is rejected.
 Incremental snapshot storage is tens of GB, not another 2.381 TB. That
 correction does not make overlap safe.
 
+The first prerequisite is now repository-only:
+`fst.capture-package.v1` defines immutable Tier-0-backed canonical catalog and
+response schemas, bounded response shards, streaming request/scope
+descriptors, aggregate validation, atomic closed-set sealing, and
+storage-admission contracts. It creates no capture process, provider traffic,
+import path, publication candidate, freeze transition, scheduler, or
+production artifact.
+
 ### Future research-only scheduler gates
 
 Do not implement overlap until all are true:
@@ -762,7 +779,15 @@ Order is evidence-driven:
 9. best-effort cleanup reorder;
 10. snapshot activation consolidation;
 11. storage-retention execution after parity/capacity gates;
-12. capture-only overlap research after architecture/storage redesign.
+12. continue the capture-overlap sequence after the accepted contract-only
+    prerequisite:
+    - prove same-response parser and canonical payload parity on bounded
+      fixtures;
+    - add a separately gated capture-only producer with no publication or
+      database-write authority;
+    - prove deterministic isolated import parity before any candidate-scoped
+      database or scheduler work;
+    - retain queue-depth-one scheduling and production A/B as later gates.
 
 ## Testing strategy
 

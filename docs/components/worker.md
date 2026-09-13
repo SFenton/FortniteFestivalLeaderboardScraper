@@ -1,9 +1,14 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified: 2026-09-12
+last_verified_commit: 84b020e8
 sources:
+  - FSTService/Scraping/Replay/CapturePackageModels.cs
+  - FSTService/Scraping/Replay/CapturePackageContract.cs
+  - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
+  - FSTService/Scraping/Replay/CapturePackageWriter.cs
+  - FSTService/Scraping/Replay/CapturePackageReader.cs
   - FSTService/ScraperWorker.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -713,7 +718,7 @@ rewrite those counters to 100 or interpret them as remaining publication work.
 Ready-publication deferral also creates distinct failed attempts followed by a
 successful retry, preserving the actual retry history.
 
-## Tier-0 replay evidence contract
+## Replay and capture evidence contracts
 
 The accepted PR-4 library adds versioned Tier-0 package, canonical JSON,
 hashing, sealing, resume-journal, path-safety, configuration-fingerprint, and
@@ -740,10 +745,28 @@ inside Tier-1 bounds. Output/comparison manifests bind the profile and still
 declare `productionComparableTiming=false`; isolated timing cannot support a
 production phase-wall claim.
 
-Future worker capture must remain a separately gated change with explicit FST
-drive capacity/retention ownership and must preserve PostgreSQL authority,
-historical correctness, Epic provenance, freeze/publication semantics, and
-rollback. See
+The non-production `fst.capture-package.v1` library now adds a canonical
+capture manifest, exact canonical catalog/support evidence, versioned
+canonical response DTOs in bounded response shards, streaming ordered request
+and scope descriptors, exact Tier-0 identity binding, and complete
+scope/count/hash validation. Request rows bind shard-member offsets, lengths,
+and hashes; a provider zero-page result retains one empty discovery response,
+while all-unsupported/zero-request packages are rejected. Its writer and
+reader reuse Tier-0 atomic writes, path confinement, regular-file identity
+checks, resume journal, checksums, root hash, and verifier. Final capture
+closed-set validation runs after Tier-0 state refresh under the same package
+lock as sealing, and content-addition guards are rechecked under that lock.
+The numeric storage-admission policy returns unchanged committed state when it
+rejects and labels counterfactual projections explicitly. No worker code calls
+the library: there is no `--capture-only` mode, provider traffic, schedule,
+queue, database import/write, publication allocation, freeze transition, or
+production package root.
+
+Future worker capture remains a separately gated change with explicit FST
+drive capacity/retention values and ownership. It must preserve PostgreSQL
+authority, historical correctness, Epic provenance, freeze/publication
+semantics, and rollback. All future capture artifacts and scratch space remain
+on the 4 TB FST drive. See
 [Replay evidence artifacts](../architecture/replay-artifacts.md).
 
 ## Publication safety
