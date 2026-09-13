@@ -2572,6 +2572,453 @@ public sealed class CapturePackageContractTests
                     Requests = [.. requests, extraRequest],
                 }),
             CapturePackageFailureKind.MissingScope);
+    }
+
+    [Fact]
+    public async Task AdditionalV2ContractFailureBranchesFailClosed()
+    {
+        var fixture = CreateFixture();
+        var definition = fixture.Definition;
+        var response = fixture.Responses[0];
+        var requests =
+            definition.Requests.ToArray();
+
+        AssertCaptureFailure(
+            "event-not-found response must be empty",
+            () => CapturePackageContract.ValidateResponse(
+                response with
+                {
+                    Origin =
+                        CaptureResponseOrigin
+                            .EventNotFound,
+                }),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope responses must be complete",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    definition.Scopes[3],
+                    []),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        AssertCaptureFailure(
+            "scope hash rejects null requests",
+            () => CapturePackageContract
+                .ComputeScopeContentSha256(
+                    [null!]),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var nullScopes =
+            definition.Scopes.ToArray();
+        nullScopes[0] = null!;
+        AssertCaptureFailure(
+            "definition rejects null scope",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Scopes = nullScopes,
+                    }),
+            CapturePackageFailureKind
+                .MissingOrdinal);
+        var nullRequests =
+            definition.Requests.ToArray();
+        nullRequests[0] = null!;
+        AssertCaptureFailure(
+            "definition rejects null request",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Requests = nullRequests,
+                    }),
+            CapturePackageFailureKind
+                .MissingOrdinal);
+
+        AssertCaptureFailure(
+            "unsupported scope requires unsupported reason",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        3,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                CaptureScopeCompletionReason
+                                    .ProviderExhausted,
+                        })),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "completed scope reason matches exhaustion",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        0,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                CaptureScopeCompletionReason
+                                    .ConfiguredPageLimit,
+                        })),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "unknown scope completion reason",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        0,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                (CaptureScopeCompletionReason)
+                                999,
+                        })),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+        AssertCaptureFailure(
+            "unknown response origin",
+            () => CapturePackageContract
+                .ValidateResponse(
+                    response with
+                    {
+                        Origin =
+                            (CaptureResponseOrigin)999,
+                    }),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+        AssertCaptureFailure(
+            "complete package requires requests",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        TotalPageCount = 0,
+                        TotalEntryCount = 0,
+                        TotalRequestCount = 0,
+                        TotalResponseBytes = 0,
+                        ResponseShardCount = 0,
+                        Requests = [],
+                    }),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        var unsupportedCatalog =
+            definition.Catalog with
+            {
+                Songs = definition.Catalog.Songs
+                    .Select(song => song with
+                    {
+                        ScopeSupport =
+                            song.ScopeSupport
+                                .Select(support =>
+                                    support with
+                                    {
+                                        Status =
+                                            CaptureCatalogSupportStatus
+                                                .Unsupported,
+                                    })
+                                .ToArray(),
+                    })
+                    .ToArray(),
+            };
+        var unsupportedScopes =
+            definition.Scopes
+                .Select(scope => scope with
+                {
+                    DeclaredPageCount = 0,
+                    DeclaredEntryCount = 0,
+                    ProviderReportedTotalPages = 0,
+                    ProviderReportedTotalEntries = 0,
+                    CapturedPageCount = 0,
+                    CapturedEntryCount = 0,
+                    CapturedRequestCount = 0,
+                    CapturedResponseBytes = 0,
+                    Status =
+                        CaptureScopeStatus
+                            .Unsupported,
+                    ContentSha256 =
+                        CapturePackageContract
+                            .ComputeScopeContentSha256(
+                                Array.Empty<
+                                    CaptureRequestDescriptor>()),
+                    CompletionReason =
+                        CaptureScopeCompletionReason
+                            .Unsupported,
+                })
+                .ToArray();
+        AssertCaptureFailure(
+            "all-unsupported package is incomplete",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Catalog =
+                            unsupportedCatalog,
+                        Scopes =
+                            unsupportedScopes,
+                    }),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        AssertCaptureFailure(
+            "layout rejects noncanonical shard path",
+            () => CapturePackageContract
+                .BuildResponseShardLayouts(
+                    [
+                        definition.Requests[0]
+                            with
+                            {
+                                ResponseShardPath =
+                                    "capture/responses/bad.jsonl",
+                            },
+                    ]),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var manifest =
+            CreateManifest(fixture);
+        var reference =
+            manifest.RequestPlan;
+        AssertCaptureFailure(
+            "descriptor reference mismatch",
+            () => CapturePackageContract
+                .ValidateReference(
+                    reference,
+                    new TierZeroArtifactDescriptor(
+                        "wrong-owner",
+                        reference.Path,
+                        CapturePackageFormat
+                            .JsonLinesMediaType,
+                        reference.SchemaVersion,
+                        reference.RecordCount,
+                        [],
+                        reference.Bytes + 1,
+                        reference.Bytes,
+                        reference.Sha256)),
+            CapturePackageFailureKind
+                .ArtifactMismatch);
+        await AssertCaptureFailureAsync(
+            "catalog write rejects byte ceiling",
+            () => CapturePackageContract
+                .ValidateContentArtifactForWriteAsync(
+                    CatalogRegistration(fixture),
+                    new byte[
+                        CapturePackageFormat
+                            .MaximumCatalogBytes + 1],
+                    fixture.Envelope,
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
+        await AssertCaptureFailureAsync(
+            "response shard write rejects byte ceiling",
+            () => CapturePackageContract
+                .ValidateContentArtifactForWriteAsync(
+                    ResponseRegistration(
+                        CapturePackageFormat
+                            .ResponseShardPath(0),
+                        1,
+                        CapturePackageFormat
+                            .MaximumResponseShardBytes +
+                        1),
+                    new byte[
+                        checked((int)
+                            CapturePackageFormat
+                                .MaximumResponseShardBytes +
+                            1)],
+                    fixture.Envelope,
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
+        var trailingCatalog =
+            new byte[
+                fixture.CatalogBytes.Length +
+                2];
+        fixture.CatalogBytes.CopyTo(
+            trailingCatalog,
+            0);
+        "{}"u8.CopyTo(
+            trailingCatalog.AsSpan(
+                fixture.CatalogBytes.Length));
+        AssertCaptureFailure(
+            "catalog JSON rejects trailing content",
+            () => CapturePackageContract
+                .DeserializeCatalog(
+                    trailingCatalog),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var firstPage = CreateResponse(
+            requestOrdinal: 0,
+            scopeOrdinal: 0,
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            totalPages: 2,
+            totalEntries: 4,
+            [
+                SoloEntry("a", 1),
+                SoloEntry("b", 2),
+            ],
+            pageIndex: 0,
+            pageSize: 2);
+        var secondPage = CreateResponse(
+            requestOrdinal: 1,
+            scopeOrdinal: 0,
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            totalPages: 2,
+            totalEntries: 4,
+            [
+                SoloEntry("c", 3),
+                SoloEntry("d", 4),
+            ],
+            pageIndex: 1,
+            pageSize: 2);
+        var completeScope =
+            new CaptureScopeDescriptor(
+                0,
+                "song-a",
+                CaptureScopeKind.Solo,
+                "Solo_Guitar",
+                2,
+                4,
+                2,
+                4,
+                2,
+                4,
+                2,
+                2,
+                CaptureScopeStatus.Complete,
+                new string('0', 64),
+                CaptureScopeCompletionReason
+                    .ProviderExhausted);
+        Assert.Equal(
+            4,
+            CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [firstPage, secondPage]));
+        AssertCaptureFailure(
+            "scope provider totals must imply page count",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage with
+                        {
+                            ProviderReportedTotalPages =
+                                3,
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope response pagination cannot drift",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage,
+                        secondPage with
+                        {
+                            PageSize = 3,
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope page cannot omit provider entries",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage with
+                        {
+                            EntryCount = 1,
+                            Entries =
+                                [SoloEntry("a", 1)],
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope aggregate identities must match",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CapturedEntryCount = 3,
+                    },
+                    [firstPage, secondPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "provider exhaustion requires complete universe",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CapturedPageCount = 1,
+                        CapturedEntryCount = 2,
+                    },
+                    [firstPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "truncated completion must precede exhaustion",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CompletionReason =
+                            CaptureScopeCompletionReason
+                                .ConfiguredPageLimit,
+                    },
+                    [firstPage, secondPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        var eventNotFound =
+            CreateResponse(
+                requestOrdinal: 0,
+                scopeOrdinal: 0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                totalPages: 0,
+                totalEntries: 0,
+                [],
+                pageIndex: 0,
+                pageSize: 100) with
+            {
+                Origin =
+                    CaptureResponseOrigin
+                        .EventNotFound,
+            };
+        AssertCaptureFailure(
+            "synthetic response requires explicit reason",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        DeclaredPageCount = 1,
+                        DeclaredEntryCount = 0,
+                        ProviderReportedTotalPages = 0,
+                        ProviderReportedTotalEntries = 0,
+                        CapturedPageCount = 1,
+                        CapturedEntryCount = 0,
+                        CompletionReason =
+                            CaptureScopeCompletionReason
+                                .ConfiguredPageLimit,
+                    },
+                    [eventNotFound]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
 
         AssertCaptureFailure(
             "scope universe must be complete",
@@ -3227,6 +3674,30 @@ public sealed class CapturePackageContractTests
             "canonical JSONL stream rejects oversized records",
             () => oversizedStream.ReadByte(),
             CapturePackageFailureKind.RecordLimitExceeded);
+
+        await using var declaredShortStream =
+            new MemoryStream(
+                Encoding.UTF8.GetBytes(
+                    "{\"a\":1}\n"));
+        await AssertCaptureFailureAsync(
+            "JSONL read enforces declared byte length",
+            () => CapturePackageJsonLines
+                .ReadAsync<JsonElement>(
+                    declaredShortStream,
+                    expectedBytes: 4,
+                    expectedCount: 1,
+                    maximumRecords: 1,
+                    maximumBytes: 100,
+                    maximumRecordBytes: 100,
+                    "test JSONL",
+                    preDeserialize: null,
+                    onRecord:
+                        static (_, _, _, _, _) =>
+                        {
+                        },
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
     }
 
     [Fact]
@@ -3787,6 +4258,28 @@ public sealed class CapturePackageContractTests
                 new Dictionary<string, TierZeroPackageFile>(
                     StringComparer.Ordinal)),
             CapturePackageFailureKind.TierZeroVerificationFailed);
+    }
+
+    [Fact]
+    public async Task ReaderWrapsMissingPackagePreflight()
+    {
+        using var directory =
+            new PackageDirectory(
+                "capture-missing-root");
+        var missing = Path.Combine(
+            directory.Path,
+            "does-not-exist");
+
+        var exception =
+            await Assert.ThrowsAsync<
+                CapturePackageException>(() =>
+                new CapturePackageReader()
+                    .LoadAsync(missing));
+
+        Assert.Equal(
+            CapturePackageFailureKind
+                .TierZeroVerificationFailed,
+            exception.Kind);
     }
 
     [Fact]

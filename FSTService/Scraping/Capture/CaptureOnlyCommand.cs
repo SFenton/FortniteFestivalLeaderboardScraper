@@ -392,9 +392,16 @@ internal static class CaptureEnvironmentFile
 {
     internal static void LoadCurrentDirectory()
     {
-        var path = Path.Combine(
-            Directory.GetCurrentDirectory(),
-            ".env");
+        LoadFile(
+            Path.Combine(
+                Directory.GetCurrentDirectory(),
+                ".env"));
+    }
+
+    internal static void LoadFile(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            path);
         if (!File.Exists(path))
             return;
 

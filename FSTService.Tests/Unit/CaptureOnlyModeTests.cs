@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Api;
+using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Scraping.Capture;
@@ -39,6 +40,13 @@ public sealed class CaptureOnlyModeTests
             var data = new TheoryData<string[]>();
             data.Add([]);
             data.Add(["--capture-only"]);
+            data.Add(["capture-only"]);
+            data.Add(
+            [
+                "--capture-only",
+                "--capture-output=",
+                "--capture-id", "capture-1",
+            ]);
             data.Add(
             [
                 "--capture-output", "/approved/capture-1",
@@ -119,6 +127,14 @@ public sealed class CaptureOnlyModeTests
     [Fact]
     public void CapturePrefixForcesCaptureDispatch()
     {
+        Assert.Throws<
+            ArgumentNullException>(() =>
+                CaptureOnlyCommand
+                    .IsRequested(null!));
+        Assert.Throws<
+            ArgumentNullException>(() =>
+                CaptureOnlyCommand
+                    .Parse(null!));
         Assert.True(
             CaptureOnlyCommand.IsRequested(
             [
@@ -203,6 +219,244 @@ public sealed class CaptureOnlyModeTests
         Assert.Equal(
             CaptureOnlyExitCode.Usage,
             exception.ExitCode);
+    }
+
+    [Fact]
+    public void EnvironmentRejectsMalformedNumericAndIdentityValues()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "invalid-environment");
+        var valid =
+            new Dictionary<string, string?>
+            {
+                [CaptureOnlyExecutionEnvironment
+                    .ApprovedRootEnvironment] =
+                    directory.Path,
+                [CaptureOnlyExecutionEnvironment
+                    .ApprovedDeviceEnvironment] =
+                    TierZeroRegularFile
+                        .GetFileSystemDeviceIdentity(
+                            directory.Path),
+                [CaptureOnlyExecutionEnvironment
+                    .MaximumPackageBytesEnvironment] =
+                    "268435456",
+                [CaptureOnlyExecutionEnvironment
+                    .MinimumReserveBytesEnvironment] =
+                    "0",
+                [CaptureOnlyExecutionEnvironment
+                    .MaximumRetainedPackagesEnvironment] =
+                    "2",
+                [CaptureOnlyExecutionEnvironment
+                    .GitCommitEnvironment] =
+                    new string('a', 40),
+                [CaptureOnlyExecutionEnvironment
+                    .ImageDigestEnvironment] =
+                    $"sha256:{new string('b', 64)}",
+                [CaptureOnlyExecutionEnvironment
+                    .ImageRevisionEnvironment] =
+                    new string('c', 40),
+                [CaptureOnlyExecutionEnvironment
+                    .ResponseShardBytesEnvironment] =
+                    "67108864",
+                [CaptureOnlyExecutionEnvironment
+                    .PaginationMaximumScoresPathEnvironment] =
+                    null,
+            };
+        var invalidCases =
+            new (string Key, string? Value)[]
+            {
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .ApprovedRootEnvironment,
+                    null),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .MaximumPackageBytesEnvironment,
+                    "not-a-number"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .MaximumPackageBytesEnvironment,
+                    CaptureRootAdmission
+                        .PreMetadataFinalPackageAllowanceBytes
+                        .ToString()),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .MinimumReserveBytesEnvironment,
+                    "-1"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .MaximumRetainedPackagesEnvironment,
+                    "not-a-number"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .MaximumRetainedPackagesEnvironment,
+                    "0"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .ResponseShardBytesEnvironment,
+                    "not-a-number"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .ResponseShardBytesEnvironment,
+                    CapturePackageFormat
+                        .MaximumResponseRecordBytes
+                        .ToString()),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .GitCommitEnvironment,
+                    "invalid"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .ImageDigestEnvironment,
+                    "sha256:invalid"),
+                (
+                    CaptureOnlyExecutionEnvironment
+                        .ImageRevisionEnvironment,
+                    "invalid"),
+            };
+
+        foreach (var (key, value) in
+                 invalidCases)
+        {
+            var variables =
+                new Dictionary<string, string?>(
+                    valid,
+                    StringComparer.Ordinal)
+                {
+                    [key] = value,
+                };
+            using var scope =
+                new EnvironmentVariableScope(
+                    variables);
+            var exception =
+                Assert.Throws<
+                    CaptureOnlyException>(
+                    CaptureOnlyExecutionEnvironment
+                        .FromProcessEnvironment);
+            Assert.Equal(
+                CaptureOnlyExitCode.Usage,
+                exception.ExitCode);
+        }
+    }
+
+    [Fact]
+    public async Task PublicEntryPointLoadsEnvironmentBeforeValidation()
+    {
+        using var directory =
+                new CaptureTestDirectory(
+                    "public-entrypoint");
+        var variables =
+                ValidCaptureEnvironmentValues(
+                    directory.Path);
+        variables["Scraper__DegreeOfParallelism"] =
+                "0";
+        using var scope =
+                new EnvironmentVariableScope(
+                    variables);
+
+        var exitCode =
+                await CaptureOnlyEntryPoint.RunAsync(
+                [
+                    "--capture-only",
+                    "--capture-output",
+                    Path.Combine(
+                        directory.Path,
+                        "capture"),
+                    "--capture-id",
+                    "public-entrypoint",
+                ]);
+
+        Assert.Equal(
+                (int)CaptureOnlyExitCode.Usage,
+                exitCode);
+    }
+
+    [Fact]
+    public async Task PublicEntryPointRejectsInvalidCommandBeforeHostStartup()
+    {
+        var exitCode =
+            await CaptureOnlyEntryPoint.RunAsync(
+            [
+                "--capture-only",
+            ]);
+
+        Assert.Equal(
+            (int)CaptureOnlyExitCode.Usage,
+            exitCode);
+    }
+
+    [Fact]
+    public void EnvironmentFileLoadsAssignmentsAndIgnoresNonAssignments()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "environment-file");
+        var path = Path.Combine(
+            directory.Path,
+            ".env");
+        const string first =
+            "FST_CAPTURE_TEST_ENV_FIRST";
+        const string second =
+            "FST_CAPTURE_TEST_ENV_SECOND";
+        using var variables =
+            new EnvironmentVariableScope(
+                new Dictionary<string, string?>
+                {
+                    [first] = null,
+                    [second] = null,
+                });
+        File.WriteAllText(
+            path,
+            $"""
+            # comment
+
+            malformed
+            =missing-key
+            {first}=value-one
+            {second}="value two"
+            """);
+
+        CaptureEnvironmentFile.LoadFile(path);
+        CaptureEnvironmentFile.LoadFile(
+            Path.Combine(
+                directory.Path,
+                "missing.env"));
+
+        Assert.Equal(
+            "value-one",
+            Environment.GetEnvironmentVariable(
+                first));
+        Assert.Equal(
+            "value two",
+            Environment.GetEnvironmentVariable(
+                second));
+        Assert.Throws<ArgumentException>(
+            () => CaptureEnvironmentFile
+                .LoadFile(""));
+    }
+
+    [Fact]
+    public void ScraperOptionsLoadEnvironmentOverrides()
+    {
+        using var variables =
+            new EnvironmentVariableScope(
+                new Dictionary<string, string?>
+                {
+                    ["Scraper__DegreeOfParallelism"] =
+                        "7",
+                    ["Scraper__QueryLead"] =
+                        "false",
+                });
+
+        var options =
+            CaptureOnlyEntryPoint
+                .LoadScraperOptions();
+
+        Assert.Equal(
+            7,
+            options.DegreeOfParallelism);
+        Assert.False(options.QueryLead);
     }
 
     [Fact]
@@ -555,6 +809,80 @@ public sealed class CaptureOnlyModeTests
     }
 
     [Fact]
+    public async Task SealAdmissionRejectsInvalidMeasurementsAndStorageErrors()
+    {
+        using var directory =
+                new CaptureTestDirectory(
+                    "seal-admission-errors");
+        var output = Path.Combine(
+                directory.Path,
+                "capture");
+        Directory.CreateDirectory(output);
+        var path = new AdmittedCapturePath(
+                directory.Path,
+                output);
+        var policy =
+                new CapturePackageStoragePolicy(
+                    256L * 1024 * 1024,
+                    0,
+                    2);
+        var lockPath = Path.Combine(
+                directory.Path,
+                "admission.lock");
+        await using (var admission =
+                new CaptureSealAdmission(
+                    path,
+                    policy,
+                    new TestStorageProbe(),
+                    new FileStream(
+                        lockPath,
+                        FileMode.CreateNew,
+                        FileAccess.ReadWrite,
+                        FileShare.None,
+                        1,
+                        FileOptions.Asynchronous)))
+        {
+            AssertCaptureFailure(
+                CaptureOnlyExitCode
+                    .AdmissionRejected,
+                () => admission
+                    .RecheckBeforeMetadata(
+                        -1,
+                        CancellationToken.None));
+            AssertCaptureFailure(
+                CaptureOnlyExitCode
+                    .AdmissionRejected,
+                () => admission
+                    .RecheckBeforeMetadata(
+                        long.MaxValue,
+                        CancellationToken.None));
+            admission.RecheckBeforeSeal(
+                CancellationToken.None);
+        }
+
+        var faultingLockPath = Path.Combine(
+                directory.Path,
+                "faulting.lock");
+        await using var faultingAdmission =
+                new CaptureSealAdmission(
+                    path,
+                    policy,
+                    new FaultingStorageProbe(),
+                    new FileStream(
+                        faultingLockPath,
+                        FileMode.CreateNew,
+                        FileAccess.ReadWrite,
+                        FileShare.None,
+                        1,
+                        FileOptions.Asynchronous));
+        AssertCaptureFailure(
+                CaptureOnlyExitCode.AdmissionRejected,
+                () => faultingAdmission
+                    .RecheckBeforeSeal(
+                        CancellationToken.None));
+    }
+
+    [Fact]
     public void DefaultShardGeometryCoversDocumentedResponseWorkload()
     {
         const long documentedResponseBytes =
@@ -860,6 +1188,55 @@ public sealed class CaptureOnlyModeTests
     }
 
     [Fact]
+    public void CatalogBuilderRejectsInvalidProviderUniverses()
+    {
+        var providerHash =
+                    Hash("provider-catalog");
+
+        Assert.Throws<
+                    ArgumentNullException>(() =>
+                        CaptureCatalogBuilder.Build(
+                            null!,
+                            providerHash));
+        Assert.Throws<
+                    ArgumentException>(() =>
+                        CaptureCatalogBuilder.Build(
+                            [
+                                CreateSong(
+                                    "song-a",
+                                    static _ => { }),
+                            ],
+                            "invalid"));
+        Assert.Throws<
+                    InvalidOperationException>(() =>
+                        CaptureCatalogBuilder.Build(
+                            [],
+                            providerHash));
+        Assert.Throws<
+                    InvalidOperationException>(() =>
+                        CaptureCatalogBuilder.Build(
+                            [null!],
+                            providerHash));
+        Assert.Throws<
+                    InvalidOperationException>(() =>
+                        CaptureCatalogBuilder.Build(
+                            [
+                                CreateSong(
+                                    "same",
+                                    static _ => { }),
+                                CreateSong(
+                                    "same",
+                                    static _ => { }),
+                            ],
+                            providerHash));
+        Assert.Equal(
+                    1,
+                    CaptureCatalogBuilder
+                        .CatalogVersionFromProviderHash(
+                            new string('0', 64)));
+    }
+
+    [Fact]
     public async Task CatalogSourceRequiresExactProviderPayloadWithoutPersistence()
     {
         var handler = new MockHttpMessageHandler();
@@ -916,6 +1293,229 @@ public sealed class CaptureOnlyModeTests
                         support.LeaderboardType ==
                         "Solo_Guitar")
                 .Status);
+    }
+
+    [Fact]
+    public async Task CatalogSourceReportsProviderAndCanonicalFailures()
+    {
+        var failedHandler =
+            new MockHttpMessageHandler();
+        failedHandler.EnqueueError(
+            System.Net.HttpStatusCode
+                .ServiceUnavailable,
+            """{"error":"unavailable"}""");
+        using var failedClient =
+            new HttpClient(failedHandler)
+            {
+                BaseAddress = new Uri(
+                    "https://catalog.invalid"),
+            };
+        var failed =
+            await new EpicCaptureCatalogSource(
+                failedClient)
+                .FetchAsync(
+                    CancellationToken.None);
+        Assert.False(
+            failed.ProviderRequestSucceeded);
+        Assert.False(failed.IsExact);
+        Assert.Null(failed.Catalog);
+
+        var duplicateHandler =
+            new MockHttpMessageHandler();
+        duplicateHandler.EnqueueJsonOk(
+            """
+            {
+              "a": {
+                "track": {
+                  "su": "duplicate",
+                  "tt": "Song A",
+                  "in": { "gr": 3 }
+                }
+              },
+              "b": {
+                "track": {
+                  "su": "duplicate",
+                  "tt": "Song B",
+                  "in": { "gr": 3 }
+                }
+              }
+            }
+            """);
+        using var duplicateClient =
+            new HttpClient(duplicateHandler)
+            {
+                BaseAddress = new Uri(
+                    "https://catalog.invalid"),
+            };
+        var duplicate =
+            await new EpicCaptureCatalogSource(
+                duplicateClient)
+                .FetchAsync(
+                    CancellationToken.None);
+        Assert.True(
+            duplicate.ProviderRequestSucceeded);
+        Assert.False(duplicate.IsExact);
+        Assert.Equal(
+            1,
+            duplicate.ParseFailureCount);
+        Assert.Null(duplicate.Catalog);
+    }
+
+    [Fact]
+    public async Task EpicAuthenticatorRefreshesStoredCredential()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "epic-auth-success");
+        var credentialPath = Path.Combine(
+            directory.Path,
+            "device-auth.json");
+        await File.WriteAllTextAsync(
+            credentialPath,
+            JsonSerializer.Serialize(
+                new StoredCredentials
+                {
+                    AccountId =
+                        "capture-account",
+                    RefreshToken =
+                        "stored-refresh",
+                }));
+        var handler =
+            new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(
+            """
+            {
+              "access_token": "new-access",
+              "expires_in": 7200,
+              "expires_at": "2026-09-13T18:00:00Z",
+              "token_type": "bearer",
+              "refresh_token": "new-refresh",
+              "refresh_expires": 28800,
+              "refresh_expires_at": "2026-09-14T00:00:00Z",
+              "account_id": "capture-account",
+              "client_id": "capture-client",
+              "displayName": "Capture"
+            }
+            """);
+        using var client =
+            new HttpClient(handler);
+        var options = CreateOptions();
+        options.DeviceAuthPath =
+            credentialPath;
+        using var variables =
+            new EnvironmentVariableScope(
+                new Dictionary<string, string?>
+                {
+                    ["EPIC_CLIENT_ID"] =
+                        "client-id",
+                    ["EPIC_CLIENT_SECRET"] =
+                        "client-secret",
+                });
+        var authenticator =
+            new EpicCaptureAuthenticator(
+                client,
+                options,
+                NullLoggerFactory.Instance);
+
+        var authentication =
+            await authenticator
+                .AuthenticateAsync(
+                    CancellationToken.None);
+
+        Assert.Equal(
+            "new-access",
+            authentication.AccessToken);
+        Assert.Equal(
+            "capture-account",
+            authentication.AccountId);
+        Assert.NotNull(
+            authentication.RefreshProvider);
+        Assert.Equal(
+            "CaptureAuthentication(redacted)",
+            authentication.ToString());
+        Assert.Single(handler.Requests);
+        Assert.Contains(
+            "new-refresh",
+            await File.ReadAllTextAsync(
+                credentialPath));
+    }
+
+    [Fact]
+    public async Task EpicAuthenticatorRejectsMissingCredentialsAndTimeout()
+    {
+        var options = CreateOptions();
+        using var noCredentials =
+            new EnvironmentVariableScope(
+                new Dictionary<string, string?>
+                {
+                    ["EPIC_CLIENT_ID"] = null,
+                    ["EPIC_CLIENT_SECRET"] = null,
+                });
+        using var unusedClient =
+            new HttpClient(
+                new MockHttpMessageHandler());
+        var missing =
+            new EpicCaptureAuthenticator(
+                unusedClient,
+                options,
+                NullLoggerFactory.Instance);
+        var missingException =
+            await Assert.ThrowsAsync<
+                CaptureOnlyException>(() =>
+                missing.AuthenticateAsync(
+                    CancellationToken.None));
+        Assert.Equal(
+            CaptureOnlyExitCode.AuthenticationFailed,
+            missingException.ExitCode);
+
+        using var directory =
+            new CaptureTestDirectory(
+                "epic-auth-timeout");
+        options.DeviceAuthPath = Path.Combine(
+            directory.Path,
+            "device-auth.json");
+        await File.WriteAllTextAsync(
+            options.DeviceAuthPath,
+            JsonSerializer.Serialize(
+                new StoredCredentials
+                {
+                    AccountId =
+                        "capture-account",
+                    RefreshToken =
+                        "stored-refresh",
+                }));
+        var timeoutHandler =
+            new MockHttpMessageHandler();
+        timeoutHandler.EnqueueHang();
+        using var timeoutClient =
+            new HttpClient(timeoutHandler)
+            {
+                Timeout =
+                    TimeSpan.FromMilliseconds(50),
+            };
+        using var credentials =
+            new EnvironmentVariableScope(
+                new Dictionary<string, string?>
+                {
+                    ["EPIC_CLIENT_ID"] =
+                        "client-id",
+                    ["EPIC_CLIENT_SECRET"] =
+                        "client-secret",
+                });
+        var timedOut =
+            new EpicCaptureAuthenticator(
+                timeoutClient,
+                options,
+                NullLoggerFactory.Instance);
+
+        var timeoutException =
+            await Assert.ThrowsAsync<
+                CaptureOnlyException>(() =>
+                timedOut.AuthenticateAsync(
+                    CancellationToken.None));
+        Assert.Equal(
+            CaptureOnlyExitCode.AuthenticationFailed,
+            timeoutException.ExitCode);
     }
 
     [Fact]
@@ -1049,6 +1649,331 @@ public sealed class CaptureOnlyModeTests
         Assert.Equal(
             1,
             capture.ProviderReportedTotalEntries);
+    }
+
+    [Fact]
+    public void CaptureEntryValidationRejectsInconsistentSafeDtos()
+    {
+        var validBand =
+            new CaptureBandLeaderboardEntry(
+                "member-a:member-b",
+                ["member-a", "member-b"],
+                200,
+                BaseScore: null,
+                InstrumentBonus: null,
+                OverdriveBonus: null,
+                1_000_000,
+                IsFullCombo: true,
+                5,
+                3,
+                1,
+                1,
+                1.0,
+                EndTime: null,
+                "0:1",
+                [
+                    new CaptureBandMemberEntry(
+                        0,
+                        "member-a",
+                        0,
+                        100,
+                        1_000_000,
+                        true,
+                        5,
+                        3),
+                    new CaptureBandMemberEntry(
+                        1,
+                        "member-b",
+                        1,
+                        100,
+                        1_000_000,
+                        true,
+                        5,
+                        3),
+                ]);
+        var identity =
+            ValidateCaptureEntry(
+                CaptureResponseKind
+                    .BandLeaderboardPage,
+                "Band_Duets",
+                validBand);
+        Assert.Equal(
+            "member-a:member-b",
+            identity.Primary);
+        Assert.Equal("0:1", identity.Secondary);
+        Assert.Equal(1, identity.Rank);
+
+        var invalidBands =
+            new object[]
+            {
+                validBand with
+                {
+                    TeamMembers =
+                        ["member-a"],
+                },
+                validBand with
+                {
+                    TeamMembers =
+                        ["member-a", "member-a"],
+                },
+                validBand with
+                {
+                    TeamKey = "wrong",
+                },
+                validBand with
+                {
+                    MemberStats =
+                    [
+                        validBand.MemberStats[0]
+                            with
+                            {
+                                MemberIndex = -1,
+                            },
+                        validBand.MemberStats[1],
+                    ],
+                },
+                validBand with
+                {
+                    MemberStats =
+                    [
+                        validBand.MemberStats[0],
+                        validBand.MemberStats[1]
+                            with
+                            {
+                                MemberIndex = 0,
+                            },
+                    ],
+                },
+                validBand with
+                {
+                    MemberStats =
+                    [
+                        validBand.MemberStats[0],
+                        validBand.MemberStats[1]
+                            with
+                            {
+                                AccountId =
+                                    "member-a",
+                            },
+                    ],
+                },
+                validBand with
+                {
+                    MemberStats =
+                    [
+                        validBand.MemberStats[0]
+                            with
+                            {
+                                InstrumentId = 999,
+                            },
+                        validBand.MemberStats[1],
+                    ],
+                },
+                validBand with
+                {
+                    MemberStats =
+                        [validBand.MemberStats[0]],
+                },
+                validBand with
+                {
+                    MemberStats = [],
+                },
+                validBand with
+                {
+                    InstrumentCombo = "1:2",
+                },
+                validBand with
+                {
+                    Rank = 0,
+                },
+                validBand with
+                {
+                    EndTime = "",
+                },
+            };
+        foreach (var invalidBand in
+                 invalidBands)
+        {
+            Assert.Throws<
+                CapturePackageException>(() =>
+                    ValidateCaptureEntry(
+                        CaptureResponseKind
+                            .BandLeaderboardPage,
+                        "Band_Duets",
+                        invalidBand));
+        }
+
+        var validSolo =
+            new CaptureSoloLeaderboardEntry(
+                "player-a",
+                1,
+                1.0,
+                100,
+                1_000_000,
+                true,
+                5,
+                1,
+                3,
+                EndTime: null);
+        Assert.Throws<
+            CapturePackageException>(() =>
+                ValidateCaptureEntry(
+                    CaptureResponseKind
+                        .SoloLeaderboardPage,
+                    "Solo_Guitar",
+                    validSolo with
+                    {
+                        Rank = 0,
+                    }));
+        Assert.Throws<
+            CapturePackageException>(() =>
+                ValidateCaptureEntry(
+                    (CaptureResponseKind)999,
+                    "Solo_Guitar",
+                    validSolo));
+        Assert.Throws<
+            CapturePackageException>(() =>
+                CaptureEntryContracts
+                    .ValidateAndIdentify(
+                        CaptureResponseKind
+                            .SoloLeaderboardPage,
+                        "Solo_Guitar",
+                        JsonSerializer
+                            .SerializeToElement(1),
+                        RequireSafeCaptureText,
+                        ThrowCaptureEntryFailure));
+    }
+
+    [Fact]
+    public void CaptureEntryValidationCanCollectAllFailureKinds()
+    {
+        var failures =
+            new List<CapturePackageFailureKind>();
+        void Record(
+            CapturePackageFailureKind kind,
+            string message) =>
+            failures.Add(kind);
+        static void AcceptText(
+            string? value,
+            string description)
+        {
+        }
+
+        _ = CaptureEntryContracts
+            .ValidateAndIdentify(
+                (CaptureResponseKind)999,
+                "Solo_Guitar",
+                JsonSerializer.SerializeToElement(
+                    new { }),
+                AcceptText,
+                Record);
+        _ = CaptureEntryContracts
+            .ValidateAndIdentify(
+                CaptureResponseKind
+                    .SoloLeaderboardPage,
+                "Solo_Guitar",
+                JsonSerializer.SerializeToElement<
+                    object?>(null),
+                AcceptText,
+                Record);
+        _ = CaptureEntryContracts
+            .ValidateAndIdentify(
+                CaptureResponseKind
+                    .BandLeaderboardPage,
+                "Band_Duets",
+                JsonSerializer.SerializeToElement(
+                    new { }),
+                AcceptText,
+                Record);
+
+        var emptyMembers =
+            new CaptureBandLeaderboardEntry(
+                "member-a:member-b",
+                ["member-a", "member-b"],
+                200,
+                BaseScore: null,
+                InstrumentBonus: null,
+                OverdriveBonus: null,
+                1_000_000,
+                IsFullCombo: true,
+                5,
+                3,
+                1,
+                1,
+                1.0,
+                EndTime: null,
+                "",
+                []);
+        _ = ValidateCaptureEntry(
+            CaptureResponseKind
+                .BandLeaderboardPage,
+            "Band_Duets",
+            emptyMembers,
+            AcceptText,
+            Record);
+
+        var soloWithUnknownField =
+            JsonDocument.Parse(
+                """
+                {
+                  "accountId": "player-a",
+                  "rank": 1,
+                  "percentile": 1.0,
+                  "score": 100,
+                  "accuracy": 1000000,
+                  "isFullCombo": true,
+                  "stars": 5,
+                  "season": 1,
+                  "difficulty": 3,
+                  "endTime": null,
+                  "unknown": true
+                }
+                """)
+                .RootElement
+                .Clone();
+        _ = CaptureEntryContracts
+            .ValidateAndIdentify(
+                CaptureResponseKind
+                    .SoloLeaderboardPage,
+                "Solo_Guitar",
+                soloWithUnknownField,
+                AcceptText,
+                Record);
+        var reorderedSolo =
+            JsonDocument.Parse(
+                """
+                {
+                  "rank": 1,
+                  "accountId": "player-a",
+                  "percentile": 1.0,
+                  "score": 100,
+                  "accuracy": 1000000,
+                  "isFullCombo": true,
+                  "stars": 5,
+                  "season": 1,
+                  "difficulty": 3,
+                  "endTime": null
+                }
+                """)
+                .RootElement
+                .Clone();
+        _ = CaptureEntryContracts
+            .ValidateAndIdentify(
+                CaptureResponseKind
+                    .SoloLeaderboardPage,
+                "Solo_Guitar",
+                reorderedSolo,
+                AcceptText,
+                Record);
+
+        Assert.True(failures.Count >= 7);
+        Assert.All(
+            failures,
+            static failure =>
+                Assert.Equal(
+                    CapturePackageFailureKind
+                        .InvalidMetadata,
+                    failure));
     }
 
     public static TheoryData<string> MalformedCaptureEnvelopes =>
@@ -1448,6 +2373,136 @@ public sealed class CaptureOnlyModeTests
     }
 
     [Fact]
+    public async Task LiveBandPageSourceProjectsExactResponse()
+    {
+        var handler =
+            new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(
+            """
+            {
+              "page": 0,
+              "totalPages": 1,
+              "totalEntries": 1,
+              "entries": [{
+                "rank": 1,
+                "percentile": 1.0,
+                "teamAccountIds": ["member-a", "member-b"],
+                "sessionHistory": [{
+                  "endTime": "2026-09-13T10:00:00Z",
+                  "trackedStats": {
+                    "SCORE": 200,
+                    "ACCURACY": 1000000,
+                    "FULL_COMBO": 1,
+                    "STARS_EARNED": 5,
+                    "SEASON": 1,
+                    "DIFFICULTY": 3,
+                    "M_0_ID_member-a": 1,
+                    "M_0_INSTRUMENT": 0,
+                    "M_0_SCORE": 100,
+                    "M_0_ACCURACY": 1000000,
+                    "M_0_FULL_COMBO": 1,
+                    "M_0_STARS_EARNED": 5,
+                    "M_0_DIFFICULTY": 3,
+                    "M_1_ID_member-b": 1,
+                    "M_1_INSTRUMENT": 1,
+                    "M_1_SCORE": 100,
+                    "M_1_ACCURACY": 1000000,
+                    "M_1_FULL_COMBO": 1,
+                    "M_1_STARS_EARNED": 5,
+                    "M_1_DIFFICULTY": 3
+                  }
+                }]
+              }]
+            }
+            """);
+        using var client =
+            new HttpClient(handler);
+        var scraper =
+            new GlobalLeaderboardScraper(
+                client,
+                new ScrapeProgressTracker(),
+                NullLogger<
+                    GlobalLeaderboardScraper>.Instance,
+                maxLookupRetries: 0);
+        using var limiter =
+            new FortniteFestival.Core.Scraping
+                .AdaptiveConcurrencyLimiter(
+                    1,
+                    1,
+                    1,
+                    NullLogger.Instance);
+        var source =
+            new EpicCapturePageSource(
+                scraper,
+                limiter);
+
+        var result = await source.FetchAsync(
+            new CaptureAuthentication(
+                "secret-access-token",
+                "capture-caller-account"),
+            CaptureScopeKind.Band,
+            "song-a",
+            "Band_Duets",
+            0,
+            CancellationToken.None);
+
+        Assert.Equal(
+            CapturePageAcquisitionStatus.Success,
+            result.Status);
+        Assert.True(result.IsExact);
+        Assert.Equal(25, result.PageSize);
+        Assert.Equal(1, result.WireRequestCount);
+        Assert.Single(result.Entries);
+    }
+
+    [Fact]
+    public async Task LivePageSourceMapsUnauthorizedResponse()
+    {
+        var handler =
+            new MockHttpMessageHandler();
+        handler.EnqueueError(
+            System.Net.HttpStatusCode
+                .Unauthorized,
+            """{"error":"unauthorized"}""");
+        using var client =
+            new HttpClient(handler);
+        var scraper =
+            new GlobalLeaderboardScraper(
+                client,
+                new ScrapeProgressTracker(),
+                NullLogger<
+                    GlobalLeaderboardScraper>.Instance,
+                maxLookupRetries: 0);
+        using var limiter =
+            new FortniteFestival.Core.Scraping
+                .AdaptiveConcurrencyLimiter(
+                    1,
+                    1,
+                    1,
+                    NullLogger.Instance);
+        var source =
+            new EpicCapturePageSource(
+                scraper,
+                limiter);
+
+        var result = await source.FetchAsync(
+            new CaptureAuthentication(
+                "secret-access-token",
+                "capture-caller-account"),
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            0,
+            CancellationToken.None);
+
+        Assert.Equal(
+            CapturePageAcquisitionStatus.Unauthorized,
+            result.Status);
+        Assert.False(result.IsExact);
+        Assert.Equal(1, result.WireRequestCount);
+    }
+
+    [Fact]
     public async Task LivePageSourceMarksEventNotFoundSeparately()
     {
         var handler = new MockHttpMessageHandler();
@@ -1671,6 +2726,40 @@ public sealed class CaptureOnlyModeTests
     }
 
     [Fact]
+    public void CaptureCompositionRejectsNoScopesAndInvalidProxyTopology()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "composition-invalid-options");
+        var environment =
+            CreateEnvironment(directory.Path);
+        var noScopes = CreateOptions(
+            enableBand: false,
+            enableSolo: false);
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureOnlyComposition
+                .CreateServiceCollection(
+                    environment,
+                    noScopes));
+
+        var invalidProxy =
+            CreateOptions(
+                enableBand: false);
+        invalidProxy.ProxyUrls =
+            ["http://proxy.invalid:8888"];
+        invalidProxy.ControlUrls = [];
+        invalidProxy.VpnProviders = [];
+        invalidProxy.ContainerNames = [];
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureOnlyComposition
+                .CreateServiceCollection(
+                    environment,
+                    invalidProxy));
+    }
+
+    [Fact]
     public async Task CaptureHttpClientRejectsOversizedBufferedResponse()
     {
         var inner = new MockHttpMessageHandler();
@@ -1707,6 +2796,112 @@ public sealed class CaptureOnlyModeTests
             ResponseBodyLimitExceededException>(
             () => client.GetAsync(
                 "https://example.invalid"));
+    }
+
+    [Fact]
+    public async Task CaptureHttpClientBuffersAllowedResponseAndValidatesLimit()
+    {
+        Assert.Throws<
+            ArgumentOutOfRangeException>(() =>
+                new CaptureResponseLimitHandler(
+                    new MockHttpMessageHandler(),
+                    0));
+        Assert.Throws<
+            ArgumentOutOfRangeException>(() =>
+                new CaptureResponseLimitHandler(
+                    new MockHttpMessageHandler(),
+                    (long)int.MaxValue + 1));
+
+        var inner =
+            new MockHttpMessageHandler();
+        var content =
+            new UnknownLengthContent(
+                "small-response"u8
+                    .ToArray());
+        content.Headers.ContentType =
+            new System.Net.Http.Headers
+                .MediaTypeHeaderValue(
+                    "application/json");
+        inner.EnqueueResponse(
+            new HttpResponseMessage(
+                System.Net.HttpStatusCode.OK)
+            {
+                Content = content,
+            });
+        using var client =
+            new HttpClient(
+                new CaptureResponseLimitHandler(
+                    inner,
+                    maximumBytes: 64));
+
+        Assert.Equal(
+            "small-response",
+            await client.GetStringAsync(
+                "https://example.invalid"));
+    }
+
+    [Fact]
+    public void ScratchPathRequiresExactNonOverlappingLocation()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "scratch-path");
+        var scratch = Path.Combine(
+            directory.Path,
+            CaptureScratchPath.DirectoryName);
+
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                "",
+                directory.Path));
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                "relative",
+                directory.Path));
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                Path.Combine(
+                    directory.Path,
+                    "other"),
+                directory.Path));
+
+        File.WriteAllText(scratch, "");
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                scratch,
+                directory.Path));
+        File.Delete(scratch);
+        Directory.CreateDirectory(scratch);
+
+        Assert.Equal(
+            scratch,
+            CaptureScratchPath.Validate(
+                scratch,
+                directory.Path));
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                scratch,
+                directory.Path,
+                scratch));
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                scratch,
+                directory.Path,
+                Path.Combine(
+                    scratch,
+                    "capture")));
+        AssertCaptureFailure(
+            CaptureOnlyExitCode.Usage,
+            () => CaptureScratchPath.Validate(
+                scratch,
+                directory.Path,
+                directory.Path));
     }
 
     [Fact]
@@ -2237,6 +3432,163 @@ public sealed class CaptureOnlyModeTests
     }
 
     [Fact]
+    public async Task RunnerUsesLegacySoloExtensionWhenTargetDisabled()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "legacy-solo-extension");
+        var catalog = CreateCatalog(
+            includeBand: false);
+        var maximumScores =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.Ordinal)
+            {
+                ["song-a"] = new SongMaxScores
+                {
+                    MaxLeadScore = 100,
+                },
+            };
+        var pages =
+            new Dictionary<
+                CapturePageKey,
+                CapturePageAcquisition>();
+        for (var pageIndex = 0;
+             pageIndex < 3;
+             pageIndex++)
+        {
+            pages[new CapturePageKey(
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                pageIndex)] = Page(
+                    pageIndex,
+                    4,
+                    4,
+                    1,
+                    SoloEntry(
+                        $"player-{pageIndex}",
+                        pageIndex + 1,
+                        score: 200 - pageIndex),
+                    pageSize: 1);
+        }
+        var options = CreateOptions(
+            enableBand: false);
+        options.MaxPagesPerLeaderboard = 1;
+        options.OverThresholdExtraPages = 2;
+        options.ValidEntryTarget = 0;
+        var catalogResult = ExactCatalog(
+            catalog,
+            maximumScores:
+                maximumScores);
+        var output = Path.Combine(
+            directory.Path,
+            "capture");
+        var runner = CreateRunner(
+            CreateEnvironment(directory.Path),
+            options,
+            new QueueCatalogSource(
+                catalogResult,
+                catalogResult),
+            new DictionaryPageSource(pages),
+            new TestStorageProbe());
+
+        await runner.ExecuteAsync(
+            new CaptureOnlyCommand(
+                output,
+                "capture-legacy-extension"),
+            CancellationToken.None);
+        var package =
+            await new CapturePackageReader()
+                .LoadAsync(output);
+        var scope = Assert.Single(
+            package.Scopes,
+            static item =>
+                item.Status ==
+                CaptureScopeStatus.Complete);
+
+        Assert.Equal(
+            [0, 1, 2],
+            package.Requests.Select(
+                static request =>
+                    request.PageIndex));
+        Assert.Equal(
+            CaptureScopeCompletionReason
+                .ConfiguredPageLimit,
+            scope.CompletionReason);
+    }
+
+    [Fact]
+    public void FileSystemStorageProbeCountsAndMeasuresPackages()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "filesystem-storage-probe");
+        var sealedPackage = Path.Combine(
+            directory.Path,
+            "sealed");
+        var incompletePackage = Path.Combine(
+            directory.Path,
+            "incomplete");
+        Directory.CreateDirectory(
+            Path.Combine(
+                sealedPackage,
+                "capture"));
+        Directory.CreateDirectory(
+            incompletePackage);
+        File.WriteAllText(
+            Path.Combine(
+                sealedPackage,
+                TierZeroEvidenceFormat
+                    .ManifestFileName),
+            "manifest");
+        File.WriteAllText(
+            Path.Combine(
+                sealedPackage,
+                CapturePackageFormat.ManifestPath
+                    .Replace(
+                        '/',
+                        Path.DirectorySeparatorChar)),
+            "capture");
+        File.WriteAllText(
+            Path.Combine(
+                incompletePackage,
+                "payload.bin"),
+            "payload");
+        var probe =
+            new CaptureFileSystemStorageProbe();
+
+        Assert.True(
+            probe.GetAvailableFreeSpace(
+                directory.Path) > 0);
+        Assert.Equal(
+            1,
+            probe.CountRetainedSealedPackages(
+                directory.Path,
+                1,
+                CancellationToken.None));
+        Assert.Equal(
+            7,
+            probe.GetPackageBytes(
+                incompletePackage,
+                CancellationToken.None));
+        Assert.Throws<
+            ArgumentOutOfRangeException>(() =>
+                probe.CountRetainedSealedPackages(
+                    directory.Path,
+                    0,
+                    CancellationToken.None));
+        using var cancellation =
+            new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.Throws<
+            OperationCanceledException>(() =>
+                probe.CountRetainedSealedPackages(
+                    directory.Path,
+                    2,
+                    cancellation.Token));
+    }
+
+    [Fact]
     public async Task RunnerSequentialSoloStopsAtConfiguredInitialPagePlan()
     {
         using var directory =
@@ -2706,6 +4058,424 @@ public sealed class CaptureOnlyModeTests
         AssertInterrupted(
             output,
             "capture-catalog-rejected");
+    }
+
+    [Fact]
+    public async Task CatalogSourceExceptionsMapAtInitialAndFinalFetch()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "catalog-source-exceptions");
+        var catalog = CreateCatalog(
+            includeBand: false);
+        var firstOutput = Path.Combine(
+            directory.Path,
+            "initial");
+        var initialRunner = CreateRunner(
+            CreateEnvironment(directory.Path),
+            CreateOptions(enableBand: false),
+            new QueueCatalogSource(),
+            new DictionaryPageSource(
+                new Dictionary<
+                    CapturePageKey,
+                    CapturePageAcquisition>()),
+            new TestStorageProbe());
+
+        var initial =
+            await Assert.ThrowsAsync<
+                CaptureOnlyException>(() =>
+                initialRunner.ExecuteAsync(
+                    new CaptureOnlyCommand(
+                        firstOutput,
+                        "capture-initial-catalog-error"),
+                    CancellationToken.None));
+        Assert.Equal(
+            CaptureOnlyExitCode.CatalogRejected,
+            initial.ExitCode);
+        AssertInterrupted(
+            firstOutput,
+            "capture-catalog-rejected");
+
+        var finalOutput = Path.Combine(
+            directory.Path,
+            "final");
+        var finalRunner = CreateRunner(
+            CreateEnvironment(directory.Path),
+            CreateOptions(enableBand: false),
+            new QueueCatalogSource(
+                ExactCatalog(catalog)),
+            new DictionaryPageSource(
+                new Dictionary<
+                    CapturePageKey,
+                    CapturePageAcquisition>
+                {
+                    [new(
+                        CaptureScopeKind.Solo,
+                        "song-a",
+                        "Solo_Guitar",
+                        0)] = Page(
+                            0,
+                            1,
+                            1,
+                            1,
+                            SoloEntry(
+                                "player-a",
+                                1),
+                            pageSize: 1),
+                }),
+            new TestStorageProbe());
+
+        var final =
+            await Assert.ThrowsAsync<
+                CaptureOnlyException>(() =>
+                finalRunner.ExecuteAsync(
+                    new CaptureOnlyCommand(
+                        finalOutput,
+                        "capture-final-catalog-error"),
+                    CancellationToken.None));
+        Assert.Equal(
+            CaptureOnlyExitCode.CatalogRejected,
+            final.ExitCode);
+        AssertInterrupted(
+            finalOutput,
+            "capture-catalog-rejected");
+    }
+
+    [Fact]
+    public async Task InvalidCatalogMaximumMetadataIsRejected()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "invalid-catalog-maxima");
+        var catalog = CreateCatalog(
+            includeBand: false);
+        var validScores =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.Ordinal)
+            {
+                ["song-a"] =
+                    new SongMaxScores
+                    {
+                        MaxLeadScore = 100,
+                    },
+            };
+        var baseline = ExactCatalog(
+            catalog,
+            maximumScores:
+                validScores);
+        var invalidAcquisitions =
+            new CaptureCatalogAcquisition[]
+            {
+                baseline with
+                {
+                    PaginationMaximumScores =
+                        new Dictionary<
+                            string,
+                            SongMaxScores>(
+                            StringComparer.Ordinal)
+                        {
+                            ["unknown-song"] =
+                                new SongMaxScores
+                                {
+                                    MaxLeadScore = 100,
+                                },
+                        },
+                },
+                baseline with
+                {
+                    PaginationMaximumScores =
+                        new Dictionary<
+                            string,
+                            SongMaxScores>(
+                            StringComparer.Ordinal)
+                        {
+                            ["song-a"] = null!,
+                        },
+                },
+                baseline with
+                {
+                    PaginationMaximumScores =
+                        new Dictionary<
+                            string,
+                            SongMaxScores>(
+                            StringComparer.Ordinal)
+                        {
+                            ["song-a"] =
+                                new SongMaxScores
+                                {
+                                    MaxLeadScore = 0,
+                                },
+                        },
+                },
+                baseline with
+                {
+                    PaginationMaximumScoresSha256 =
+                        "invalid",
+                },
+                ExactCatalog(catalog) with
+                {
+                    PaginationMaximumScoresSha256 =
+                        Hash("orphan-maxima"),
+                },
+                baseline with
+                {
+                    ProviderContentSha256 =
+                        Hash("different-provider"),
+                },
+            };
+
+        for (var index = 0;
+             index < invalidAcquisitions.Length;
+             index++)
+        {
+            var output = Path.Combine(
+                directory.Path,
+                $"capture-{index}");
+            var runner = CreateRunner(
+                CreateEnvironment(directory.Path),
+                CreateOptions(enableBand: false),
+                new QueueCatalogSource(
+                    invalidAcquisitions[index]),
+                new DictionaryPageSource(
+                    new Dictionary<
+                        CapturePageKey,
+                        CapturePageAcquisition>()),
+                new TestStorageProbe());
+
+            var exception =
+                await Assert.ThrowsAsync<
+                    CaptureOnlyException>(() =>
+                    runner.ExecuteAsync(
+                        new CaptureOnlyCommand(
+                            output,
+                            $"invalid-maxima-{index}"),
+                        CancellationToken.None));
+
+            Assert.Equal(
+                CaptureOnlyExitCode.CatalogRejected,
+                exception.ExitCode);
+            AssertInterrupted(
+                output,
+                "capture-catalog-rejected");
+        }
+    }
+
+    [Fact]
+    public async Task PageExceptionsAndUnauthorizedStatusMapToTypedFailures()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "typed-page-failures");
+        var catalog = CreateCatalog(
+            includeBand: false);
+        var cases =
+            new (ICapturePageSource Source,
+                 CaptureOnlyExitCode ExitCode,
+                 string Marker)[]
+            {
+                (
+                    new ThrowingPageSource(
+                        new OperationCanceledException(
+                            "internal timeout")),
+                    CaptureOnlyExitCode.CaptureFailed,
+                    "capture-incomplete"),
+                (
+                    new ThrowingPageSource(
+                        new ScrapeAuthenticationException(
+                            "expired")),
+                    CaptureOnlyExitCode
+                        .AuthenticationFailed,
+                    "capture-authentication-failed"),
+                (
+                    new DictionaryPageSource(
+                        new Dictionary<
+                            CapturePageKey,
+                            CapturePageAcquisition>
+                        {
+                            [new(
+                                CaptureScopeKind.Solo,
+                                "song-a",
+                                "Solo_Guitar",
+                                0)] =
+                                new CapturePageAcquisition(
+                                    CapturePageAcquisitionStatus
+                                        .Unauthorized,
+                                    0,
+                                    100,
+                                    0,
+                                    0,
+                                    [],
+                                    1,
+                                    0,
+                                    IsExact: false),
+                        }),
+                    CaptureOnlyExitCode
+                        .AuthenticationFailed,
+                    "capture-authentication-failed"),
+            };
+
+        for (var index = 0;
+             index < cases.Length;
+             index++)
+        {
+            var output = Path.Combine(
+                directory.Path,
+                $"capture-{index}");
+            var runner = CreateRunner(
+                CreateEnvironment(directory.Path),
+                CreateOptions(enableBand: false),
+                new QueueCatalogSource(
+                    ExactCatalog(catalog)),
+                cases[index].Source,
+                new TestStorageProbe());
+
+            var exception =
+                await Assert.ThrowsAsync<
+                    CaptureOnlyException>(() =>
+                    runner.ExecuteAsync(
+                        new CaptureOnlyCommand(
+                            output,
+                            $"typed-failure-{index}"),
+                        CancellationToken.None));
+
+            Assert.Equal(
+                cases[index].ExitCode,
+                exception.ExitCode);
+            AssertInterrupted(
+                output,
+                cases[index].Marker);
+        }
+    }
+
+    [Fact]
+    public async Task InvalidPageMetadataFailsClosed()
+    {
+        using var directory =
+            new CaptureTestDirectory(
+                "invalid-page-metadata");
+        var catalog = CreateCatalog(
+            includeBand: false);
+        var baseline = Page(
+            0,
+            1,
+            1,
+            1,
+            SoloEntry("player-a", 1),
+            pageSize: 1);
+        var invalidPages =
+            new CapturePageAcquisition[]
+            {
+                baseline with { Entries = null! },
+                baseline with { PageIndex = 1 },
+                baseline with { PageSize = 0 },
+                baseline with
+                {
+                    PageSize =
+                        CapturePackageFormat
+                            .MaximumPageSize + 1,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalPages = -1,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalPages =
+                        CapturePackageFormat
+                            .MaximumRequestRecords + 1,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalEntries =
+                        null,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalEntries =
+                        -1,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalEntries =
+                        CapturePackageFormat
+                            .MaximumScopeEntries + 1,
+                },
+                baseline with
+                {
+                    WireRequestCount = 0,
+                },
+                baseline with
+                {
+                    ProviderResponseBytes = -1,
+                },
+                baseline with
+                {
+                    Entries =
+                    [
+                        SoloEntry("player-a", 1),
+                        SoloEntry("player-b", 2),
+                    ],
+                },
+                baseline with
+                {
+                    Entries =
+                    [
+                        JsonSerializer
+                            .SerializeToElement(1),
+                    ],
+                },
+                baseline with
+                {
+                    Status =
+                        CapturePageAcquisitionStatus
+                            .EventNotFound,
+                    ProviderReportedTotalPages = 1,
+                },
+                baseline with
+                {
+                    ProviderReportedTotalPages = 0,
+                    ProviderReportedTotalEntries = 1,
+                },
+            };
+
+        for (var index = 0;
+             index < invalidPages.Length;
+             index++)
+        {
+            var output = Path.Combine(
+                directory.Path,
+                $"capture-{index}");
+            var runner = CreateRunner(
+                CreateEnvironment(directory.Path),
+                CreateOptions(enableBand: false),
+                new QueueCatalogSource(
+                    ExactCatalog(catalog)),
+                new DictionaryPageSource(
+                    new Dictionary<
+                        CapturePageKey,
+                        CapturePageAcquisition>
+                    {
+                        [new(
+                            CaptureScopeKind.Solo,
+                            "song-a",
+                            "Solo_Guitar",
+                            0)] =
+                                invalidPages[index],
+                    }),
+                new TestStorageProbe());
+
+            var exception =
+                await Assert.ThrowsAsync<
+                    CaptureOnlyException>(() =>
+                    runner.ExecuteAsync(
+                        new CaptureOnlyCommand(
+                            output,
+                            $"invalid-page-{index}"),
+                        CancellationToken.None));
+            Assert.Equal(
+                CaptureOnlyExitCode.CaptureFailed,
+                exception.ExitCode);
+        }
     }
 
     [Fact]
@@ -3384,6 +5154,45 @@ public sealed class CaptureOnlyModeTests
             responseShardBytes,
             "capture-only-tests");
 
+    private static Dictionary<string, string?>
+        ValidCaptureEnvironmentValues(
+        string root) =>
+        new(StringComparer.Ordinal)
+        {
+            [CaptureOnlyExecutionEnvironment
+                .ApprovedRootEnvironment] =
+                root,
+            [CaptureOnlyExecutionEnvironment
+                .ApprovedDeviceEnvironment] =
+                TierZeroRegularFile
+                    .GetFileSystemDeviceIdentity(
+                        root),
+            [CaptureOnlyExecutionEnvironment
+                .MaximumPackageBytesEnvironment] =
+                "268435456",
+            [CaptureOnlyExecutionEnvironment
+                .MinimumReserveBytesEnvironment] =
+                "0",
+            [CaptureOnlyExecutionEnvironment
+                .MaximumRetainedPackagesEnvironment] =
+                "2",
+            [CaptureOnlyExecutionEnvironment
+                .GitCommitEnvironment] =
+                new string('a', 40),
+            [CaptureOnlyExecutionEnvironment
+                .ImageDigestEnvironment] =
+                $"sha256:{new string('b', 64)}",
+            [CaptureOnlyExecutionEnvironment
+                .ImageRevisionEnvironment] =
+                new string('c', 40),
+            [CaptureOnlyExecutionEnvironment
+                .ResponseShardBytesEnvironment] =
+                "67108864",
+            [CaptureOnlyExecutionEnvironment
+                .PaginationMaximumScoresPathEnvironment] =
+                null,
+        };
+
     private static ScraperOptions CreateOptions(
         bool enableBand = true,
         bool enableSolo = true) =>
@@ -3589,6 +5398,56 @@ public sealed class CaptureOnlyModeTests
         TierZeroCanonicalJson.Sha256Hex(
             System.Text.Encoding.UTF8
                 .GetBytes(value));
+
+    private static CaptureEntryIdentity
+        ValidateCaptureEntry(
+        CaptureResponseKind responseKind,
+        string leaderboardType,
+        object entry) =>
+        ValidateCaptureEntry(
+            responseKind,
+            leaderboardType,
+            entry,
+            RequireSafeCaptureText,
+            ThrowCaptureEntryFailure);
+
+    private static CaptureEntryIdentity
+        ValidateCaptureEntry(
+        CaptureResponseKind responseKind,
+        string leaderboardType,
+        object entry,
+        Action<string?, string> requireSafeText,
+        Action<CapturePackageFailureKind, string>
+            invalid) =>
+        CaptureEntryContracts.ValidateAndIdentify(
+            responseKind,
+            leaderboardType,
+            JsonSerializer.SerializeToElement(
+                entry,
+                TierZeroCanonicalJson
+                    .SerializerOptions),
+            requireSafeText,
+            invalid);
+
+    private static void RequireSafeCaptureText(
+        string? value,
+        string description)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new CapturePackageException(
+                CapturePackageFailureKind
+                    .InvalidMetadata,
+                $"{description} is unsafe.");
+        }
+    }
+
+    private static void ThrowCaptureEntryFailure(
+        CapturePackageFailureKind kind,
+        string message) =>
+        throw new CapturePackageException(
+            kind,
+            message);
 
     private static void AssertInterrupted(
         string packageRoot,
@@ -4230,6 +6089,27 @@ public sealed class CaptureOnlyModeTests
                 .Sum(static path =>
                     new FileInfo(path).Length);
         }
+    }
+
+    private sealed class FaultingStorageProbe
+        : ICaptureStorageProbe
+    {
+        public long GetAvailableFreeSpace(
+            string approvedRoot) =>
+            throw new IOException(
+                "injected free-space failure");
+
+        public int CountRetainedSealedPackages(
+            string approvedRoot,
+            int stopAfter,
+            CancellationToken cancellationToken) =>
+            0;
+
+        public long GetPackageBytes(
+            string packageRoot,
+            CancellationToken cancellationToken) =>
+            throw new IOException(
+                "injected package-size failure");
     }
 
     private sealed class StubRunner

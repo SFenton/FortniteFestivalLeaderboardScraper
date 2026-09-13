@@ -277,7 +277,7 @@ internal interface ICaptureAuthenticator
 internal sealed class EpicCaptureAuthenticator
     : ICaptureAuthenticator
 {
-    private readonly CaptureHttpClientSet _clients;
+    private readonly HttpClient _authenticationClient;
     private readonly ScraperOptions _options;
     private readonly ILoggerFactory _loggerFactory;
 
@@ -285,10 +285,28 @@ internal sealed class EpicCaptureAuthenticator
         CaptureHttpClientSet clients,
         IOptions<ScraperOptions> options,
         ILoggerFactory loggerFactory)
+        : this(
+            clients.Authentication,
+            options.Value,
+            loggerFactory)
     {
-        _clients = clients;
-        _options = options.Value;
-        _loggerFactory = loggerFactory;
+    }
+
+    internal EpicCaptureAuthenticator(
+        HttpClient authenticationClient,
+        ScraperOptions options,
+        ILoggerFactory loggerFactory)
+    {
+        _authenticationClient =
+            authenticationClient ??
+            throw new ArgumentNullException(
+                nameof(authenticationClient));
+        _options = options ??
+            throw new ArgumentNullException(
+                nameof(options));
+        _loggerFactory = loggerFactory ??
+            throw new ArgumentNullException(
+                nameof(loggerFactory));
     }
 
     public async Task<CaptureAuthentication> AuthenticateAsync(
@@ -309,7 +327,7 @@ internal sealed class EpicCaptureAuthenticator
         try
         {
             var auth = new EpicAuthService(
-                _clients.Authentication,
+                _authenticationClient,
                 _loggerFactory
                     .CreateLogger<EpicAuthService>(),
                 clientId,

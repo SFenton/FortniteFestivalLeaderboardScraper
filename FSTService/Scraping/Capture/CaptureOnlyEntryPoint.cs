@@ -166,7 +166,7 @@ public static class CaptureOnlyEntryPoint
         }
     }
 
-    private static ScraperOptions LoadScraperOptions()
+    internal static ScraperOptions LoadScraperOptions()
     {
         var currentDirectory =
             Directory.GetCurrentDirectory();
