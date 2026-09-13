@@ -2,13 +2,18 @@
 status: canonical
 owner: worker
 last_verified: 2026-09-12
-last_verified_commit: 84b020e8
+last_verified_commit: 964d9188
 sources:
+  - FSTService/Scraping/Capture/
+  - FSTService/Scraping/LeaderboardEntryIdentity.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - FSTService/Scraping/Replay/CaptureEntryContracts.cs
   - FSTService/Scraping/Replay/CapturePackageModels.cs
   - FSTService/Scraping/Replay/CapturePackageContract.cs
   - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
   - FSTService/Scraping/Replay/CapturePackageWriter.cs
   - FSTService/Scraping/Replay/CapturePackageReader.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
   - FSTService/ScraperWorker.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -745,28 +750,46 @@ inside Tier-1 bounds. Output/comparison manifests bind the profile and still
 declare `productionComparableTiming=false`; isolated timing cannot support a
 production phase-wall claim.
 
-The non-production `fst.capture-package.v1` library now adds a canonical
+The `fst.capture-package.v2` library adds a canonical
 capture manifest, exact canonical catalog/support evidence, versioned
 canonical response DTOs in bounded response shards, streaming ordered request
 and scope descriptors, exact Tier-0 identity binding, and complete
 scope/count/hash validation. Request rows bind shard-member offsets, lengths,
-and hashes; a provider zero-page result retains one empty discovery response,
-while all-unsupported/zero-request packages are rejected. Its writer and
+and hashes. Provider-success empties and exact event-not-found empties retain
+distinct origin/completion values; all-unsupported/zero-request packages are
+rejected. Its writer and
 reader reuse Tier-0 atomic writes, path confinement, regular-file identity
 checks, resume journal, checksums, root hash, and verifier. Final capture
 closed-set validation runs after Tier-0 state refresh under the same package
 lock as sealing, and content-addition guards are rechecked under that lock.
 The numeric storage-admission policy returns unchanged committed state when it
-rejects and labels counterfactual projections explicitly. No worker code calls
-the library: there is no `--capture-only` mode, provider traffic, schedule,
-queue, database import/write, publication allocation, freeze transition, or
-production package root.
+rejects and labels counterfactual projections explicitly.
 
-Future worker capture remains a separately gated change with explicit FST
-drive capacity/retention values and ownership. It must preserve PostgreSQL
-authority, historical correctness, Epic provenance, freeze/publication
-semantics, and rollback. All future capture artifacts and scratch space remain
-on the 4 TB FST drive. See
+The same image now exposes a separate manual `--capture-only` entry point. It
+is dispatched before `WebApplication`, hosted-service, Npgsql, schema,
+worker-status, publication/freeze/cache/notification, path-generation,
+cleanup, and ordinary-worker construction. It loads only the normal
+authentication and transport configuration needed to fetch an exact provider
+catalog and the configured full-scrape solo/band scope. Provider pages follow
+the shared production pagination planner and may complete concurrently, then
+are serialized in canonical order through the existing
+authentication-refresh, resilient HTTP, pacing, cooldown, proxy, and
+self-heal path. Capture parsing requires the complete typed provider envelope,
+models event-not-found separately from HTTP success, and projects parsed
+leaderboard models onto strict secret-screened DTO allowlists. The ordinary
+worker parser and persistence behavior are unchanged.
+
+The command performs no `StartScrapeRun`, publication allocation, freeze
+transition, staging/snapshot/population/fingerprint/band/history/projection or
+cache write, post-process, or client notification. It creates no production
+candidate and has no schedule or overlap behavior. Exact catalog acquisition,
+plan-complete page/scope descriptors, stable unique identities and dense
+provider ranks, final catalog stability, final package size, same-device
+future-write free-space reserve, and retained sealed-package count all fail
+closed before atomic sealing. A root-wide no-follow admission lock prevents
+concurrent captures from independently passing the final decision.
+Interrupted attempts remain unsealed, and no package is deleted automatically.
+Capture artifacts and transport scratch remain on the 4 TB FST drive. See
 [Replay evidence artifacts](../architecture/replay-artifacts.md).
 
 ## Publication safety

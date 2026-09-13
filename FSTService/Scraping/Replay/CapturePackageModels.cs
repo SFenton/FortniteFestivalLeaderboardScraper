@@ -5,14 +5,14 @@ namespace FSTService.Scraping.Replay;
 
 public static class CapturePackageFormat
 {
-    public const string FormatId = "fst.capture-package.v1";
+    public const string FormatId = "fst.capture-package.v2";
     public const string CatalogFormatId = "fst.capture-catalog.v1";
-    public const string ResponseFormatId = "fst.capture-response.v1";
+    public const string ResponseFormatId = "fst.capture-response.v2";
     public const string ProviderId = "epic-games";
-    public const int Version = 1;
+    public const int Version = 2;
     public const int CatalogSchemaVersion = 1;
-    public const int DescriptorSchemaVersion = 1;
-    public const int ResponseSchemaVersion = 1;
+    public const int DescriptorSchemaVersion = 2;
+    public const int ResponseSchemaVersion = 2;
     public const string ManifestPath = "capture/manifest.json";
     public const string CatalogPath = "capture/catalog.json";
     public const string RequestPlanPath = "capture/request-plan.jsonl";
@@ -38,6 +38,7 @@ public static class CapturePackageFormat
         MaximumResponseShards + 16;
     public const int MaximumPageSize = 10_000;
     public const int MaximumResponseEntries = 10_000;
+    public const long MaximumScopeEntries = 2_000_000;
     public const int MaximumRequestDescriptorBytes = 8 * 1024;
     public const int MaximumScopeDescriptorBytes = 8 * 1024;
     public const int MaximumResponseRecordBytes = 8 * 1024 * 1024;
@@ -137,6 +138,12 @@ public enum CaptureResponseKind
     BandLeaderboardPage,
 }
 
+public enum CaptureResponseOrigin
+{
+    ProviderHttpSuccess,
+    EventNotFound,
+}
+
 public enum CaptureRequestStatus
 {
     Complete,
@@ -150,6 +157,15 @@ public enum CaptureScopeStatus
     Unsupported,
     Incomplete,
     Failed,
+}
+
+public enum CaptureScopeCompletionReason
+{
+    ProviderExhausted,
+    ConfiguredPageLimit,
+    ValidEntryTargetReached,
+    EventNotFound,
+    Unsupported,
 }
 
 public enum CapturePackageFailureKind
@@ -224,7 +240,9 @@ public sealed record CaptureResponseArtifact(
     int ProviderReportedTotalPages,
     long ProviderReportedTotalEntries,
     int EntryCount,
-    IReadOnlyList<JsonElement> Entries);
+    IReadOnlyList<JsonElement> Entries,
+    CaptureResponseOrigin Origin =
+        CaptureResponseOrigin.ProviderHttpSuccess);
 
 public sealed record CaptureRequestDescriptor(
     int Ordinal,
@@ -261,7 +279,9 @@ public sealed record CaptureScopeDescriptor(
     long CapturedRequestCount,
     long CapturedResponseBytes,
     CaptureScopeStatus Status,
-    string ContentSha256);
+    string ContentSha256,
+    CaptureScopeCompletionReason CompletionReason =
+        CaptureScopeCompletionReason.ProviderExhausted);
 
 public sealed record CaptureDescriptorSetReference(
     string Path,
@@ -336,7 +356,9 @@ public sealed record CapturePackageStoragePolicy(
     int MaximumRetainedSealedPackages);
 
 public sealed record CapturePackageStorageState(
-    long ProposedPackageBytes,
+    long CurrentPackageBytes,
+    long FinalPackageBytes,
+    long RemainingBytesToWrite,
     long AvailableFreeSpaceBytes,
     int RetainedSealedPackageCount);
 
@@ -381,11 +403,18 @@ public static class CapturePackageStorageAdmission
                 nameof(policy),
                 "Maximum retained sealed packages must be positive.");
         }
-        if (state.ProposedPackageBytes <= 0)
+        if (state.CurrentPackageBytes < 0 ||
+            state.FinalPackageBytes <= 0 ||
+            state.RemainingBytesToWrite < 0 ||
+            state.FinalPackageBytes <
+                state.CurrentPackageBytes ||
+            state.RemainingBytesToWrite <
+                state.FinalPackageBytes -
+                state.CurrentPackageBytes)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(state),
-                "Proposed package bytes must be positive.");
+                "Package byte inputs are inconsistent.");
         }
         if (state.AvailableFreeSpaceBytes < 0 ||
             state.RetainedSealedPackageCount < 0)
@@ -396,16 +425,20 @@ public static class CapturePackageStorageAdmission
         }
 
         var rejections = new List<CapturePackageAdmissionRejection>();
-        if (state.ProposedPackageBytes > policy.MaximumPackageBytes)
+        if (state.CurrentPackageBytes >
+                policy.MaximumPackageBytes ||
+            state.FinalPackageBytes >
+                policy.MaximumPackageBytes)
         {
             rejections.Add(
                 CapturePackageAdmissionRejection.PackageTooLarge);
         }
 
         long? projectedRemainingFreeSpace =
-            state.ProposedPackageBytes <= state.AvailableFreeSpaceBytes
+            state.RemainingBytesToWrite <=
+                    state.AvailableFreeSpaceBytes
                 ? state.AvailableFreeSpaceBytes -
-                  state.ProposedPackageBytes
+                  state.RemainingBytesToWrite
                 : null;
         if (projectedRemainingFreeSpace is null ||
             projectedRemainingFreeSpace <

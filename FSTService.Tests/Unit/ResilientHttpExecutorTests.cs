@@ -101,6 +101,45 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_ProxyLeaseWaitDoesNotCountWireSend()
+    {
+        var options = new ScraperOptions
+        {
+            ProxyUrls = ["http://gluetun-1:8888"],
+            ContainerNames = ["gluetun-1"],
+            VpnProviders = ["Private Internet Access"],
+            ControlUrls = ["http://gluetun-1:8000"],
+            ProxyMaxConcurrentRequestsPerEndpoint = 1,
+        };
+        using var pool = new ProxyPool(
+            options,
+            NullLogger<ProxyPool>.Instance);
+        using var heldLease =
+            await pool.AcquireAsync(
+                CancellationToken.None);
+        Assert.NotNull(heldLease);
+        using var http = new HttpClient(
+            new ProxyRoutingHttpMessageHandler(
+                pool));
+        var executor = new ResilientHttpExecutor(
+            http,
+            _log,
+            pool);
+        using var cancellation =
+            new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<
+            OperationCanceledException>(
+            () => executor.SendAsync(
+                MakeEpicEventsRequest,
+                label: "proxy-lease-wait",
+                ct: cancellation.Token));
+
+        Assert.Equal(0, executor.TotalHttpSends);
+    }
+
+    [Fact]
     public async Task SendAsync_ProxyCurlPrimary_InternalCancellation_Retries()
     {
         var handler = new MockHttpMessageHandler();
@@ -517,8 +556,22 @@ public sealed class ResilientHttpExecutorTests
             {
                 Content = new StringContent("""{"result":"ok"}""")
             });
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1,
+            minDop: 1,
+            maxDop: 1,
+            Substitute.For<
+                ILogger<AdaptiveConcurrencyLimiter>>(),
+            maxRequestsPerSecond: 1_000);
+        var acquiredRateTokens = 0;
+        limiter.OnRateTokenAcquired = _ =>
+            Interlocked.Increment(
+                ref acquiredRateTokens);
 
-        using var response = await executor.SendAsync(() => MakeEpicEventsRequest(), label: "epic-fallback-test");
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            limiter: limiter,
+            label: "epic-fallback-test");
         var body = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -526,6 +579,95 @@ public sealed class ResilientHttpExecutorTests
         Assert.False(executor.IsCdnBlocked);
         Assert.Equal(0, executor.CdnBlocksDetected);
         Assert.Single(handler.Requests);
+        Assert.Equal(2, executor.TotalHttpSends);
+        Assert.Equal(1, acquiredRateTokens);
+    }
+
+    [Fact]
+    public async Task SendAsync_EpicCdn403_WhenCurlFallbackIsTransient_DoesNotRecover()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(
+            handler);
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        executor.CdnBlockFallbackOverride = (_, _, _) =>
+            Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(
+                    HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("try again"),
+                });
+
+        using var response = await executor.SendAsync(
+                () => MakeEpicEventsRequest(),
+                label: "transient-fallback-test");
+        Assert.Equal(
+            HttpStatusCode.OK,
+            response.StatusCode);
+        Assert.Equal(
+            """{"result":"ok"}""",
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal(3, executor.TotalHttpSends);
+    }
+
+    [Fact]
+    public void CurlConfigIncludesTransferTimeResponseLimit()
+    {
+        using var request = MakeEpicEventsRequest();
+
+        var config =
+            ResilientHttpExecutor.CurlHttpFallback
+                .BuildCurlConfig(
+                    request,
+                    "/tmp/request",
+                    "/tmp/response",
+                    TimeSpan.FromSeconds(30),
+                    maximumResponseBytes: 8_388_608);
+
+        Assert.Contains(
+            "max-filesize = \"8388608\"",
+            config,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "fst-retry-after:%header{retry-after}",
+            config,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CurlProcessDisablesAmbientConfigurationFirst()
+    {
+        var startInfo =
+            ResilientHttpExecutor.CurlHttpFallback
+                .CreateProcessStartInfo();
+
+        Assert.Equal(
+            ["--disable", "--config", "-"],
+            startInfo.ArgumentList);
+    }
+
+    [Fact]
+    public async Task ProxyLeaseContentReleasesLeaseAfterBodyRead()
+    {
+        var lease = new TrackingDisposable();
+        using var content =
+            new ProxyLeaseHttpContent(
+                new ByteArrayContent(
+                    "response"u8.ToArray()),
+                lease);
+
+        await using var stream =
+            await content.ReadAsStreamAsync();
+        Assert.False(lease.IsDisposed);
+        var buffer = new byte[16];
+        Assert.Equal(
+            8,
+            await stream.ReadAsync(buffer));
+        Assert.Equal(
+            0,
+            await stream.ReadAsync(buffer));
+        Assert.True(lease.IsDisposed);
     }
 
     [Fact]
@@ -570,6 +712,7 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(2, executor.TotalHttpSends);
         Assert.Equal(1, executor.CdnBlocksDetected);
         Assert.False(executor.IsCdnBlocked);
         Assert.Equal(0, fallbackCalls);
@@ -598,6 +741,7 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(3, executor.TotalHttpSends);
     }
 
     [Fact]
@@ -620,6 +764,7 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(3, executor.TotalHttpSends);
     }
 
     [Fact]
@@ -1067,7 +1212,7 @@ public sealed class ResilientHttpExecutorTests
         Assert.False(executor.IsCdnBlocked);
     }
 
-// ─── ResetCdnState ──────────────────────────────────────────
+    // ─── ResetCdnState ──────────────────────────────────────────
 
     [Fact]
     public async Task ResetCdnState_ClearsCooldownAndRetryIndex()
@@ -1413,6 +1558,65 @@ public sealed class ResilientHttpExecutorTests
         using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await executor.WaitForCdnClearAsync(waitCts.Token);
         Assert.False(executor.IsCdnBlocked);
+    }
+
+    [Fact]
+    public async Task QuiesceCdnProbeCancelsAndAwaitsDetachedSend()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler,
+            TimeSpan.FromSeconds(30));
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                MakeRequest,
+                label: "capture-quiesce"));
+        await handler.WaitForRequestCountAsync(
+            2,
+            TimeSpan.FromSeconds(5));
+        Assert.True(executor.IsProbeRunning);
+
+        await executor.QuiesceCdnProbeAsync(
+            CancellationToken.None);
+
+        Assert.False(executor.IsProbeRunning);
+        Assert.Equal(2, executor.TotalHttpSends);
+    }
+
+    [Fact]
+    public async Task WaiterCancellationDoesNotCancelSharedCdnResolution()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler,
+            TimeSpan.FromSeconds(30));
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(),
+                label: "shared-waiter"));
+        using var cancelledWaiter =
+            new CancellationTokenSource();
+        var cancelled = executor.WaitForCdnClearAsync(
+            cancelledWaiter.Token);
+        var surviving = executor.WaitForCdnClearAsync(
+            CancellationToken.None);
+        cancelledWaiter.Cancel();
+
+        await Assert.ThrowsAnyAsync<
+            OperationCanceledException>(
+            () => cancelled);
+        Assert.False(surviving.IsCompleted);
+
+        executor.ResetCdnState();
+        await surviving.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        Assert.True(surviving.IsCompletedSuccessfully);
     }
 
     [Fact]
@@ -1806,6 +2010,17 @@ public sealed class ResilientHttpExecutorTests
         public int Successes { get; private set; }
         public void ReportSuccess(HttpRequestMessage request) => Successes++;
         public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
+    }
+
+    private sealed class TrackingDisposable
+        : IDisposable
+    {
+        public bool IsDisposed { get; private set; }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
+        }
     }
 
     private sealed class LocalCdnBlockReporter(ProxyCdnBlockDecision decision) : IProxyHealthReporter, IProxyCdnBlockHandler

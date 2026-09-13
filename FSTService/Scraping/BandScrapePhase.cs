@@ -170,7 +170,10 @@ public sealed class BandScrapePhase
             return new BandLeaderboardScrapeResult { Requests = requests, BytesReceived = bytesReceived };
 
         int totalPages = page0.TotalPages;
-        int pagesToFetch = maxPages > 0 ? Math.Min(totalPages, maxPages) : totalPages;
+        int pagesToFetch =
+            LeaderboardPaginationPlanner.InitialPageCount(
+                totalPages,
+                maxPages);
 
         // Process page 0 entries
         foreach (var entry in page0.Entries)
@@ -182,7 +185,15 @@ public sealed class BandScrapePhase
         }
 
         // Fetch remaining pages until valid target met
-        for (int page = 1; page < pagesToFetch && (validTarget == 0 || validCount < validTarget); page++)
+        for (int page = 1;
+             page < pagesToFetch &&
+             LeaderboardPaginationPlanner.ShouldFetchBandPage(
+                 page,
+                 totalPages,
+                 maxPages,
+                 validCount,
+                 validTarget);
+             page++)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -208,10 +219,21 @@ public sealed class BandScrapePhase
         }
 
         // Extend pagination beyond maxPages if valid target not yet met (like solo deep scrape)
-        if (validTarget > 0 && validCount < validTarget && pagesToFetch < totalPages)
+        if (LeaderboardPaginationPlanner.ShouldFetchBandPage(
+                pagesToFetch,
+                totalPages,
+                maxPages,
+                validCount,
+                validTarget))
         {
-            int batchSize = opts.OverThresholdExtraPages > 0 ? opts.OverThresholdExtraPages : 100;
-            for (int page = pagesToFetch; page < totalPages && validCount < validTarget; page++)
+            for (int page = pagesToFetch;
+                 LeaderboardPaginationPlanner.ShouldFetchBandPage(
+                     page,
+                     totalPages,
+                     maxPages,
+                     validCount,
+                     validTarget);
+                 page++)
             {
                 ct.ThrowIfCancellationRequested();
 
@@ -239,7 +261,9 @@ public sealed class BandScrapePhase
         // Deduplicate by (team_key, instrument_combo) — same team with same instruments
         // can appear on multiple pages; different instrument combos are separate entries
         var deduped = allEntries
-            .GroupBy(e => $"{e.TeamKey}|{e.InstrumentCombo}", StringComparer.OrdinalIgnoreCase)
+            .GroupBy(
+                LeaderboardEntryIdentity.Band,
+                LeaderboardEntryIdentity.BandComparer)
             .Select(g => g.OrderByDescending(e => e.Score).First())
             .ToList();
 
@@ -290,27 +314,14 @@ public sealed class BandScrapePhase
     internal static bool IsWithinChOptValidCutoff(
         BandLeaderboardEntry entry,
         SongMaxScores? maxScores,
-        double validCutoffMultiplier = 0.95)
-    {
-        if (maxScores is null || entry.MemberStats.Count == 0)
-            return true;
-
-        foreach (var member in entry.MemberStats)
-        {
-            var leaderboardType = BandInstrumentMapping.ToLeaderboardType(member.InstrumentId);
-            if (leaderboardType is null)
-                continue;
-
-            var choptMax = maxScores.GetByInstrument(leaderboardType);
-            if (choptMax is null or <= 0)
-                continue;
-
-            if (member.Score > (int)(choptMax.Value * validCutoffMultiplier))
-                return false;
-        }
-
-        return true;
-    }
+        double validCutoffMultiplier = 0.95) =>
+        LeaderboardPaginationPlanner
+            .IsBandEntryWithinValidCutoff(
+                entry.MemberStats,
+                static member => member.InstrumentId,
+                static member => member.Score,
+                maxScores,
+                validCutoffMultiplier);
 }
 
 /// <summary>Result of scraping one band leaderboard (one song + one band type).</summary>

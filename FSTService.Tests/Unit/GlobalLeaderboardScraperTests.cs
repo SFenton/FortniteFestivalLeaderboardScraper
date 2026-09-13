@@ -964,15 +964,32 @@ public class GlobalLeaderboardScraperTests
 
         handler.EnqueueError(HttpStatusCode.Unauthorized, "expired");
         handler.EnqueueJsonOk(OnePage);
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1,
+            minDop: 1,
+            maxDop: 1,
+            Substitute.For<
+                ILogger<AdaptiveConcurrencyLimiter>>(),
+            maxRequestsPerSecond: 1_000);
+        var acquiredRateTokens = 0;
+        limiter.OnRateTokenAcquired = _ =>
+            Interlocked.Increment(
+                ref acquiredRateTokens);
 
         var result = await scraper.ScrapeLeaderboardAsync(
-            "song1", "Solo_Guitar", "old_token", "acct", accessTokenProvider: provider);
+            "song1",
+            "Solo_Guitar",
+            "old_token",
+            "acct",
+            limiter: limiter,
+            accessTokenProvider: provider);
 
         Assert.Single(result.Entries);
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal("old_token", handler.Requests[0].Headers.Authorization?.Parameter);
         Assert.Equal("new_token", handler.Requests[1].Headers.Authorization?.Parameter);
         Assert.Equal(1, provider.RefreshCount);
+        Assert.Equal(2, acquiredRateTokens);
     }
 
     [Fact]

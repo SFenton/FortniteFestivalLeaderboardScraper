@@ -143,7 +143,10 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
                 TrackSongWithData(item.SongId);
             }
 
-            int totalPages = Math.Min(parsed.TotalPages, maxPages > 0 ? maxPages : int.MaxValue);
+            int totalPages =
+                LeaderboardPaginationPlanner.InitialPageCount(
+                    parsed.TotalPages,
+                    maxPages);
             for (int p = 1; p < totalPages; p++)
                 pageWork.Add((item.SongId, item.BandType, p));
 
@@ -249,9 +252,10 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
                 var expectedLastPage = page0Succeeded
                     ? Math.Max(
                             0,
-                            Math.Min(
-                                reportedPages,
-                                maxPages > 0 ? maxPages : int.MaxValue) - 1)
+                            LeaderboardPaginationPlanner
+                                .InitialPageCount(
+                                    reportedPages,
+                                    maxPages) - 1)
                     : 0;
                 var forbiddenPages = state.PageStatuses
                     .Where(static pair =>

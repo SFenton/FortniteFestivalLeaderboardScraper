@@ -11,6 +11,40 @@ public class DeepScrapeTests
     private readonly ILogger<GlobalLeaderboardScraper> _log = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
     private readonly ScrapeProgressTracker _progress = new();
 
+    [Fact]
+    public void ProductionSoloPaginationKeepsCapAndBatchSemantics()
+    {
+        Assert.Equal(
+            100,
+            LeaderboardPaginationPlanner
+                .InitialPageCount(
+                    providerReportedTotalPages: 500,
+                    configuredMaximumPages: 100));
+        Assert.Equal(
+            200,
+            LeaderboardPaginationPlanner
+                .NextSoloBatchEnd(
+                    nextPage: 100,
+                    providerReportedTotalPages: 500,
+                    configuredBatchPages: 100));
+        Assert.True(
+            LeaderboardPaginationPlanner
+                .NeedsTargetDrivenSoloExtension(
+                    deepScrapeTriggered: true,
+                    capturedPageCount: 100,
+                    providerReportedTotalPages: 500,
+                    validEntryCount: 9_999,
+                    validEntryTarget: 10_000));
+        Assert.False(
+            LeaderboardPaginationPlanner
+                .NeedsTargetDrivenSoloExtension(
+                    deepScrapeTriggered: true,
+                    capturedPageCount: 100,
+                    providerReportedTotalPages: 500,
+                    validEntryCount: 10_000,
+                    validEntryTarget: 10_000));
+    }
+
     private (GlobalLeaderboardScraper scraper, MockHttpMessageHandler handler) CreateScraper()
     {
         var handler = new MockHttpMessageHandler();

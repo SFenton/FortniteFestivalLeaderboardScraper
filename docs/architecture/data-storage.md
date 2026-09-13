@@ -2,8 +2,12 @@
 status: canonical
 owner: data
 last_verified: 2026-09-12
-last_verified_commit: 84b020e8
+last_verified_commit: 964d9188
 sources:
+  - FSTService/Scraping/Capture/
+  - FSTService/Scraping/LeaderboardEntryIdentity.cs
+  - FSTService/Scraping/Replay/CaptureEntryContracts.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
   - FSTService/Scraping/Replay/CapturePackageModels.cs
   - FSTService/Scraping/Replay/CapturePackageContract.cs
   - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
@@ -104,7 +108,7 @@ surface is not the production service persistence model.
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, bounded plan-only retirement policies/jobs/events, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
-| Replay and capture evidence artifacts | Immutable Tier-0 filesystem packages plus the non-production `fst.capture-package.v1` manifest/request/scope contract; never publication authority |
+| Replay and capture evidence artifacts | Immutable Tier-0 filesystem packages plus the non-production `fst.capture-package.v2` manifest/request/scope contract; never publication authority |
 
 ### Snapshot-generation retirement planning
 
@@ -1655,12 +1659,12 @@ Verification is read-only and detects corruption, missing/extra files or
 directories, path/symlink escape, and expected parent/config/schema/phase
 mismatches.
 
-The `fst.capture-package.v1` library now defines a closed Tier-0 artifact set
+The `fst.capture-package.v2` library now defines a closed Tier-0 artifact set
 for a canonical `fst.capture-catalog.v1` artifact, bounded canonical
-`fst.capture-response.v1` JSON Lines shards, streaming request-plan and
+`fst.capture-response.v2` JSON Lines shards, streaming request-plan and
 scope-completeness JSON Lines, and `capture/manifest.json`. The catalog bytes
 bind version, schema, exact ordered song IDs, song count, byte count, hash, and
-explicit supported/unsupported evidence for every v1 scope type. Request rows
+explicit supported/unsupported evidence for every v2 capture scope type. Request rows
 reference shard members by canonical path, offset, length, and hash rather than
 creating one Tier-0 artifact per page.
 
@@ -1670,22 +1674,39 @@ enabled scope types, timestamps, aggregate counts, response-shard count, and
 descriptor-set hashes. Complete packages fail closed on catalog/scope
 substitution, noncanonical response DTOs, response/scope/page mismatches,
 missing or duplicate members, shard gaps/overlap, incomplete statuses, record
-ceilings, count/hash/order mismatch, and secret-like metadata. A supported
-zero-entry leaderboard retains one empty page-zero discovery response with
-provider page/entry totals of zero. Unsupported scopes require explicit
-catalog evidence and zero work; v1 rejects an all-unsupported/zero-request
-package.
+ceilings, count/hash/order mismatch, and secret-like metadata. Response entries
+are strict allowlist projections of parsed solo and band DTOs rather than raw
+provider objects. Cross-page validation requires dense ranks and unique solo
+account IDs or band `(team_key,instrument_combo)` identities; a
+provider-exhausted scope must match the exact provider entry total. A supported
+zero-entry HTTP response and an exact synthetic event-not-found result each
+retain one page-zero response with distinct origin/completion metadata.
+Unsupported scopes require explicit catalog evidence and zero work; v2 rejects
+an all-unsupported/zero-request package.
 
-The accompanying storage-admission type evaluates only caller-supplied
-package bytes, free bytes, retained sealed-package count, and policy bounds.
-Rejected decisions leave their committed free-space and retained-package
-state unchanged; separately named `Projected...IfAdmitted` values are
-counterfactual only. The contract does not inspect disks, select production
-thresholds, delete artifacts, or authorize retention. No live capture,
-production database export/import, capture consumer, publication binding, or
-retention automation uses this contract. Future production-derived packages
-and replay workspace must stay on the 4 TB FST drive and receive explicit
-capacity/retention ownership. See [Replay evidence artifacts](replay-artifacts.md).
+The manual capture-only producer supplies the storage-admission type with
+operator-required maximum package bytes, free-space reserve, and retained
+sealed-package count. Its output must be a new direct child of an approved
+capture root on the configured 4 TB FST filesystem. Admission reserves the
+full configured final package maximum plus temporary sealing workspace before
+provider traffic. Final rechecks do not subtract bytes already written from
+current free space: they independently enforce current/projected final package
+size and subtract only future metadata/workspace. A no-follow root-wide lock is
+acquired for initial admission and held through the final retained-count/
+free-space decision and package sealing, so concurrent captures targeting
+different child directories cannot race the same root budget. Rejected
+decisions leave committed free-space and
+retained-package state unchanged; separately named
+`Projected...IfAdmitted` values are counterfactual only. Neither capture nor
+the contract deletes older packages.
+
+Capture packages remain filesystem evidence, not PostgreSQL relations. The
+capture-only composition creates no data source, opens no database connection,
+does not initialize schema, and cannot write scrape, staging, snapshot,
+population, fingerprint, band, history, projection, cache, freeze, or
+publication state. A sealed package creates no production candidate and grants
+no import or publication authority. See
+[Replay evidence artifacts](replay-artifacts.md).
 
 The accepted PR-5 repository capability adds only a synthetic/bounded Tier-1
 import into a fresh marker-owned isolated PostgreSQL database. The importer

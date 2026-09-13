@@ -104,6 +104,19 @@ public sealed class ReplayRootAdmission
             output);
     }
 
+    internal string AdmitNewOutputPackage(string outputPackage)
+    {
+        var output = AdmitOutputPackage(outputPackage);
+        RequireSameFileSystem(_approvedRoot, output);
+        return output;
+    }
+
+    internal static string GetFileSystemDeviceIdentity(string path) =>
+        DeviceIdentity(path);
+
+    internal static long GetAvailableFreeSpace(string path) =>
+        FindDrive(path).AvailableFreeSpace;
+
     public (string Baseline, string Candidate, string Report) AdmitComparison(
         string baseline,
         string candidate,

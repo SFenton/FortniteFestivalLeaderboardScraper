@@ -33,6 +33,7 @@ public sealed class ScrapeAccessTokenProvider
         _log.LogWarning("Access token was rejected with 401 during {Operation}. Refreshing and retrying once.", operation);
 
         var refreshed = await _tokenManager.ForceRefreshAccessTokenAsync(rejectedAccessToken, ct);
+        ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(refreshed))
             return null;
 

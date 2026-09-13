@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSTService.Scraping;
 
@@ -14,7 +15,7 @@ public sealed class DeepScrapeCoordinator
 {
     private const int ForbiddenThreshold = 3;
 
-    private readonly GlobalLeaderboardScraper _scraper;
+    private readonly GlobalLeaderboardScraper? _scraper;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger _log;
 
@@ -27,6 +28,19 @@ public sealed class DeepScrapeCoordinator
         _progress = progress;
         _log = log;
     }
+
+    private DeepScrapeCoordinator(
+        ScrapeProgressTracker progress,
+        ILogger log)
+    {
+        _progress = progress;
+        _log = log;
+    }
+
+    internal sealed record DeepScrapeFetchedPage(
+        GlobalLeaderboardScraper.ParsedPage? Page,
+        int BodyLength,
+        GlobalLeaderboardScraper.FetchStatus Status);
 
     /// <summary>
     /// Per-combo state for a deep scrape job.
@@ -93,7 +107,7 @@ public sealed class DeepScrapeCoordinator
     /// <param name="onJobComplete">Callback when a job reaches its target or stops.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>One result per job with deep scrape entries.</returns>
-    internal async Task<List<GlobalLeaderboardResult>> RunAsync(
+    internal Task<List<GlobalLeaderboardResult>> RunAsync(
         List<DeepScrapeJob> jobs,
         AdaptiveConcurrencyLimiter limiter,
         string accessToken,
@@ -101,7 +115,59 @@ public sealed class DeepScrapeCoordinator
         int seedBatch,
         Func<GlobalLeaderboardResult, ValueTask>? onJobComplete,
         CancellationToken ct,
-        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        ScrapeAccessTokenProvider? accessTokenProvider = null) =>
+        RunCoreAsync(
+            jobs,
+            limiter,
+            accessToken,
+            accountId,
+            seedBatch,
+            onJobComplete,
+            ct,
+            accessTokenProvider,
+            pageFetcher: null);
+
+    internal static Task<List<GlobalLeaderboardResult>>
+        RunCaptureAsync(
+        List<DeepScrapeJob> jobs,
+        int seedBatch,
+        Func<
+            DeepScrapeJob,
+            int,
+            CancellationToken,
+            Task<DeepScrapeFetchedPage>> pageFetcher,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(pageFetcher);
+        var coordinator = new DeepScrapeCoordinator(
+            new ScrapeProgressTracker(),
+            NullLogger.Instance);
+        return coordinator.RunCoreAsync(
+            jobs,
+            limiter: null,
+            accessToken: "",
+            accountId: "",
+            seedBatch,
+            onJobComplete: null,
+            ct,
+            accessTokenProvider: null,
+            pageFetcher);
+    }
+
+    private async Task<List<GlobalLeaderboardResult>> RunCoreAsync(
+        List<DeepScrapeJob> jobs,
+        AdaptiveConcurrencyLimiter? limiter,
+        string accessToken,
+        string accountId,
+        int seedBatch,
+        Func<GlobalLeaderboardResult, ValueTask>? onJobComplete,
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider,
+        Func<
+            DeepScrapeJob,
+            int,
+            CancellationToken,
+            Task<DeepScrapeFetchedPage>>? pageFetcher)
     {
         if (jobs.Count == 0)
             return [];
@@ -161,7 +227,7 @@ public sealed class DeepScrapeCoordinator
                         "Deep scrape progress: {Done}/{Total} jobs complete, {Pages:N0} pages fetched, " +
                         "{Requests:N0} requests, DOP={Dop}, elapsed {Elapsed}.",
                         done, jobs.Count, totalPages, totalReqs,
-                        limiter.CurrentDop, sw.Elapsed);
+                        limiter?.CurrentDop ?? 0, sw.Elapsed);
                 }
             }
             catch (OperationCanceledException) { }
@@ -193,9 +259,13 @@ public sealed class DeepScrapeCoordinator
         void CompleteJob(int jobIndex, string reason)
         {
             var job = jobs[jobIndex];
-            if (job.Done) return;
-            job.Done = true;
-            job.CompletionReason = reason;
+            lock (job.CursorLock)
+            {
+                if (job.Done)
+                    return;
+                job.Done = true;
+                job.CompletionReason = reason;
+            }
             Interlocked.Increment(ref completedJobCount);
 
             try { job.Cts?.Cancel(); } catch { }
@@ -264,22 +334,103 @@ public sealed class DeepScrapeCoordinator
         var pendingTasks = new List<Task>(workItems.Count);
         var extensionLock = new object();
 
-        foreach (var (jobIndex, page) in workItems)
+        Task SchedulePage(int jobIndex, int page)
         {
-            pendingTasks.Add(ProcessPageAsync(jobIndex, page));
+            var start = new TaskCompletionSource();
+            var task = RunTrackedAsync();
+            lock (extensionLock)
+            {
+                pendingTasks.Add(task);
+            }
+            start.SetResult();
+            return task;
+
+            async Task RunTrackedAsync()
+            {
+                await start.Task;
+                await ProcessPageAsync(jobIndex, page);
+            }
         }
 
-        // Wait for initial batch. Extension tasks are added to pendingTasks as needed.
-        while (true)
+        try
         {
-            Task[] snapshot;
-            lock (extensionLock) { snapshot = pendingTasks.ToArray(); }
-            await Task.WhenAll(snapshot);
+            foreach (var (jobIndex, page) in workItems)
+            {
+                _ = SchedulePage(jobIndex, page);
+            }
 
-            // Check if any extensions were added after the snapshot
-            bool hasNew;
-            lock (extensionLock) { hasNew = pendingTasks.Count > snapshot.Length; }
-            if (!hasNew) break;
+            // Wait for initial batch. Extension tasks are added to pendingTasks as needed.
+            while (true)
+            {
+                Task[] snapshot;
+                lock (extensionLock)
+                {
+                    snapshot = pendingTasks.ToArray();
+                }
+                await Task.WhenAll(snapshot);
+
+                // Check if any extensions were added after the snapshot
+                bool hasNew;
+                lock (extensionLock)
+                {
+                    hasNew =
+                        pendingTasks.Count >
+                        snapshot.Length;
+                }
+                if (!hasNew)
+                    break;
+            }
+        }
+        catch
+        {
+            foreach (var job in jobs)
+            {
+                lock (job.CursorLock)
+                {
+                    job.Done = true;
+                }
+                try
+                {
+                    job.Cts?.Cancel();
+                }
+                catch
+                {
+                }
+            }
+            while (true)
+            {
+                Task[] drain;
+                lock (extensionLock)
+                {
+                    drain = pendingTasks.ToArray();
+                }
+                try
+                {
+                    await Task.WhenAll(drain);
+                }
+                catch
+                {
+                }
+                lock (extensionLock)
+                {
+                    if (pendingTasks.Count ==
+                        drain.Length)
+                    {
+                        break;
+                    }
+                }
+            }
+            progressCts.Cancel();
+            try
+            {
+                await progressTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            foreach (var job in jobs)
+                job.Dispose();
+            throw;
         }
 
         async Task ProcessPageAsync(int jobIndex, int page)
@@ -289,17 +440,62 @@ public sealed class DeepScrapeCoordinator
 
             try
             {
-                var (parsed, bodyLen, status) = await _scraper.Executor.WithCdnResilienceAsync(
-                    work: async () =>
-                    {
-                        if (job.Done)
-                            return ((GlobalLeaderboardScraper.ParsedPage?)null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
-                        return await _scraper.FetchPageAsync(
-                            job.SongId, job.Instrument, page, accessToken, accountId, limiter, job.Cts!.Token, accessTokenProvider);
-                    },
-                    ct,
-                    acquireSlot: () => _scraper.AcquireEpicSlotAsync(limiter, job.Cts!.Token),
-                    releaseSlot: limiter.Release);
+                DeepScrapeFetchedPage fetched;
+                if (pageFetcher is not null)
+                {
+                    fetched = await pageFetcher(
+                        job,
+                        page,
+                        job.Cts!.Token);
+                }
+                else
+                {
+                    var scraper = _scraper ??
+                        throw new InvalidOperationException(
+                            "Deep scrape provider is unavailable.");
+                    var activeLimiter = limiter ??
+                        throw new InvalidOperationException(
+                            "Deep scrape limiter is unavailable.");
+                    var result =
+                        await scraper.Executor
+                            .WithCdnResilienceAsync(
+                                work: async () =>
+                                {
+                                    if (job.Done)
+                                    {
+                                        return (
+                                            (GlobalLeaderboardScraper
+                                                .ParsedPage?)null,
+                                            0,
+                                            GlobalLeaderboardScraper
+                                                .FetchStatus
+                                                .OtherFailure);
+                                    }
+                                    return await scraper.FetchPageAsync(
+                                        job.SongId,
+                                        job.Instrument,
+                                        page,
+                                        accessToken,
+                                        accountId,
+                                        activeLimiter,
+                                        job.Cts!.Token,
+                                        accessTokenProvider);
+                                },
+                                ct,
+                                acquireSlot: () =>
+                                    scraper.AcquireEpicSlotAsync(
+                                        activeLimiter,
+                                        job.Cts!.Token),
+                                releaseSlot:
+                                    activeLimiter.Release);
+                    fetched = new DeepScrapeFetchedPage(
+                        result.Item1,
+                        result.Item2,
+                        result.Item3);
+                }
+                var parsed = fetched.Page;
+                var bodyLen = fetched.BodyLength;
+                var status = fetched.Status;
 
                 Interlocked.Increment(ref job.RequestCount);
                 Interlocked.Add(ref job.BytesReceived, bodyLen);
@@ -336,28 +532,41 @@ public sealed class DeepScrapeCoordinator
             finally
             {
                 // Extend seed if this job needs more pages
-                if (!job.Done && job.LastEnqueuedPage < job.ReportedPages - 1)
+                var extStart = -1;
+                var extEnd = -1;
+                lock (job.CursorLock)
                 {
-                    int remaining;
-                    lock (job.CursorLock) { remaining = job.LastEnqueuedPage - job.CursorPage; }
-                    if (remaining < Math.Max(1, seedBatch / 4))
+                    if (!job.Done &&
+                        job.LastEnqueuedPage <
+                            job.ReportedPages - 1)
                     {
-                        int extStart = job.LastEnqueuedPage + 1;
-                        int extEnd = Math.Min(extStart + seedBatch, job.ReportedPages);
-                        if (extEnd > extStart)
+                        var remaining =
+                            job.LastEnqueuedPage -
+                            job.CursorPage;
+                        if (remaining <
+                            Math.Max(
+                                1,
+                                seedBatch / 4))
                         {
-                            job.LastEnqueuedPage = extEnd - 1;
-
-                            // Sort extension pages breadth-first with other pending extensions
-                            var extTasks = new List<Task>(extEnd - extStart);
-                            for (int p = extStart; p < extEnd; p++)
-                                extTasks.Add(ProcessPageAsync(jobIndex, p));
-
-                            lock (extensionLock)
-                            {
-                                pendingTasks.AddRange(extTasks);
-                            }
+                            extStart =
+                                job.LastEnqueuedPage + 1;
+                            extEnd = Math.Min(
+                                extStart + seedBatch,
+                                job.ReportedPages);
+                            job.LastEnqueuedPage =
+                                extEnd - 1;
                         }
+                    }
+                }
+                if (extEnd > extStart)
+                {
+                    for (var nextPage = extStart;
+                         nextPage < extEnd;
+                         nextPage++)
+                    {
+                        _ = SchedulePage(
+                            jobIndex,
+                            nextPage);
                     }
                 }
             }

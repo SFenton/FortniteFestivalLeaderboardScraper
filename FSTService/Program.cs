@@ -5,12 +5,22 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Scraping.Capture;
 using FSTService.Scraping.Replay;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+
+// Capture dispatch is first so mixed capture/host/replay/maintenance flags are
+// rejected before any normal host or mutation service can be constructed.
+if (CaptureOnlyCommand.IsRequested(args))
+{
+    Environment.ExitCode =
+        await CaptureOnlyEntryPoint.RunAsync(args);
+    return;
+}
 
 // The retention-only command must not load .env or construct any host services.
 if (SnapshotRetentionSchemaCommand.IsRequested(args))
@@ -32,24 +42,7 @@ if (ReplayCommand.IsRequested(args))
 
 // ─── Load .env file (local development secrets) ────────────
 
-var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
-if (File.Exists(envPath))
-{
-    foreach (var line in File.ReadAllLines(envPath))
-    {
-        var trimmed = line.Trim();
-        if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#'))
-            continue;
-
-        var eq = trimmed.IndexOf('=');
-        if (eq <= 0)
-            continue;
-
-        var key = trimmed[..eq].Trim();
-        var value = trimmed[(eq + 1)..].Trim().Trim('"');
-        Environment.SetEnvironmentVariable(key, value);
-    }
-}
+CaptureEnvironmentFile.LoadCurrentDirectory();
 
 RetiredMaintenanceCommandGuard.ThrowIfPresent(args);
 

@@ -31,6 +31,10 @@ public sealed class FileCredentialStore : ICredentialStore
 
             return creds;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to load credentials from {Path}", _path);

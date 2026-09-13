@@ -1,10 +1,15 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-08
-last_verified_commit: 2a7783a9
+last_verified: 2026-09-12
+last_verified_commit: 964d9188
 sources:
   - FSTService/Program.cs
+  - FSTService/Scraping/Capture/CaptureOnlyCommand.cs
+  - FSTService/Scraping/Capture/CaptureOnlyEntryPoint.cs
+  - FSTService/Scraping/Capture/CaptureOnlyRunner.cs
+  - FSTService/Scraping/Capture/CapturePaginationMaximums.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/ScraperOptions.cs
   - FSTService/ScrapePhase.cs
@@ -51,6 +56,94 @@ is not an FSTService hosting flag. Its only commands are `inspect` and
 identity-asserted `observe-current`; it never starts the service/worker
 entry point, initializes schema, resumes a scrape, or sends notifications.
 `--once` remains a full scrape/publication pass, not an offline report mode.
+
+## Manual capture-only command
+
+`--capture-only` performs one provider capture, seals one
+`fst.capture-package.v2` package, prints one sanitized JSON result, and exits.
+It is default-off and manual. It is not a hosted worker mode, overlap
+scheduler, production candidate, publication action, or database import.
+
+Capture dispatch is the first `FSTService` command check. The dedicated entry
+point parses the complete argument list before loading `.env`, then loads only
+normal configuration needed for Epic authentication, enabled leaderboard
+types, pacing, and proxy routing. It does not construct `WebApplication`,
+register hosted services, create an Npgsql data source, initialize schema,
+publish worker status, allocate a publication, freeze reads, build caches,
+generate paths, run cleanup/post-process, or notify clients.
+
+The strict command shape is:
+
+```text
+--capture-only
+--capture-output <new-package-root>
+--capture-id <capture-id>
+```
+
+The output must be a nonexistent direct child of the
+`FST_CAPTURE_APPROVED_ROOT` directory. Duplicate flags, missing/empty values,
+unknown options, positional arguments, unsafe capture IDs, and every normal,
+replay, maintenance, setup, or hosting flag are rejected. The command cannot
+be combined with `--once`, phase-selection flags, `--setup`, API/worker role
+flags, replay flags, schema commands, or maintenance commands.
+
+The command requires the capture environment described in
+[Configuration](configuration.md#manual-capture-only-environment). It uses
+the configured full-scrape solo instrument switches and
+`Scraper:EnableBandScraping`. Both active solo and band paths use
+`Scraper:MaxPagesPerLeaderboard`; parallel solo mode additionally reproduces
+the active CHOpt deep-scrape/valid-entry rules, while sequential solo mode ends
+at the initial configured page range. The legacy direct band phase's separate
+page/valid-entry settings are not part of the normal worker capture plan.
+Concurrent page completion is sorted back into canonical song,
+solo-instrument, band-type, and page order. Successful HTTP responses must
+contain typed `page`, `totalPages`, `totalEntries`, and `entries` fields.
+Scope finalization cancels and awaits any detached CDN probe before binding the
+monotonic physical-send total to retained request metadata.
+An exact page-zero `event_not_found` response is represented separately from
+an HTTP-success empty page. When a parallel solo scope needs CHOpt-aware pagination,
+the command requires the catalog-bound maximum-score snapshot configured by
+`FST_CAPTURE_PAGINATION_MAX_SCORES_PATH`; it never queries PostgreSQL for that
+state. The snapshot must itself reside on the approved filesystem device. A
+valid existing device-auth credential is required; capture mode never starts
+interactive setup. Live capture also requires an absolute same-device
+`Scraper:ProxyCurlTempDirectory` even when curl is only the .NET HTTP fallback;
+fallback response files are transfer-bounded and removed after each attempt.
+Capture curl invocations disable ambient curl configuration, and proxy
+concurrency leases remain held until response bodies are consumed or disposed.
+Every page has a fixed ten-minute cumulative transport deadline across proxy
+waits, network retries, CDN recovery, and response transfer. Deadline
+exhaustion returns the typed capture failure code rather than cancellation.
+
+Exit codes are:
+
+| Code | Meaning |
+|---:|---|
+| `0` | One package sealed successfully |
+| `1` | Unexpected sanitized failure |
+| `2` | CLI or configuration usage failure |
+| `3` | Approved root, device, or output path rejected |
+| `4` | Package/shard capacity, free-space reserve, retained-count, or root-lock admission rejected |
+| `5` | Authentication unavailable or rejected |
+| `6` | Initial/final catalog was inexact, malformed, safety-merged, reconstructed, or changed |
+| `7` | A leaderboard page/scope was failed, incomplete, or inconsistent |
+| `8` | Package creation, artifact write, validation, or atomic seal failed |
+| `130` | Caller or process-signal cancellation |
+
+Success output contains only the capture ID, package root hash, bounded counts,
+and `noPublication=true`. Failure output contains only a typed failure, exit
+code, and fixed sanitized message. Credentials, tokens, request headers, the
+authenticated caller configuration, and configured addresses are never
+written to the package or terminal output. Leaderboard participant account
+identifiers are intentionally retained in the response artifacts and require
+the same access and retention controls as leaderboard history. After output
+admission, any
+authentication, catalog, page, cancellation, reserve, or seal failure leaves
+the attempt unsealed and marked interrupted. Existing packages are never
+overwritten or deleted. Both Ctrl-C and `SIGTERM` request cancellation; either
+returns `130` and uses the fixed `capture-cancelled` interruption reason.
+OAuth and transport timeouts without caller cancellation retain their
+authentication, catalog, or capture failure classification.
 
 ## Isolated phase replay candidate
 

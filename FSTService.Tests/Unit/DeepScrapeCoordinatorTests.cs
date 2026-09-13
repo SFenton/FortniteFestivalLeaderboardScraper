@@ -272,6 +272,73 @@ public class DeepScrapeCoordinatorTests
         Assert.Empty(results);
     }
 
+    [Fact]
+    public async Task CaptureSchedulerReservesEachExtensionPageOnce()
+    {
+        var calls =
+            new ConcurrentDictionary<int, int>();
+        var jobs = new List<DeepScrapeJob>
+        {
+            new()
+            {
+                SongId = "song1",
+                Instrument = "Solo_Guitar",
+                ValidCutoff = 1000,
+                ValidEntryTarget = 1000,
+                ReportedPages = 10,
+                Wave2Start = 2,
+                ValidCount = 0,
+            },
+        };
+
+        var results =
+            await DeepScrapeCoordinator
+                .RunCaptureAsync(
+                    jobs,
+                    seedBatch: 2,
+                    async (_, page, ct) =>
+                    {
+                        calls.AddOrUpdate(
+                            page,
+                            1,
+                            static (_, count) =>
+                                count + 1);
+                        await Task.Yield();
+                        ct.ThrowIfCancellationRequested();
+                        return new DeepScrapeCoordinator
+                            .DeepScrapeFetchedPage(
+                            new GlobalLeaderboardScraper
+                                .ParsedPage
+                            {
+                                Page = page,
+                                TotalPages = 10,
+                                Entries =
+                                [
+                                    new LeaderboardEntry
+                                    {
+                                        AccountId =
+                                            $"player-{page}",
+                                        Rank = page + 1,
+                                        Score = 500,
+                                    },
+                                ],
+                            },
+                            BodyLength: 100,
+                            GlobalLeaderboardScraper
+                                .FetchStatus.Success);
+                    },
+                    CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(
+            Enumerable.Range(2, 8),
+            calls.Keys.Order());
+        Assert.All(
+            calls.Values,
+            static count =>
+                Assert.Equal(1, count));
+    }
+
     // ─── BuildJobs creates correct jobs from metadata ──
 
     [Fact]
