@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-27
-last_verified_commit: c35b7f47
+last_verified: 2026-09-12
+last_verified_commit: c0b30c41
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -27,6 +27,11 @@ sources:
   - deploy/.env.example
   - tools/fst-worker-compose-guard.sh
   - FSTService/Scraping/Replay/ReplaySecurity.cs
+  - FSTService/Scraping/Capture/CaptureOnlyCommand.cs
+  - FSTService/Scraping/Capture/CaptureOnlyComposition.cs
+  - FSTService/Scraping/Capture/CapturePaginationMaximums.cs
+  - FSTService/Scraping/Capture/CaptureOnlyStorage.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
   - tools/FstSnapshotGenerationRetirement/
   - tools/postgres-snapshot-generation-retirement.sh
 update_triggers:
@@ -367,6 +372,86 @@ which the isolated target must not match.
 
 Tests inject their root/target policy directly; there is no environment flag
 that weakens production root, device, marker, cluster, or publication refusal.
+
+## Manual capture-only environment
+
+Capture-only mode loads the normal `.env`, appsettings, environment-specific
+appsettings, and process environment solely to obtain Epic authentication,
+enabled leaderboard types, pacing, and proxy-routing behavior. It never reads
+or creates an Npgsql data source and does not require a PostgreSQL connection.
+Resolved values, credentials, tokens, configured addresses, and authenticated
+account configuration must not be copied into logs, packages, exception
+artifacts, or documentation. Captured leaderboard participant account IDs are
+data payload and require the same access and retention controls as leaderboard
+history.
+
+Every production invocation requires these explicit values:
+
+| Variable | Requirement |
+|---|---|
+| `FST_CAPTURE_APPROVED_ROOT` | Existing capture root under the canonical 4 TB FST `fst-data/capture` or `fst-data/evidence/capture` tree |
+| `FST_CAPTURE_APPROVED_DEVICE` | Exact filesystem device identity (`major:minor` on Linux) for that root |
+| `FST_CAPTURE_MAX_PACKAGE_BYTES` | Maximum final sealed-package size; must exceed the bounded 24 MiB pre-metadata allowance and is used as the conservative pre-provider admission size |
+| `FST_CAPTURE_MIN_FREE_SPACE_RESERVE_BYTES` | Non-negative free-space reserve that must remain after admission and sealing |
+| `FST_CAPTURE_MAX_RETAINED_SEALED_PACKAGES` | Positive count ceiling; reaching it refuses capture and never deletes an older package |
+| `FST_CAPTURE_GIT_COMMIT` | Exact 40- or 64-character implementation commit |
+| `FST_CAPTURE_IMAGE_DIGEST` | Exact OCI SHA-256 image digest |
+| `FST_CAPTURE_IMAGE_REVISION` | Exact 40- or 64-character OCI revision |
+| `FST_CAPTURE_PAGINATION_MAX_SCORES_PATH` | Optional canonical `fst.capture-pagination-max-scores.v1` regular file beneath the approved root and on its filesystem device; required whenever a non-exhausted parallel solo scope needs CHOpt-aware pagination |
+
+The approved root and every ancestor are rejected if they contain Tier-0
+package marker files; a sealed package can never be reused as a capture
+container.
+
+`FST_CAPTURE_RESPONSE_SHARD_BYTES` is optional and defaults to 64 MiB. It must
+be greater than the 8 MiB response-record ceiling and no larger than the
+64 MiB contract ceiling. The default geometry provides 128 GiB of response
+capacity, above the measured approximately 92.8 GB workload. Before provider
+traffic, checked arithmetic verifies that the configured shard size multiplied
+by the fixed 2,048-shard ceiling can contain the admitted package response
+budget. The command rechecks current and projected final package bytes
+independently from future metadata/workspace bytes. A no-follow approved-root
+lock is acquired for preflight and held through the final free-space and
+retained-count decision and sealing, including between different output
+directories. It never performs retention deletion.
+
+The normal `Scraper` keys that select full-scrape solo instruments,
+`Scraper:EnableBandScraping`, `Scraper:MaxPagesPerLeaderboard`, concurrency,
+the global request rate, and the existing aligned
+proxy/pacing/cooldown/retry/self-heal settings are reused. Parallel solo mode
+also reuses the active valid-entry/deep-scrape thresholds and batch size;
+sequential solo and the active band fetcher stop at the initial common page
+cap. The legacy direct band phase's separate page/valid-entry settings are not
+used by capture-only mode.
+Pages may complete concurrently, but package records are restored to canonical
+scope/page order before sealing. A scope that could be truncated fails closed
+unless catalog acquisition supplies the exact non-database maximum-score
+snapshot needed by the ordinary pagination decision. The configured curl scratch directory is required for every live capture,
+including .NET-HTTP fallback when curl is not the primary proxy transport. It
+must be the exact absolute
+`<FST_CAPTURE_APPROVED_ROOT>/.capture-curl-scratch` path, outside every output
+package and any existing Tier-0 package ancestor. Capture revalidates that path
+before every curl write and caps every curl response during transfer at the
+capture response-record byte limit. Curl ignores ambient configuration, and
+proxy concurrency ownership remains active until each response body is
+consumed or disposed. Initial storage admission reserves one
+maximum response per configured capture page-concurrency slot in addition to
+the maximum package and sealing workspace.
+
+The maximum-score file is strict canonical JSON bound to the exact provider
+catalog SHA-256. It contains one ordinal song record per catalog song and one
+entry, in canonical solo-instrument order, for every supported maximum; a
+missing maximum omits the `maximumScore` member. Capture reads it as a regular
+no-follow file on the approved device, records its SHA-256 in package lineage,
+and revalidates it with the final catalog fetch. It is pagination input only
+and grants no database or path-generation authority.
+
+```json
+{"formatId":"fst.capture-pagination-max-scores.v1","providerContentSha256":"<sha256>","songs":[{"maximums":[{"leaderboardType":"Solo_Guitar","maximumScore":123456}],"songId":"song-id"}],"version":1}
+```
+
+The abbreviated example shows one maximum; an admitted file must contain every
+catalog song and every capture-contract solo instrument in canonical order.
 
 ## Snapshot-retirement plan environment
 

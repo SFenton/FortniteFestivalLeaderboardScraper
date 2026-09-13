@@ -122,6 +122,7 @@ public abstract class PageFetcherBase<TEntry>
         var label = $"{songId}/{type}/page({page})";
 
         var authRetryCount = 0;
+        var outerSendCount = 0;
         string sentAccessToken = accessToken;
 
         HttpRequestMessage CreateRequest()
@@ -145,6 +146,11 @@ public abstract class PageFetcherBase<TEntry>
             HttpResponseMessage res;
             try
             {
+                if (outerSendCount++ > 0)
+                {
+                    await Pool.Limiter
+                        .AcquireRateTokenAsync(ct);
+                }
                 res = await Executor.SendAsync(CreateRequest, Pool.Limiter, label, MaxRetries, ct);
             }
             catch (HttpRequestException ex)
@@ -207,6 +213,7 @@ public abstract class PageFetcherBase<TEntry>
                     Progress.ReportRetry();
 
                     var refreshed = await AccessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    ct.ThrowIfCancellationRequested();
                     if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
                     {
                         throw new ScrapeAuthenticationException(

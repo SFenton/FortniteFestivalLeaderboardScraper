@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-12
-last_verified_commit: 84b020e8
+last_verified_commit: c0b30c41
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -44,6 +44,10 @@ sources:
   - FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/CapturePackageContractTests.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
+  - FSTService.Tests/Unit/BandScrapePhaseTests.cs
+  - FSTService.Tests/Unit/DeepScrapeTests.cs
+  - FSTService.Tests/Unit/TokenManagerTests.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
@@ -979,24 +983,38 @@ bash -n tools/postgres-tier1-replay-drill.sh
 node --test tools/postgres-tier1-replay-drill.test.mjs
 ```
 
-Focused capture-package contract and inherited Tier-0 safety validation:
+Focused capture-only producer, capture-package contract, parser regression, and
+inherited Tier-0 safety validation:
 
 ```bash
 dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
-  --filter 'FullyQualifiedName~CapturePackageContractTests|FullyQualifiedName~TierZeroPackageTests|FullyQualifiedName~TierZeroEvidenceContractTests'
+  --filter 'FullyQualifiedName~CaptureOnlyModeTests|FullyQualifiedName~CapturePackageContractTests|FullyQualifiedName~TierZeroPackageTests|FullyQualifiedName~TierZeroEvidenceContractTests|FullyQualifiedName~GlobalLeaderboardScraperTests|FullyQualifiedName~DeepScrapeTests|FullyQualifiedName~BandPageFetcherTests|FullyQualifiedName~BandScrapePhaseTests|FullyQualifiedName~ResilientHttpExecutorTests|FullyQualifiedName~TokenManagerTests|FullyQualifiedName~EpicAuthServiceCredentialTests'
 ```
 
-This contract-only matrix covers canonical `fst.capture-package.v1` round
-trips, exact canonical catalog song/support proof, canonical versioned
-response DTO validation on write and read, bounded response-shard member
-offset/length/hash coverage, coherent zero-page and all-unsupported behavior,
-record ceilings, exact Tier-0 identity binding, and complete package sealing.
-It also covers duplicate/missing/misordered/count/hash rejection, unchanged
-committed admission state on rejection, a two-writer atomic-seal race, Tier-0
-tamper detection, partial-metadata resume, and a deterministic no-live-I/O
-8,500-scope/612,000-request capacity and validation bound. It performs no
-provider, filesystem-capacity, database, publication, freeze, or production
-operation.
+This matrix covers the strict capture CLI and conflict rules; typed exit codes;
+early process dispatch; Ctrl-C/SIGTERM and OAuth/store cancellation;
+approved-root, device, direct-child, new-attempt, root-wide sealing admission,
+package-size, future-write reserve, retained-count, and shard-geometry refusal;
+exact catalog support mapping; strict capture envelopes with unchanged normal
+parsing; event-not-found provenance; allowlisted entry projection; duplicate
+identity/rank/page drift refusal; production pagination planning and canonical
+post-concurrency ordering; fake solo/band multi-page capture;
+retry-amplification counts; request/scope descriptors; sealed-reader round
+trips; sanitized output; and auth, inexact catalog, page failure, cancellation,
+catalog drift, final reserve, seal, and interrupted-package behavior.
+Composition assertions reject
+Npgsql, publication, notification, worker, and hosted-service registrations,
+and all producer fixtures use deterministic fakes with no network or database.
+
+The inherited contract tests continue to cover canonical
+`fst.capture-package.v2` round trips, exact canonical catalog song/support
+proof, canonical response validation on write/read, bounded response-shard
+member offset/length/hash coverage, coherent zero-page and all-unsupported
+behavior, record ceilings, exact Tier-0 identity binding, complete package
+sealing, duplicate/missing/misordered/count/hash rejection, unchanged
+committed admission state on rejection, atomic-seal races, tamper detection,
+partial-metadata resume, and the deterministic 8,500-scope/612,000-request
+capacity bound.
 
 Focused Band current-projection candidate validation:
 

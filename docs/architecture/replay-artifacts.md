@@ -2,8 +2,12 @@
 status: canonical
 owner: worker
 last_verified: 2026-09-12
-last_verified_commit: 84b020e8
+last_verified_commit: c0b30c41
 sources:
+  - FSTService/Scraping/Capture/
+  - FSTService/Scraping/LeaderboardEntryIdentity.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - FSTService/Scraping/Replay/CaptureEntryContracts.cs
   - FSTService/Scraping/Replay/CapturePackageModels.cs
   - FSTService/Scraping/Replay/CapturePackageContract.cs
   - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
@@ -19,6 +23,7 @@ sources:
   - FSTService.Tests/Unit/TierZeroEvidenceContractTests.cs
   - FSTService.Tests/Unit/TierZeroPackageTests.cs
   - FSTService.Tests/Unit/CapturePackageContractTests.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
   - FSTService/Scraping/Replay/ReplaySecurity.cs
   - FSTService/Scraping/Replay/TierOneReplayModels.cs
@@ -39,12 +44,12 @@ verification primitives. It does **not** capture a live scrape, export
 PostgreSQL, import into an isolated database, invoke a phase, replay a phase,
 publish data, or grant an artifact authority over public reads.
 
-`fst.capture-package.v1` now defines the first capture-specific contract on top
-of those Tier-0 primitives. It is a library and test fixture only: there is no
-`--capture-only` mode, provider invocation, scheduler, database import,
-publication allocation, freeze behavior, or production wiring. PR-4 and PR-5
-remain accepted repository contracts, no replay producer or consumer is
-deployed in production, and PostgreSQL remains the durable source of truth.
+`fst.capture-package.v2` defines the first capture-specific contract on top of
+those Tier-0 primitives. The same service image now has one explicit,
+default-off `--capture-only` producer. It performs one manual provider capture,
+seals one package, and exits. It is not a hosted worker, scheduler, overlap
+queue, database import, production candidate, publication allocation, or
+freeze transition. PostgreSQL remains the durable source of truth.
 
 ## Ownership and location
 
@@ -53,13 +58,18 @@ consumer workflow. Future production-derived packages, replay scratch, and
 exports must remain on the 4 TB FST drive. Unit-test fixtures stay under the
 repository test/session workspace and are bounded.
 
-The capture library has a deterministic numeric admission contract for maximum
-package bytes, minimum post-admission free-space reserve, and maximum retained
-sealed packages. It performs no filesystem probe, has no production defaults,
-and enables no retention action. A sealed package must not be overwritten or
-deleted by generic scrape-log cleanup. Future capture or replay wiring must
-supply accepted values and define retention, capacity, rollback, and lineage
-ownership before creating live artifacts.
+The capture command supplies the library's deterministic numeric admission
+contract from mandatory operator values: maximum final package bytes, minimum
+post-admission free-space reserve, and maximum retained sealed packages. Before
+provider traffic it admits the configured package maximum plus bounded
+temporary sealing workspace and verifies that the configured shard geometry
+can represent that budget. Rechecks treat already-written package bytes as
+already consumed: the final-size ceiling is evaluated independently, while
+only future metadata and temporary workspace are subtracted from current free
+space. A no-follow lock in the approved root is acquired before that admission
+and retained through the final retained-count/free-space decision and sealing,
+serializing capture writers across processes and output directories. Capture
+performs no retention action; packages are never automatically deleted.
 
 ### Caller-root policy
 
@@ -84,9 +94,15 @@ device, rejects generic temporary and PostgreSQL-data paths, and requires
 non-overlapping immutable attempts. Tests inject isolated roots directly; the
 runtime path has no weakening flag.
 
-## Capture package v1
+Capture uses the same path/symlink/device primitives. Its approved root is
+explicitly supplied by `FST_CAPTURE_APPROVED_ROOT`, must be within the
+canonical 4 TB FST capture/evidence tree, and must match
+`FST_CAPTURE_APPROVED_DEVICE`. `--capture-output` must name a nonexistent
+direct child of that root.
 
-Format `fst.capture-package.v1`, version `1`, is a canonical capture manifest
+## Capture package v2
+
+Format `fst.capture-package.v2`, version `2`, is a canonical capture manifest
 and descriptor family stored inside a sealed Tier-0 envelope. The canonical
 artifact paths are:
 
@@ -98,6 +114,11 @@ capture/scope-completeness.jsonl
 capture/manifest.json
 ```
 
+Version 2 supersedes the contract-only v1 draft before any production package
+was created. It adds explicit response origin and scope completion-reason
+fields; response and descriptor schema versions are therefore also `2`.
+Readers fail closed on v1 rather than interpreting missing provenance fields.
+
 `capture/catalog.json` has its own canonical
 `fst.capture-catalog.v1` schema. It records a positive catalog version, exact
 song count, ordinally sorted unique song IDs, and an explicit
@@ -108,11 +129,20 @@ length, and SHA-256 to both the capture manifest and Tier-0 source identity.
 Scope validation is derived from this artifact; a different same-count song
 set is not interchangeable.
 
-Response shards are bounded to 64 MiB and contain canonical JSON Lines records
-using the versioned `fst.capture-response.v1` DTO. Each record binds its request
-and scope ordinals, response kind, song/type identity, page coordinate and
-size, provider page/entry totals, explicit entry count, and entry array. Every
-record is validated on write and read, including byte-for-byte canonical
+Response shards default to and are bounded by 64 MiB. The fixed 2,048-shard
+ceiling therefore represents 128 GiB, which covers the measured approximately
+92.8 GB response workload; startup refuses undersized configured geometry
+before authentication or provider traffic. Shards contain canonical JSON Lines
+records using the versioned `fst.capture-response.v2` DTO. Each record binds its
+request and scope ordinals, response kind and origin, song/type identity, page
+coordinate and size, provider page/entry totals, explicit entry count, and
+entry array. Entry arrays contain only strict allowlisted solo or band DTO
+fields projected from the production parsers. Unknown provider properties are
+discarded by the producer and rejected by the contract; every retained string
+is recursively screened against credential, token, password, API-key, host,
+endpoint, and authorization-like values.
+
+Every record is validated on write and read, including byte-for-byte canonical
 serialization. Request descriptors point to the containing shard plus the
 member offset, length, and SHA-256. Offsets begin at zero, advance by the exact
 member length plus the single LF separator, and cover each shard without gaps
@@ -137,23 +167,27 @@ shard path, member offset/length, and member SHA-256. Scope descriptors use cont
 ordinals and bind declared, provider-reported, and captured totals plus a
 SHA-256 over a fixed-width digest sequence for their ordered request
 descriptors. Scope order follows the exact canonical catalog song sequence,
-then the protocol's solo-instrument order, then band-type order. Version 1
+then the protocol's solo-instrument order, then band-type order. Version 2
 requires exactly one scope for every catalog song and enabled type.
 
 The validator rejects duplicate or missing request/scope ordinals, duplicate
 or missing scope identities, unknown types or statuses, noncanonical order,
 malformed or non-lowercase SHA-256 values, negative counts, mismatched
 request/scope/package aggregates, and any `incomplete` or `failed` member of a
-package presented for sealing. A `complete` scope must match both its declared
-and provider-reported totals. A provider `0` page/`0` entry result is represented
-by one canonical empty page-zero discovery response while the declared and
-provider page counts remain zero. An `unsupported` scope is sealable only when
-the exact catalog support record says `unsupported`, and it has zero pages,
-entries, requests, and response bytes. Version 1 rejects a zero-request or
+package presented for sealing. Scope completion records distinguish provider
+exhaustion, configured page limits, valid-entry targets, explicit
+event-not-found results, and unsupported catalog scopes. Captured pages must be
+a contiguous prefix with stable provider totals and page size. Ranks must be
+dense from one, solo account IDs must be unique, band
+`(team_key,instrument_combo)` identities must be unique, every non-final
+provider page must be full, and a provider-exhausted scope's unique identity
+count must equal `totalEntries`. A provider HTTP success with zero pages is
+distinct from the synthetic page-zero response created only for an exact
+`event_not_found` error. An `unsupported` scope is sealable only when the exact
+catalog support record says `unsupported`, and it has zero pages, entries,
+requests, and response bytes. Version 2 rejects a zero-request or
 all-unsupported package even when the catalog proves every enabled scope is
-unsupported. Contract metadata reuses the Tier-0
-credential/endpoint/authorization screening, and response paths are generated
-from bounded shard ordinals rather than caller text.
+unsupported.
 
 `CapturePackageWriter` delegates content writes, hashing, journaling, path
 confinement, locking, resume, checksum generation, and atomic final sealing to
@@ -190,10 +224,99 @@ The numeric storage-admission result distinguishes committed state from
 counterfactual `Projected...IfAdmitted` values. A rejection leaves committed
 free-space and retained-package counts unchanged.
 
-This contract does not authorize capture, import, retention deletion,
-publication, or access to provider credentials/endpoints. Any future
-production capture package, scratch space, or retained artifact must stay on
-the 4 TB FST drive.
+### Manual capture producer
+
+The capture-only entry point is selected before normal `.env` processing and
+loads `.env` itself only after strict command parsing. It constructs a small
+capture-only service collection: credential-file authentication, exact
+provider catalog acquisition, existing resilient leaderboard transport,
+configured proxy routing/pacing/cooldown/self-heal, an in-memory progress
+tracker, filesystem admission, and the package runner. It does not construct
+`WebApplication`, Npgsql, schema initialization, worker status,
+publication/freeze/cache/notification services, path generation, cleanup, or
+the ordinary worker. The inherited Tier-0 database identity is a fixed
+versioned `no-database` sentinel with no extensions; it is not discovered from
+or validated against PostgreSQL.
+
+The initial provider catalog must be exact: failed requests, dropped or
+duplicate objects, parse failures, reconstruction, and safety merges are
+rejected. Its complete provider-content hash deterministically supplies the
+positive capture catalog version and a Tier-0 parent hash. The canonical
+catalog records every fixed capture solo/band support decision. Enabled solo
+instruments come from the full-scrape query switches; band types are the
+canonical three when band scraping is enabled.
+
+Supported scopes retain canonical catalog, solo, band, and page order. Page
+ranges match the active normal worker paths. Solo and band use the common
+`MaxPagesPerLeaderboard` cap. Parallel solo capture also applies the active
+CHOpt trigger/cutoff/deep-batch and valid-entry rules when exact non-database
+maxima accompany catalog acquisition; sequential solo and the active
+`BandPageFetcher` end at the initial capped range. The legacy direct
+`BandScrapePhase` pagination extensions are intentionally excluded.
+Target-driven parallel solo capture invokes the same seeded, breadth-first
+`DeepScrapeCoordinator` scheduling core as the active worker through a capture
+page-source adapter.
+Independent page requests may complete concurrently, but
+the package sorts them back into canonical page order before validation and
+serialization. Target completion retains the coordinator's committed
+contiguous page prefix; completed seeded pages beyond that prefix and
+already-issued requests canceled after target completion contribute their
+wire-request count to the terminal retained page instead of creating a gapped
+package or under-reporting provider load. Before final scope accounting,
+capture cancels and awaits any detached CDN probe, then derives the scope delta
+from the executor's monotonic physical-send counter. If a scope can be
+truncated and the
+exact maximum-score snapshot needed to reproduce the ordinary decision is
+unavailable, capture rejects the scope rather than assuming that every row is
+valid. The existing V1
+request/parser path is reused in a strict
+capture mode that requires typed `page`, `totalPages`, `totalEntries`, and
+`entries` fields plus every non-nullable projected solo, band, and per-member
+statistic in the selected best session. Ordinary parser behavior is unchanged.
+
+The optional input is a canonical
+`fst.capture-pagination-max-scores.v1` file beneath the approved root. It is
+required to be on the approved root's filesystem device, is bound to the
+provider catalog hash, covers every catalog song and fixed solo instrument in
+canonical order, and contributes its own SHA-256 to package lineage. It carries
+only nullable positive maxima and identifiers; it cannot carry SQL, endpoints,
+credentials, or executable configuration.
+
+Existing authorization refresh, transport retries, amplification counts,
+global/per-route pacing, cooldown, proxy rotation, and configured self-heal
+remain in force. OAuth and credential-store cancellation propagates, and the
+command handles both Ctrl-C and `SIGTERM`; only caller/signal cancellation
+returns 130 and uses the fixed cancellation marker. OAuth or transport timeout
+without caller cancellation is classified as the applicable authentication,
+catalog, or capture failure. Only allowlisted
+canonical response DTOs and non-secret request/page/count/byte metadata enter
+bounded shards; transport headers, arbitrary provider properties, and
+authentication material do not. Every physical outer retry or curl fallback
+consumes another global rate token. Curl primary/fallback traffic uses the
+required same-device scratch directory, ignores ambient curl configuration,
+holds proxy concurrency ownership through response consumption, and is
+terminated when a response exceeds the capture record-size ceiling.
+Each capture page also has a fixed ten-minute cumulative transport deadline
+covering proxy admission, retries, CDN waits/probes, and response transfer.
+Exhaustion is a typed capture failure rather than an indefinite root-lock hold
+or operator-cancellation result.
+
+Every requested provider page must parse exactly and keep stable page/entry
+totals. The captured contiguous prefix must satisfy provider page sizing,
+dense ranks, and unique production identities; provider exhaustion additionally
+requires the unique identity count to equal `totalEntries`. A supported
+zero-result scope retains one empty page-zero response with explicit provider
+or event-not-found origin. The provider catalog is fetched again after all page
+traffic; any full-catalog hash, canonical support, or supplied pagination-maxima
+change rejects sealing.
+Failures after output admission leave a new unsealed interrupted attempt with
+a fixed non-secret reason. Successful sealing is atomic through
+`CapturePackageWriter`, and terminal output contains only a sanitized summary
+and package root hash.
+
+This producer does not authorize import, retention deletion, publication,
+candidate creation, scheduling, overlap, or access to stored response headers.
+All capture packages and transport scratch remain on the 4 TB FST drive.
 
 ## Tier-1 phase input
 
@@ -448,7 +571,7 @@ determinism, cultures, reordered inputs, large and empty count boundaries,
 path/secret rejection, pending-artifact crash recovery, interruption/resume,
 exact state-byte commitment, atomic sealing, corruption, empty-directory and
 lineage mismatches, and stable phase descriptors without network or database
-access. `CapturePackageContractTests` adds canonical v1 round trips, complete
+access. `CapturePackageContractTests` adds canonical v2 round trips, complete
 sealing, exact catalog support proof, canonical response semantics, bounded
 shard/member layout, zero-result and all-unsupported rules, closed-set and
 aggregate validation, counterfeit-count and duplicate/case-aliased JSON

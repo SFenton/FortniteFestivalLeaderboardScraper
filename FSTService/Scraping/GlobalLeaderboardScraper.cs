@@ -1300,6 +1300,42 @@ public class GlobalLeaderboardScraper
             "com.epicgames.events.event_not_found",
             StringComparison.Ordinal);
 
+    internal static bool IsExactMissingLeaderboardEvent(
+        int statusCode,
+        int page,
+        string body)
+    {
+        if (!IsMissingLeaderboardEvent(
+                statusCode,
+                page,
+                body))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document =
+                JsonDocument.Parse(body);
+            var root = document.RootElement;
+            return root.ValueKind ==
+                       JsonValueKind.Object &&
+                   root.TryGetProperty(
+                       "errorCode",
+                       out var errorCode) &&
+                   errorCode.ValueKind ==
+                       JsonValueKind.String &&
+                   string.Equals(
+                       errorCode.GetString(),
+                       "com.epicgames.events.event_not_found",
+                       StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
     /// transient failures (429, 5xx, network errors, timeouts) and CDN blocks.
@@ -1314,7 +1350,8 @@ public class GlobalLeaderboardScraper
         string accountId,
         AdaptiveConcurrencyLimiter? limiter,
         CancellationToken ct,
-        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        ScrapeAccessTokenProvider? accessTokenProvider = null,
+        bool captureProjection = false)
     {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
@@ -1322,6 +1359,7 @@ public class GlobalLeaderboardScraper
         var label = $"{songId}/{instrument}/page({page})";
 
         var authRetryCount = 0;
+        var outerSendCount = 0;
         string sentAccessToken = accessToken;
 
         HttpRequestMessage CreateRequest()
@@ -1345,6 +1383,11 @@ public class GlobalLeaderboardScraper
             HttpResponseMessage res;
             try
             {
+                if (outerSendCount++ > 0)
+                {
+                    await (limiter?.AcquireRateTokenAsync(ct) ??
+                        Task.CompletedTask);
+                }
                 res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
             }
             catch (HttpRequestException ex)
@@ -1361,7 +1404,10 @@ public class GlobalLeaderboardScraper
                 {
                     await using var stream = await res.Content.ReadAsStreamAsync(ct);
                     var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
-                    var parsed = await ParsePageAsync(stream, ct);
+                    var parsed = await ParsePageAsync(
+                        stream,
+                        ct,
+                        captureProjection);
 
                     if (parsed is not null)
                         return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes, FetchStatus.Success);
@@ -1401,6 +1447,7 @@ public class GlobalLeaderboardScraper
                     _progress.ReportRetry();
 
                     var refreshed = await accessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    ct.ThrowIfCancellationRequested();
                     if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
                     {
                         throw new ScrapeAuthenticationException(
@@ -1422,14 +1469,30 @@ public class GlobalLeaderboardScraper
 
                 // Non-retryable / exhausted retries
                 string errorBody = "";
+                string responseBody = "";
                 try
                 {
-                    var body = await res.Content.ReadAsStringAsync(ct);
-                    errorBody = body.Length > 200 ? body[..200] : body;
+                    responseBody =
+                        await res.Content.ReadAsStringAsync(ct);
+                    errorBody = responseBody.Length > 200
+                        ? responseBody[..200]
+                        : responseBody;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch { }
 
-                if (IsMissingLeaderboardEvent(statusCode, page, errorBody))
+                if (IsMissingLeaderboardEvent(
+                        statusCode,
+                        page,
+                        errorBody) &&
+                    (!captureProjection ||
+                     IsExactMissingLeaderboardEvent(
+                         statusCode,
+                         page,
+                         responseBody)))
                 {
                     _log.LogInformation(
                         "Leaderboard event is not available yet for {Song}/{Instrument}; treating page 0 as a legitimate empty scope.",
@@ -1442,6 +1505,9 @@ public class GlobalLeaderboardScraper
                             TotalPages = 0,
                             Entries = [],
                             EstimatedBytes = 0,
+                            ProviderEntryCount = 0,
+                            ProviderReportedTotalEntries = 0,
+                            IsSyntheticEventNotFound = true,
                         },
                         errorBody.Length,
                         FetchStatus.Success);
@@ -1562,8 +1628,10 @@ public class GlobalLeaderboardScraper
 
         // Clamp to configured max to avoid spawning millions of tasks
         int reportedPages = totalPages;
-        if (maxPages > 0 && totalPages > maxPages)
-            totalPages = maxPages;
+        totalPages =
+            LeaderboardPaginationPlanner.InitialPageCount(
+                totalPages,
+                maxPages);
         var requestedLastPage = totalPages - 1;
         var hitEpicBoundary = false;
         int? deepStartPage = null;
@@ -1576,19 +1644,28 @@ public class GlobalLeaderboardScraper
         bool deepScrapeTriggered = false;
         int overThreshold = 0;
         int validCutoff = 0;
-        if (choptMaxScore.HasValue && page0.firstPage.Entries.Count > 0)
+        if (LeaderboardPaginationPlanner.TryGetSoloThresholds(
+                choptMaxScore,
+                overThresholdMultiplier,
+                validCutoffMultiplier,
+                out overThreshold,
+                out validCutoff) &&
+            page0.firstPage.Entries.Count > 0)
         {
-            overThreshold = (int)(choptMaxScore.Value * overThresholdMultiplier);
-            validCutoff = (int)(choptMaxScore.Value * validCutoffMultiplier);
-            int topScore = page0.firstPage.Entries.Max(e => e.Score);
-            if (topScore > overThreshold)
+            int topScore =
+                page0.firstPage.Entries.Max(
+                    static entry => entry.Score);
+            if (LeaderboardPaginationPlanner
+                .ShouldDeepScrapeSolo(
+                    page0.firstPage.Entries,
+                    overThreshold))
             {
                 deepScrapeTriggered = true;
                 _log.LogInformation(
                     "Deep scrape triggered for {Label} ({Song}/{Instrument}): top score {TopScore:N0} exceeds " +
                     "{Multiplier:P0} CHOpt max {ChoptMax:N0} (trigger {Threshold:N0}, valid cutoff {Cutoff:N0}).",
                     label ?? songId, songId, instrument, topScore,
-                    overThresholdMultiplier, choptMaxScore.Value, overThreshold, validCutoff);
+                    overThresholdMultiplier, choptMaxScore.GetValueOrDefault(), overThreshold, validCutoff);
             }
         }
 
@@ -1693,7 +1770,14 @@ public class GlobalLeaderboardScraper
             {
                 // ── Deferred mode: return metadata for coordinated deep scrape ──
                 int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
-                var needsDeepScrape = validCount < validEntryTarget;
+                var needsDeepScrape =
+                    LeaderboardPaginationPlanner
+                        .NeedsTargetDrivenSoloExtension(
+                            deepScrapeTriggered,
+                            totalPages,
+                            reportedPages,
+                            validCount,
+                            validEntryTarget);
                 if (needsDeepScrape)
                 {
                     _log.LogInformation(
@@ -1765,9 +1849,20 @@ public class GlobalLeaderboardScraper
                 int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
                 int nextPage = wave2Start;
 
-                while (validCount < validEntryTarget && nextPage < reportedPages)
+                while (LeaderboardPaginationPlanner
+                    .NeedsTargetDrivenSoloExtension(
+                        deepScrapeTriggered,
+                        nextPage,
+                        reportedPages,
+                        validCount,
+                        validEntryTarget))
                 {
-                    int batchEnd = Math.Min(nextPage + overThresholdExtraPages, reportedPages);
+                    int batchEnd =
+                        LeaderboardPaginationPlanner
+                            .NextSoloBatchEnd(
+                                nextPage,
+                                reportedPages,
+                                overThresholdExtraPages);
                     int batchSize = batchEnd - nextPage;
                     requestedLastPage = Math.Max(requestedLastPage, batchEnd - 1);
                     deepEndPage = batchEnd - 1;
@@ -1889,9 +1984,13 @@ public class GlobalLeaderboardScraper
                         lastOverThresholdPage = Math.Max(lastOverThresholdPage, pageNum);
                 }
 
-                int wave2End = Math.Min(
-                    Math.Max(lastOverThresholdPage + overThresholdExtraPages + 1, totalPages + overThresholdExtraPages),
-                    reportedPages);
+                int wave2End =
+                    LeaderboardPaginationPlanner
+                        .LegacySoloExtensionEnd(
+                            totalPages,
+                            reportedPages,
+                            lastOverThresholdPage,
+                            overThresholdExtraPages);
 
                 if (wave2End > wave2Start)
                 {
@@ -2509,9 +2608,10 @@ public class GlobalLeaderboardScraper
         }
 
         int reportedPages = page0TotalPages;
-        int totalPages = reportedPages;
-        if (maxPages > 0 && totalPages > maxPages)
-            totalPages = maxPages;
+        int totalPages =
+            LeaderboardPaginationPlanner.InitialPageCount(
+                reportedPages,
+                maxPages);
 
         _progress.ReportPage0(totalPages);
 
@@ -2662,24 +2762,72 @@ public class GlobalLeaderboardScraper
 
     // ─── Parsing ────────────────────────────────────
 
-    internal static async Task<ParsedPage?> ParsePageAsync(Stream stream, CancellationToken ct)
+    internal static async Task<ParsedPage?> ParsePageAsync(
+        Stream stream,
+        CancellationToken ct,
+        bool captureProjection = false)
     {
         try
         {
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             var root = doc.RootElement;
+            var page = 0;
+            var totalPages = 0;
+            long? providerReportedTotalEntries = null;
+            JsonElement entryArray = default;
 
-            var page = root.TryGetProperty("page", out var p) && p.ValueKind == JsonValueKind.Number
-                ? p.GetInt32() : 0;
-            var totalPages = root.TryGetProperty("totalPages", out var tp) && tp.ValueKind == JsonValueKind.Number
-                ? tp.GetInt32() : 0;
+            if (captureProjection &&
+                !TryReadCaptureEnvelope(
+                    root,
+                    out page,
+                    out totalPages,
+                    out providerReportedTotalEntries,
+                    out entryArray))
+            {
+                return null;
+            }
+
+            if (!captureProjection)
+            {
+                page =
+                    root.TryGetProperty(
+                        "page",
+                        out var ordinaryPage) &&
+                    ordinaryPage.ValueKind ==
+                        JsonValueKind.Number
+                        ? ordinaryPage.GetInt32()
+                        : 0;
+                totalPages =
+                    root.TryGetProperty(
+                        "totalPages",
+                        out var ordinaryTotalPages) &&
+                    ordinaryTotalPages.ValueKind ==
+                        JsonValueKind.Number
+                        ? ordinaryTotalPages.GetInt32()
+                        : 0;
+                providerReportedTotalEntries = null;
+                entryArray =
+                    root.TryGetProperty(
+                        "entries",
+                        out var ordinaryEntries) &&
+                    ordinaryEntries.ValueKind ==
+                        JsonValueKind.Array
+                        ? ordinaryEntries
+                        : default;
+            }
 
             var entries = new List<LeaderboardEntry>();
-
-            if (root.TryGetProperty("entries", out var entArr) && entArr.ValueKind == JsonValueKind.Array)
+            var providerEntryCount = 0;
+            if (entryArray.ValueKind == JsonValueKind.Array)
             {
-                foreach (var e in entArr.EnumerateArray())
+                foreach (var e in entryArray.EnumerateArray())
                 {
+                    providerEntryCount++;
+                    if (captureProjection &&
+                        !IsStrictCaptureSoloEntry(e))
+                    {
+                        return null;
+                    }
                     entries.Add(ParseEntryElement(e, extractBandContext: false));
                 }
             }
@@ -2689,8 +2837,15 @@ public class GlobalLeaderboardScraper
                 Page = page,
                 TotalPages = totalPages,
                 Entries = entries,
-                EstimatedBytes = entries.Count * 350 /* rough per-entry estimate */
+                EstimatedBytes = entries.Count * 350 /* rough per-entry estimate */,
+                ProviderEntryCount = providerEntryCount,
+                ProviderReportedTotalEntries =
+                    providerReportedTotalEntries,
             };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -2705,6 +2860,9 @@ public class GlobalLeaderboardScraper
         public List<LeaderboardEntry> Entries { get; init; } = [];
         IReadOnlyList<LeaderboardEntry> IParsedPage<LeaderboardEntry>.Entries => Entries;
         public int EstimatedBytes { get; init; }
+        internal int ProviderEntryCount { get; init; }
+        internal long? ProviderReportedTotalEntries { get; init; }
+        internal bool IsSyntheticEventNotFound { get; init; }
     }
 
     /// <summary>
@@ -2717,37 +2875,103 @@ public class GlobalLeaderboardScraper
         public List<BandLeaderboardEntry> Entries { get; init; } = [];
         IReadOnlyList<BandLeaderboardEntry> IParsedPage<BandLeaderboardEntry>.Entries => Entries;
         public int EstimatedBytes => Entries.Count * 500;
+        internal int ProviderEntryCount { get; init; }
+        internal long? ProviderReportedTotalEntries { get; init; }
+        internal bool IsSyntheticEventNotFound { get; init; }
     }
 
     /// <summary>
     /// Parse a V1 band leaderboard page response, extracting <see cref="BandLeaderboardEntry"/>
     /// entries with per-member stats from <c>trackedStats</c>.
     /// </summary>
-    internal static async Task<ParsedBandPage?> ParseBandPageAsync(Stream stream, CancellationToken ct)
+    internal static async Task<ParsedBandPage?> ParseBandPageAsync(
+        Stream stream,
+        CancellationToken ct,
+        bool captureProjection = false,
+        string? captureBandType = null)
     {
         try
         {
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             var root = doc.RootElement;
+            var page = 0;
+            var totalPages = 0;
+            long? providerReportedTotalEntries = null;
+            JsonElement entryArray = default;
 
-            var page = root.TryGetProperty("page", out var p) && p.ValueKind == JsonValueKind.Number
-                ? p.GetInt32() : 0;
-            var totalPages = root.TryGetProperty("totalPages", out var tp) && tp.ValueKind == JsonValueKind.Number
-                ? tp.GetInt32() : 0;
+            if (captureProjection &&
+                !TryReadCaptureEnvelope(
+                    root,
+                    out page,
+                    out totalPages,
+                    out providerReportedTotalEntries,
+                    out entryArray))
+            {
+                return null;
+            }
+
+            if (!captureProjection)
+            {
+                page =
+                    root.TryGetProperty(
+                        "page",
+                        out var ordinaryPage) &&
+                    ordinaryPage.ValueKind ==
+                        JsonValueKind.Number
+                        ? ordinaryPage.GetInt32()
+                        : 0;
+                totalPages =
+                    root.TryGetProperty(
+                        "totalPages",
+                        out var ordinaryTotalPages) &&
+                    ordinaryTotalPages.ValueKind ==
+                        JsonValueKind.Number
+                        ? ordinaryTotalPages.GetInt32()
+                        : 0;
+                providerReportedTotalEntries = null;
+                entryArray =
+                    root.TryGetProperty(
+                        "entries",
+                        out var ordinaryEntries) &&
+                    ordinaryEntries.ValueKind ==
+                        JsonValueKind.Array
+                        ? ordinaryEntries
+                        : default;
+            }
 
             var entries = new List<BandLeaderboardEntry>();
-
-            if (root.TryGetProperty("entries", out var entArr) && entArr.ValueKind == JsonValueKind.Array)
+            var providerEntryCount = 0;
+            if (entryArray.ValueKind == JsonValueKind.Array)
             {
-                foreach (var e in entArr.EnumerateArray())
+                foreach (var e in entryArray.EnumerateArray())
                 {
+                    providerEntryCount++;
+                    if (captureProjection &&
+                        !IsStrictCaptureBandEntry(
+                            e,
+                            captureBandType))
+                    {
+                        return null;
+                    }
                     var bandEntry = ParseBandEntryElement(e);
                     if (bandEntry is not null)
                         entries.Add(bandEntry);
                 }
             }
 
-            return new ParsedBandPage { Page = page, TotalPages = totalPages, Entries = entries };
+            return new ParsedBandPage
+            {
+                Page = page,
+                TotalPages = totalPages,
+                Entries = entries,
+                ProviderEntryCount = providerEntryCount,
+                ProviderReportedTotalEntries =
+                    providerReportedTotalEntries,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -2768,7 +2992,8 @@ public class GlobalLeaderboardScraper
         string accountId,
         AdaptiveConcurrencyLimiter? limiter,
         CancellationToken ct,
-        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        ScrapeAccessTokenProvider? accessTokenProvider = null,
+        bool captureProjection = false)
     {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{bandType}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
@@ -2776,6 +3001,7 @@ public class GlobalLeaderboardScraper
         var label = $"{songId}/{bandType}/page({page})";
 
         var authRetryCount = 0;
+        var outerSendCount = 0;
         string sentAccessToken = accessToken;
 
         HttpRequestMessage CreateRequest()
@@ -2796,6 +3022,11 @@ public class GlobalLeaderboardScraper
             HttpResponseMessage res;
             try
             {
+                if (outerSendCount++ > 0)
+                {
+                    await (limiter?.AcquireRateTokenAsync(ct) ??
+                        Task.CompletedTask);
+                }
                 res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
             }
             catch (HttpRequestException ex)
@@ -2812,7 +3043,13 @@ public class GlobalLeaderboardScraper
                 {
                     await using var stream = await res.Content.ReadAsStreamAsync(ct);
                     var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
-                    var parsed = await ParseBandPageAsync(stream, ct);
+                    var parsed = await ParseBandPageAsync(
+                        stream,
+                        ct,
+                        captureProjection,
+                        captureProjection
+                            ? bandType
+                            : null);
 
                     if (parsed is not null)
                         return (parsed, contentLength > 0 ? contentLength : parsed.Entries.Count * 500, FetchStatus.Success);
@@ -2852,6 +3089,7 @@ public class GlobalLeaderboardScraper
                     _progress.ReportRetry();
 
                     var refreshed = await accessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    ct.ThrowIfCancellationRequested();
                     if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
                     {
                         throw new ScrapeAuthenticationException(
@@ -2872,14 +3110,30 @@ public class GlobalLeaderboardScraper
                 }
 
                 string errorBody = "";
+                string responseBody = "";
                 try
                 {
-                    var body = await res.Content.ReadAsStringAsync(ct);
-                    errorBody = body.Length > 200 ? body[..200] : body;
+                    responseBody =
+                        await res.Content.ReadAsStringAsync(ct);
+                    errorBody = responseBody.Length > 200
+                        ? responseBody[..200]
+                        : responseBody;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch { }
 
-                if (IsMissingLeaderboardEvent(statusCode, page, errorBody))
+                if (IsMissingLeaderboardEvent(
+                        statusCode,
+                        page,
+                        errorBody) &&
+                    (!captureProjection ||
+                     IsExactMissingLeaderboardEvent(
+                         statusCode,
+                         page,
+                         responseBody)))
                 {
                     _log.LogInformation(
                         "Band leaderboard event is not available yet for {Song}/{BandType}; treating page 0 as a legitimate empty scope.",
@@ -2891,6 +3145,9 @@ public class GlobalLeaderboardScraper
                             Page = 0,
                             TotalPages = 0,
                             Entries = [],
+                            ProviderEntryCount = 0,
+                            ProviderReportedTotalEntries = 0,
+                            IsSyntheticEventNotFound = true,
                         },
                         errorBody.Length,
                         FetchStatus.Success);
@@ -2904,6 +3161,76 @@ public class GlobalLeaderboardScraper
 
         _log.LogWarning("Exhausted all retry attempts for {Song}/{BandType} page {Page}.", songId, bandType, page);
         return (null, 0, exhaustedStatus);
+    }
+
+    private static bool TryReadCaptureEnvelope(
+        JsonElement root,
+        out int page,
+        out int totalPages,
+        out long? totalEntries,
+        out JsonElement entries)
+    {
+        page = 0;
+        totalPages = 0;
+        totalEntries = null;
+        entries = default;
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+
+        var required = new HashSet<string>(
+            StringComparer.Ordinal);
+        var knownNames = new HashSet<string>(
+            [
+                "page",
+                "totalPages",
+                "totalEntries",
+                "entries",
+            ],
+            StringComparer.Ordinal);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (knownNames.Contains(property.Name))
+            {
+                if (!required.Add(property.Name))
+                    return false;
+            }
+            else if (knownNames.Contains(
+                         property.Name,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        if (required.Count != 4 ||
+            !root.TryGetProperty("page", out var pageValue) ||
+            pageValue.ValueKind != JsonValueKind.Number ||
+            !pageValue.TryGetInt32(out page) ||
+            page < 0 ||
+            !root.TryGetProperty(
+                "totalPages",
+                out var totalPagesValue) ||
+            totalPagesValue.ValueKind != JsonValueKind.Number ||
+            !totalPagesValue.TryGetInt32(out totalPages) ||
+            totalPages < 0 ||
+            !root.TryGetProperty(
+                "totalEntries",
+                out var totalEntriesValue) ||
+            totalEntriesValue.ValueKind != JsonValueKind.Number ||
+            !totalEntriesValue.TryGetInt64(
+                out var parsedTotalEntries) ||
+            parsedTotalEntries < 0 ||
+            !root.TryGetProperty("entries", out entries) ||
+            entries.ValueKind != JsonValueKind.Array ||
+            entries.EnumerateArray().Any(
+                static entry =>
+                    entry.ValueKind !=
+                    JsonValueKind.Object))
+        {
+            return false;
+        }
+
+        totalEntries = parsedTotalEntries;
+        return true;
     }
 
     /// <summary>
@@ -3059,6 +3386,99 @@ public class GlobalLeaderboardScraper
             members.Select(m => m.InstrumentId).OrderBy(id => id));
     }
 
+    private static bool IsStrictCaptureSoloEntry(
+        JsonElement entry)
+    {
+        if (entry.ValueKind != JsonValueKind.Object ||
+            !TryReadExclusiveString(
+                entry,
+                "teamId",
+                "team_id",
+                out _) ||
+            !TryReadRequiredInt(
+                entry,
+                "rank",
+                out var rank) ||
+            rank <= 0 ||
+            !entry.TryGetProperty(
+                "percentile",
+                out var percentile) ||
+            percentile.ValueKind !=
+                JsonValueKind.Number ||
+            !percentile.TryGetDouble(
+                out var percentileValue) ||
+            !double.IsFinite(percentileValue) ||
+            !entry.TryGetProperty(
+                "sessionHistory",
+                out var sessionHistory) ||
+            sessionHistory.ValueKind !=
+                JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        JsonElement bestSession = default;
+        JsonElement bestStats = default;
+        var bestScore = int.MinValue;
+        var foundBest = false;
+        foreach (var session in
+                 sessionHistory.EnumerateArray())
+        {
+            if (session.ValueKind !=
+                    JsonValueKind.Object ||
+                !session.TryGetProperty(
+                    "trackedStats",
+                    out var stats) ||
+                stats.ValueKind !=
+                    JsonValueKind.Object ||
+                !TryReadRequiredInt(
+                    stats,
+                    "SCORE",
+                    out var score) ||
+                score <= 0)
+            {
+                return false;
+            }
+            if (!foundBest || score > bestScore)
+            {
+                bestScore = score;
+                bestSession = session;
+                bestStats = stats;
+                foundBest = true;
+            }
+        }
+        if (!foundBest ||
+            !TryReadRequiredInt(
+                bestStats,
+                "ACCURACY",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "FULL_COMBO",
+                out var fullCombo) ||
+            fullCombo is < 0 or > 1 ||
+            !TryReadRequiredInt(
+                bestStats,
+                "STARS_EARNED",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "SEASON",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "DIFFICULTY",
+                out _))
+        {
+            return false;
+        }
+        return !bestSession.TryGetProperty(
+                   "endTime",
+                   out var endTime) ||
+               endTime.ValueKind ==
+                   JsonValueKind.String;
+    }
+
     // ─── Band entry parsing ─────────────────────────────
 
     /// <summary>
@@ -3117,6 +3537,236 @@ public class GlobalLeaderboardScraper
         }
 
         return entry;
+    }
+
+    private static bool IsStrictCaptureBandEntry(
+        JsonElement entry,
+        string? bandType)
+    {
+        var expectedMemberCount =
+            BandInstrumentMapping.ExpectedMemberCount(
+                bandType ?? "");
+        if (expectedMemberCount <= 0 ||
+            !TryReadRequiredInt(
+                entry,
+                "rank",
+                out var rank) ||
+            rank <= 0 ||
+            !entry.TryGetProperty(
+                "percentile",
+                out var percentile) ||
+            percentile.ValueKind !=
+                JsonValueKind.Number ||
+            !percentile.TryGetDouble(
+                out var percentileValue) ||
+            !double.IsFinite(percentileValue) ||
+            !entry.TryGetProperty(
+                "teamAccountIds",
+                out var teamAccountIds) ||
+            teamAccountIds.ValueKind !=
+                JsonValueKind.Array ||
+            teamAccountIds.GetArrayLength() !=
+                expectedMemberCount)
+        {
+            return false;
+        }
+
+        var teamMembers = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var account in
+                 teamAccountIds.EnumerateArray())
+        {
+            if (account.ValueKind !=
+                    JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(
+                    account.GetString()) ||
+                !teamMembers.Add(account.GetString()!))
+            {
+                return false;
+            }
+        }
+
+        if (!entry.TryGetProperty(
+                "sessionHistory",
+                out var sessionHistory) ||
+            sessionHistory.ValueKind !=
+                JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        JsonElement bestStats = default;
+        var bestScore = int.MinValue;
+        var foundBest = false;
+        foreach (var session in
+                 sessionHistory.EnumerateArray())
+        {
+            if (session.ValueKind !=
+                    JsonValueKind.Object ||
+                !session.TryGetProperty(
+                    "trackedStats",
+                    out var stats) ||
+                stats.ValueKind !=
+                    JsonValueKind.Object ||
+                !stats.TryGetProperty(
+                    "SCORE",
+                    out var scoreElement) ||
+                scoreElement.ValueKind !=
+                    JsonValueKind.Number ||
+                !scoreElement.TryGetInt32(
+                    out var score))
+            {
+                return false;
+            }
+            if (!foundBest || score > bestScore)
+            {
+                bestScore = score;
+                bestStats = stats;
+                foundBest = true;
+            }
+        }
+        if (!foundBest)
+            return false;
+        if (!TryReadRequiredInt(
+                bestStats,
+                "ACCURACY",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "FULL_COMBO",
+                out var fullCombo) ||
+            fullCombo is < 0 or > 1 ||
+            !TryReadRequiredInt(
+                bestStats,
+                "STARS_EARNED",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "SEASON",
+                out _) ||
+            !TryReadRequiredInt(
+                bestStats,
+                "DIFFICULTY",
+                out _))
+        {
+            return false;
+        }
+
+        var memberAccounts = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        var memberIndexes = new HashSet<int>();
+        foreach (var property in
+                 bestStats.EnumerateObject())
+        {
+            if (!property.Name.StartsWith(
+                    "M_",
+                    StringComparison.Ordinal) ||
+                !property.Name.Contains(
+                    "_ID_",
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parts = property.Name.Split('_', 4);
+            if (parts.Length != 4 ||
+                !int.TryParse(
+                    parts[1],
+                    out var memberIndex) ||
+                memberIndex < 0 ||
+                memberIndex >= expectedMemberCount ||
+                string.IsNullOrWhiteSpace(parts[3]) ||
+                !memberIndexes.Add(memberIndex) ||
+                !memberAccounts.Add(parts[3]))
+            {
+                return false;
+            }
+        }
+        if (memberIndexes.Count !=
+                expectedMemberCount ||
+            !memberAccounts.SetEquals(teamMembers))
+        {
+            return false;
+        }
+
+        for (var memberIndex = 0;
+             memberIndex < expectedMemberCount;
+             memberIndex++)
+        {
+            if (!bestStats.TryGetProperty(
+                    $"M_{memberIndex}_INSTRUMENT",
+                    out var instrumentElement) ||
+                instrumentElement.ValueKind !=
+                    JsonValueKind.Number ||
+                !instrumentElement.TryGetInt32(
+                    out var instrumentId) ||
+                BandInstrumentMapping.ToLeaderboardType(
+                    instrumentId) is null)
+            {
+                return false;
+            }
+            foreach (var suffix in new[]
+                     {
+                         "SCORE",
+                         "ACCURACY",
+                         "FULL_COMBO",
+                         "STARS_EARNED",
+                         "DIFFICULTY",
+                     })
+            {
+                if (!TryReadRequiredInt(
+                        bestStats,
+                        $"M_{memberIndex}_{suffix}",
+                        out var value) ||
+                    suffix == "FULL_COMBO" &&
+                    value is < 0 or > 1)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static bool TryReadRequiredInt(
+        JsonElement element,
+        string propertyName,
+        out int value)
+    {
+        value = 0;
+        return element.TryGetProperty(
+                   propertyName,
+                   out var property) &&
+               property.ValueKind ==
+                   JsonValueKind.Number &&
+               property.TryGetInt32(out value);
+    }
+
+    private static bool TryReadExclusiveString(
+        JsonElement element,
+        string primaryName,
+        string alternateName,
+        out string value)
+    {
+        value = "";
+        var hasPrimary = element.TryGetProperty(
+            primaryName,
+            out var primary);
+        var hasAlternate = element.TryGetProperty(
+            alternateName,
+            out var alternate);
+        if (hasPrimary == hasAlternate)
+            return false;
+        var selected = hasPrimary
+            ? primary
+            : alternate;
+        if (selected.ValueKind !=
+                JsonValueKind.String)
+        {
+            return false;
+        }
+        value = selected.GetString() ?? "";
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     /// <summary>

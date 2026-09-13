@@ -100,7 +100,7 @@ public static class CapturePackageContract
             {
                 Invalid(
                     CapturePackageFailureKind.MissingScope,
-                    $"Capture catalog song '{song.SongId}' does not explicitly classify every v1 scope type.");
+                    $"Capture catalog song '{song.SongId}' does not explicitly classify every v2 capture scope type.");
             }
 
             var support = new CaptureCatalogScopeSupport[
@@ -134,7 +134,7 @@ public static class CapturePackageContract
                 {
                     Invalid(
                         CapturePackageFailureKind.NonCanonicalOrder,
-                        $"Capture catalog support for song '{song.SongId}' is not the complete canonical v1 scope sequence.");
+                        $"Capture catalog support for song '{song.SongId}' is not the complete canonical v2 capture scope sequence.");
                 }
                 support[supportIndex] = actual;
             }
@@ -241,6 +241,7 @@ public static class CapturePackageContract
         RequireSafeText(response.SongId, "response song ID");
         ValidateKnownScopeKind(response.ScopeKind);
         ValidateKnownResponseKind(response.ResponseKind);
+        ValidateKnownResponseOrigin(response.Origin);
         if (response.ResponseKind !=
             ExpectedResponseKind(response.ScopeKind))
         {
@@ -266,11 +267,13 @@ public static class CapturePackageContract
             response.ProviderReportedTotalEntries,
             "provider-reported response entry count");
         if (response.ProviderReportedTotalPages >
-            CapturePackageFormat.MaximumRequestRecords)
+                CapturePackageFormat.MaximumRequestRecords ||
+            response.ProviderReportedTotalEntries >
+                CapturePackageFormat.MaximumScopeEntries)
         {
             Invalid(
                 CapturePackageFailureKind.RecordLimitExceeded,
-                "Provider-reported response page count exceeds the capture limit.");
+                "Provider-reported response totals exceed the capture limits.");
         }
         if (response.EntryCount < 0 ||
             response.EntryCount >
@@ -282,18 +285,17 @@ public static class CapturePackageContract
                 CapturePackageFailureKind.AggregateMismatch,
                 "Capture response entry count does not match its bounded entry array.");
         }
-        if (response.Entries.Any(static entry =>
-                entry.ValueKind != JsonValueKind.Object))
-        {
-            Invalid(
-                CapturePackageFailureKind.InvalidMetadata,
-                "Capture response entries must be JSON objects.");
-        }
         foreach (var entry in response.Entries)
         {
             ValidateJsonElementProperties(
                 entry,
                 "capture response entry");
+            _ = CaptureEntryContracts.ValidateAndIdentify(
+                response.ResponseKind,
+                response.LeaderboardType,
+                entry,
+                RequireSafeText,
+                Invalid);
         }
 
         ValidateZeroResponseSemantics(
@@ -302,7 +304,39 @@ public static class CapturePackageContract
             response.ProviderReportedTotalEntries,
             response.EntryCount,
             "response");
+        if (response.Origin ==
+                CaptureResponseOrigin.EventNotFound &&
+            (response.PageIndex != 0 ||
+             response.ProviderReportedTotalPages != 0 ||
+             response.ProviderReportedTotalEntries != 0 ||
+             response.EntryCount != 0))
+        {
+            Invalid(
+                CapturePackageFailureKind.AggregateMismatch,
+                "Synthetic event-not-found responses must be an explicit empty page-zero result.");
+        }
         return response;
+    }
+
+    internal static long ValidateScopeResponseEntries(
+        CaptureScopeDescriptor scope,
+        IReadOnlyList<CaptureResponseArtifact> responses)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(responses);
+        if (scope.Status != CaptureScopeStatus.Complete ||
+            responses.Count == 0)
+        {
+            Invalid(
+                CapturePackageFailureKind.IncompleteCapture,
+                $"Capture scope {scope.Ordinal} has no complete response sequence.");
+        }
+
+        var validator =
+            new CaptureScopeResponseValidator(scope);
+        foreach (var response in responses)
+            validator.Add(response);
+        return validator.Complete();
     }
 
     public static byte[] SerializeResponse(
@@ -425,7 +459,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.IncompleteCapture,
-                "v1 does not seal zero-request or all-unsupported capture packages.");
+                "v2 does not seal zero-request or all-unsupported capture packages.");
         }
         ValidateRecordCount(
             definition.TotalPageCount,
@@ -943,7 +977,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.ArtifactMismatch,
-                $"Capture content artifact path '{registration.Path}' is not part of the v1 closed set.");
+                $"Capture content artifact path '{registration.Path}' is not part of the v2 closed set.");
         }
         if (content.Length >
             CapturePackageFormat.MaximumResponseShardBytes)
@@ -1197,7 +1231,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.ArtifactMismatch,
-                "Capture envelope artifact count does not match its closed v1 artifact set.");
+                "Capture envelope artifact count does not match its closed v2 artifact set.");
         }
     }
 
@@ -1270,7 +1304,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.ArtifactMismatch,
-                "Capture envelope artifact count does not match its bounded v1 closed set.");
+                "Capture envelope artifact count does not match its bounded v2 closed set.");
         }
     }
 
@@ -1723,7 +1757,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.IncompleteCapture,
-                "v1 does not seal zero-request or all-unsupported capture manifests.");
+                "v2 does not seal zero-request or all-unsupported capture manifests.");
         }
         ValidateRecordCount(
             manifest.TotalPageCount,
@@ -1880,6 +1914,8 @@ public static class CapturePackageContract
             enabledSolo,
             enabledBands);
         ValidateKnownStatus(scope.Status);
+        ValidateKnownCompletionReason(
+            scope.CompletionReason);
         RequireNonNegative(
             scope.DeclaredPageCount,
             "declared scope page count");
@@ -1929,17 +1965,24 @@ public static class CapturePackageContract
                     CapturePackageFailureKind.AggregateMismatch,
                     $"Unsupported capture scope {scope.Ordinal} must have zero captured work.");
             }
+            if (scope.CompletionReason !=
+                CaptureScopeCompletionReason.Unsupported)
+            {
+                Invalid(
+                    CapturePackageFailureKind.AggregateMismatch,
+                    $"Unsupported capture scope {scope.Ordinal} must use the unsupported completion reason.");
+            }
             return;
         }
 
         if (scope.DeclaredPageCount !=
-                scope.ProviderReportedTotalPages ||
+                scope.CapturedPageCount ||
             scope.DeclaredEntryCount !=
-                scope.ProviderReportedTotalEntries)
+                scope.CapturedEntryCount)
         {
             Invalid(
                 CapturePackageFailureKind.AggregateMismatch,
-                $"Completed capture scope {scope.Ordinal} does not preserve provider totals.");
+                $"Completed capture scope {scope.Ordinal} does not preserve its admitted request plan.");
         }
         ValidateZeroResponseSemantics(
             pageIndex: 0,
@@ -1947,19 +1990,47 @@ public static class CapturePackageContract
             scope.ProviderReportedTotalEntries,
             entryCount: 0,
             $"scope {scope.Ordinal}");
-        var expectedCapturedPages =
-            scope.ProviderReportedTotalPages == 0
-                ? 1
-                : scope.ProviderReportedTotalPages;
-        if (scope.CapturedPageCount != expectedCapturedPages ||
-            scope.CapturedEntryCount !=
+        if (scope.CapturedPageCount < 1 ||
+            scope.CapturedPageCount >
+                Math.Max(
+                    1,
+                    scope.ProviderReportedTotalPages) ||
+            scope.CapturedEntryCount >
                 scope.ProviderReportedTotalEntries ||
-            scope.CapturedRequestCount < expectedCapturedPages ||
+            scope.CapturedRequestCount <
+                scope.CapturedPageCount ||
             scope.CapturedResponseBytes <= 0)
         {
             Invalid(
                 CapturePackageFailureKind.AggregateMismatch,
                 $"Completed capture scope {scope.Ordinal} does not satisfy captured response totals.");
+        }
+        var providerExhausted =
+            scope.ProviderReportedTotalPages == 0 ||
+            scope.CapturedPageCount ==
+                scope.ProviderReportedTotalPages;
+        if ((scope.CompletionReason ==
+                 CaptureScopeCompletionReason.ProviderExhausted &&
+             !providerExhausted) ||
+            ((scope.CompletionReason ==
+                  CaptureScopeCompletionReason
+                      .ConfiguredPageLimit ||
+              scope.CompletionReason ==
+                  CaptureScopeCompletionReason
+                      .ValidEntryTargetReached) &&
+             providerExhausted) ||
+            (scope.CompletionReason ==
+                 CaptureScopeCompletionReason.EventNotFound &&
+             (scope.ProviderReportedTotalPages != 0 ||
+              scope.ProviderReportedTotalEntries != 0 ||
+              scope.CapturedPageCount != 1 ||
+              scope.CapturedEntryCount != 0)) ||
+            scope.CompletionReason ==
+                CaptureScopeCompletionReason.Unsupported)
+        {
+            Invalid(
+                CapturePackageFailureKind.AggregateMismatch,
+                $"Capture scope {scope.Ordinal} completion reason does not match its page totals.");
         }
     }
 
@@ -2121,7 +2192,7 @@ public static class CapturePackageContract
         {
             Invalid(
                 CapturePackageFailureKind.IncompleteCapture,
-                "v1 does not seal zero-request or all-unsupported capture packages.");
+                "v2 does not seal zero-request or all-unsupported capture packages.");
         }
     }
 
@@ -2254,9 +2325,7 @@ public static class CapturePackageContract
             var expectedRequestCount =
                 scope.Status == CaptureScopeStatus.Unsupported
                     ? 0
-                    : scope.ProviderReportedTotalPages == 0
-                        ? 1
-                        : scope.ProviderReportedTotalPages;
+                    : scope.CapturedPageCount;
             if (scopeRequestCount != expectedRequestCount)
             {
                 Invalid(
@@ -2495,6 +2564,17 @@ public static class CapturePackageContract
         }
     }
 
+    private static void ValidateKnownCompletionReason(
+        CaptureScopeCompletionReason reason)
+    {
+        if (!Enum.IsDefined(reason))
+        {
+            Invalid(
+                CapturePackageFailureKind.InvalidMetadata,
+                "Capture scope completion reason is unsupported.");
+        }
+    }
+
     private static void ValidateKnownScopeKind(CaptureScopeKind kind)
     {
         if (!Enum.IsDefined(kind))
@@ -2513,6 +2593,17 @@ public static class CapturePackageContract
             Invalid(
                 CapturePackageFailureKind.InvalidMetadata,
                 "Capture response kind is unsupported.");
+        }
+    }
+
+    private static void ValidateKnownResponseOrigin(
+        CaptureResponseOrigin origin)
+    {
+        if (!Enum.IsDefined(origin))
+        {
+            Invalid(
+                CapturePackageFailureKind.InvalidMetadata,
+                "Capture response origin is unsupported.");
         }
     }
 
@@ -2961,6 +3052,18 @@ public static class CapturePackageContract
         IReadOnlyDictionary<string, TierZeroPackageFile>?
             expectedFiles = null)
     {
+        var currentScopeOrdinal = -1;
+        CaptureScopeResponseValidator?
+            currentValidator = null;
+
+        void CompleteCurrentScope()
+        {
+            if (currentValidator is null)
+                return;
+            _ = currentValidator.Complete();
+            currentValidator = null;
+        }
+
         foreach (var layout in BuildResponseShardLayouts(
                      definition.Requests))
         {
@@ -2979,17 +3082,263 @@ public static class CapturePackageContract
                 {
                     var request = definition.Requests[
                         layout.StartRequestIndex + memberIndex];
+                    if (request.ScopeOrdinal !=
+                        currentScopeOrdinal)
+                    {
+                        CompleteCurrentScope();
+                        currentScopeOrdinal =
+                            request.ScopeOrdinal;
+                        currentValidator =
+                            new CaptureScopeResponseValidator(
+                                definition.Scopes[
+                                    currentScopeOrdinal]);
+                    }
+                    var validated =
+                        ValidateResponse(response);
                     ValidateResponseAgainstRequest(
-                        ValidateResponse(response),
+                        validated,
                         request,
                         offset,
                         length,
                         sha256);
+                    currentValidator!.Add(validated);
                 },
                 cancellationToken,
                 ExpectedSnapshot(
                     expectedFiles,
                     layout.Path));
+        }
+        CompleteCurrentScope();
+    }
+
+    private sealed class CaptureScopeResponseValidator
+    {
+        private readonly CaptureScopeDescriptor _scope;
+        private readonly HashSet<string>
+            _soloIdentities = new(
+                LeaderboardEntryIdentity.SoloComparer);
+        private readonly HashSet<BandLeaderboardIdentity>
+            _bandIdentities = new(
+                LeaderboardEntryIdentity.BandComparer);
+        private CaptureResponseArtifact? _first;
+        private long _capturedEntries;
+        private long _expectedRank = 1;
+        private int _responseCount;
+        private bool _hasEventNotFound;
+
+        internal CaptureScopeResponseValidator(
+            CaptureScopeDescriptor scope)
+        {
+            _scope = scope ??
+                throw new ArgumentNullException(
+                    nameof(scope));
+            if (_scope.Status !=
+                CaptureScopeStatus.Complete)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .IncompleteCapture,
+                    $"Capture scope {_scope.Ordinal} is not complete.");
+            }
+        }
+
+        internal void Add(
+            CaptureResponseArtifact candidate)
+        {
+            var response = ValidateResponse(candidate);
+            _first ??= response;
+            var first = _first;
+            if (_responseCount == 0)
+            {
+                var expectedProviderPages =
+                    first.ProviderReportedTotalEntries == 0
+                        ? 0
+                        : 1 +
+                          (first.ProviderReportedTotalEntries - 1) /
+                          first.PageSize;
+                if (expectedProviderPages >
+                        int.MaxValue ||
+                    expectedProviderPages !=
+                        first.ProviderReportedTotalPages)
+                {
+                    Invalid(
+                        CapturePackageFailureKind
+                            .AggregateMismatch,
+                        $"Capture scope {_scope.Ordinal} provider page and entry totals are inconsistent.");
+                }
+            }
+
+            if (response.ScopeOrdinal != _scope.Ordinal ||
+                response.ScopeRequestOrdinal !=
+                    _responseCount ||
+                response.PageIndex != _responseCount ||
+                response.ScopeKind != _scope.ScopeKind ||
+                !string.Equals(
+                    response.SongId,
+                    _scope.SongId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    response.LeaderboardType,
+                    _scope.LeaderboardType,
+                    StringComparison.Ordinal) ||
+                response.PageSize != first.PageSize ||
+                response.ProviderReportedTotalPages !=
+                    first.ProviderReportedTotalPages ||
+                response.ProviderReportedTotalEntries !=
+                    first.ProviderReportedTotalEntries)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} response pagination drifted.");
+            }
+
+            var expectedPageEntries =
+                response.ProviderReportedTotalPages == 0
+                    ? 0L
+                    : Math.Min(
+                        response.PageSize,
+                        response.ProviderReportedTotalEntries -
+                        checked(
+                            (long)response.PageIndex *
+                            response.PageSize));
+            if (expectedPageEntries < 0 ||
+                response.EntryCount !=
+                    expectedPageEntries)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} has a missing or overfull provider page.");
+            }
+
+            foreach (var entry in response.Entries)
+            {
+                var identity =
+                    CaptureEntryContracts.ValidateAndIdentify(
+                        response.ResponseKind,
+                        response.LeaderboardType,
+                        entry,
+                        RequireSafeText,
+                        Invalid);
+                if (identity.Rank != _expectedRank++)
+                {
+                    Invalid(
+                        CapturePackageFailureKind
+                            .AggregateMismatch,
+                        $"Capture scope {_scope.Ordinal} has a duplicate or missing provider rank.");
+                }
+                var added = _scope.ScopeKind ==
+                    CaptureScopeKind.Solo
+                    ? _soloIdentities.Add(
+                        identity.Primary)
+                    : _bandIdentities.Add(
+                        LeaderboardEntryIdentity.Band(
+                            identity.Primary,
+                            identity.Secondary));
+                if (!added)
+                {
+                    Invalid(
+                        CapturePackageFailureKind
+                            .DuplicateScope,
+                        $"Capture scope {_scope.Ordinal} contains a duplicate stable leaderboard identity.");
+                }
+                _capturedEntries++;
+                if (_capturedEntries >
+                    CapturePackageFormat
+                        .MaximumScopeEntries)
+                {
+                    Invalid(
+                        CapturePackageFailureKind
+                            .RecordLimitExceeded,
+                        $"Capture scope {_scope.Ordinal} exceeds the supported entry ceiling.");
+                }
+            }
+            _hasEventNotFound |=
+                response.Origin ==
+                CaptureResponseOrigin.EventNotFound;
+            _responseCount++;
+        }
+
+        internal long Complete()
+        {
+            if (_first is null ||
+                _responseCount == 0)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .IncompleteCapture,
+                    $"Capture scope {_scope.Ordinal} has no complete response sequence.");
+            }
+            var first = _first;
+            var expectedCapturedEntries = Math.Min(
+                first.ProviderReportedTotalEntries,
+                checked(
+                    (long)_responseCount *
+                    first.PageSize));
+            if (_capturedEntries !=
+                    expectedCapturedEntries ||
+                _responseCount !=
+                    _scope.CapturedPageCount ||
+                _capturedEntries !=
+                    _scope.CapturedEntryCount)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} response identities do not match provider and captured totals.");
+            }
+            if (_scope.CompletionReason ==
+                    CaptureScopeCompletionReason
+                        .ProviderExhausted &&
+                (_capturedEntries !=
+                     first.ProviderReportedTotalEntries ||
+                 _responseCount != Math.Max(
+                     1,
+                     first.ProviderReportedTotalPages)))
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} did not preserve the complete provider identity universe.");
+            }
+            if (_scope.CompletionReason ==
+                    CaptureScopeCompletionReason
+                        .EventNotFound &&
+                (_responseCount != 1 ||
+                 first.Origin !=
+                    CaptureResponseOrigin.EventNotFound))
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} event-not-found completion is not explicit.");
+            }
+            if (_scope.CompletionReason !=
+                    CaptureScopeCompletionReason
+                        .EventNotFound &&
+                _hasEventNotFound)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} contains an unexpected synthetic response.");
+            }
+            if ((_scope.CompletionReason ==
+                     CaptureScopeCompletionReason
+                         .ConfiguredPageLimit ||
+                 _scope.CompletionReason ==
+                     CaptureScopeCompletionReason
+                         .ValidEntryTargetReached) &&
+                _responseCount >=
+                    first.ProviderReportedTotalPages)
+            {
+                Invalid(
+                    CapturePackageFailureKind
+                        .AggregateMismatch,
+                    $"Capture scope {_scope.Ordinal} truncated completion does not precede provider exhaustion.");
+            }
+            return _capturedEntries;
         }
     }
 

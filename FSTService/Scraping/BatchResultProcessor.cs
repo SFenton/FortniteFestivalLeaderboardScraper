@@ -70,13 +70,21 @@ public class BatchResultProcessor
                 {
                     scoreChanges.Add(new ScoreChangeRecord
                     {
-                        SongId = songId, Instrument = instrument, AccountId = entry.AccountId,
-                        OldScore = existing.Score, NewScore = entry.Score,
-                        OldRank = existing.Rank, NewRank = entry.Rank,
-                        Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
-                        Stars = entry.Stars, Percentile = entry.Percentile,
-                        Season = entry.Season, ScoreAchievedAt = entry.EndTime,
-                        AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
+                        SongId = songId,
+                        Instrument = instrument,
+                        AccountId = entry.AccountId,
+                        OldScore = existing.Score,
+                        NewScore = entry.Score,
+                        OldRank = existing.Rank,
+                        NewRank = entry.Rank,
+                        Accuracy = entry.Accuracy,
+                        IsFullCombo = entry.IsFullCombo,
+                        Stars = entry.Stars,
+                        Percentile = entry.Percentile,
+                        Season = entry.Season,
+                        ScoreAchievedAt = entry.EndTime,
+                        AllTimeRank = entry.Rank,
+                        Difficulty = entry.Difficulty,
                     });
                 }
             }
@@ -84,13 +92,21 @@ public class BatchResultProcessor
             {
                 scoreChanges.Add(new ScoreChangeRecord
                 {
-                    SongId = songId, Instrument = instrument, AccountId = entry.AccountId,
-                    OldScore = null, NewScore = entry.Score,
-                    OldRank = null, NewRank = entry.Rank,
-                    Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
-                    Stars = entry.Stars, Percentile = entry.Percentile,
-                    Season = entry.Season, ScoreAchievedAt = entry.EndTime,
-                    AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
+                    SongId = songId,
+                    Instrument = instrument,
+                    AccountId = entry.AccountId,
+                    OldScore = null,
+                    NewScore = entry.Score,
+                    OldRank = null,
+                    NewRank = entry.Rank,
+                    Accuracy = entry.Accuracy,
+                    IsFullCombo = entry.IsFullCombo,
+                    Stars = entry.Stars,
+                    Percentile = entry.Percentile,
+                    Season = entry.Season,
+                    ScoreAchievedAt = entry.EndTime,
+                    AllTimeRank = entry.Rank,
+                    Difficulty = entry.Difficulty,
                 });
             }
 
@@ -142,7 +158,9 @@ public class BatchResultProcessor
         // Stage population floor for staged accounts (max rank across all staged entries)
         var stagedAccountsInBatch = entriesToUpsert
             .Where(e => IsStaged(e.AccountId))
-            .GroupBy(e => e.AccountId, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(
+                LeaderboardEntryIdentity.Solo,
+                LeaderboardEntryIdentity.SoloComparer);
         foreach (var group in stagedAccountsInBatch)
         {
             var groupMaxRank = group.Max(e => e.Rank);
@@ -180,13 +198,21 @@ public class BatchResultProcessor
 
             scoreChanges.Add(new ScoreChangeRecord
             {
-                SongId = songId, Instrument = instrument, AccountId = session.AccountId,
-                OldScore = oldScore, NewScore = session.Score,
-                OldRank = existing?.Rank, NewRank = session.Rank,
-                Accuracy = session.Accuracy, IsFullCombo = session.IsFullCombo,
-                Stars = session.Stars, Percentile = session.Percentile,
-                Season = season, ScoreAchievedAt = session.EndTime,
-                SeasonRank = session.Rank, Difficulty = session.Difficulty,
+                SongId = songId,
+                Instrument = instrument,
+                AccountId = session.AccountId,
+                OldScore = oldScore,
+                NewScore = session.Score,
+                OldRank = existing?.Rank,
+                NewRank = session.Rank,
+                Accuracy = session.Accuracy,
+                IsFullCombo = session.IsFullCombo,
+                Stars = session.Stars,
+                Percentile = session.Percentile,
+                Season = season,
+                ScoreAchievedAt = session.EndTime,
+                SeasonRank = session.Rank,
+                Difficulty = session.Difficulty,
             });
         }
 
@@ -259,13 +285,21 @@ public class BatchResultProcessor
             {
                 scoreChanges.Add(new ScoreChangeRecord
                 {
-                    SongId = songId, Instrument = instrument, AccountId = accountId,
-                    OldScore = bestScore, NewScore = session.Score,
-                    OldRank = bestRank, NewRank = session.Rank,
-                    Accuracy = session.Accuracy, IsFullCombo = session.IsFullCombo,
-                    Stars = session.Stars, Percentile = session.Percentile,
-                    Season = season, ScoreAchievedAt = session.EndTime,
-                    SeasonRank = session.Rank, Difficulty = session.Difficulty,
+                    SongId = songId,
+                    Instrument = instrument,
+                    AccountId = accountId,
+                    OldScore = bestScore,
+                    NewScore = session.Score,
+                    OldRank = bestRank,
+                    NewRank = session.Rank,
+                    Accuracy = session.Accuracy,
+                    IsFullCombo = session.IsFullCombo,
+                    Stars = session.Stars,
+                    Percentile = session.Percentile,
+                    Season = season,
+                    ScoreAchievedAt = session.EndTime,
+                    SeasonRank = session.Rank,
+                    Difficulty = session.Difficulty,
                 });
 
                 if (bestScore is null || session.Score > bestScore)

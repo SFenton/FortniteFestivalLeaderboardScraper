@@ -206,6 +206,38 @@ public sealed class CapturePackageContractTests
     }
 
     [Fact]
+    public void VersionOneCaptureArtifactsFailClosed()
+    {
+        var fixture = CreateFixture();
+        var oldResponse = fixture.Responses[0] with
+        {
+            FormatId = "fst.capture-response.v1",
+            SchemaVersion = 1,
+        };
+        var responseException =
+            Assert.Throws<CapturePackageException>(
+                () => CapturePackageContract
+                    .ValidateResponse(oldResponse));
+        Assert.Equal(
+            CapturePackageFailureKind.UnsupportedFormat,
+            responseException.Kind);
+
+        var manifest = CreateManifest(fixture) with
+        {
+            FormatId = "fst.capture-package.v1",
+            Version = 1,
+            ManifestRootHash = null,
+        };
+        var manifestException =
+            Assert.Throws<CapturePackageException>(
+                () => CapturePackageContract
+                    .SerializeManifest(manifest));
+        Assert.Equal(
+            CapturePackageFailureKind.UnsupportedFormat,
+            manifestException.Kind);
+    }
+
+    [Fact]
     public async Task ResponseShardWriteRejectsInvalidOrNoncanonicalBytes()
     {
         using var directory =
@@ -346,6 +378,296 @@ public sealed class CapturePackageContractTests
     }
 
     [Fact]
+    public void ResponseEntryContractRejectsUnknownSecretFieldsAndValues()
+    {
+        var fixture = CreateFixture();
+        var unknownSecretField = fixture.Responses[0] with
+        {
+            EntryCount = 1,
+            ProviderReportedTotalEntries = 1,
+            Entries =
+            [
+                Entry(
+                    """
+                    {
+                      "accountId": "player-a",
+                      "rank": 1,
+                      "percentile": 1,
+                      "score": 100,
+                      "accuracy": 1000000,
+                      "isFullCombo": true,
+                      "stars": 5,
+                      "season": 1,
+                      "difficulty": 3,
+                      "endTime": "2026-09-12T10:00:00Z",
+                      "token": "secret-token-value"
+                    }
+                    """),
+            ],
+        };
+        var unknownException =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract.SerializeResponse(
+                    unknownSecretField));
+        Assert.Equal(
+            CapturePackageFailureKind.InvalidMetadata,
+            unknownException.Kind);
+
+        var secretValue = fixture.Responses[0] with
+        {
+            EntryCount = 1,
+            ProviderReportedTotalEntries = 1,
+            Entries =
+            [
+                SoloEntry(
+                    "https://internal.example.invalid",
+                    1),
+            ],
+        };
+        var valueException =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract.SerializeResponse(
+                    secretValue));
+        Assert.Equal(
+            CapturePackageFailureKind.InvalidMetadata,
+            valueException.Kind);
+    }
+
+    [Fact]
+    public void ScopeEntriesRejectDuplicateSoloIdentityAndRankGaps()
+    {
+        var duplicateResponses = new[]
+        {
+            CreateResponse(
+                0,
+                0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                2,
+                2,
+                [SoloEntry("player-a", 1)],
+                pageIndex: 0,
+                pageSize: 1),
+            CreateResponse(
+                1,
+                0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                2,
+                2,
+                [SoloEntry("player-a", 2)],
+                pageIndex: 1,
+                pageSize: 1),
+        };
+        var scope = ScopeForResponses(
+            0,
+            duplicateResponses);
+
+        var duplicate =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract
+                    .ValidateScopeResponseEntries(
+                        scope,
+                        duplicateResponses));
+        Assert.Equal(
+            CapturePackageFailureKind.DuplicateScope,
+            duplicate.Kind);
+
+        var gapResponses = new[]
+        {
+            duplicateResponses[0],
+            duplicateResponses[1] with
+            {
+                Entries =
+                [
+                    SoloEntry("player-b", 3),
+                ],
+            },
+        };
+        var gap =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract
+                    .ValidateScopeResponseEntries(
+                        scope,
+                        gapResponses));
+        Assert.Equal(
+            CapturePackageFailureKind.AggregateMismatch,
+            gap.Kind);
+    }
+
+    [Fact]
+    public void ScopeEntriesRejectDuplicateBandIdentityAcrossPages()
+    {
+        var responses = new[]
+        {
+            CreateResponse(
+                0,
+                0,
+                CaptureScopeKind.Band,
+                "song-a",
+                "Band_Duets",
+                2,
+                2,
+                [BandEntry("a", "b", 1)],
+                pageIndex: 0,
+                pageSize: 1),
+            CreateResponse(
+                1,
+                0,
+                CaptureScopeKind.Band,
+                "song-a",
+                "Band_Duets",
+                2,
+                2,
+                [BandEntry("b", "a", 2)],
+                pageIndex: 1,
+                pageSize: 1),
+        };
+        var exception =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract
+                    .ValidateScopeResponseEntries(
+                        ScopeForResponses(0, responses),
+                        responses));
+
+        Assert.Equal(
+            CapturePackageFailureKind.DuplicateScope,
+            exception.Kind);
+    }
+
+    [Fact]
+    public void BandEntriesMustMatchLeaderboardSizeAndKnownInstruments()
+    {
+        var oversized = CreateResponse(
+            0,
+            0,
+            CaptureScopeKind.Band,
+            "song-a",
+            "Band_Duets",
+            1,
+            1,
+            [
+                BandEntry(
+                    [("a", 0), ("b", 1), ("c", 2)],
+                    rank: 1),
+            ],
+            pageIndex: 0,
+            pageSize: 1);
+        var oversizedException =
+            Assert.Throws<CapturePackageException>(
+                () => CapturePackageContract
+                    .ValidateResponse(oversized));
+        Assert.Equal(
+            CapturePackageFailureKind.InvalidMetadata,
+            oversizedException.Kind);
+
+        var unknownInstrument = CreateResponse(
+            0,
+            0,
+            CaptureScopeKind.Band,
+            "song-a",
+            "Band_Duets",
+            1,
+            1,
+            [
+                BandEntry(
+                    [("a", 0), ("b", 99)],
+                    rank: 1),
+            ],
+            pageIndex: 0,
+            pageSize: 1);
+        var instrumentException =
+            Assert.Throws<CapturePackageException>(
+                () => CapturePackageContract
+                    .ValidateResponse(unknownInstrument));
+        Assert.Equal(
+            CapturePackageFailureKind.InvalidMetadata,
+            instrumentException.Kind);
+    }
+
+    [Fact]
+    public void ScopeEntriesMustMatchProviderTotalAtExhaustion()
+    {
+        var responses = new[]
+        {
+            CreateResponse(
+                0,
+                0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                2,
+                3,
+                [
+                    SoloEntry("player-a", 1),
+                    SoloEntry("player-b", 2),
+                ],
+                pageIndex: 0,
+                pageSize: 2),
+            CreateResponse(
+                1,
+                0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                2,
+                3,
+                [],
+                pageIndex: 1,
+                pageSize: 2),
+        };
+
+        var exception =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract
+                    .ValidateScopeResponseEntries(
+                        ScopeForResponses(0, responses),
+                        responses));
+        Assert.Equal(
+            CapturePackageFailureKind.AggregateMismatch,
+            exception.Kind);
+    }
+
+    [Fact]
+    public void EventNotFoundMustUseExplicitSyntheticOrigin()
+    {
+        var providerEmpty = CreateResponse(
+            0,
+            0,
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            0,
+            0,
+            []);
+        var eventScope = ScopeForResponses(
+            0,
+            [providerEmpty],
+            CaptureScopeCompletionReason.EventNotFound);
+
+        var exception =
+            Assert.Throws<CapturePackageException>(() =>
+                CapturePackageContract
+                    .ValidateScopeResponseEntries(
+                        eventScope,
+                        [providerEmpty]));
+        Assert.Equal(
+            CapturePackageFailureKind.AggregateMismatch,
+            exception.Kind);
+
+        var eventResponse = providerEmpty with
+        {
+            Origin =
+                CaptureResponseOrigin.EventNotFound,
+        };
+        CapturePackageContract.ValidateScopeResponseEntries(
+            eventScope,
+            [eventResponse]);
+    }
+
+    [Fact]
     public async Task ResponseSemanticsAreCrossCheckedOnSealAndRead()
     {
         var original = CreateFixture();
@@ -405,7 +727,7 @@ public sealed class CapturePackageContractTests
         var zeroScope = fixture.Definition.Scopes[2];
         var zeroRequest = fixture.Definition.Requests[2];
 
-        Assert.Equal(0, zeroScope.DeclaredPageCount);
+        Assert.Equal(1, zeroScope.DeclaredPageCount);
         Assert.Equal(0, zeroScope.DeclaredEntryCount);
         Assert.Equal(1, zeroScope.CapturedPageCount);
         Assert.Equal(0, zeroRequest.ProviderReportedTotalPages);
@@ -436,7 +758,9 @@ public sealed class CapturePackageContractTests
                     CapturePackageContract
                         .ComputeScopeContentSha256(
                             Array.Empty<
-                                CaptureRequestDescriptor>())))
+                                CaptureRequestDescriptor>()),
+                    CaptureScopeCompletionReason
+                        .Unsupported))
             .ToArray();
         var allUnsupported = new CapturePackageDefinition(
             "capture-all-unsupported",
@@ -592,7 +916,9 @@ public sealed class CapturePackageContractTests
         var accepted = CapturePackageStorageAdmission.Evaluate(
             policy,
             new CapturePackageStorageState(
-                ProposedPackageBytes: 400,
+                CurrentPackageBytes: 300,
+                FinalPackageBytes: 400,
+                RemainingBytesToWrite: 400,
                 AvailableFreeSpaceBytes: 1_000,
                 RetainedSealedPackageCount: 0));
 
@@ -614,7 +940,9 @@ public sealed class CapturePackageContractTests
         var rejected = CapturePackageStorageAdmission.Evaluate(
             policy,
             new CapturePackageStorageState(
-                ProposedPackageBytes: 1_001,
+                CurrentPackageBytes: 900,
+                FinalPackageBytes: 1_001,
+                RemainingBytesToWrite: 1_001,
                 AvailableFreeSpaceBytes: 1_200,
                 RetainedSealedPackageCount: 1));
         Assert.False(rejected.IsAdmitted);
@@ -630,6 +958,70 @@ public sealed class CapturePackageContractTests
         Assert.Equal(
             2,
             rejected.ProjectedRetainedSealedPackageCountIfAdmitted);
+    }
+
+    [Fact]
+    public void StorageAdmissionSeparatesWrittenBytesFromFutureBytes()
+    {
+        var policy = new CapturePackageStoragePolicy(
+            MaximumPackageBytes: 1_000,
+            MinimumFreeSpaceReserveBytes: 500,
+            MaximumRetainedSealedPackages: 2);
+
+        var exactBoundary =
+            CapturePackageStorageAdmission.Evaluate(
+                policy,
+                new CapturePackageStorageState(
+                    CurrentPackageBytes: 900,
+                    FinalPackageBytes: 1_000,
+                    RemainingBytesToWrite: 100,
+                    AvailableFreeSpaceBytes: 600,
+                    RetainedSealedPackageCount: 0));
+        Assert.True(exactBoundary.IsAdmitted);
+        Assert.Equal(
+            500,
+            exactBoundary
+                .ProjectedRemainingFreeSpaceBytesIfAdmitted);
+
+        var oversizedCurrent =
+            CapturePackageStorageAdmission.Evaluate(
+                policy,
+                new CapturePackageStorageState(
+                    CurrentPackageBytes: 1_001,
+                    FinalPackageBytes: 1_001,
+                    RemainingBytesToWrite: 0,
+                    AvailableFreeSpaceBytes: 500,
+                    RetainedSealedPackageCount: 0));
+        Assert.Contains(
+            CapturePackageAdmissionRejection.PackageTooLarge,
+            oversizedCurrent.Rejections);
+
+        var oversizedFinal =
+            CapturePackageStorageAdmission.Evaluate(
+                policy,
+                new CapturePackageStorageState(
+                    CurrentPackageBytes: 900,
+                    FinalPackageBytes: 1_001,
+                    RemainingBytesToWrite: 101,
+                    AvailableFreeSpaceBytes: 601,
+                    RetainedSealedPackageCount: 0));
+        Assert.Contains(
+            CapturePackageAdmissionRejection.PackageTooLarge,
+            oversizedFinal.Rejections);
+
+        var reserveShortfall =
+            CapturePackageStorageAdmission.Evaluate(
+                policy,
+                new CapturePackageStorageState(
+                    CurrentPackageBytes: 900,
+                    FinalPackageBytes: 1_000,
+                    RemainingBytesToWrite: 101,
+                    AvailableFreeSpaceBytes: 600,
+                    RetainedSealedPackageCount: 0));
+        Assert.Contains(
+            CapturePackageAdmissionRejection
+                .InsufficientFreeSpace,
+            reserveShortfall.Rejections);
     }
 
     [Fact]
@@ -2123,16 +2515,43 @@ public sealed class CapturePackageContractTests
                 expected);
         }
 
-        var unsupportedAsComplete = WithScope(
-            definition,
-            3,
-            scope => scope with
+        var unsupportedCatalogSongs =
+            definition.Catalog.Songs.ToArray();
+        var unsupportedSupport =
+            unsupportedCatalogSongs[0]
+                .ScopeSupport.ToArray();
+        var soloLeadSupportIndex =
+            Array.FindIndex(
+                unsupportedSupport,
+                static support =>
+                    support.ScopeKind ==
+                        CaptureScopeKind.Solo &&
+                    support.LeaderboardType ==
+                        "Solo_Guitar");
+        unsupportedSupport[soloLeadSupportIndex] =
+            unsupportedSupport[
+                soloLeadSupportIndex] with
             {
-                CapturedPageCount = 1,
-                CapturedRequestCount = 1,
-                CapturedResponseBytes = 1,
-                Status = CaptureScopeStatus.Complete,
-            });
+                Status =
+                    CaptureCatalogSupportStatus
+                        .Unsupported,
+            };
+        unsupportedCatalogSongs[0] =
+            unsupportedCatalogSongs[0] with
+            {
+                ScopeSupport =
+                    unsupportedSupport,
+            };
+        var unsupportedAsComplete =
+            definition with
+            {
+                Catalog =
+                    definition.Catalog with
+                    {
+                        Songs =
+                            unsupportedCatalogSongs,
+                    },
+            };
         AssertCaptureFailure(
             "scope status is not proven by catalog support",
             () => CapturePackageContract.ValidateDefinition(
@@ -2153,6 +2572,453 @@ public sealed class CapturePackageContractTests
                     Requests = [.. requests, extraRequest],
                 }),
             CapturePackageFailureKind.MissingScope);
+    }
+
+    [Fact]
+    public async Task AdditionalV2ContractFailureBranchesFailClosed()
+    {
+        var fixture = CreateFixture();
+        var definition = fixture.Definition;
+        var response = fixture.Responses[0];
+        var requests =
+            definition.Requests.ToArray();
+
+        AssertCaptureFailure(
+            "event-not-found response must be empty",
+            () => CapturePackageContract.ValidateResponse(
+                response with
+                {
+                    Origin =
+                        CaptureResponseOrigin
+                            .EventNotFound,
+                }),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope responses must be complete",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    definition.Scopes[3],
+                    []),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        AssertCaptureFailure(
+            "scope hash rejects null requests",
+            () => CapturePackageContract
+                .ComputeScopeContentSha256(
+                    [null!]),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var nullScopes =
+            definition.Scopes.ToArray();
+        nullScopes[0] = null!;
+        AssertCaptureFailure(
+            "definition rejects null scope",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Scopes = nullScopes,
+                    }),
+            CapturePackageFailureKind
+                .MissingOrdinal);
+        var nullRequests =
+            definition.Requests.ToArray();
+        nullRequests[0] = null!;
+        AssertCaptureFailure(
+            "definition rejects null request",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Requests = nullRequests,
+                    }),
+            CapturePackageFailureKind
+                .MissingOrdinal);
+
+        AssertCaptureFailure(
+            "unsupported scope requires unsupported reason",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        3,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                CaptureScopeCompletionReason
+                                    .ProviderExhausted,
+                        })),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "completed scope reason matches exhaustion",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        0,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                CaptureScopeCompletionReason
+                                    .ConfiguredPageLimit,
+                        })),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "unknown scope completion reason",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    WithScope(
+                        definition,
+                        0,
+                        scope => scope with
+                        {
+                            CompletionReason =
+                                (CaptureScopeCompletionReason)
+                                999,
+                        })),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+        AssertCaptureFailure(
+            "unknown response origin",
+            () => CapturePackageContract
+                .ValidateResponse(
+                    response with
+                    {
+                        Origin =
+                            (CaptureResponseOrigin)999,
+                    }),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+        AssertCaptureFailure(
+            "complete package requires requests",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        TotalPageCount = 0,
+                        TotalEntryCount = 0,
+                        TotalRequestCount = 0,
+                        TotalResponseBytes = 0,
+                        ResponseShardCount = 0,
+                        Requests = [],
+                    }),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        var unsupportedCatalog =
+            definition.Catalog with
+            {
+                Songs = definition.Catalog.Songs
+                    .Select(song => song with
+                    {
+                        ScopeSupport =
+                            song.ScopeSupport
+                                .Select(support =>
+                                    support with
+                                    {
+                                        Status =
+                                            CaptureCatalogSupportStatus
+                                                .Unsupported,
+                                    })
+                                .ToArray(),
+                    })
+                    .ToArray(),
+            };
+        var unsupportedScopes =
+            definition.Scopes
+                .Select(scope => scope with
+                {
+                    DeclaredPageCount = 0,
+                    DeclaredEntryCount = 0,
+                    ProviderReportedTotalPages = 0,
+                    ProviderReportedTotalEntries = 0,
+                    CapturedPageCount = 0,
+                    CapturedEntryCount = 0,
+                    CapturedRequestCount = 0,
+                    CapturedResponseBytes = 0,
+                    Status =
+                        CaptureScopeStatus
+                            .Unsupported,
+                    ContentSha256 =
+                        CapturePackageContract
+                            .ComputeScopeContentSha256(
+                                Array.Empty<
+                                    CaptureRequestDescriptor>()),
+                    CompletionReason =
+                        CaptureScopeCompletionReason
+                            .Unsupported,
+                })
+                .ToArray();
+        AssertCaptureFailure(
+            "all-unsupported package is incomplete",
+            () => CapturePackageContract
+                .ValidateDefinition(
+                    definition with
+                    {
+                        Catalog =
+                            unsupportedCatalog,
+                        Scopes =
+                            unsupportedScopes,
+                    }),
+            CapturePackageFailureKind
+                .IncompleteCapture);
+        AssertCaptureFailure(
+            "layout rejects noncanonical shard path",
+            () => CapturePackageContract
+                .BuildResponseShardLayouts(
+                    [
+                        definition.Requests[0]
+                            with
+                            {
+                                ResponseShardPath =
+                                    "capture/responses/bad.jsonl",
+                            },
+                    ]),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var manifest =
+            CreateManifest(fixture);
+        var reference =
+            manifest.RequestPlan;
+        AssertCaptureFailure(
+            "descriptor reference mismatch",
+            () => CapturePackageContract
+                .ValidateReference(
+                    reference,
+                    new TierZeroArtifactDescriptor(
+                        "wrong-owner",
+                        reference.Path,
+                        CapturePackageFormat
+                            .JsonLinesMediaType,
+                        reference.SchemaVersion,
+                        reference.RecordCount,
+                        [],
+                        reference.Bytes + 1,
+                        reference.Bytes,
+                        reference.Sha256)),
+            CapturePackageFailureKind
+                .ArtifactMismatch);
+        await AssertCaptureFailureAsync(
+            "catalog write rejects byte ceiling",
+            () => CapturePackageContract
+                .ValidateContentArtifactForWriteAsync(
+                    CatalogRegistration(fixture),
+                    new byte[
+                        CapturePackageFormat
+                            .MaximumCatalogBytes + 1],
+                    fixture.Envelope,
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
+        await AssertCaptureFailureAsync(
+            "response shard write rejects byte ceiling",
+            () => CapturePackageContract
+                .ValidateContentArtifactForWriteAsync(
+                    ResponseRegistration(
+                        CapturePackageFormat
+                            .ResponseShardPath(0),
+                        1,
+                        CapturePackageFormat
+                            .MaximumResponseShardBytes +
+                        1),
+                    new byte[
+                        checked((int)
+                            CapturePackageFormat
+                                .MaximumResponseShardBytes +
+                            1)],
+                    fixture.Envelope,
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
+        var trailingCatalog =
+            new byte[
+                fixture.CatalogBytes.Length +
+                2];
+        fixture.CatalogBytes.CopyTo(
+            trailingCatalog,
+            0);
+        "{}"u8.CopyTo(
+            trailingCatalog.AsSpan(
+                fixture.CatalogBytes.Length));
+        AssertCaptureFailure(
+            "catalog JSON rejects trailing content",
+            () => CapturePackageContract
+                .DeserializeCatalog(
+                    trailingCatalog),
+            CapturePackageFailureKind
+                .InvalidMetadata);
+
+        var firstPage = CreateResponse(
+            requestOrdinal: 0,
+            scopeOrdinal: 0,
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            totalPages: 2,
+            totalEntries: 4,
+            [
+                SoloEntry("a", 1),
+                SoloEntry("b", 2),
+            ],
+            pageIndex: 0,
+            pageSize: 2);
+        var secondPage = CreateResponse(
+            requestOrdinal: 1,
+            scopeOrdinal: 0,
+            CaptureScopeKind.Solo,
+            "song-a",
+            "Solo_Guitar",
+            totalPages: 2,
+            totalEntries: 4,
+            [
+                SoloEntry("c", 3),
+                SoloEntry("d", 4),
+            ],
+            pageIndex: 1,
+            pageSize: 2);
+        var completeScope =
+            new CaptureScopeDescriptor(
+                0,
+                "song-a",
+                CaptureScopeKind.Solo,
+                "Solo_Guitar",
+                2,
+                4,
+                2,
+                4,
+                2,
+                4,
+                2,
+                2,
+                CaptureScopeStatus.Complete,
+                new string('0', 64),
+                CaptureScopeCompletionReason
+                    .ProviderExhausted);
+        Assert.Equal(
+            4,
+            CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [firstPage, secondPage]));
+        AssertCaptureFailure(
+            "scope provider totals must imply page count",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage with
+                        {
+                            ProviderReportedTotalPages =
+                                3,
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope response pagination cannot drift",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage,
+                        secondPage with
+                        {
+                            PageSize = 3,
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope page cannot omit provider entries",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope,
+                    [
+                        firstPage with
+                        {
+                            EntryCount = 1,
+                            Entries =
+                                [SoloEntry("a", 1)],
+                        },
+                    ]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "scope aggregate identities must match",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CapturedEntryCount = 3,
+                    },
+                    [firstPage, secondPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "provider exhaustion requires complete universe",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CapturedPageCount = 1,
+                        CapturedEntryCount = 2,
+                    },
+                    [firstPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        AssertCaptureFailure(
+            "truncated completion must precede exhaustion",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        CompletionReason =
+                            CaptureScopeCompletionReason
+                                .ConfiguredPageLimit,
+                    },
+                    [firstPage, secondPage]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
+        var eventNotFound =
+            CreateResponse(
+                requestOrdinal: 0,
+                scopeOrdinal: 0,
+                CaptureScopeKind.Solo,
+                "song-a",
+                "Solo_Guitar",
+                totalPages: 0,
+                totalEntries: 0,
+                [],
+                pageIndex: 0,
+                pageSize: 100) with
+            {
+                Origin =
+                    CaptureResponseOrigin
+                        .EventNotFound,
+            };
+        AssertCaptureFailure(
+            "synthetic response requires explicit reason",
+            () => CapturePackageContract
+                .ValidateScopeResponseEntries(
+                    completeScope with
+                    {
+                        DeclaredPageCount = 1,
+                        DeclaredEntryCount = 0,
+                        ProviderReportedTotalPages = 0,
+                        ProviderReportedTotalEntries = 0,
+                        CapturedPageCount = 1,
+                        CapturedEntryCount = 0,
+                        CompletionReason =
+                            CaptureScopeCompletionReason
+                                .ConfiguredPageLimit,
+                    },
+                    [eventNotFound]),
+            CapturePackageFailureKind
+                .AggregateMismatch);
 
         AssertCaptureFailure(
             "scope universe must be complete",
@@ -2808,6 +3674,30 @@ public sealed class CapturePackageContractTests
             "canonical JSONL stream rejects oversized records",
             () => oversizedStream.ReadByte(),
             CapturePackageFailureKind.RecordLimitExceeded);
+
+        await using var declaredShortStream =
+            new MemoryStream(
+                Encoding.UTF8.GetBytes(
+                    "{\"a\":1}\n"));
+        await AssertCaptureFailureAsync(
+            "JSONL read enforces declared byte length",
+            () => CapturePackageJsonLines
+                .ReadAsync<JsonElement>(
+                    declaredShortStream,
+                    expectedBytes: 4,
+                    expectedCount: 1,
+                    maximumRecords: 1,
+                    maximumBytes: 100,
+                    maximumRecordBytes: 100,
+                    "test JSONL",
+                    preDeserialize: null,
+                    onRecord:
+                        static (_, _, _, _, _) =>
+                        {
+                        },
+                    CancellationToken.None),
+            CapturePackageFailureKind
+                .RecordLimitExceeded);
     }
 
     [Fact]
@@ -2818,7 +3708,9 @@ public sealed class CapturePackageContractTests
             MinimumFreeSpaceReserveBytes: 10,
             MaximumRetainedSealedPackages: 2);
         var state = new CapturePackageStorageState(
-            ProposedPackageBytes: 50,
+            CurrentPackageBytes: 0,
+            FinalPackageBytes: 50,
+            RemainingBytesToWrite: 50,
             AvailableFreeSpaceBytes: 100,
             RetainedSealedPackageCount: 0);
 
@@ -2847,7 +3739,7 @@ public sealed class CapturePackageContractTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             CapturePackageStorageAdmission.Evaluate(
                 policy,
-                state with { ProposedPackageBytes = 0 }));
+                state with { FinalPackageBytes = 0 }));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             CapturePackageStorageAdmission.Evaluate(
                 policy,
@@ -2856,7 +3748,9 @@ public sealed class CapturePackageContractTests
         var rejected = CapturePackageStorageAdmission.Evaluate(
             policy,
             new CapturePackageStorageState(
-                ProposedPackageBytes: 101,
+                CurrentPackageBytes: 0,
+                FinalPackageBytes: 101,
+                RemainingBytesToWrite: 101,
                 AvailableFreeSpaceBytes: 50,
                 RetainedSealedPackageCount: 2));
         Assert.Equal(
@@ -3367,6 +4261,28 @@ public sealed class CapturePackageContractTests
     }
 
     [Fact]
+    public async Task ReaderWrapsMissingPackagePreflight()
+    {
+        using var directory =
+            new PackageDirectory(
+                "capture-missing-root");
+        var missing = Path.Combine(
+            directory.Path,
+            "does-not-exist");
+
+        var exception =
+            await Assert.ThrowsAsync<
+                CapturePackageException>(() =>
+                new CapturePackageReader()
+                    .LoadAsync(missing));
+
+        Assert.Equal(
+            CapturePackageFailureKind
+                .TierZeroVerificationFailed,
+            exception.Kind);
+    }
+
+    [Fact]
     public async Task ReaderAndVerifierPropagateCancellationAndPathFailures()
     {
         using var missingDirectory =
@@ -3641,8 +4557,8 @@ public sealed class CapturePackageContractTests
                 totalPages: 1,
                 totalEntries: 2,
                 [
-                    Entry("""{"accountId":"a","rank":1}"""),
-                    Entry("""{"accountId":"b","rank":2}"""),
+                    SoloEntry("a", 1),
+                    SoloEntry("b", 2),
                 ]),
             CreateResponse(
                 requestOrdinal: 1,
@@ -3653,7 +4569,7 @@ public sealed class CapturePackageContractTests
                 totalPages: 1,
                 totalEntries: 1,
                 [
-                    Entry("""{"rank":1,"teamKey":"a:b"}"""),
+                    BandEntry("a", "b", 1),
                 ]),
             CreateResponse(
                 requestOrdinal: 2,
@@ -3694,7 +4610,9 @@ public sealed class CapturePackageContractTests
                 CapturePackageContract
                     .ComputeScopeContentSha256(
                         Array.Empty<
-                            CaptureRequestDescriptor>())),
+                            CaptureRequestDescriptor>()),
+                CaptureScopeCompletionReason
+                    .Unsupported),
         };
         var definition = new CapturePackageDefinition(
             "capture-0001",
@@ -3783,25 +4701,54 @@ public sealed class CapturePackageContractTests
         string leaderboardType,
         int totalPages,
         long totalEntries,
-        IReadOnlyList<JsonElement> entries) =>
+        IReadOnlyList<JsonElement> entries,
+        int pageIndex = 0,
+        int pageSize = 100) =>
         new(
             CapturePackageFormat.ResponseFormatId,
             CapturePackageFormat.ResponseSchemaVersion,
             requestOrdinal,
             scopeOrdinal,
-            0,
+            pageIndex,
             scopeKind == CaptureScopeKind.Solo
                 ? CaptureResponseKind.SoloLeaderboardPage
                 : CaptureResponseKind.BandLeaderboardPage,
             songId,
             scopeKind,
             leaderboardType,
-            0,
-            100,
+            pageIndex,
+            pageSize,
             totalPages,
             totalEntries,
             entries.Count,
             entries);
+
+    private static CaptureScopeDescriptor ScopeForResponses(
+        int scopeOrdinal,
+        IReadOnlyList<CaptureResponseArtifact> responses,
+        CaptureScopeCompletionReason completionReason =
+            CaptureScopeCompletionReason.ProviderExhausted)
+    {
+        var first = responses[0];
+        return new CaptureScopeDescriptor(
+            scopeOrdinal,
+            first.SongId,
+            first.ScopeKind,
+            first.LeaderboardType,
+            responses.Count,
+            responses.Sum(static response =>
+                checked((long)response.EntryCount)),
+            first.ProviderReportedTotalPages,
+            first.ProviderReportedTotalEntries,
+            responses.Count,
+            responses.Sum(static response =>
+                checked((long)response.EntryCount)),
+            responses.Count,
+            responses.Count,
+            CaptureScopeStatus.Complete,
+            Hash("scope"),
+            completionReason);
+    }
 
     private static CaptureRequestDescriptor[]
         CreateRequestDescriptors(
@@ -3854,8 +4801,12 @@ public sealed class CapturePackageContractTests
             first.SongId,
             first.ScopeKind,
             first.LeaderboardType,
-            first.ProviderReportedTotalPages,
-            first.ProviderReportedTotalEntries,
+            requests.Skip(start).Take(count).Sum(
+                static request =>
+                    request.CapturedPageCount),
+            requests.Skip(start).Take(count).Sum(
+                static request =>
+                    request.CapturedEntryCount),
             first.ProviderReportedTotalPages,
             first.ProviderReportedTotalEntries,
             requests.Skip(start).Take(count).Sum(
@@ -4328,6 +5279,86 @@ public sealed class CapturePackageContractTests
     {
         using var document = JsonDocument.Parse(json);
         return document.RootElement.Clone();
+    }
+
+    private static JsonElement SoloEntry(
+        string accountId,
+        int rank,
+        int score = 100) =>
+        CaptureEntryContracts.Project(
+            new LeaderboardEntry
+            {
+                AccountId = accountId,
+                Rank = rank,
+                Percentile = 1.0,
+                Score = score,
+                Accuracy = 1_000_000,
+                IsFullCombo = true,
+                Stars = 5,
+                Season = 1,
+                Difficulty = 3,
+                EndTime = "2026-09-12T10:00:00Z",
+            });
+
+    private static JsonElement BandEntry(
+        string firstAccountId,
+        string secondAccountId,
+        int rank,
+        int score = 200) =>
+        BandEntry(
+            [(firstAccountId, 0), (secondAccountId, 1)],
+            rank,
+            score);
+
+    private static JsonElement BandEntry(
+        IReadOnlyList<(string AccountId, int InstrumentId)> members,
+        int rank,
+        int score = 200)
+    {
+        var accountIds = members
+            .Select(static member => member.AccountId)
+            .ToArray();
+        return CaptureEntryContracts.Project(
+            new BandLeaderboardEntry
+            {
+                TeamKey = string.Join(
+                    ':',
+                    accountIds.OrderBy(
+                        static value => value,
+                        StringComparer.OrdinalIgnoreCase)),
+                TeamMembers = accountIds,
+                Score = score,
+                Accuracy = 1_000_000,
+                IsFullCombo = true,
+                Stars = 5,
+                Difficulty = 3,
+                Season = 1,
+                Rank = rank,
+                Percentile = 1.0,
+                EndTime = "2026-09-12T10:00:00Z",
+                InstrumentCombo = string.Join(
+                    ':',
+                    members
+                        .Select(static member =>
+                            member.InstrumentId)
+                        .Order()),
+                MemberStats = members
+                    .Select((member, index) =>
+                        new BandMemberStats
+                        {
+                            MemberIndex = index,
+                            AccountId = member.AccountId,
+                            InstrumentId =
+                                member.InstrumentId,
+                            Score = score /
+                                members.Count,
+                            Accuracy = 1_000_000,
+                            IsFullCombo = true,
+                            Stars = 5,
+                            Difficulty = 3,
+                        })
+                    .ToList(),
+            });
     }
 
     private static void AssertFailure(

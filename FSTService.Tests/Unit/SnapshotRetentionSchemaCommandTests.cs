@@ -106,7 +106,9 @@ public sealed class SnapshotRetentionSchemaCommandTests
         var program = File.ReadAllText(Path.Combine(root, "FSTService/Program.cs"));
         var dispatch = program.IndexOf("SnapshotRetentionSchemaCommand.IsRequested(args)", StringComparison.Ordinal);
         Assert.InRange(dispatch, 0, program.IndexOf("ReplayCommand.IsRequested(args)", StringComparison.Ordinal));
-        Assert.True(dispatch < program.IndexOf("var envPath", StringComparison.Ordinal));
+        Assert.True(dispatch < program.IndexOf(
+            "CaptureEnvironmentFile.LoadCurrentDirectory()",
+            StringComparison.Ordinal));
         Assert.True(dispatch < program.IndexOf("WebApplication.CreateBuilder", StringComparison.Ordinal));
         var command = File.ReadAllText(Path.Combine(root, "FSTService/Persistence/SnapshotRetentionSchemaCommand.cs"));
         foreach (var forbidden in new[]
