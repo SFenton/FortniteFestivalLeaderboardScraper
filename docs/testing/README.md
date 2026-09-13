@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-12
-last_verified_commit: 964d9188
+last_verified_commit: c0b30c41
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts

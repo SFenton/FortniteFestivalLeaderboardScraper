@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-09-12
-last_verified_commit: 964d9188
+last_verified_commit: c0b30c41
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -59,9 +59,10 @@ update_triggers:
 - Keep PostgreSQL as the durable source of truth. DuckDB and Parquet remain
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, and direct concurrent
-  `RunScrapePassAsync` execution. The capture-package contract is now the
-  first non-production prerequisite for a future artifact-backed overlap
-  design; capture execution remains absent.
+  `RunScrapePassAsync` execution. The capture-package contract and default-off
+  manual capture producer are implemented as non-production prerequisites for
+  a future artifact-backed overlap design; isolated import and overlap
+  scheduling remain absent.
 - The one-instrument-at-a-time snapshot-generation conversion is accepted.
   Scrape `1310` proved all nine generation writer paths through publication,
   notifications, registration drain, and worker exit.

@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-09-12
-last_verified_commit: 964d9188
+last_verified_commit: c0b30c41
 sources:
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
