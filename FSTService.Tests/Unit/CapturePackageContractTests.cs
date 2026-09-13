@@ -2515,16 +2515,43 @@ public sealed class CapturePackageContractTests
                 expected);
         }
 
-        var unsupportedAsComplete = WithScope(
-            definition,
-            3,
-            scope => scope with
+        var unsupportedCatalogSongs =
+            definition.Catalog.Songs.ToArray();
+        var unsupportedSupport =
+            unsupportedCatalogSongs[0]
+                .ScopeSupport.ToArray();
+        var soloLeadSupportIndex =
+            Array.FindIndex(
+                unsupportedSupport,
+                static support =>
+                    support.ScopeKind ==
+                        CaptureScopeKind.Solo &&
+                    support.LeaderboardType ==
+                        "Solo_Guitar");
+        unsupportedSupport[soloLeadSupportIndex] =
+            unsupportedSupport[
+                soloLeadSupportIndex] with
             {
-                CapturedPageCount = 1,
-                CapturedRequestCount = 1,
-                CapturedResponseBytes = 1,
-                Status = CaptureScopeStatus.Complete,
-            });
+                Status =
+                    CaptureCatalogSupportStatus
+                        .Unsupported,
+            };
+        unsupportedCatalogSongs[0] =
+            unsupportedCatalogSongs[0] with
+            {
+                ScopeSupport =
+                    unsupportedSupport,
+            };
+        var unsupportedAsComplete =
+            definition with
+            {
+                Catalog =
+                    definition.Catalog with
+                    {
+                        Songs =
+                            unsupportedCatalogSongs,
+                    },
+            };
         AssertCaptureFailure(
             "scope status is not proven by catalog support",
             () => CapturePackageContract.ValidateDefinition(
@@ -3210,7 +3237,9 @@ public sealed class CapturePackageContractTests
             MinimumFreeSpaceReserveBytes: 10,
             MaximumRetainedSealedPackages: 2);
         var state = new CapturePackageStorageState(
-            ProposedPackageBytes: 50,
+            CurrentPackageBytes: 0,
+            FinalPackageBytes: 50,
+            RemainingBytesToWrite: 50,
             AvailableFreeSpaceBytes: 100,
             RetainedSealedPackageCount: 0);
 
@@ -3239,7 +3268,7 @@ public sealed class CapturePackageContractTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             CapturePackageStorageAdmission.Evaluate(
                 policy,
-                state with { ProposedPackageBytes = 0 }));
+                state with { FinalPackageBytes = 0 }));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             CapturePackageStorageAdmission.Evaluate(
                 policy,
@@ -3248,7 +3277,9 @@ public sealed class CapturePackageContractTests
         var rejected = CapturePackageStorageAdmission.Evaluate(
             policy,
             new CapturePackageStorageState(
-                ProposedPackageBytes: 101,
+                CurrentPackageBytes: 0,
+                FinalPackageBytes: 101,
+                RemainingBytesToWrite: 101,
                 AvailableFreeSpaceBytes: 50,
                 RetainedSealedPackageCount: 2));
         Assert.Equal(
