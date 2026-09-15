@@ -48,13 +48,13 @@ fixtures but never automatically promoted executors.
 keeps every model capability provisional. Deterministic routing, evidence,
 registered tools, tests, and receipts run without a model launch. Known-pattern
 work uses the opportunity's exact project-qualified medium coordinator:
-Claude Sonnet 5 medium/default for routine work and Sol medium/default for
-database, concurrency, storage, publication, provenance, debugging, live, and
-release-sensitive coordination. External research and binding specification
-are conditional. Sol max/long-context appears only behind a named trigger
-receipt for unresolved concurrency corruption, publication/provenance conflict,
-live data-loss/restore conflict, or release public-health/rollback conflict.
-No phase has standing max residency.
+gpt-5.4 medium/default for routine, database, concurrency, storage,
+publication, provenance, debugging, live, and release-sensitive coordination.
+External research is conditional, and binding specification remains
+gpt-5.4 medium/default. Sol high/default appears only as receipt-bound
+research for unresolved concurrency corruption, publication/provenance
+conflict, live data-loss/restore conflict, or release public-health/rollback
+conflict. No phase has standing Sol ownership or max/long residency.
 
 The adapter advertises only the implemented focused-test worker class. MAI Code
 1.1 Flash may produce one provisional staged formatter-test artifact and one
@@ -76,10 +76,11 @@ readiness, or a performance win.
 
 Registered zero-model validation commands live in `.github/agent-tools.json`.
 The version 3 application release machine and destructive-maintenance machine
-use separate operator authorization, evidence, rollback and cleanup contracts. Both
-remain disabled while any required external or production tool is disabled.
-Medium review cannot authorize side effects. Failed rollback can open max/long
-review only through the machine's project-specific trigger receipt.
+use separate operator authorization, evidence, rollback and cleanup contracts.
+Both remain disabled while any required external or production tool is
+disabled. Medium review cannot authorize side effects. Failed rollback can
+open receipt-bound Sol high/default research only through the machine's
+project-specific trigger receipt.
 
 Run affected existing tests and matched benchmarks. Every changed documented
 area is synchronized and `node tools/check-docs.mjs` remains required.

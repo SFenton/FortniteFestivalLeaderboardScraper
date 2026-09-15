@@ -110,7 +110,7 @@ Workflow:
 1. Read the relevant repo instructions and component docs before editing.
 2. Reproduce the problem or write the smallest failing test/invariant when feasible.
 3. Design for idempotency, short lock/statement timeouts, backward compatibility, and rollback.
-4. Keep destructive changes behind explicit flags, the FST live-scrape A/B data-parity gate, and fresh exact-object frontier authorization. Parity is necessary evidence, never execution approval.
+4. Keep destructive changes behind explicit flags, the FST live-scrape A/B data-parity gate, and fresh exact-object operator authorization through the destructive-maintenance machine. Parity is necessary evidence, never execution approval.
 5. Update docs in the same patch, including README and component/runbook docs when behavior changes.
 6. Validate with the smallest targeted tests/builds and any required DB smoke.
 
@@ -147,7 +147,7 @@ Workflow:
 1. Identify source tables/files, provider/universe/timeframe/range, and retention objective.
 2. Build or verify manifests with counts, ranges, byte sizes, checksums/fingerprints, format, compression, and storage path.
 3. Validate read/query parity before any prune or cutover.
-4. Require the FST live-scrape A/B data-parity gate and fresh exact-object frontier authorization for destructive pruning or table rewrites. Record rollback and post-action validation; parity alone never approves execution.
+4. Require the FST live-scrape A/B data-parity gate and fresh exact-object operator authorization through the destructive-maintenance machine for destructive pruning or table rewrites. Record rollback and post-action validation; parity alone never approves execution.
 5. Document restore/rehydration and cleanup.
 
 Output:

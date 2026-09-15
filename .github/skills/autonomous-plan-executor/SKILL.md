@@ -19,14 +19,12 @@ Resolve every phase through the hierarchical version 3
 - deterministic routing, evidence collection, registered tools, tests, and
   receipts launch no model and need no model-bound authorization;
 - known-pattern work uses the exact opportunity medium coordinator:
-  Claude Sonnet 5 medium/default for routine work and Sol medium/default for
-  database, concurrency, storage, publication, provenance, debugging, live, and
-  release-sensitive coordination;
-- conditional external research uses Astra high/default only after
+  gpt-5.4 medium/default for routine, database, concurrency, storage, publication, provenance, debugging, live, and release-sensitive coordination;
+- conditional external research uses Sol high/default only after
   `approved-novel-public-research`;
 - a binding novel spec or consequential architecture review uses Sol
   high/default only after its named trigger receipt;
-- Sol max/long-context may run only after an evidence-bound
+- Sol high/default research may run only after an evidence-bound
   `fst-live-data-loss-or-restore-conflict`,
   `fst-publication-provenance-conflict`,
   `fst-unresolved-concurrency-corruption`, or
@@ -46,7 +44,7 @@ production tools are disabled. Medium/cheap models never authorize or execute
 GitHub, database, production, release, verification, rollback, or destructive
 steps.
 
-Overall model identity never bypasses routing. Sol, HydraFusion, or another
+Overall model identity never bypasses routing. gpt-5.4, Sol, or another
 current model may fill a role only when it exactly matches that role's
 qualified profile; otherwise it may orchestrate/read but gains no semantic,
 repository-apply, live, release, or destructive authority.
@@ -93,7 +91,7 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 - `fstworker`, `fstservice`, and `festivalweb` may be restarted, redeployed, or temporarily taken down for maintenance when useful. Keep downtime as short as practical, redeploy/recover as soon as possible, and verify worker/service/web health immediately afterward.
 - After any `fstworker`, `fstservice`, `festivalweb`, or production compose restart/redeploy, do not mark the action complete or move to unrelated work until the full public path is healthy after all expected containers have returned: Docker health/status for `fstservice`, `festivalweb`, `fst-postgres`, and `fstworker` when it is expected to run; `fstservice` `/readyz`; `festivalweb` container health; a browser/static app-shell route through `festivalweb`; and a representative API route through `festivalweb` such as `/api/service-info`. If starting `fstworker` causes `fstservice` or `festivalweb` API routes to become unhealthy/time out, stop or roll back the worker immediately, restore API/web health, record the failure evidence, and treat worker validation as rejected/blocked until a safer worker start path is implemented.
 - Backend/database work should preserve the user experience by using prompt redeploys, publication gates, rollback-safe changes, and clear monitoring rather than by avoiding all downtime.
-- Destructive reclaim, index/table drop, table rewrite/repack, active data movement, or irreversible publication-state changes require live-scrape A/B parity and a fresh variant-bound frontier authorization covering exact objects, current publication, restore package, health, monitoring, and rollback. Parity is necessary evidence, never authorization. Until both gates pass, continue all safe non-interactive work around them.
+- Destructive reclaim, index/table drop, table rewrite/repack, active data movement, or irreversible publication-state changes require live-scrape A/B parity and fresh exact-object operator authorization through the destructive-maintenance machine, covering exact objects, current publication, restore package, health, monitoring, and rollback. Parity is necessary evidence, never authorization. Until both gates pass, continue all safe non-interactive work around them.
 
 ## Scrape-boundary execution classes
 
@@ -320,7 +318,7 @@ drive.
 
 End-of-queue rule: before declaring the queue complete, sweep all rejected, blocked, and caveated decisions. Prioritize new safe work in this order: correctness/parity, live/public-read safety, data coverage, storage/retention feasibility, performance/resource safety, operational monitoring, documentation/reporting. "Not approved for production mutation/scrape" does not mean "no more work"; continue with readiness work that is safe and useful.
 
-Parity gate rule: if destructive reclaim, index/table drop, rewrite/repack, active data movement, or irreversible publication-state change is pending, build and run the live-scrape A/B proof first. Matching parity permits an authorization decision but does not approve execution. Require a fresh destructive-maintenance authorization before acting. If parity or authorization is absent, keep processing safe alternatives.
+Parity gate rule: if destructive reclaim, index/table drop, rewrite/repack, active data movement, or irreversible publication-state change is pending, build and run the live-scrape A/B proof first. Matching parity permits an authorization decision but does not approve execution. Require fresh operator authorization through the destructive-maintenance machine before acting. If parity or authorization is absent, keep processing safe alternatives.
 
 ## Stop counters
 
@@ -340,7 +338,7 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 1. Read Docker caps and runtime defaults before heavy work. Production runs under `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
 2. Before broad evals, scrapes, backfills, DB scans, deploys, or service changes, run live-safety probes: `docker compose ps`, service `/readyz`, Postgres readiness, locks/long queries, `docker stats --no-stream`, disk headroom, public-read freeze state, and published scrape.
 3. Scrapes may proceed normally, and `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance. Redeploy/recover them as soon as possible, then verify worker state, `fstservice` `/readyz`, `festivalweb` health, the static app shell through `festivalweb`, and at least one representative API route through `festivalweb` after all expected containers have returned. A healthy static shell alone is insufficient when API-backed UI routes are timing out.
-4. Destructive data/reclaim actions require both matching live-scrape A/B evidence and fresh destructive-maintenance authorization. Before execution, bind exact objects/actions, current publication, restore package, rollback, disk/resource risk, monitoring, and post-action validation.
+4. Destructive data/reclaim actions require both matching live-scrape A/B evidence and fresh operator authorization through the destructive-maintenance machine. Before execution, bind exact objects/actions, current publication, restore package, rollback, disk/resource risk, monitoring, and post-action validation.
 5. When a destructive DDL/reclaim action has not yet met the live-scrape A/B parity gate, continue with smaller safe substitutes that answer the same question as far as possible: fixture tests, code review, generated rollback DDL, representative read-only query plans, manifest generation, API parity probes, storage math, and approval-package drafts.
 6. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
 7. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.

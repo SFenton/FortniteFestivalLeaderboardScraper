@@ -9,6 +9,61 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function assertProfile(profile, { model, effort, context }, label) {
+  assert(profile?.model === model, `${label} must use ${model}`);
+  assert(
+    profile.effort === effort && profile.context === context,
+    `${label} must use ${effort}/${context}`,
+  );
+}
+
+function inspectResearchProfiles(opportunity, label) {
+  const profiles = opportunity.conditionalProfiles?.filter(profile =>
+    profile.kind === 'research-frontier') ?? [];
+  assert(profiles.length >= 1, `${label} requires at least one receipt-bound research profile`);
+  for (const profile of profiles) {
+    assertProfile(
+      profile.profile,
+      { model: 'gpt-5.6-sol', effort: 'high', context: 'default' },
+      `${label} research profile ${profile.id}`,
+    );
+    assert(profile.requiresTriggerReceipt === true && profile.triggerIds?.length >= 1,
+      `${label} research profile ${profile.id} requires explicit trigger ids and a receipt`);
+  }
+  return profiles.map(({ id, kind, profile, triggerIds, requiresTriggerReceipt }) => ({
+    id,
+    kind,
+    profile,
+    triggerIds,
+    requiresTriggerReceipt,
+  }));
+}
+
+function inspectMachine(root, relativePath, variant, triggerId) {
+  const machine = JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'));
+  assert(machine.version === 3, `${variant} machine must be version 3`);
+  assert(machine.variant === variant, `${variant} machine must retain its exact variant`);
+  assert(machine.enabled === false, `${variant} machine must remain disabled`);
+  assert(machine.operatorAuthorizationRequired === true,
+    `${variant} machine requires explicit operator authorization`);
+  assertProfile(
+    machine.reviewer?.profile,
+    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    `${variant} machine reviewer`,
+  );
+  assert(machine.exception?.role === 'research-frontier',
+    `${variant} machine exception must remain research-only`);
+  assertProfile(
+    machine.exception?.profile,
+    { model: 'gpt-5.6-sol', effort: 'high', context: 'default' },
+    `${variant} machine exception`,
+  );
+  assert(machine.exception.requiresTriggerReceipt === true &&
+    machine.exception.triggerIds?.includes(triggerId),
+  `${variant} machine exception must retain its trigger-bound research receipt`);
+  return machine;
+}
+
 export function inspectOpportunity(root, opportunityId) {
   const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
   const policy = JSON.parse(read('.github/agent-opportunities.json'));
@@ -19,19 +74,25 @@ export function inspectOpportunity(root, opportunityId) {
   const opportunity = policy.opportunities.find(item => item.id === policyId);
   assert(opportunity, `unknown opportunity: ${opportunityId}`);
   const routine = opportunity.team?.coordinator?.profile;
-  assert(routine?.model === 'gpt-5.6-sol',
-    'sensitive routine coordinator must remain Sol');
-  assert(routine.effort === 'medium' && routine.context === 'default',
-    'routine coordinator must use medium/default');
-  const exception = opportunity.conditionalProfiles?.find(profile =>
-    profile.kind === 'risk-triggered-frontier-review');
-  assert(exception?.profile?.model === 'gpt-5.6-sol' &&
-    exception.profile.effort === 'max' &&
-    exception.profile.context === 'long_context',
-  'critical reviewer must use Sol max/long_context');
-  assert(exception.requiresTriggerReceipt === true &&
-    exception.triggerIds?.length >= 1,
-  'critical review requires explicit trigger ids and a receipt');
+  assertProfile(
+    routine,
+    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    'routine coordinator',
+  );
+  const reviewer = opportunity.team?.reviewer?.profile;
+  assertProfile(
+    reviewer,
+    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    'routine reviewer',
+  );
+  if (opportunity.team?.workerCandidate?.profile) {
+    assertProfile(
+      opportunity.team.workerCandidate.profile,
+      { model: 'mai-code-1.1-flash', effort: 'medium', context: 'default' },
+      'bounded worker candidate',
+    );
+  }
+  const researchProfiles = inspectResearchProfiles(opportunity, opportunityId);
 
   let facts;
   if (opportunityId === 'publication') {
@@ -88,6 +149,12 @@ export function inspectOpportunity(root, opportunityId) {
       bootstrapScope: 'current publication only',
     };
   } else if (opportunityId === 'application-release') {
+    inspectMachine(
+      root,
+      '.github/release-machine.json',
+      'application-release',
+      'fst-release-public-health-or-rollback-conflict',
+    );
     const errors = validatePublishImageWorkflow(
       read('.github/workflows/publish-image.yml'),
       read('FortniteFestivalWeb/Dockerfile'),
@@ -108,6 +175,12 @@ export function inspectOpportunity(root, opportunityId) {
       rollbackClass: 'immutable image rollback',
     };
   } else if (opportunityId === 'destructive-maintenance') {
+    inspectMachine(
+      root,
+      '.github/destructive-maintenance-machine.json',
+      'destructive-maintenance',
+      'fst-live-data-loss-or-restore-conflict',
+    );
     const schemaTests = read('FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs');
     const dropProgram = read('tools/FstSnapshotGenerationDrop/Program.cs');
     const runbook = read('docs/database/SnapshotGenerationDropRunbook.md');
@@ -156,9 +229,10 @@ export function inspectOpportunity(root, opportunityId) {
   return {
     opportunity: opportunityId,
     routine,
-    exception: exception.profile,
-    escalationTriggers: exception.triggerIds,
-    requiresTriggerReceipt: exception.requiresTriggerReceipt,
+    reviewer,
+    researchProfiles,
+    escalationTriggers: [...new Set(researchProfiles.flatMap(profile => profile.triggerIds ?? []))],
+    requiresTriggerReceipt: researchProfiles.every(profile => profile.requiresTriggerReceipt === true),
     facts,
   };
 }
