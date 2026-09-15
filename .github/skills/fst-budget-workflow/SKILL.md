@@ -11,8 +11,8 @@ Otherwise follow this bounded workflow directly without external services.
 Resolve substantive work through `.github/agent-opportunities.json` and the
 shared `opportunities.mjs` planner. Select one exact opportunity; database,
 performance, storage, publication, provenance, contracts, debugging, live, and
-release work intentionally have different Sol effort/context and specialist
-tooling profiles.
+release work intentionally have different specialist tooling and receipt-bound
+research trigger profiles.
 Registered zero-model validation commands are declared in
 `.github/agent-tools.json`. All opportunities use hierarchical version 3
 definitions, including distinct application-release and
@@ -20,7 +20,8 @@ destructive-maintenance variants. Both version 3 machines remain disabled while
 their external and production drivers are unavailable.
 Execute deterministic routing, evidence, and registered tools before the exact
 routine or sensitive medium coordinator. Research, binding specification, and
-max/long critical review require named evidence-bound trigger receipts;
+receipt-bound Sol high/default research legs require named evidence-bound
+trigger receipts;
 release, publication, provenance, or concurrency terminology alone is not a
 trigger.
 
@@ -63,12 +64,12 @@ safety or a specialist's explicit model/approval contract.
 7. Deployment and destructive work retain existing approval, current
    live-scrape A/B, exact-object and restoration gates. Application image
    release and destructive database maintenance use separate advisory machines;
-   they never share authorization or rollback. Routine review is Sol
-   medium/default. Both remain invalidated and disabled; Sol max/long appears
+   they never share authorization or rollback. Routine review is gpt-5.4
+   medium/default. Both remain invalidated and disabled; Sol research appears
    only after `fst-live-data-loss-or-restore-conflict` or
    `fst-release-public-health-or-rollback-conflict` receipts.
 
-The overall interactive model may be Sol, HydraFusion, or another model. Exact
+The overall interactive model may be gpt-5.4, Sol, or another model. Exact
 project pins still apply. An unqualified model may orchestrate/read but gains no
 semantic, repository-apply, database, production, publication, release, or
 destructive authority.
