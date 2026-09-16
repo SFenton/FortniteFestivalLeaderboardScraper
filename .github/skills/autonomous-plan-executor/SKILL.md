@@ -19,7 +19,7 @@ Resolve every phase through the hierarchical version 3
 - deterministic routing, evidence collection, registered tools, tests, and
   receipts launch no model and need no model-bound authorization;
 - known-pattern work uses the exact opportunity medium coordinator:
-  gpt-5.4 medium/default for routine, database, concurrency, storage, publication, provenance, debugging, live, and release-sensitive coordination;
+  gpt-5.6-luna medium/default for routine, database, concurrency, storage, publication, provenance, debugging, live, and release-sensitive coordination;
 - conditional external research uses Sol high/default only after
   `approved-novel-public-research`;
 - a binding novel spec or consequential architecture review uses Sol

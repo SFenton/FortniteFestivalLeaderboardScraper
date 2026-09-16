@@ -9,12 +9,12 @@ for (const opportunity of [
   'application-release',
   'destructive-maintenance',
 ]) {
-  test(`${opportunity} uses gpt-5.4 routine ownership with receipt-bound Sol research`, () => {
+  test(`${opportunity} uses Luna routine ownership with receipt-bound Sol research`, () => {
     const result = inspectOpportunity(process.cwd(), opportunity);
-    assert.equal(result.routine.model, 'gpt-5.4');
+    assert.equal(result.routine.model, 'gpt-5.6-luna');
     assert.equal(result.routine.effort, 'medium');
     assert.equal(result.routine.context, 'default');
-    assert.equal(result.reviewer.model, 'gpt-5.4');
+    assert.equal(result.reviewer.model, 'gpt-5.6-luna');
     assert.equal(result.reviewer.effort, 'medium');
     assert.equal(result.reviewer.context, 'default');
     assert.ok(result.researchProfiles.length >= 1);

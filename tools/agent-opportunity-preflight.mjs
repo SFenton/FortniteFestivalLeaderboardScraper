@@ -48,7 +48,7 @@ function inspectMachine(root, relativePath, variant, triggerId) {
     `${variant} machine requires explicit operator authorization`);
   assertProfile(
     machine.reviewer?.profile,
-    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    { model: 'gpt-5.6-luna', effort: 'medium', context: 'default' },
     `${variant} machine reviewer`,
   );
   assert(machine.exception?.role === 'research-frontier',
@@ -76,13 +76,13 @@ export function inspectOpportunity(root, opportunityId) {
   const routine = opportunity.team?.coordinator?.profile;
   assertProfile(
     routine,
-    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    { model: 'gpt-5.6-luna', effort: 'medium', context: 'default' },
     'routine coordinator',
   );
   const reviewer = opportunity.team?.reviewer?.profile;
   assertProfile(
     reviewer,
-    { model: 'gpt-5.4', effort: 'medium', context: 'default' },
+    { model: 'gpt-5.6-luna', effort: 'medium', context: 'default' },
     'routine reviewer',
   );
   if (opportunity.team?.workerCandidate?.profile) {
