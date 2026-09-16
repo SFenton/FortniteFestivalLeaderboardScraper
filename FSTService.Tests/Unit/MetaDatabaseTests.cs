@@ -748,6 +748,400 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.NotNull(last.CompletedAt);
         Assert.False(last.EpicReportedOver100Pages);
         Assert.Equal("completed", last.Status);
+
+        var state = Db.GetScrapeResumeState(id)!;
+        Assert.Null(state.AcquisitionCompletedAtUtc);
+        Assert.Null(state.ExpectedSoloScopeCount);
+        Assert.Null(state.ExpectedSoloScopeFingerprintVersion);
+        Assert.Null(state.ExpectedSoloScopeFingerprint);
+    }
+
+    [Fact]
+    public async Task AcquisitionCheckpoint_persists_exact_resume_metrics()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        var expectedPairs = SoloPairs("song-a", "song-b");
+        InsertCompleteManifests(scrapeId, expectedPairs);
+
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId,
+            songsScraped: 2,
+            totalEntries: 123_456,
+            totalRequests: 789,
+            totalBytes: 9_876_543_210,
+            expectedSoloLeaderboardPairs: expectedPairs,
+            epicReportedOver100Pages: true);
+
+        var state = Db.GetScrapeResumeState(scrapeId)!;
+        Assert.NotNull(state.AcquisitionCompletedAtUtc);
+        Assert.Equal(2, state.SongsScraped);
+        Assert.Equal(123_456, state.TotalEntries);
+        Assert.Equal(789, state.TotalRequests);
+        Assert.Equal(9_876_543_210, state.TotalBytes);
+        Assert.True(state.EpicReportedOver100Pages);
+        Assert.Equal(2, state.PublicationSongCount);
+        Assert.Equal(18, state.ExpectedSoloScopeCount);
+        Assert.Equal(
+            SoloAcquisitionScopeFingerprint.Version,
+            state.ExpectedSoloScopeFingerprintVersion);
+        Assert.Matches(
+            "^[0-9a-f]{64}$",
+            state.ExpectedSoloScopeFingerprint);
+        Assert.Equal(18, state.ActualCompleteSoloScopeCount);
+        Assert.Equal(
+            state.ExpectedSoloScopeFingerprint,
+            state.ActualCompleteSoloScopeFingerprint);
+        Assert.Null(state.AcquisitionMetricsValidationError);
+        Assert.True(state.CanResume);
+        Assert.Equal("running", state.Status);
+    }
+
+    [Fact]
+    public async Task AcquisitionCheckpoint_is_idempotent_and_rejects_metric_drift()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        var expectedPairs = SoloPairs("song-a");
+
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, expectedPairs, true);
+        var first = Db.GetScrapeResumeState(scrapeId)!;
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, expectedPairs, true);
+        var repeated = Db.GetScrapeResumeState(scrapeId)!;
+
+        Assert.Equal(
+            first.AcquisitionCompletedAtUtc,
+            repeated.AcquisitionCompletedAtUtc);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId, 1, 11, 2, 100, expectedPairs, true));
+        Assert.Contains("conflicts", error.Message);
+        var scopeError = Assert.Throws<InvalidOperationException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId,
+                1,
+                10,
+                2,
+                100,
+                [("song-a", "Solo_Guitar")],
+                true));
+        Assert.Contains("conflicts", scopeError.Message);
+        Assert.Equal(10, Db.GetScrapeResumeState(scrapeId)!.TotalEntries);
+    }
+
+    [Fact]
+    public async Task ResumeMetrics_are_bound_to_the_requested_scrape()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var firstScrapeId = Db.StartScrapeRun(token);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            firstScrapeId, 1, 10, 2, 100, SoloPairs("song-a", "song-b"));
+        var secondScrapeId = Db.StartScrapeRun(token);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            secondScrapeId, 2, 20, 3, 200, SoloPairs("song-a", "song-b"));
+
+        var first = Db.GetScrapeResumeState(firstScrapeId)!;
+        var second = Db.GetScrapeResumeState(secondScrapeId)!;
+
+        Assert.Equal(firstScrapeId, first.ScrapeId);
+        Assert.Equal(10, first.TotalEntries);
+        Assert.Equal(100, first.TotalBytes);
+        Assert.Equal(secondScrapeId, second.ScrapeId);
+        Assert.Equal(20, second.TotalEntries);
+        Assert.Equal(200, second.TotalBytes);
+    }
+
+    [Fact]
+    public void AcquisitionCheckpoint_rejects_negative_and_overflowed_metrics()
+    {
+        var scrapeId = Db.StartScrapeRun();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId, -1, 0, 0, 0, [("song", "Solo_Guitar")]));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId,
+                0,
+                (long)int.MaxValue + 1,
+                0,
+                0,
+                [("song", "Solo_Guitar")]));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId, 0, 0, -1, 0, [("song", "Solo_Guitar")]));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId, 0, 0, 0, -1, [("song", "Solo_Guitar")]));
+        Assert.Throws<ArgumentException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                scrapeId, 0, 0, 0, 0, []));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionCheckpoint(
+                (long)int.MaxValue + 1,
+                0,
+                0,
+                0,
+                0,
+                [("song", "Solo_Guitar")]));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.CompleteScrapeRun(
+                (long)int.MaxValue + 1,
+                0,
+                0,
+                0,
+                0));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.GetScrapeResumeState((long)int.MaxValue + 1));
+    }
+
+    [Fact]
+    public async Task ResumeScope_requires_exact_complete_catalog_owned_solo_manifests()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var expectedPairs = SoloPairs("song-a");
+        var scrapeId = Db.StartScrapeRun(token);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, expectedPairs);
+
+        var missing = Db.GetScrapeResumeState(scrapeId)!;
+        Assert.Contains(
+            "manifest count differs",
+            missing.AcquisitionMetricsValidationError);
+
+        InsertCompleteManifests(scrapeId, SoloPairs("other-song"));
+        var mismatched = Db.GetScrapeResumeState(scrapeId)!;
+        Assert.Equal(9, mismatched.ActualCompleteSoloScopeCount);
+        Assert.Contains(
+            "manifest fingerprint differs",
+            mismatched.AcquisitionMetricsValidationError);
+        Assert.False(mismatched.CanResume);
+    }
+
+    [Fact]
+    public async Task ResumeScope_excludes_band_and_other_scrape_manifests()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var expectedPairs = SoloPairs("song-a");
+        var otherScrapeId = Db.StartScrapeRun(token);
+        InsertCompleteManifests(otherScrapeId, expectedPairs);
+        var targetScrapeId = Db.StartScrapeRun(token);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            targetScrapeId, 1, 10, 2, 100, expectedPairs);
+        InsertCompleteManifests(
+            targetScrapeId,
+            [("song-a", "Band_Guitar")]);
+
+        var state = Db.GetScrapeResumeState(targetScrapeId)!;
+
+        Assert.Equal(1, state.ManifestCount);
+        Assert.Equal(0, state.ActualCompleteSoloScopeCount);
+        Assert.Contains(
+            "manifest count differs",
+            state.AcquisitionMetricsValidationError);
+        Assert.False(state.CanResume);
+    }
+
+    [Fact]
+    public async Task ResumeScope_rejects_reduced_solo_contract()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var reducedPairs =
+            new[] { ("song-a", "Solo_Guitar") };
+        var scrapeId = Db.StartScrapeRun(token);
+        InsertCompleteManifests(scrapeId, reducedPairs);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, reducedPairs);
+
+        var state = Db.GetScrapeResumeState(scrapeId)!;
+
+        Assert.Equal(1, state.ExpectedSoloScopeCount);
+        Assert.Equal(1, state.ActualCompleteSoloScopeCount);
+        Assert.Contains(
+            "every catalog song and canonical instrument",
+            state.AcquisitionMetricsValidationError);
+        Assert.False(state.CanResume);
+    }
+
+    [Fact]
+    public async Task ResumeScope_requires_manifest_song_catalog_ownership()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var foreignPairs = SoloPairs("other-song");
+        var scrapeId = Db.StartScrapeRun(token);
+        InsertCompleteManifests(scrapeId, foreignPairs);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, foreignPairs);
+
+        var state = Db.GetScrapeResumeState(scrapeId)!;
+
+        Assert.Equal(
+            state.ExpectedSoloScopeFingerprint,
+            state.ActualCompleteSoloScopeFingerprint);
+        Assert.Contains(
+            "not owned by the publication song catalog",
+            state.AcquisitionMetricsValidationError);
+        Assert.False(state.CanResume);
+    }
+
+    [Fact]
+    public async Task CompleteScrapeRun_requires_existing_checkpoint_metrics_and_scope_to_match()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var expectedPairs = SoloPairs("song-a");
+        var scrapeId = Db.StartScrapeRun(token);
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId, 1, 10, 2, 100, expectedPairs);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.CompleteScrapeRun(
+                scrapeId,
+                1,
+                10,
+                2,
+                100,
+                expectedSoloLeaderboardPairs:
+                    [("song-a", "Solo_Guitar")]));
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.CompleteScrapeRun(
+                scrapeId,
+                1,
+                11,
+                2,
+                100,
+                expectedSoloLeaderboardPairs: expectedPairs));
+
+        Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            10,
+            2,
+            100,
+            expectedSoloLeaderboardPairs: expectedPairs);
+
+        Assert.Equal(
+            "completed",
+            Db.GetScrapeResumeState(scrapeId)!.Status);
+    }
+
+    [Fact]
+    public void LegacyPartialMetrics_without_checkpoint_are_not_resumable()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE scrape_log
+                SET songs_scraped = 1
+                WHERE id = @scrapeId
+                """;
+            command.Parameters.AddWithValue("scrapeId", scrapeId);
+            command.ExecuteNonQuery();
+        }
+
+        var state = Db.GetScrapeResumeState(scrapeId)!;
+
+        Assert.Equal(
+            "acquisition checkpoint is missing",
+            state.AcquisitionMetricsValidationError);
+        Assert.False(state.CanResume);
+    }
+
+    [Fact]
+    public void Database_rejects_checkpoint_marker_with_invalid_metrics()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_log
+            SET acquisition_completed_at = now(),
+                songs_scraped = -1,
+                total_entries = 0,
+                total_requests = 0,
+                total_bytes = 0
+            WHERE id = @scrapeId
+            """;
+        command.Parameters.AddWithValue("scrapeId", scrapeId);
+
+        var error = Assert.Throws<PostgresException>(
+            () => command.ExecuteNonQuery());
+        Assert.Equal(
+            PostgresErrorCodes.CheckViolation,
+            error.SqlState);
+    }
+
+    [Theory]
+    [InlineData(1, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData(2, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void Database_rejects_invalid_checkpoint_scope_fingerprint(
+        int fingerprintVersion,
+        string fingerprint)
+    {
+        var scrapeId = Db.StartScrapeRun();
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_log
+            SET acquisition_completed_at = now(),
+                songs_scraped = 1,
+                total_entries = 1,
+                total_requests = 1,
+                total_bytes = 1,
+                expected_solo_scope_count = 9,
+                expected_solo_scope_fingerprint_version =
+                    @fingerprintVersion,
+                expected_solo_scope_fingerprint = @fingerprint
+            WHERE id = @scrapeId
+            """;
+        command.Parameters.AddWithValue("scrapeId", scrapeId);
+        command.Parameters.AddWithValue(
+            "fingerprintVersion",
+            fingerprintVersion);
+        command.Parameters.AddWithValue("fingerprint", fingerprint);
+
+        var error = Assert.Throws<PostgresException>(
+            () => command.ExecuteNonQuery());
+        Assert.Equal(
+            PostgresErrorCodes.CheckViolation,
+            error.SqlState);
     }
 
     [Fact]
@@ -8203,6 +8597,98 @@ public sealed class MetaDatabaseTests : IDisposable
             WHERE id = TRUE
             """;
         Assert.Equal(1, command.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void SoloScopeFingerprint_is_order_independent_case_sensitive_and_versioned()
+    {
+        var first = SoloAcquisitionScopeFingerprint.Create(
+        [
+            ("song-b", "Solo_Bass"),
+            ("song-a", "Solo_Guitar"),
+            ("song-a", "Solo_Guitar"),
+        ]);
+        var reordered = SoloAcquisitionScopeFingerprint.Create(
+        [
+            ("song-a", "Solo_Guitar"),
+            ("song-b", "Solo_Bass"),
+        ]);
+        var recased = SoloAcquisitionScopeFingerprint.Create(
+        [
+            ("SONG-A", "Solo_Guitar"),
+            ("song-b", "Solo_Bass"),
+        ]);
+
+        Assert.Equal(2, first.Count);
+        Assert.Equal(SoloAcquisitionScopeFingerprint.Version, first.FingerprintVersion);
+        Assert.Equal(first, reordered);
+        Assert.NotEqual(first.Fingerprint, recased.Fingerprint);
+        Assert.Matches("^[0-9a-f]{64}$", first.Fingerprint);
+    }
+
+    private static IReadOnlyList<(string SongId, string Instrument)>
+        SoloPairs(params string[] songIds) =>
+        songIds
+            .SelectMany(songId =>
+                GlobalLeaderboardScraper.AllInstruments.Select(
+                    instrument => (songId, instrument)))
+            .ToArray();
+
+    private void InsertCompleteManifests(
+        long scrapeId,
+        IEnumerable<(string SongId, string Instrument)> pairs)
+    {
+        using var connection = DataSource.OpenConnection();
+        foreach (var pair in pairs)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO leaderboard_scope_manifests (
+                    scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    expected_first_page,
+                    expected_last_page,
+                    received_pages,
+                    page_statuses,
+                    terminal_boundary,
+                    terminal_boundary_page,
+                    parse_status,
+                    retry_exhausted,
+                    reported_total_entries,
+                    reported_total_pages,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    is_complete,
+                    created_at,
+                    updated_at)
+                VALUES (
+                    @scrapeId,
+                    @songId,
+                    @instrument,
+                    'alltime',
+                    0,
+                    0,
+                    ARRAY[0],
+                    '{}'::jsonb,
+                    'epic_empty',
+                    0,
+                    'complete',
+                    FALSE,
+                    0,
+                    0,
+                    repeat('a', 64),
+                    repeat('b', 64),
+                    TRUE,
+                    now(),
+                    now())
+                """;
+            command.Parameters.AddWithValue("scrapeId", scrapeId);
+            command.Parameters.AddWithValue("songId", pair.SongId);
+            command.Parameters.AddWithValue("instrument", pair.Instrument);
+            command.ExecuteNonQuery();
+        }
     }
 
     private static Song CreateCatalogSong(string songId, string title) =>

@@ -599,13 +599,111 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
-    public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false)
+    public void RecordScrapeAcquisitionCheckpoint(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedSoloLeaderboardPairs,
+        bool epicReportedOver100Pages = false)
     {
+        ValidateScrapeMetrics(
+            scrapeId,
+            songsScraped,
+            totalEntries,
+            totalRequests,
+            totalBytes);
+        var scopeContract =
+            SoloAcquisitionScopeFingerprint.Create(
+                expectedSoloLeaderboardPairs);
+        if (scopeContract.Count <= 0)
+        {
+            throw new ArgumentException(
+                "A scrape acquisition checkpoint requires a non-empty expected solo leaderboard scope.",
+                nameof(expectedSoloLeaderboardPairs));
+        }
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE scrape_log
-            SET completed_at = @now,
+            SET acquisition_completed_at = COALESCE(acquisition_completed_at, @now),
+                songs_scraped = @songs,
+                total_entries = @entries,
+                total_requests = @requests,
+                total_bytes = @bytes,
+                epic_reported_over_100_pages = @epicReportedOver100Pages,
+                expected_solo_scope_count = @expectedSoloScopeCount,
+                expected_solo_scope_fingerprint_version =
+                    @expectedSoloScopeFingerprintVersion,
+                expected_solo_scope_fingerprint =
+                    @expectedSoloScopeFingerprint
+            WHERE id = @id
+              AND status = 'running'
+              AND (
+                    acquisition_completed_at IS NULL
+                    OR (
+                        songs_scraped = @songs
+                        AND total_entries = @entries
+                        AND total_requests = @requests
+                        AND total_bytes = @bytes
+                        AND epic_reported_over_100_pages = @epicReportedOver100Pages
+                        AND expected_solo_scope_count =
+                            @expectedSoloScopeCount
+                        AND expected_solo_scope_fingerprint_version =
+                            @expectedSoloScopeFingerprintVersion
+                        AND expected_solo_scope_fingerprint =
+                            @expectedSoloScopeFingerprint
+                    )
+              )
+            """;
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("songs", songsScraped);
+        cmd.Parameters.AddWithValue("entries", (int)totalEntries);
+        cmd.Parameters.AddWithValue("requests", totalRequests);
+        cmd.Parameters.AddWithValue("bytes", totalBytes);
+        cmd.Parameters.AddWithValue("epicReportedOver100Pages", epicReportedOver100Pages);
+        cmd.Parameters.AddWithValue(
+            "expectedSoloScopeCount",
+            scopeContract.Count);
+        cmd.Parameters.AddWithValue(
+            "expectedSoloScopeFingerprintVersion",
+            scopeContract.FingerprintVersion);
+        cmd.Parameters.AddWithValue(
+            "expectedSoloScopeFingerprint",
+            scopeContract.Fingerprint);
+        cmd.Parameters.AddWithValue("id", (int)scrapeId);
+        if (cmd.ExecuteNonQuery() != 1)
+            throw new InvalidOperationException(
+                $"Scrape run {scrapeId} acquisition checkpoint is missing, not running, or conflicts with its persisted metrics.");
+    }
+
+    public void CompleteScrapeRun(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        bool epicReportedOver100Pages = false,
+        IReadOnlyCollection<(string SongId, string Instrument)>?
+            expectedSoloLeaderboardPairs = null)
+    {
+        ValidateScrapeMetrics(
+            scrapeId,
+            songsScraped,
+            totalEntries,
+            totalRequests,
+            totalBytes);
+        var scopeContract = expectedSoloLeaderboardPairs is null
+            ? (SoloAcquisitionScopeContract?)null
+            : SoloAcquisitionScopeFingerprint.Create(
+                expectedSoloLeaderboardPairs);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_log
+            SET completed_at = COALESCE(completed_at, @now),
                 status = 'completed',
                 failed_at = NULL,
                 failure_phase = NULL,
@@ -617,6 +715,22 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 epic_reported_over_100_pages = @epicReportedOver100Pages
             WHERE id = @id
               AND status <> 'failed'
+              AND (
+                    acquisition_completed_at IS NULL
+                    OR (
+                        songs_scraped = @songs
+                        AND total_entries = @entries
+                        AND total_requests = @requests
+                        AND total_bytes = @bytes
+                        AND epic_reported_over_100_pages = @epicReportedOver100Pages
+                        AND expected_solo_scope_count =
+                            @expectedSoloScopeCount
+                        AND expected_solo_scope_fingerprint_version =
+                            @expectedSoloScopeFingerprintVersion
+                        AND expected_solo_scope_fingerprint =
+                            @expectedSoloScopeFingerprint
+                    )
+              )
             """;
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.Parameters.AddWithValue("songs", songsScraped);
@@ -624,10 +738,22 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("requests", totalRequests);
         cmd.Parameters.AddWithValue("bytes", totalBytes);
         cmd.Parameters.AddWithValue("epicReportedOver100Pages", epicReportedOver100Pages);
+        cmd.Parameters.Add(
+            "expectedSoloScopeCount",
+            NpgsqlDbType.Integer).Value =
+            (object?)scopeContract?.Count ?? DBNull.Value;
+        cmd.Parameters.Add(
+            "expectedSoloScopeFingerprintVersion",
+            NpgsqlDbType.Integer).Value =
+            (object?)scopeContract?.FingerprintVersion ?? DBNull.Value;
+        cmd.Parameters.Add(
+            "expectedSoloScopeFingerprint",
+            NpgsqlDbType.Text).Value =
+            (object?)scopeContract?.Fingerprint ?? DBNull.Value;
         cmd.Parameters.AddWithValue("id", (int)scrapeId);
         if (cmd.ExecuteNonQuery() != 1)
             throw new InvalidOperationException(
-                $"Scrape run {scrapeId} cannot be completed after it has failed.");
+                $"Scrape run {scrapeId} cannot be completed after failure or with metrics that differ from its acquisition checkpoint.");
     }
 
 
@@ -729,6 +855,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     public ScrapeResumeState? GetScrapeResumeState(long scrapeId)
     {
+        ValidateScrapeId(scrapeId);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -746,7 +873,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     WHERE scrape_id = scrape.id
                       AND criticality = 'publication_critical'
                       AND status <> 'completed'
-                )
+                ),
+                scrape.acquisition_completed_at,
+                scrape.songs_scraped,
+                scrape.total_entries,
+                scrape.total_requests,
+                scrape.total_bytes,
+                scrape.epic_reported_over_100_pages,
+                scrape.expected_solo_scope_count,
+                scrape.expected_solo_scope_fingerprint_version,
+                scrape.expected_solo_scope_fingerprint
             FROM scrape_log scrape
             LEFT JOIN scrape_publication_state publication ON publication.id = TRUE
             WHERE scrape.id = @scrapeId
@@ -761,6 +897,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
         int completeManifestCount;
         int writerFailureCount;
         int criticalPhaseFailureCount;
+        DateTime? acquisitionCompletedAtUtc;
+        int? songsScraped;
+        long? totalEntries;
+        int? totalRequests;
+        long? totalBytes;
+        bool? epicReportedOver100Pages;
+        int? expectedSoloScopeCount;
+        int? expectedSoloScopeFingerprintVersion;
+        string? expectedSoloScopeFingerprint;
         using (var reader = cmd.ExecuteReader())
         {
             if (!reader.Read())
@@ -774,7 +919,77 @@ public sealed partial class MetaDatabase : IMetaDatabase
             completeManifestCount = reader.GetInt32(5);
             writerFailureCount = reader.GetInt32(6);
             criticalPhaseFailureCount = reader.GetInt32(7);
+            acquisitionCompletedAtUtc = reader.IsDBNull(8)
+                ? null
+                : reader.GetDateTime(8);
+            songsScraped = reader.IsDBNull(9)
+                ? null
+                : reader.GetInt32(9);
+            totalEntries = reader.IsDBNull(10)
+                ? null
+                : reader.GetInt32(10);
+            totalRequests = reader.IsDBNull(11)
+                ? null
+                : reader.GetInt32(11);
+            totalBytes = reader.IsDBNull(12)
+                ? null
+                : reader.GetInt64(12);
+            epicReportedOver100Pages = reader.IsDBNull(13)
+                ? null
+                : reader.GetBoolean(13);
+            expectedSoloScopeCount = reader.IsDBNull(14)
+                ? null
+                : reader.GetInt32(14);
+            expectedSoloScopeFingerprintVersion = reader.IsDBNull(15)
+                ? null
+                : reader.GetInt32(15);
+            expectedSoloScopeFingerprint = reader.IsDBNull(16)
+                ? null
+                : reader.GetString(16);
         }
+
+        var publicationCatalog =
+            GetPublicationSongCatalogForScrape(scrapeId);
+        using var manifestKeysCmd = conn.CreateCommand();
+        manifestKeysCmd.CommandText = """
+            SELECT song_id, instrument
+            FROM leaderboard_scope_manifests
+            WHERE scrape_id = @scrapeId
+              AND scope_kind = 'alltime'
+              AND is_complete
+              AND instrument = ANY(@soloInstruments)
+            """;
+        manifestKeysCmd.Parameters.AddWithValue(
+            "scrapeId",
+            (int)scrapeId);
+        manifestKeysCmd.Parameters.AddWithValue(
+            "soloInstruments",
+            GlobalLeaderboardScraper.AllInstruments.ToArray());
+        var actualCompleteSoloPairs =
+            new List<(string SongId, string Instrument)>();
+        using (var reader = manifestKeysCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                actualCompleteSoloPairs.Add((
+                    reader.GetString(0),
+                    reader.GetString(1)));
+            }
+        }
+        var actualScopeContract =
+            SoloAcquisitionScopeFingerprint.Create(
+                actualCompleteSoloPairs);
+        var catalogSongIds = publicationCatalog is null
+            ? null
+            : SongCatalogSnapshotBuilder.DeserializeCatalog(
+                    publicationCatalog.CatalogJson)
+                .Select(static song => song.track.su)
+                .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+                .ToHashSet(StringComparer.Ordinal);
+        var actualCompleteSoloScopeOwnedByCatalog =
+            catalogSongIds is not null
+            && actualCompleteSoloPairs.All(
+                pair => catalogSongIds.Contains(pair.SongId));
 
         using var outcomesCmd = conn.CreateCommand();
         outcomesCmd.CommandText = """
@@ -811,7 +1026,59 @@ public sealed partial class MetaDatabase : IMetaDatabase
             completeManifestCount,
             writerFailureCount,
             criticalPhaseFailureCount,
-            outcomes);
+            outcomes)
+        {
+            AcquisitionCompletedAtUtc = acquisitionCompletedAtUtc,
+            SongsScraped = songsScraped,
+            TotalEntries = totalEntries,
+            TotalRequests = totalRequests,
+            TotalBytes = totalBytes,
+            EpicReportedOver100Pages = epicReportedOver100Pages,
+            PublicationSongCount = publicationCatalog?.SongCount,
+            PublicationSongCatalogIsExact =
+                publicationCatalog is not null,
+            ExpectedSoloScopeCount = expectedSoloScopeCount,
+            ExpectedSoloScopeFingerprintVersion =
+                expectedSoloScopeFingerprintVersion,
+            ExpectedSoloScopeFingerprint =
+                expectedSoloScopeFingerprint,
+            ActualCompleteSoloScopeCount =
+                actualScopeContract.Count,
+            ActualCompleteSoloScopeFingerprint =
+                actualScopeContract.Fingerprint,
+            ActualCompleteSoloScopeOwnedByCatalog =
+                actualCompleteSoloScopeOwnedByCatalog,
+        };
+    }
+
+    private static void ValidateScrapeMetrics(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes)
+    {
+        ValidateScrapeId(scrapeId);
+        if (songsScraped < 0)
+            throw new ArgumentOutOfRangeException(nameof(songsScraped));
+        if (totalEntries is < 0 or > int.MaxValue)
+            throw new ArgumentOutOfRangeException(
+                nameof(totalEntries),
+                $"Scrape total entries must be between 0 and {int.MaxValue} for the current scrape_log contract.");
+        if (totalRequests < 0)
+            throw new ArgumentOutOfRangeException(nameof(totalRequests));
+        if (totalBytes < 0)
+            throw new ArgumentOutOfRangeException(nameof(totalBytes));
+    }
+
+    private static void ValidateScrapeId(long scrapeId)
+    {
+        if (scrapeId is <= 0 or > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scrapeId),
+                $"Scrape ID must be between 1 and {int.MaxValue} for the current scrape_log SERIAL contract.");
+        }
     }
 
     public ScrapeRunInfo? GetLastCompletedScrapeRun()

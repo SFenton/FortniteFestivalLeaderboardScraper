@@ -318,6 +318,8 @@ public sealed class ScraperOptions
     /// </summary>
     public long ResumeScrapeId { get; set; }
 
+    // Retained so rolling deployments can accept older environment files.
+    // Resume metrics are loaded exclusively from the scrape_log checkpoint.
     public int ResumeSongsScraped { get; set; }
     public long ResumeTotalEntries { get; set; }
     public int ResumeTotalRequests { get; set; }

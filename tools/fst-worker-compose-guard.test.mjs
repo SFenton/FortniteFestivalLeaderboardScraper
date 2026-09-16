@@ -32,6 +32,17 @@ const expectedWorkerImageId = "sha256:" + "a".repeat(64);
 const expectedWorkerRevision = "1".repeat(40);
 const immutableWorkerImage =
   "example.invalid/fstworker@sha256:" + "e".repeat(64);
+const canonicalSoloInstruments = [
+  "Solo_Guitar",
+  "Solo_Bass",
+  "Solo_Vocals",
+  "Solo_Drums",
+  "Solo_PeripheralGuitar",
+  "Solo_PeripheralBass",
+  "Solo_PeripheralVocals",
+  "Solo_PeripheralCymbals",
+  "Solo_PeripheralDrums"
+];
 
 function canonicalize(value) {
   if (Array.isArray(value)) {
@@ -54,6 +65,109 @@ function workerConfigSha256(config) {
     .digest("hex");
 }
 
+function soloScopeFingerprint(pairs) {
+  const hash = createHash("sha256");
+  hash.update(Buffer.from("fst-solo-acquisition-scope\0v1\0", "utf8"));
+  const ordered = [...new Set(
+    pairs.map(([songId, instrument]) => `${instrument}\0${songId}`)
+  )]
+    .sort((left, right) => left.localeCompare(right, "en", {
+      sensitivity: "case",
+      numeric: false
+    }))
+    .map((value) => {
+      const [instrument, songId] = value.split("\0");
+      return [songId, instrument];
+    });
+  for (const [songId, instrument] of ordered) {
+    for (const value of [instrument, songId]) {
+      const bytes = Buffer.from(value, "utf8");
+      const length = Buffer.alloc(4);
+      length.writeInt32BE(bytes.length);
+      hash.update(length);
+      hash.update(bytes);
+    }
+  }
+  return hash.digest("hex");
+}
+
+function buildPublicationCatalogJson(songIds) {
+  return JSON.stringify(songIds.map((songId) => ({
+    track: { su: songId }
+  })));
+}
+
+function buildActiveRecoveryResumeState({
+  scrapeId = 1305,
+  publishedScrapeId = 1304,
+  songIds = ["song-a", "song-b"],
+  status = "running",
+  manifestCount = songIds.length * canonicalSoloInstruments.length,
+  completeManifestCount = manifestCount,
+  writerFailureCount = 0,
+  criticalPhaseFailureCount = 0,
+  acquisitionCompletedAtUtc = "2026-08-11T19:30:00Z",
+  songsScraped = songIds.length,
+  totalEntries = 40764011,
+  totalRequests = 409088,
+  totalBytes = 57563653024,
+  epicReportedOver100Pages = true,
+  expectedSoloScopeFingerprintVersion = 1,
+  completeSoloPairs = null,
+  expectedSoloScopeCount = null,
+  expectedSoloScopeFingerprint = null,
+  workingPublicationId = 9001,
+  candidatePublicationId = 9001,
+  candidatePublicationStatus = "building",
+  startupShouldResumeDeferredPublication = false,
+  improvementNotificationsScrapeId = null,
+  improvementNotificationsStatus = null,
+  publicationCatalogSchemaVersion = 1,
+  publicationCatalogVersion = 77,
+  publicationCatalogContentHash = "b".repeat(64),
+  publicationCatalogJson = null
+} = {}) {
+  const pairs = completeSoloPairs ?? songIds.flatMap((songId) =>
+    canonicalSoloInstruments.map((instrument) => [songId, instrument])
+  );
+  const checkpointScopeCount = expectedSoloScopeCount ?? pairs.length;
+  const checkpointFingerprint =
+    expectedSoloScopeFingerprint ?? soloScopeFingerprint(pairs);
+  return {
+    scrapeId,
+    startedAtUtc: "2026-08-11T19:00:00Z",
+    status,
+    publishedScrapeId,
+    workingPublicationId,
+    publicReadsFrozenReason: "post-process",
+    improvementNotificationsScrapeId,
+    improvementNotificationsStatus,
+    candidatePublicationId,
+    candidatePublicationStatus,
+    manifestCount,
+    completeManifestCount,
+    writerFailureCount,
+    criticalPhaseFailureCount,
+    acquisitionCompletedAtUtc,
+    songsScraped,
+    totalEntries,
+    totalRequests,
+    totalBytes,
+    epicReportedOver100Pages,
+    expectedSoloScopeCount: checkpointScopeCount,
+    expectedSoloScopeFingerprintVersion,
+    expectedSoloScopeFingerprint: checkpointFingerprint,
+    publicationCatalogVersion,
+    publicationCatalogSchemaVersion,
+    publicationCatalogContentHash,
+    publicationSongCount: songIds.length,
+    publicationCatalogJson:
+      publicationCatalogJson ?? buildPublicationCatalogJson(songIds),
+    completeSoloPairs: pairs,
+    startupShouldResumeDeferredPublication
+  };
+}
+
 const fakeDockerSource = String.raw`#!/usr/bin/env node
 import {
   appendFileSync,
@@ -72,11 +186,13 @@ const scenarioPath = path.join(root, "scenario.json");
 const runtimePath = path.join(root, "runtime.json");
 const eventPath = path.join(root, "events.log");
 const configPath = path.join(root, "compose.json");
+const runonceConfigPath = path.join(root, "runonce-compose.json");
 const scenario = JSON.parse(readFileSync(scenarioPath, "utf8"));
 const runtime = JSON.parse(readFileSync(runtimePath, "utf8"));
 const args = process.argv.slice(2);
 const defaultWorkerImageId = "sha256:" + "a".repeat(64);
 const defaultWorkerRevision = "1".repeat(40);
+let stdinConfig = null;
 
 function saveRuntime() {
   writeFileSync(runtimePath, JSON.stringify(runtime));
@@ -93,12 +209,33 @@ function workerProfileEnabled(commandArgs) {
   );
 }
 
-function assignWorkerIdentity() {
+function currentComposeConfig(commandArgs) {
+  if (stdinConfig) {
+    return stdinConfig;
+  }
+  if (commandArgs.some((value) => value.endsWith("/docker-compose.runonce.yml") || value === "docker-compose.runonce.yml")) {
+    return JSON.parse(readFileSync(runonceConfigPath, "utf8"));
+  }
+  return JSON.parse(readFileSync(configPath, "utf8"));
+}
+
+function startModeFromConfig(config) {
+  const restart = String(
+    config?.services?.fstworker?.restart ?? ""
+  ).toLowerCase();
+  if (restart === "no") {
+    return "runonce";
+  }
+  const value = String(
+    config?.services?.fstworker?.environment?.Scraper__RunOnce ?? ""
+  ).toLowerCase();
+  return value === "true" ? "runonce" : "continuous";
+}
+
+function assignWorkerIdentity(config) {
   runtime.workerContainerId =
     scenario.createdWorkerContainerId ?? "b".repeat(64);
-  runtime.workerImage =
-    JSON.parse(readFileSync(configPath, "utf8"))
-      .services.fstworker.image;
+  runtime.workerImage = config.services.fstworker.image;
   runtime.workerImageId =
     scenario.createdWorkerImageId
     ?? scenario.resolvedWorkerImageId
@@ -107,6 +244,8 @@ function assignWorkerIdentity() {
     scenario.createdWorkerRevision
     ?? scenario.resolvedWorkerRevision
     ?? defaultWorkerRevision;
+  runtime.lastWorkerStartMode = startModeFromConfig(config);
+  runtime.workerStartedOnce = true;
 }
 
 function containerState(name) {
@@ -126,13 +265,24 @@ function containerState(name) {
 }
 
 function serviceInfo() {
-  const afterWorkerStart = runtime.workerStarted;
+  const mode = runtime.lastWorkerStartMode ?? "continuous";
+  const afterWorkerStart = runtime.workerStarted || runtime.workerStartedOnce;
   const workerReady =
-    afterWorkerStart && scenario.workerBecomesReady !== false;
+    afterWorkerStart
+    && (
+      mode === "runonce"
+        ? scenario.runonceWorkerBecomesReady
+        : scenario.continuousWorkerBecomesReady
+    ) !== false
+    && scenario.workerBecomesReady !== false;
+  const statusPrefix = mode === "runonce"
+    ? "runonce"
+    : "continuous";
   return {
     currentUpdate: {
       status: afterWorkerStart
-        ? scenario.postStartCurrentUpdateStatus
+        ? scenario[statusPrefix + "PostStartCurrentUpdateStatus"]
+          ?? scenario.postStartCurrentUpdateStatus
           ?? scenario.currentUpdateStatus
           ?? "idle"
         : scenario.currentUpdateStatus ?? "idle",
@@ -140,39 +290,76 @@ function serviceInfo() {
     },
     publication: {
       publicReadsFrozen: afterWorkerStart
-        ? scenario.postStartPublicReadsFrozen
+        ? scenario[statusPrefix + "PostStartPublicReadsFrozen"]
+          ?? scenario.postStartPublicReadsFrozen
           ?? scenario.publicReadsFrozen
           ?? false
         : scenario.publicReadsFrozen ?? false,
-      publishedScrapeId: scenario.publishedScrapeId ?? 1304,
-      freezeReason: scenario.freezeReason ?? "post-process"
+      publishedScrapeId: afterWorkerStart
+        ? scenario[statusPrefix + "PostStartPublishedScrapeId"]
+          ?? scenario.postStartPublishedScrapeId
+          ?? scenario.publishedScrapeId
+          ?? 1304
+        : scenario.publishedScrapeId ?? 1304,
+      freezeReason: afterWorkerStart
+        ? scenario[statusPrefix + "PostStartFreezeReason"]
+          ?? scenario.postStartFreezeReason
+          ?? scenario.freezeReason
+          ?? "post-process"
+        : scenario.freezeReason ?? "post-process"
     },
     workerStatus: workerReady
       ? {
           status: "online",
-          instanceId: "new-worker-instance",
-          lastHeartbeatAt: "2026-08-11T20:39:00Z",
-          heartbeatAgeSeconds: 1,
-          staleAfterSeconds: 90
+          instanceId: scenario[statusPrefix + "WorkerInstanceId"]
+            ?? (mode === "runonce"
+              ? "runonce-worker-instance"
+              : "continuous-worker-instance"),
+          lastHeartbeatAt: scenario[statusPrefix + "WorkerHeartbeatAt"]
+            ?? (mode === "runonce"
+              ? "2026-08-11T20:39:00Z"
+              : "2026-08-11T20:40:00Z"),
+          heartbeatAgeSeconds:
+            scenario[statusPrefix + "WorkerHeartbeatAgeSeconds"]
+            ?? 1,
+          staleAfterSeconds:
+            scenario[statusPrefix + "WorkerStaleAfterSeconds"]
+            ?? 90
         }
       : {
           status: scenario.initialWorkerApiStatus ?? "offline",
-          instanceId: "old-worker-instance",
-          lastHeartbeatAt: "2026-08-11T19:00:00Z",
-          heartbeatAgeSeconds: 3600,
-          staleAfterSeconds: 90
+          instanceId:
+            scenario.initialWorkerApiInstanceId ?? "old-worker-instance",
+          lastHeartbeatAt:
+            scenario.initialWorkerHeartbeatAt ?? "2026-08-11T19:00:00Z",
+          heartbeatAgeSeconds:
+            scenario.initialWorkerHeartbeatAgeSeconds ?? 3600,
+          staleAfterSeconds:
+            scenario.initialWorkerStaleAfterSeconds ?? 90
         }
   };
+}
+
+function activeRecoveryDatabaseState() {
+  if (
+    runtime.workerStartedOnce
+    && runtime.lastWorkerStartMode === "runonce"
+    && scenario.postRunonceResumeState
+  ) {
+    return scenario.postRunonceResumeState;
+  }
+  return scenario.resumeState ?? null;
 }
 
 if (args[0] === "compose") {
   if (args.some((value, index) =>
     value === "-f" && args[index + 1] === "-"
   )) {
-    readFileSync(0, "utf8");
+    const stdinText = readFileSync(0, "utf8");
+    stdinConfig = stdinText ? JSON.parse(stdinText) : null;
   }
   if (args.includes("config")) {
-    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    const config = currentComposeConfig(args);
     if (!workerProfileEnabled(args)) {
       delete config.services?.fstworker;
     }
@@ -192,11 +379,12 @@ if (args[0] === "compose") {
     if (scenario.workerCreateFailsBeforeReplacement) {
       process.exit(1);
     }
+    const config = currentComposeConfig(args);
     runtime.workerStarted = false;
     runtime.workerState = "created|none";
     runtime.workerExitCode = 0;
     runtime.workerStartedAt = "0001-01-01T00:00:00Z";
-    assignWorkerIdentity();
+    assignWorkerIdentity(config);
     saveRuntime();
     process.exit(scenario.workerCreateFails ? 1 : 0);
   }
@@ -226,22 +414,40 @@ if (args[0] === "compose") {
         if (scenario.workerCreateFailsBeforeReplacement) {
           process.exit(1);
         }
+        const config = currentComposeConfig(args);
         runtime.workerStarted = false;
         runtime.workerState = "created|none";
         runtime.workerExitCode = 0;
         runtime.workerStartedAt = "0001-01-01T00:00:00Z";
-        assignWorkerIdentity();
+        assignWorkerIdentity(config);
         saveRuntime();
         process.exit(scenario.workerCreateFails ? 1 : 0);
       }
       event("worker-start", ["fstworker"]);
+      const config = currentComposeConfig(args);
+      const mode = startModeFromConfig(config);
       runtime.workerStarted = true;
       runtime.workerState = "running|healthy";
-      runtime.workerExitCode = 0;
+      runtime.workerExitCode = mode === "runonce"
+        ? scenario.runonceWorkerExitCode ?? scenario.workerExitCode ?? 0
+        : scenario.continuousWorkerExitCode ?? scenario.workerExitCode ?? 0;
       runtime.workerStartedAt = "2026-08-11T20:39:00Z";
-      assignWorkerIdentity();
+      assignWorkerIdentity(config);
+      if (
+        mode === "runonce"
+        && (scenario.runonceWorkerExitsImmediately
+          ?? scenario.workerExitsImmediately)
+      ) {
+        runtime.workerStarted = false;
+        runtime.workerState = "exited|none";
+      }
       saveRuntime();
-      process.exit(scenario.workerStartFails ? 1 : 0);
+      const startFails =
+        (mode === "runonce"
+          ? scenario.runonceWorkerStartFails
+          : scenario.continuousWorkerStartFails)
+        ?? scenario.workerStartFails;
+      process.exit(startFails ? 1 : 0);
     }
     if (workerProfileEnabled(args)) {
       process.stderr.write("proxy-only recreate enabled the worker profile\n");
@@ -314,9 +520,18 @@ if (args[0] === "inspect") {
 
 if (args[0] === "start" && args.at(-1) === runtime.workerContainerId) {
   event("worker-start", ["fstworker"]);
+  const mode = runtime.lastWorkerStartMode ?? startModeFromConfig(currentComposeConfig(args));
+  runtime.lastWorkerStartMode = mode;
+  runtime.workerStartedOnce = true;
   runtime.workerStartedAt = "2026-08-11T20:39:00Z";
-  runtime.workerExitCode = scenario.workerExitCode ?? 0;
-  if (scenario.workerExitsImmediately) {
+  runtime.workerExitCode = mode === "runonce"
+    ? scenario.runonceWorkerExitCode ?? scenario.workerExitCode ?? 0
+    : scenario.continuousWorkerExitCode ?? scenario.workerExitCode ?? 0;
+  if (
+    mode === "runonce"
+      ? scenario.runonceWorkerExitsImmediately ?? scenario.workerExitsImmediately
+      : scenario.continuousWorkerExitsImmediately ?? scenario.workerExitsImmediately
+  ) {
     runtime.workerStarted = false;
     runtime.workerState = "exited|none";
   } else {
@@ -329,7 +544,12 @@ if (args[0] === "start" && args.at(-1) === runtime.workerContainerId) {
       setTimeout(resolve, scenario.workerStartDelayMs)
     );
   }
-  process.exit(scenario.workerStartFails ? 1 : 0);
+  const startFails =
+    (mode === "runonce"
+      ? scenario.runonceWorkerStartFails
+      : scenario.continuousWorkerStartFails)
+    ?? scenario.workerStartFails;
+  process.exit(startFails ? 1 : 0);
 }
 
 if (args[0] === "exec") {
@@ -342,6 +562,17 @@ if (args[0] === "exec") {
   }
   if (container === "fstservice" && joined.includes("/api/service-info")) {
     process.stdout.write(JSON.stringify(serviceInfo()));
+    process.exit(0);
+  }
+  if (
+    (container === "fst-postgres" || container === "postgres")
+    && commandArgs[0] === "psql"
+    && joined.includes("fst_boot_active_recovery_state")
+  ) {
+    const state = activeRecoveryDatabaseState();
+    if (state) {
+      process.stdout.write(JSON.stringify(state));
+    }
     process.exit(0);
   }
   if (joined.includes("/v1/vpn/status")) {
@@ -576,20 +807,17 @@ function buildLeaderboardRivalsBatchRunonceConfig({
 
 function buildScrapeResumeRunonceConfig({
   resumeScrapeId = "1305",
-  resumeTotalBytes = "59082543837",
-  rivalsMaxDegreeOfParallelism = "2"
+  rivalsMaxDegreeOfParallelism = "2",
+  workerImage = "example.invalid/fstworker:test"
 } = {}) {
-  const config = buildComposeConfig({ runOnce: true });
+  const config = buildComposeConfig({ runOnce: true, workerImage });
   Object.assign(config.services.fstworker.environment, {
+    Scraper__ApiOnly: "false",
+    Scraper__DisableScraperWorker: "false",
     Scraper__EnabledPhases: "SoloRankings",
     Scraper__RegistrationSyncWorkerOnly: "false",
     Scraper__RegisteredUserRefreshTimeout: "00:00:00",
     Scraper__ResumeScrapeId: resumeScrapeId,
-    Scraper__ResumeSongsScraped: "704",
-    Scraper__ResumeTotalEntries: "40764011",
-    Scraper__ResumeTotalRequests: "409088",
-    Scraper__ResumeTotalBytes: resumeTotalBytes,
-    Scraper__ResumeEpicReportedOver100Pages: "false",
     Scraper__RivalsMaxDegreeOfParallelism:
       rivalsMaxDegreeOfParallelism,
     Features__EnforcePublicationCriticalPhases: "true",
@@ -607,6 +835,7 @@ function buildScrapeResumeRunonceConfig({
 
 async function createHarness({
   config = buildComposeConfig(),
+  runonceConfig = null,
   scenario = {}
 } = {}) {
   const root = await mkdtemp(
@@ -622,17 +851,31 @@ async function createHarness({
   );
 
   await mkdir(binDirectory);
+  const effectiveRunonceConfig = runonceConfig
+    ?? (
+      String(config?.services?.fstworker?.restart ?? "").toLowerCase() === "no"
+        ? config
+        : buildScrapeResumeRunonceConfig({
+            resumeScrapeId: String(scenario.currentScrapeId ?? 1305)
+          })
+    );
   await Promise.all([
     writeFile(path.join(root, "docker-compose.yml"), "services: {}\n"),
     writeFile(path.join(root, "docker-compose.pia-30.yml"), "services: {}\n"),
     writeFile(path.join(root, "docker-compose.runonce.yml"), "services: {}\n"),
     writeFile(path.join(root, "compose.json"), JSON.stringify(config)),
+    writeFile(
+      path.join(root, "runonce-compose.json"),
+      JSON.stringify(effectiveRunonceConfig)
+    ),
     writeFile(path.join(root, "scenario.json"), JSON.stringify(scenario)),
     writeFile(inheritedLockLauncherPath, inheritedLockLauncherSource),
     writeFile(
       path.join(root, "runtime.json"),
       JSON.stringify({
         workerStarted: false,
+        workerStartedOnce: false,
+        lastWorkerStartMode: "continuous",
         workerState: scenario.workerContainerState ?? "exited|none",
         workerContainerId:
           scenario.workerContainerId ?? "c".repeat(64),
@@ -773,6 +1016,56 @@ function composeServiceBlock(compose, serviceName) {
   return nextServiceOffset < 0
     ? compose.slice(start)
     : compose.slice(start, contentStart + nextServiceOffset);
+}
+
+async function createActiveRecoveryHarness({
+  scrapeId = 1305,
+  publishedScrapeId = 1304,
+  scenario = {},
+  resumeState = null,
+  postRunonceResumeState = null,
+  config = null,
+  runonceConfig = null
+} = {}) {
+  const workerImage =
+    config?.services?.fstworker?.image
+    ?? runonceConfig?.services?.fstworker?.image
+    ?? immutableWorkerImage;
+  const continuousConfig = config ?? buildComposeConfig({
+    workerImage
+  });
+  const resumeConfig = runonceConfig ?? buildScrapeResumeRunonceConfig({
+    resumeScrapeId: String(scrapeId),
+    workerImage
+  });
+
+  return createHarness({
+    config: continuousConfig,
+    runonceConfig: resumeConfig,
+    scenario: {
+      currentUpdateStatus: "stalled",
+      currentScrapeId: scrapeId,
+      publicReadsFrozen: true,
+      publishedScrapeId,
+      initialWorkerApiStatus: "offline",
+      resumeState: resumeState
+        ?? buildActiveRecoveryResumeState({
+          scrapeId,
+          publishedScrapeId
+        }),
+      postRunonceResumeState: postRunonceResumeState
+        ?? buildActiveRecoveryResumeState({
+          scrapeId,
+          publishedScrapeId: scrapeId,
+          status: "completed"
+        }),
+      runonceWorkerExitsImmediately: true,
+      runoncePostStartCurrentUpdateStatus: "idle",
+      runoncePostStartPublicReadsFrozen: false,
+      runoncePostStartPublishedScrapeId: scrapeId,
+      ...scenario
+    }
+  });
 }
 
 describe("fstworker Compose startup recovery", () => {
@@ -1121,6 +1414,288 @@ describe("fstworker Compose startup recovery", () => {
       } finally {
         await harness.cleanup();
       }
+    }
+  });
+
+  it("runs active scrape recovery through scrape-resume before restarting the continuous worker", async () => {
+    const harness = await createActiveRecoveryHarness();
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-start|fstworker"
+      ]);
+      assert.match(
+        result.stdout,
+        /recovery=active-candidate scrape=1305 published=1304 mode=scrape-resume/
+      );
+      assert.match(result.stdout, /recovery=ok .*worker=online heartbeat=fresh/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("refuses active scrape recovery for a legacy null checkpoint before any mutation", async () => {
+    const harness = await createActiveRecoveryHarness({
+      resumeState: buildActiveRecoveryResumeState({
+        acquisitionCompletedAtUtc: null,
+        songsScraped: null,
+        totalEntries: null,
+        totalRequests: null,
+        totalBytes: null
+      })
+    });
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /acquisition checkpoint is missing/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("fails active recovery closed for exact checkpoint and publication mismatches", async () => {
+    const cases = [
+      {
+        name: "deferred publication path",
+        resumeState: buildActiveRecoveryResumeState({
+          startupShouldResumeDeferredPublication: true
+        }),
+        expected: /should resume through the existing deferred-publication startup path/
+      },
+      {
+        name: "incomplete manifests",
+        resumeState: buildActiveRecoveryResumeState({
+          completeManifestCount: 17,
+          manifestCount: 18
+        }),
+        expected: /manifests are incomplete/
+      },
+      {
+        name: "writer failures",
+        resumeState: buildActiveRecoveryResumeState({
+          writerFailureCount: 1
+        }),
+        expected: /has writer failures/
+      },
+      {
+        name: "critical failures",
+        resumeState: buildActiveRecoveryResumeState({
+          criticalPhaseFailureCount: 1
+        }),
+        expected: /has publication-critical failures/
+      },
+      {
+        name: "wrong fingerprint version",
+        resumeState: buildActiveRecoveryResumeState({
+          expectedSoloScopeFingerprintVersion: 2
+        }),
+        expected: /fingerprint version is unsupported/
+      },
+      {
+        name: "wrong scope count",
+        resumeState: buildActiveRecoveryResumeState({
+          expectedSoloScopeCount: 17
+        }),
+        expected: /scope count does not cover the exact catalog and canonical instruments/
+      },
+      {
+        name: "reduced solo scope",
+        resumeState: buildActiveRecoveryResumeState({
+          completeSoloPairs: [["song-a", "Solo_Guitar"]]
+        }),
+        expected: /scope count does not cover the exact catalog and canonical instruments/
+      },
+      {
+        name: "nonpositive persisted requests",
+        resumeState: buildActiveRecoveryResumeState({
+          totalRequests: 0
+        }),
+        expected: /totalRequests must be a positive persisted value/
+      }
+    ];
+
+    for (const testCase of cases) {
+      const harness = await createActiveRecoveryHarness({
+        resumeState: testCase.resumeState
+      });
+      try {
+        const result = await harness.run(["--recover-start"]);
+        assert.notEqual(result.code, 0, testCase.name);
+        assert.deepEqual(await harness.events(), [], testCase.name);
+        assert.match(result.stderr, testCase.expected, testCase.name);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
+  it("refuses active recovery when the prior worker heartbeat is still fresh", async () => {
+    const harness = await createActiveRecoveryHarness({
+      scenario: {
+        initialWorkerApiStatus: "online",
+        initialWorkerHeartbeatAgeSeconds: 1,
+        initialWorkerStaleAfterSeconds: 90
+      }
+    });
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /prior worker heartbeat to be stale or offline/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("fails active recovery before mutation when the run-once image or config drifts", async () => {
+    const wrongImageHarness = await createActiveRecoveryHarness({
+      config: buildComposeConfig({ workerImage: immutableWorkerImage }),
+      runonceConfig: buildScrapeResumeRunonceConfig({
+        resumeScrapeId: "1305",
+        workerImage: "example.invalid/fstworker@sha256:" + "d".repeat(64)
+      })
+    });
+    try {
+      const result = await wrongImageHarness.run(["--recover-start"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await wrongImageHarness.events(), []);
+      assert.match(
+        result.stderr,
+        /recovery run-once worker image must match/
+      );
+    } finally {
+      await wrongImageHarness.cleanup();
+    }
+
+    const mismatchedConfig = buildScrapeResumeRunonceConfig({
+      resumeScrapeId: "1305",
+      workerImage: immutableWorkerImage
+    });
+    mismatchedConfig.services.fstworker.environment.Features__WriteLogicalLeaderboardVersions =
+      "true";
+    const configHarness = await createActiveRecoveryHarness({
+      runonceConfig: mismatchedConfig
+    });
+    try {
+      const result = await configHarness.run(["--recover-start"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await configHarness.events(), []);
+      assert.match(
+        result.stderr,
+        /Features__WriteLogicalLeaderboardVersions=false|active recovery could not start the scrape-resume worker|configuration hash does not match/
+      );
+    } finally {
+      await configHarness.cleanup();
+    }
+  });
+
+  it("fails active recovery closed when the run-once worker exits without publication convergence", async () => {
+    const harness = await createActiveRecoveryHarness({
+      postRunonceResumeState: buildActiveRecoveryResumeState({
+        status: "running"
+      }),
+      scenario: {
+        runoncePostStartCurrentUpdateStatus: "stalled",
+        runoncePostStartPublicReadsFrozen: true,
+        runoncePostStartPublishedScrapeId: 1304
+      }
+    });
+    try {
+      const result = await harness.run(
+        ["--recover-start"],
+        { FST_WORKER_RECOVERY_TOTAL_DEADLINE_SECONDS: "3" }
+      );
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(
+        result.stderr,
+        /exceeded its total deadline before publication convergence/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("routes SIGTERM through the active recovery leave-running safeguard once work has begun", async () => {
+    const harness = await createActiveRecoveryHarness({
+      postRunonceResumeState: buildActiveRecoveryResumeState({
+        status: "running"
+      }),
+      scenario: {
+        runonceWorkerExitsImmediately: false,
+        runonceWorkerBecomesReady: false,
+        runoncePostStartCurrentUpdateStatus: "stalled",
+        runoncePostStartPublicReadsFrozen: true,
+        runoncePostStartPublishedScrapeId: 1304
+      }
+    });
+    const child = harness.spawnGuard(
+      ["--recover-start"],
+      {
+        FST_WORKER_RECOVERY_TOTAL_DEADLINE_SECONDS: "30"
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    try {
+      await waitFor(async () =>
+        (await harness.events()).includes("worker-start|fstworker")
+      );
+      const exitPromise = once(child, "exit");
+      assert.equal(child.kill("SIGTERM"), true);
+      const [code, signal] = await exitPromise;
+      assert.equal(code, 143, stderr || stdout);
+      assert.equal(signal, null);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(stderr, /leaving the worker running/);
+    } finally {
+      if (child.exitCode == null && child.signalCode == null) {
+        child.kill("SIGTERM");
+        await once(child, "exit");
+      }
+      await harness.cleanup();
+    }
+  });
+
+  it("starts the continuous worker directly when startup needs deferred publication recovery", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ workerImage: immutableWorkerImage }),
+      scenario: {
+        currentUpdateStatus: "idle",
+        publicReadsFrozen: true,
+        freezeReason: "publication-commit-deferred",
+        publishedScrapeId: 1305
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recover-start",
+        "--expected-worker-image",
+        immutableWorkerImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        expectedWorkerRevision,
+        "--expected-worker-config-sha256",
+        workerConfigSha256(buildComposeConfig({ workerImage: immutableWorkerImage }))
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(result.stdout, /reads=frozen deferred-publication=1305/);
+    } finally {
+      await harness.cleanup();
     }
   });
 
@@ -1836,7 +2411,7 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  it("accepts a guarded scrape resume with exact metrics and rivals cap", async () => {
+  it("accepts a guarded scrape resume with persisted metrics and rivals cap", async () => {
     const harness = await createHarness({
       config: buildScrapeResumeRunonceConfig()
     });
@@ -1857,27 +2432,88 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  it("rejects a scrape resume without positive persisted metrics", async () => {
-    for (const config of [
-      buildScrapeResumeRunonceConfig({ resumeScrapeId: "0" }),
-      buildScrapeResumeRunonceConfig({ resumeTotalBytes: "0" })
-    ]) {
-      const harness = await createHarness({ config });
+  it("rejects scrape-resume on non-full-worker hosting modes before any mutation", async () => {
+    const cases = [
+      {
+        name: "api-only",
+        key: "Scraper__ApiOnly",
+        value: "true",
+        expected: /Scraper__ApiOnly=false/
+      },
+      {
+        name: "frontend-only",
+        key: "Scraper__DisableScraperWorker",
+        value: "true",
+        expected: /Scraper__DisableScraperWorker=false/
+      },
+      {
+        name: "registration-sync-only",
+        key: "Scraper__RegistrationSyncWorkerOnly",
+        value: "true",
+        expected: /Scraper__RegistrationSyncWorkerOnly=false/
+      }
+    ];
+
+    for (const testCase of cases) {
+      const runonceConfig = buildScrapeResumeRunonceConfig({
+        workerImage: immutableWorkerImage
+      });
+      runonceConfig.services.fstworker.environment[testCase.key] =
+        testCase.value;
+
+      const genericHarness = await createHarness({
+        config: runonceConfig
+      });
       try {
-        const result = await harness.run([
-          "--check-runonce",
-          "--config-only",
+        const result = await genericHarness.run([
+          "--recreate-runonce",
           "--data-profile",
           "scrape-resume",
           "--expected-worker-image",
-          "example.invalid/fstworker:test"
+          immutableWorkerImage
         ]);
-        assert.notEqual(result.code, 0);
-        assert.deepEqual(await harness.events(), []);
-        assert.match(result.stderr, /must be greater than zero/);
+        assert.notEqual(result.code, 0, testCase.name);
+        assert.deepEqual(await genericHarness.events(), [], testCase.name);
+        assert.match(result.stderr, testCase.expected, testCase.name);
       } finally {
-        await harness.cleanup();
+        await genericHarness.cleanup();
       }
+
+      const activeHarness = await createActiveRecoveryHarness({
+        config: buildComposeConfig({
+          workerImage: immutableWorkerImage
+        }),
+        runonceConfig
+      });
+      try {
+        const result = await activeHarness.run(["--recover-start"]);
+        assert.notEqual(result.code, 0, testCase.name);
+        assert.deepEqual(await activeHarness.events(), [], testCase.name);
+        assert.match(result.stderr, testCase.expected, testCase.name);
+      } finally {
+        await activeHarness.cleanup();
+      }
+    }
+  });
+
+  it("rejects a scrape resume without a positive scrape id", async () => {
+    const harness = await createHarness({
+      config: buildScrapeResumeRunonceConfig({ resumeScrapeId: "0" })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "scrape-resume",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /must be greater than zero/);
+    } finally {
+      await harness.cleanup();
     }
   });
 
@@ -2086,7 +2722,7 @@ describe("fstworker Compose startup recovery", () => {
   it("rejects a run-once worker that retains the continuous restart policy", async () => {
     const config = buildRunonceComposeConfig();
     config.services.fstworker.restart = "on-failure:5";
-    const harness = await createHarness({ config });
+    const harness = await createHarness({ runonceConfig: config });
     try {
       const result = await harness.run([
         "--check-runonce",

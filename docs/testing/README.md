@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-12
-last_verified_commit: c0b30c41
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -149,6 +149,27 @@ checkpoint progress, attempted-subject fairness, retryable exact
 invalid-leaderboard handling, adaptive-limiter cleanup, durable configuration
 identity, option validation, and the unchanged resilient HTTP cancellation
 contract.
+
+Focused scrape acquisition checkpoint and restart-resume validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~MetaDatabaseTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~ScraperWorkerTests|FullyQualifiedName~ScraperWorkerStatefulTests'
+
+node --test tools/fst-worker-compose-guard.test.mjs
+```
+
+This proves idempotent bounded schema initialization, atomic persistence of all
+four acquisition totals plus the exact versioned solo-scope count/fingerprint,
+scrape-bound complete-solo manifest reads, catalog ownership, exclusion of band
+and other-scrape manifests, rejection of missing/reduced/mismatched scope and
+partial/negative/overflowed or drifted metrics, checkpoint calls only after all
+orchestrator gates, non-synthetic legacy completion, reuse of persisted values
+in the resumed result, early rejection when any canonical solo `Scraper:Query*`
+flag is disabled for resume post-processing, explicit full-worker host refusal
+for `scrape-resume` guard paths (`ApiOnly`, disabled scraper worker, and
+registration-sync-only), and removal of operator-supplied metric estimates
+from guard admission.
 
 Focused snapshot-retention policy validation:
 
