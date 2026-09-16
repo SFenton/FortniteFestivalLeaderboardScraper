@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-12
-last_verified_commit: c0b30c41
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
@@ -51,6 +51,7 @@ sources:
   - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/Replay/
@@ -111,13 +112,22 @@ the worker. The guarded host startup path owns that transition. Run-once
 merges retain `restart: no`.
 
 The host then runs `tools/fst-worker-compose-guard.sh --recover-start`. That
-action validates the continuous baseline and exact effective arrays, refuses
-active/frozen work, requires the worker profile and restart policy, performs
-bounded effective-proxy recovery and qualification, and recreates only
-`fstworker` with `--no-deps`. The guard explicitly supplies `--profile worker`
-both when resolving merged config and when targeting the worker start. Success
-additionally requires a healthy worker container and a new fresh heartbeat
-through `/api/service-info`.
+action validates the continuous baseline and exact effective arrays, requires
+the worker profile and restart policy, and then chooses one of two safe boot
+paths under the same nonblocking worker-mutation lock. Idle and unfrozen state
+keeps the existing bounded effective-proxy recovery, runtime qualification, and
+continuous `fstworker` recreate with `--no-deps`. A stopped/absent worker plus
+an `updating` or `stalled` exact current scrape, frozen reads with
+`freezeReason=post-process`, a different published scrape, and a stale/offline
+prior worker heartbeat instead enters active-candidate recovery: the guard
+loads the candidate's durable PostgreSQL resume state, validates the exact
+acquisition checkpoint and canonical solo scope contract, runs the existing
+`scrape-resume` run-once profile, waits for publication and unfreeze
+convergence, and only then recreates the continuous worker. The guard
+explicitly supplies `--profile worker` both when resolving merged config and
+when targeting worker starts. Success additionally requires a healthy
+continuous worker container and a new fresh heartbeat through
+`/api/service-info`.
 
 The in-worker Gluetun recycler remains responsible for tunnel failures after
 startup; it is not the boot healer. Recovery failure keeps or returns the
@@ -129,21 +139,41 @@ profiles are run-once-only and are not continuous startup authorization.
 
 An interrupted candidate with complete manifests and zero writer/critical
 failures uses the guard data profile `scrape-resume`. The profile authorizes
-only `SoloRankings` run-once recovery, requires positive persisted scrape
-metrics, full-worker mode, the publication correctness and snapshot-reuse
-gates, and `Scraper:RivalsMaxDegreeOfParallelism=2`. It rejects normal scrape
-phases, zero/missing resume metrics, a different account cap, logical-version
-or stored-rank candidates, and retention rewriting. The worker then validates
-`ResumeScrapeId` against durable state, reloads the candidate's immutable song
-catalog, skips network/writer phases, reruns the solo-leaderboards chain, and
-retains the existing freeze until publication or durable failure isolation.
-Before a full guard check or recreate, the live preflight also requires the
-worker container stopped, `currentUpdate.status` equal to `updating` or
-`stalled`, the exact configured resume scrape ID, public reads still frozen,
-freeze reason exactly `post-process`, and a different currently published
-scrape ID. A gracefully stopped
-interrupted worker normally reports `stalled`; both states are
-resume-eligible only for the same exact candidate.
+only `SoloRankings` run-once recovery, requires a positive
+`Scraper:ResumeScrapeId`, explicit full-worker hosting
+(`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
+publication correctness and snapshot-reuse gates, and
+`Scraper:RivalsMaxDegreeOfParallelism=2`. The four acquisition totals and Epic
+page-count signal are not operator inputs: the worker loads them from the
+exact scrape's atomic PostgreSQL acquisition
+checkpoint. It rejects normal scrape phases, a missing/partial/invalid
+checkpoint, a band-only or reduced-solo acquisition, a count/fingerprint
+mismatch in the requested scrape's complete all-time solo manifests, a
+manifest song outside the exact publication catalog, a different account cap,
+logical-version or stored-rank candidates, and retention rewriting. Band
+manifests are excluded from the resume-scope comparison. The worker then
+validates the scrape ID against durable state, reloads the candidate's immutable
+song catalog, skips network/writer phases, reruns the solo-leaderboards chain
+with the persisted metrics, and retains the existing freeze until publication
+or durable failure isolation. Normal terminal completion never manufactures a
+missing acquisition checkpoint; legacy completed rows therefore remain
+non-resumable.
+The in-worker `ValidateResumeScrape` admission now also rejects any reduced
+canonical solo query scope before post-processing starts: every
+`Scraper:Query*` flag backing
+`GlobalLeaderboardScraper.AllInstruments` must remain enabled so resume
+post-processing cannot silently diverge from the exact acquisition checkpoint.
+Before a full run-once guard check or recreate, the live preflight also
+requires the worker container stopped, `currentUpdate.status` equal to
+`updating` or `stalled`, the exact configured resume scrape ID, public reads
+still frozen, freeze reason exactly `post-process`, and a different currently
+published scrape ID. A gracefully stopped interrupted worker normally reports
+`stalled`; both states are resume-eligible only for the same exact candidate.
+`--recover-start` applies the same durable-candidate gate automatically during
+boot before it mutates proxies or worker state. Legacy rows without the atomic
+acquisition checkpoint, including scrape `1399`, are intentionally refused and
+remain frozen until an operator chooses another recovery path.
 
 Resume and ordinary scrape contexts both carry the immutable song catalog
 selected for their publication. Cleanup precompute must serialize canonical

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -27,6 +27,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
@@ -141,6 +142,18 @@ read-serving health does not admit the next scrape or imply source readiness.
 5. **Network and writer phases**
    - `ScrapeOrchestrator` performs enabled solo/band work and persists candidate
      results through disk-spool or bounded online writers.
+   - After the solo coverage manifest, any band manifest, and every writer gate
+     succeeds, one `scrape_log` update atomically records
+     `acquisition_completed_at`, songs scraped, entries, logical requests,
+     bytes, the Epic page-count signal, and the versioned SHA-256 fingerprint
+     plus count of the exact expected solo `(song_id, instrument)` set.
+     Band-only, empty-solo, reduced-solo, incomplete-manifest, and writer-failed
+     passes do not receive a resume-eligible checkpoint. This is the
+     authoritative acquisition/core checkpoint used by restart recovery;
+     post-processing starts only after it commits.
+   - Terminal completion compares a pre-existing checkpoint and exact solo
+     scope contract when one exists. It never creates the acquisition marker
+     or scope contract for legacy/uncheckpointed rows.
    - Before a snapshot write, generation creation takes the shared
      partition-DDL advisory lock. An active retention/restore hold blocks both
      returning and creating the exact generation; committed DROP evidence also

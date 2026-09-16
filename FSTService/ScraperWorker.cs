@@ -979,6 +979,7 @@ public sealed class ScraperWorker : BackgroundService
             throw new InvalidOperationException(
                 $"Scrape recovery requires exactly the solo leaderboard phases; resolved {ScrapePhaseResolver.Format(resolvedPhases)}.");
         }
+        ValidateResumeCanonicalSoloScope(options);
         if (state is null || state.ScrapeId != options.ResumeScrapeId)
             throw new InvalidOperationException($"Scrape {options.ResumeScrapeId} does not exist.");
         if (!state.CanResume)
@@ -987,15 +988,70 @@ public sealed class ScraperWorker : BackgroundService
                 $"Scrape {state.ScrapeId} cannot resume: status={state.Status}, " +
                 $"manifests={state.CompleteManifestCount}/{state.ManifestCount}, " +
                 $"writerFailures={state.WriterFailureCount}, criticalFailures={state.CriticalPhaseFailureCount}, " +
-                $"published={state.PublishedScrapeId?.ToString() ?? "none"}.");
+                $"published={state.PublishedScrapeId?.ToString() ?? "none"}, " +
+                $"acquisitionMetrics={state.AcquisitionMetricsValidationError ?? "valid"}.");
         }
-        if (options.ResumeSongsScraped <= 0
-            || options.ResumeTotalEntries <= 0
-            || options.ResumeTotalRequests <= 0
-            || options.ResumeTotalBytes <= 0)
+    }
+
+    private static void ValidateResumeCanonicalSoloScope(
+        ScraperOptions options)
+    {
+        var enabledInstruments = GetEnabledInstruments(options);
+        var canonicalInstruments =
+            GlobalLeaderboardScraper.AllInstruments;
+
+        if (enabledInstruments.Count == canonicalInstruments.Count
+            && enabledInstruments.SequenceEqual(canonicalInstruments))
         {
-            throw new InvalidOperationException("Scrape recovery requires persisted positive scrape metrics.");
+            return;
         }
+
+        var missingInstruments = canonicalInstruments
+            .Except(enabledInstruments)
+            .ToArray();
+        var unexpectedInstruments = enabledInstruments
+            .Except(canonicalInstruments)
+            .ToArray();
+
+        throw new InvalidOperationException(
+            "Scrape recovery requires every canonical solo query flag " +
+            "enabled so the post-processing scope exactly matches the " +
+            "acquisition checkpoint; missing="
+            + FormatInstrumentList(missingInstruments)
+            + ", unexpected="
+            + FormatInstrumentList(unexpectedInstruments)
+            + ".");
+    }
+
+    private static string FormatInstrumentList(
+        IReadOnlyCollection<string> instruments) =>
+        instruments.Count == 0
+            ? "none"
+            : string.Join(",", instruments);
+
+    internal static ScrapePassResult CreateResumeScrapeResult(
+        ScrapeResumeState state,
+        ScrapePassContext context,
+        DateTime nowUtc)
+    {
+        if (state.AcquisitionMetricsValidationError is { } error)
+        {
+            throw new InvalidOperationException(
+                $"Scrape {state.ScrapeId} cannot resume: {error}.");
+        }
+
+        return new ScrapePassResult
+        {
+            Context = context,
+            ScrapeId = state.ScrapeId,
+            SongsScraped = state.SongsScraped!.Value,
+            TotalEntries = state.TotalEntries!.Value,
+            TotalRequests = state.TotalRequests!.Value,
+            TotalBytes = state.TotalBytes!.Value,
+            EpicReportedOver100Pages =
+                state.EpicReportedOver100Pages!.Value,
+            ScrapeDuration = nowUtc - state.StartedAtUtc,
+        };
     }
 
     internal ScrapeCatalogSelection LoadResumeSongCatalog(
@@ -1343,7 +1399,8 @@ public sealed class ScraperWorker : BackgroundService
                 PublicationCatalogSongs =
                     passService.Songs.ToArray(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
-                EpicReportedOver100Pages = resumeState is not null && opts.ResumeEpicReportedOver100Pages,
+                EpicReportedOver100Pages =
+                    resumeState?.EpicReportedOver100Pages ?? false,
                 LeaderboardScrapeCompleted = !anyScrapePhase,
             };
 
@@ -1355,17 +1412,10 @@ public sealed class ScraperWorker : BackgroundService
                         RehydratePhaseOutcome(outcome));
                 }
 
-                result = new ScrapePassResult
-                {
-                    Context = ctx,
-                    ScrapeId = resumeState.ScrapeId,
-                    SongsScraped = opts.ResumeSongsScraped,
-                    TotalEntries = opts.ResumeTotalEntries,
-                    TotalRequests = opts.ResumeTotalRequests,
-                    TotalBytes = opts.ResumeTotalBytes,
-                    EpicReportedOver100Pages = opts.ResumeEpicReportedOver100Pages,
-                    ScrapeDuration = DateTime.UtcNow - resumeState.StartedAtUtc,
-                };
+                result = CreateResumeScrapeResult(
+                    resumeState,
+                    ctx,
+                    DateTime.UtcNow);
                 _log.LogWarning(
                     "Resuming scrape {ScrapeId} from durable network/writer state with phases {Phases}.",
                     resumeState.ScrapeId,
@@ -1619,7 +1669,10 @@ public sealed class ScraperWorker : BackgroundService
                             result.TotalEntries,
                             result.TotalRequests,
                             result.TotalBytes,
-                            result.EpicReportedOver100Pages);
+                            result.EpicReportedOver100Pages,
+                            ScrapeOrchestrator
+                                .BuildExpectedSoloLeaderboardPairs(
+                                    result.Context.ScrapeRequests));
                         _workerStatus?.UpdateOperation(
                             "scrape.publication",
                             subOperation: "preparing_publication_candidate");

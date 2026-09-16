@@ -17,7 +17,24 @@ public interface IMetaDatabase : IDisposable
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();
     long StartScrapeRun(SongCatalogPersistenceToken expectedCatalog);
-    void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
+    void RecordScrapeAcquisitionCheckpoint(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedSoloLeaderboardPairs,
+        bool epicReportedOver100Pages = false);
+    void CompleteScrapeRun(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        bool epicReportedOver100Pages = false,
+        IReadOnlyCollection<(string SongId, string Instrument)>?
+            expectedSoloLeaderboardPairs = null);
     void FailScrapeRun(
         long scrapeId,
         string phase,

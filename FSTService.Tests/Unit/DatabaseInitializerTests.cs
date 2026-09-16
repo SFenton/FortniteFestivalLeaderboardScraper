@@ -88,6 +88,154 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_idempotent_scrape_acquisition_checkpoint()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name = 'acquisition_completed_at'
+                      AND data_type = 'timestamp with time zone'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name = 'expected_solo_scope_count'
+                      AND data_type = 'integer'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name =
+                          'expected_solo_scope_fingerprint_version'
+                      AND data_type = 'integer'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name =
+                          'expected_solo_scope_fingerprint'
+                      AND data_type = 'text'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'scrape_log'::regclass
+                      AND conname =
+                          'ck_scrape_log_acquisition_checkpoint'
+                      AND convalidated
+                )
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+        Assert.True(reader.GetBoolean(4));
+    }
+
+    [Fact]
+    public void ScrapeAcquisitionCheckpoint_schema_step_is_bounded()
+    {
+        var step = DatabaseInitializer
+            .GetSchemaInitializationPlan()
+            .Single(static candidate =>
+                candidate.Name ==
+                    "scrape-acquisition-checkpoint");
+
+        Assert.True(step.UseShortTransaction);
+        Assert.Equal("2s", step.LockTimeout);
+        Assert.Equal("15s", step.StatementTimeout);
+        Assert.Equal(20, step.CommandTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task AcquisitionCheckpointMigration_preserves_legacy_partial_rows_as_noncheckpointed()
+    {
+        long scrapeId;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                ALTER TABLE scrape_log
+                    DROP CONSTRAINT
+                        ck_scrape_log_acquisition_checkpoint;
+                ALTER TABLE scrape_log
+                    DROP COLUMN acquisition_completed_at;
+                ALTER TABLE scrape_log
+                    DROP COLUMN expected_solo_scope_count;
+                ALTER TABLE scrape_log
+                    DROP COLUMN expected_solo_scope_fingerprint_version;
+                ALTER TABLE scrape_log
+                    DROP COLUMN expected_solo_scope_fingerprint;
+                INSERT INTO scrape_log (
+                    started_at,
+                    songs_scraped,
+                    status)
+                VALUES (
+                    now(),
+                    1,
+                    'running')
+                RETURNING id
+                """;
+            scrapeId = Convert.ToInt64(
+                command.ExecuteScalar());
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+
+        using var verifyConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                acquisition_completed_at,
+                songs_scraped,
+                total_entries,
+                total_requests,
+                total_bytes,
+                expected_solo_scope_count,
+                expected_solo_scope_fingerprint_version,
+                expected_solo_scope_fingerprint
+            FROM scrape_log
+            WHERE id = @scrapeId
+            """;
+        verify.Parameters.AddWithValue(
+            "scrapeId",
+            scrapeId);
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.IsDBNull(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.True(reader.IsDBNull(5));
+        Assert.True(reader.IsDBNull(6));
+        Assert.True(reader.IsDBNull(7));
+    }
+
+    [Fact]
     public async Task CheckHealthAsync_BeforeInit_ReturnsUnhealthy()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);
@@ -1013,6 +1161,7 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "scrape-acquisition-checkpoint",
                 "publication-generation-retirement-columns",
                 "publication-generation-foreign-keys",
                 "publication-generation-retirement-index",
@@ -1055,7 +1204,7 @@ public class DatabaseInitializerTests : IDisposable
             "ix_publication_generations_retired_scrape",
             plan[2].Sql,
             StringComparison.Ordinal);
-        var retirementColumns = plan[3];
+        var retirementColumns = plan[4];
         Assert.True(retirementColumns.UseShortTransaction);
         Assert.Equal(20, retirementColumns.CommandTimeoutSeconds);
         Assert.Equal("2s", retirementColumns.LockTimeout);
@@ -1068,7 +1217,7 @@ public class DatabaseInitializerTests : IDisposable
             "ADD COLUMN IF NOT EXISTS retired_scrape_id",
             retirementColumns.Sql,
             StringComparison.Ordinal);
-        var publicationForeignKeys = plan[4];
+        var publicationForeignKeys = plan[5];
         Assert.True(publicationForeignKeys.UseShortTransaction);
         Assert.Equal(20, publicationForeignKeys.CommandTimeoutSeconds);
         Assert.Equal("2s", publicationForeignKeys.LockTimeout);
@@ -1081,7 +1230,7 @@ public class DatabaseInitializerTests : IDisposable
             "ON DELETE RESTRICT",
             publicationForeignKeys.Sql,
             StringComparison.Ordinal);
-        var retirementIndex = plan[5];
+        var retirementIndex = plan[6];
         Assert.False(retirementIndex.UseShortTransaction);
         Assert.True(retirementIndex.UseConcurrentIndex);
         Assert.Equal(20, retirementIndex.CommandTimeoutSeconds);
@@ -1107,7 +1256,7 @@ public class DatabaseInitializerTests : IDisposable
             PublicationGenerationRetirementSchemaMigration
                 .DropIndexSql,
             retirementIndex.CleanupSql);
-        var pathArtifacts = plan[6];
+        var pathArtifacts = plan[7];
         Assert.True(pathArtifacts.UseShortTransaction);
         Assert.Equal(20, pathArtifacts.CommandTimeoutSeconds);
         Assert.Equal("2s", pathArtifacts.LockTimeout);
@@ -1115,12 +1264,12 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             PublicationPathArtifactSchema.Sql,
             pathArtifacts.Sql);
-        var retention = plan[7];
+        var retention = plan[8];
         Assert.True(retention.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationRetentionSchema.Sql,
             retention.Sql);
-        var retirementControl = plan[8];
+        var retirementControl = plan[9];
         Assert.True(retirementControl.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationRetirementSchema.Sql,
@@ -1128,7 +1277,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, retirementControl.CommandTimeoutSeconds);
         Assert.Equal("2s", retirementControl.LockTimeout);
         Assert.Equal("15s", retirementControl.StatementTimeout);
-        var quarantine = plan[9];
+        var quarantine = plan[10];
         Assert.True(quarantine.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationQuarantineSchema.Sql,
@@ -1136,7 +1285,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, quarantine.CommandTimeoutSeconds);
         Assert.Equal("2s", quarantine.LockTimeout);
         Assert.Equal("15s", quarantine.StatementTimeout);
-        var drop = plan[10];
+        var drop = plan[11];
         Assert.True(drop.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationDropSchema.Sql,
@@ -1144,7 +1293,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, drop.CommandTimeoutSeconds);
         Assert.Equal("2s", drop.LockTimeout);
         Assert.Equal("15s", drop.StatementTimeout);
-        var maxScoreMaintenance = plan[11];
+        var maxScoreMaintenance = plan[12];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

@@ -57,13 +57,21 @@ wiring the boot unit remain production operations; repository templates do not
 install or mutate that live wiring.
 
 `--recover-start` does not recreate or restart core services. It requires
-PostgreSQL and `fstservice` to be healthy/ready, checks that worker/publication
-state is safe, converges only the effective proxy set, runs the full proxy
-qualification probes, and finally recreates only `fstworker` with `--no-deps`.
-Failure leaves the public service, web, and database containers under their
-normal ownership. A failed start stops the worker only while operational state
-remains idle and unfrozen; if work or a freeze has begun, the worker remains
-running for the guarded no-progress recovery procedure.
+PostgreSQL and `fstservice` to be healthy/ready, validates the continuous
+worker image/config binding, and then branches under the same shared
+worker-mutation lock. Idle and unfrozen state keeps the existing bounded
+effective-proxy recovery, runtime qualification, and continuous worker
+recreate path. A stopped/absent worker plus exact active-candidate state
+(`currentUpdate.status` `updating` or `stalled`, frozen reads with
+`freezeReason=post-process`, a different published scrape, and a stale/offline
+prior worker heartbeat) instead loads the durable PostgreSQL resume state,
+rejects legacy/null/incomplete checkpoints, starts only the existing
+`scrape-resume` run-once worker, waits for publication and unfreeze
+convergence, and only then recreates the continuous worker. Failure leaves the
+public service, web, and database containers under their normal ownership. A
+failed start stops the worker only while operational state remains idle and
+unfrozen; if work or a freeze has begun, the worker remains running for the
+guarded no-progress recovery procedure.
 
 This two-step boundary is necessary because a Docker restart policy does not
 start a dependent that never passed `service_healthy`. Do not replace it with a

@@ -488,9 +488,11 @@ Before proxy mutation it verifies:
 - the guard-only `worker` profile and continuous `on-failure:5` policy;
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;
-- a stopped/absent worker container;
-- `currentUpdate.status=idle`;
-- unfrozen public reads.
+- a stopped/absent worker container before either boot lane may start;
+- either idle/unfrozen ordinary startup state or the exact active-candidate
+  recovery state (`currentUpdate.status` `updating` or `stalled`,
+  `freezeReason=post-process`, a different published scrape, and a stale or
+  offline prior worker heartbeat).
 
 The initial and post-recreate proxy windows are finite, proxy recreates are
 effective-set-only and capped, and worker startup happens only after all runtime
@@ -498,6 +500,27 @@ probes pass. A 1,800-second total deadline also caps core readiness, proxy
 convergence, runtime DNS/control/egress qualification, and worker readiness.
 It never clears a freeze, rewrites publication state, restarts core services,
 changes provider selectors, promotes spares, or installs static endpoint IPs.
+
+If the active lane is selected, the guard next issues bounded read-only
+PostgreSQL queries through the live `fst-postgres` container, validates the
+candidate's exact acquisition checkpoint version, positive persisted metrics,
+canonical solo-scope count/fingerprint, complete manifests, zero writer
+failures, zero publication-critical failures, exact publication/catalog
+identity, and absence of another ready/deferred publication path that should be
+resumed instead. Legacy or partial rows are refused without mutation. Scrape
+`1399` is the canonical example: its legacy null
+`songs_scraped`/`total_entries`/`total_requests`/`total_bytes` values and
+missing checkpoint fields make it intentionally unrecoverable by boot
+automation, and the guard must not synthesize replacements.
+
+On active-candidate admission the guard binds the exact current worker image
+reference, local image ID, OCI revision, and the non-image hashes of both the
+continuous and run-once merged worker configurations before any start. It then
+starts only the existing `scrape-resume` run-once profile, waits for durable
+publication success plus unfreeze while the same lock remains held, and only
+after that success snapshot reruns idle/unfrozen safety checks and recreates
+the continuous worker. Any timeout, mismatch, signal, durable failure,
+publication drift, or core/proxy loss fails closed and preserves the freeze.
 
 Use the dual-lane run-once wrapper for a full-scrape candidate. The
 `leaderboard-rivals-batch` profile pairs exact `800/32/4` network enforcement

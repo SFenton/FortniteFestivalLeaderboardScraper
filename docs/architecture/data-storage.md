@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-12
-last_verified_commit: c0b30c41
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
@@ -35,6 +35,8 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
+  - FSTService/Persistence/SoloAcquisitionScopeFingerprint.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
@@ -109,6 +111,50 @@ surface is not the production service persistence model.
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, bounded plan-only retirement policies/jobs/events, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay and capture evidence artifacts | Immutable Tier-0 filesystem packages plus the non-production `fst.capture-package.v2` manifest/request/scope contract; never publication authority |
+
+### Scrape acquisition checkpoint
+
+`scrape_log` owns the durable acquisition/core checkpoint. The nullable
+`acquisition_completed_at` marker is written in the same PostgreSQL statement
+as exact `songs_scraped`, `total_entries`, `total_requests`, `total_bytes`, the
+Epic page-count visibility signal, and the expected solo scope count,
+fingerprint version, and lowercase SHA-256 fingerprint. The fingerprint uses
+the exact case-sensitive `(song_id, instrument)` keys produced by
+`BuildExpectedSoloLeaderboardPairs`, deduplicated and ordered by instrument
+then song ID with ordinal comparison, and hashes a versioned domain followed by
+big-endian length-prefixed UTF-8 values. It contains no leaderboard payload or
+account data.
+
+The worker writes this checkpoint only after a nonempty solo acquisition has
+complete solo coverage, any band manifest gate has passed, and all writers have
+succeeded. Band-only and empty-solo passes do not create it. Repeated writes are
+accepted only when every metric and scope-contract value matches; a retry with
+drift is rejected.
+
+The additive schema step uses the normal two-second lock timeout and
+15-second statement timeout. Its validated check constraint permits historical
+rows with no checkpoint marker, while requiring every metric, a positive scope
+count, fingerprint version `1`, and a 64-character lowercase SHA-256 value
+whenever the marker exists. No backfill is performed. Resume joins the
+requested scrape to its own exact working publication catalog and independently
+reads only complete `scope_kind='alltime'` manifests for the canonical nine
+solo instruments. The actual key count and fingerprint must exactly match the
+checkpoint, every key must belong to that catalog, and the expected count must
+equal catalog songs times nine. Band manifests, reduced solo sets, missing
+keys, extra/foreign keys, or another scrape's manifests cannot satisfy the
+gate.
+
+`CompleteScrapeRun` does not synthesize `acquisition_completed_at` or any scope
+contract. If a checkpoint exists, terminal metrics and the supplied exact solo
+scope must match it. Legacy rows without a marker retain normal completion
+compatibility but keep the marker and scope fields null, so they remain
+non-resumable.
+
+Rollback is code-only: disable scrape resume, or return to an older binary and
+restore that binary's legacy operator-supplied `Scraper:Resume*` values before
+attempting recovery. The nullable checkpoint columns and check constraints may
+remain because old code ignores them, and completed historical rows remain
+readable without a backfill.
 
 ### Snapshot-generation retirement planning
 

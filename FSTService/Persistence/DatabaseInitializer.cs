@@ -476,6 +476,15 @@ public static class DatabaseInitializer
                 LockTimeout: null,
                 StatementTimeout: null),
             new(
+                Name: "scrape-acquisition-checkpoint",
+                Sql: ScrapeAcquisitionCheckpointSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
                 Name:
                     "publication-generation-retirement-columns",
                 Sql:

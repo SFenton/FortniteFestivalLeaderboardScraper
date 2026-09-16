@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-12
-last_verified_commit: c0b30c41
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -481,11 +481,24 @@ FSTService options and do not belong in container environment arrays.
 
 Run-once guard actions require a named data profile. `scrape-resume` is the
 only profile that permits `Scraper:EnabledPhases=SoloRankings`; it also
-requires positive `Scraper:Resume*` metrics,
-`Scraper:RegistrationSyncWorkerOnly=false`, the publication correctness and
-snapshot-reuse gates, and
+requires a positive `Scraper:ResumeScrapeId`, explicit full-worker hosting
+(`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
+publication correctness and snapshot-reuse gates, and
 `Scraper:RivalsMaxDegreeOfParallelism=2`. This profile is for an existing
 resume-eligible candidate only and does not authorize a new network scrape.
+The worker ignores legacy `Scraper:ResumeSongsScraped`,
+`Scraper:ResumeTotalEntries`, `Scraper:ResumeTotalRequests`,
+`Scraper:ResumeTotalBytes`, and
+`Scraper:ResumeEpicReportedOver100Pages` values and instead loads the exact
+metrics from the candidate's PostgreSQL acquisition checkpoint. The legacy
+keys remain bindable so older worker images and environment files can coexist
+during a rolling deployment. Worker database validation also requires the
+checkpoint's versioned solo-scope count/fingerprint to match the requested
+scrape's complete all-time manifests for all nine canonical solo instruments;
+band manifests are not considered, and in-worker resume admission rejects any
+reduced canonical `Scraper:Query*` solo scope before post-processing begins.
+Terminal completion does not create a missing checkpoint for legacy rows.
 With runtime probes enabled, the guard also requires a stopped worker, an
 `updating` or `stalled` service state for the exact configured resume scrape,
 frozen public reads with reason `post-process`, and a different published
