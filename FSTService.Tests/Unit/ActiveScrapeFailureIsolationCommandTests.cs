@@ -186,6 +186,144 @@ public sealed class ActiveScrapeFailureIsolationCommandTests
             PublishedScrapeIdArgument.Flag,
             error.Message);
     }
+
+    [Fact]
+    public void Parse_rejects_duplicate_maintenance_flag()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_duplicate_execute_flag()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_duplicate_check_flag()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.CheckFlag,
+                    ActiveScrapeFailureIsolationCommand.CheckFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            ActiveScrapeFailureIsolationCommand.CheckFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_missing_failure_message_value()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                    $"{ActiveScrapeFailureIsolationCommand.FailurePhaseFlag}={MetaDatabase.NoProgressReadIsolationFailurePhase}",
+                    ActiveScrapeFailureIsolationCommand.FailureMessageFlag,
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            ActiveScrapeFailureIsolationCommand.FailureMessageFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_empty_failure_message()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                    $"{ActiveScrapeFailureIsolationCommand.FailurePhaseFlag}={MetaDatabase.NoProgressReadIsolationFailurePhase}",
+                    $"{ActiveScrapeFailureIsolationCommand.FailureMessageFlag}=",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            "non-empty value",
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_duplicate_failure_phase()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1399",
+                    $"{ActiveScrapeFailureIsolationCommand.FailurePhaseFlag}={MetaDatabase.NoProgressReadIsolationFailurePhase}",
+                    $"{ActiveScrapeFailureIsolationCommand.FailurePhaseFlag}={MetaDatabase.AcquisitionFailureIsolationFailurePhase}",
+                    $"{ActiveScrapeFailureIsolationCommand.FailureMessageFlag}=watchdog timeout",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            ActiveScrapeFailureIsolationCommand.FailurePhaseFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Parse_rejects_non_positive_scrape_id()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand.ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=0",
+                    $"{ActiveScrapeFailureIsolationCommand.FailurePhaseFlag}={MetaDatabase.NoProgressReadIsolationFailurePhase}",
+                    $"{ActiveScrapeFailureIsolationCommand.FailureMessageFlag}=watchdog timeout",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1398"])));
+
+        Assert.Contains(
+            "positive integer",
+            error.Message);
+    }
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]
