@@ -406,6 +406,119 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void BulkProfiles_UseProjectionWhenSourceSnapshotMatches()
+    {
+        InsertSnapshotEntry(
+            42,
+            "song-bulk-projection",
+            "acct-user",
+            120_000,
+            "scrape");
+        InsertSnapshotState(
+            "song-bulk-projection",
+            42,
+            isFinalized: true);
+        InsertProjectionScope(
+            "song-bulk-projection",
+            sourceSnapshotId: 42);
+        InsertProjectionEntry(
+            "song-bulk-projection",
+            "acct-user",
+            130_000,
+            "projection");
+
+        var profiles =
+            Db.GetCurrentStatePlayerScoresForAccounts(
+                ["acct-user"]);
+
+        Assert.Equal(
+            130_000,
+            Assert.Single(profiles["acct-user"]).Score);
+    }
+
+    [Fact]
+    public void BulkProfiles_UsePublishedProjectionDuringFreeze()
+    {
+        InsertSnapshotEntry(
+            816,
+            "song-bulk-frozen",
+            "acct-user",
+            120_000,
+            "scrape");
+        InsertSnapshotState(
+            "song-bulk-frozen",
+            816,
+            isFinalized: true);
+        InsertProjectionScope(
+            "song-bulk-frozen",
+            sourceSnapshotId: 815);
+        InsertProjectionEntry(
+            "song-bulk-frozen",
+            "acct-user",
+            130_000,
+            "projection");
+        SetPublicationState(
+            publishedScrapeId: 815,
+            publicReadsFrozen: true);
+
+        var profiles =
+            Db.GetCurrentStatePlayerScoresForAccounts(
+                ["acct-user"]);
+
+        Assert.Equal(
+            130_000,
+            Assert.Single(profiles["acct-user"]).Score);
+    }
+
+    [Fact]
+    public void BulkProfiles_UseValidatedCandidateDuringFreeze()
+    {
+        InsertSnapshotEntry(
+            816,
+            "song-bulk-worker-frozen",
+            "acct-user",
+            120_000,
+            "scrape");
+        InsertSnapshotState(
+            "song-bulk-worker-frozen",
+            816,
+            isFinalized: true);
+        InsertProjectionScope(
+            "song-bulk-worker-frozen",
+            sourceSnapshotId: 816);
+        InsertProjectionEntry(
+            "song-bulk-worker-frozen",
+            "acct-user",
+            130_000,
+            "projection");
+        SetPublicationState(
+            publishedScrapeId: 815,
+            publicReadsFrozen: true);
+        Db.UseSnapshotOverlayWorkerReaders = true;
+        Db.UseValidatedCurrentProjectionForWorkerReaders = true;
+
+        var profiles =
+            Db.GetCurrentStatePlayerScoresForAccounts(
+                ["acct-user"]);
+
+        Assert.Equal(
+            130_000,
+            Assert.Single(profiles["acct-user"]).Score);
+    }
+
+    [Fact]
+    public async Task BulkProfilesAsync_HonorsPreCanceledToken()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Db.GetCurrentStatePlayerScoresForAccountsAsync(
+                ["acct-user"],
+                ct: cts.Token));
+    }
+
+    [Fact]
     public void SnapshotOverlayWorkerReaders_UseProjectionOnlyAfterPassValidation()
     {
         InsertScrape(42);

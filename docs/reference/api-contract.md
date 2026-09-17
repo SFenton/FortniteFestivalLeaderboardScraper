@@ -1,22 +1,42 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/HealthEndpoints.cs
+  - FSTService/StartupPublicationReadOnlyState.cs
+  - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/ScrapeProgressTracker.cs
+  - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/WorkerStatusPublisher.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
+  - FSTService/Api/SongEndpoints.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
+  - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Api/SongsCacheService.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/AdminPathRegenerationGate.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/src/hooks/data/useCatalogPublicationLag.ts
+  - FortniteFestivalWeb/src/components/page/CatalogUpdateBanner.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
@@ -24,6 +44,7 @@ sources:
   - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
+  - Publication-bound read-source changes for songs or path routes.
 ---
 
 # API contract
@@ -45,7 +66,7 @@ definitions, but it must remain aligned with the domain endpoint groups.
 
 ## Current surface
 
-The service maps 80 HTTP routes across 14 route-bearing endpoint files plus
+The service maps 81 HTTP routes across 14 route-bearing endpoint files plus
 `/api/ws`.
 
 | Group | Main responsibility |
@@ -77,6 +98,36 @@ publication-bound, accept an optional current `generationId`, and return an
 explicit error for invalid instruments, difficulties, generation IDs, or
 missing artifacts.
 
+Outside digest-owned max-score maintenance, a syntactically valid
+`generationId` that differs from the current pointer returns `400`, and a
+missing artifact for the current pointer returns `404`. During the maintenance
+freeze, a warm pre-promotion `/api/songs` response may still contain the prior
+generation ID after path promotion. Both the PNG and JSON routes return
+`503` with `Retry-After: 30` for that stale ID rather than serving the old
+immutable generation or reporting an invalid path. Omitting `generationId` or
+supplying the current value may serve only the current artifact when it
+already exists.
+
+With `Scraper:UsePublicationPathArtifacts` enabled, `/api/songs` first
+hydrates from the durable current-publication `public-api:songs:v1` row and
+serves it unchanged; a request-time rebuild is served but never persisted, so
+the publication-owned payload cannot be replaced by process-local state. The
+public response cache middleware uses the canonical key as the only lookup
+candidate for that route and disables write-through, so route-key
+(`public-route:/api/songs...`) rows are neither written nor able to shadow the
+canonical payload. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
+Route and DTO shapes are unchanged by publication-bound path artifacts. When
+`Scraper:UsePublicationPathArtifacts` is enabled, `/api/songs` is built strictly
+from the bound publication catalog plus that publication's path snapshot, and
+`/api/paths` compares `generationId` against the bound publication row instead
+of the mutable live row. The publication read middleware opens the matching
+path read scope for every publication-bound route, so all publication-bound
+consumers observe the same generation. With the flag off, responses are
+byte-compatible with previous behavior. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
 Path JSON schema v2 is represented by `PathDataResponse` in
 `packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
 instruction and exact trigger score/Overdrive metadata. Legacy schema-v1 JSON
@@ -85,6 +136,22 @@ remains readable while catalogue regeneration is in progress.
 Supported path instruments are Lead, Bass, Drums, Tap Vocals, Pro Lead,
 Pro Bass, Pro Drums, and Pro Drums + Cymbals. `/api/songs` exposes distinct
 max-score entries for both plastic-drums modes.
+
+`POST /api/admin/regenerate-paths` returns `409 Conflict` whenever
+`Scraper:UsePublicationPathArtifacts` is enabled, and additionally when
+`Scraper:EnableScrapePassPathGeneration` is enabled or a working publication is
+building. Immediate live generation must not race a staged publication-safe
+promotion, and in publication-bound mode path state changes through worker
+scrape-pass staging, guarded max-score maintenance, or the rearm route instead.
+The route, auth, and payload shape are unchanged.
+
+`POST /api/admin/path-generation/rearm?songId=<id>` is a protected private
+route that clears automatic scrape-pass staging deferral state
+(review-required and retry backoff) for one song and returns the resulting
+`pending`, `reviewRequired`, `nextAttemptAtUtc`, and `attemptCount`. It returns
+`400` without `songId` and `404` for an unknown song. It never generates paths
+and never changes published data, so it has no publication classification
+impact beyond being private.
 
 `POST /api/admin/regenerate-paths?songId=<id>&force=<bool>` is an
 `AdminPrivate` single-song command. It requires `X-API-Key`, returns `202`, and
@@ -151,13 +218,76 @@ Aggregate player scopes intentionally use different formulas:
   per second per client outside tests.
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
+- With `UsePublishedScopeSources=true`, startup, `/readyz`, L1/L2 cache hits,
+  uncached publication-bound HTTP reads, and WebSocket admission require the
+  exact current `solo_scope_sources` binding and canonical source-key hash.
+  Missing, partial, legacy, malformed, or publication/scrape-mismatched
+  mappings return `503` with `Retry-After: 1`; disabling that backend read path
+  preserves rolling compatibility and skips this serving gate. Lazy cache
+  waiters repeat validation after single-flight acquisition and before serving
+  bytes. WebSockets retain the validated publication identity even when full
+  request pinning is disabled. A bounded shared publication lease covers final
+  pointer/source validation plus initial registration and every
+  `subscribe_sync`/`unsubscribe_sync` account-key move. Publication-change
+  snapshots serialize with the atomic in-process move. All gates are released
+  before WebSocket I/O; commit either precedes and rejects admission/rebind or
+  follows registration and notifies the socket. Null/stale identities receive
+  `publication_changed` and close when current publication advances.
+- Covered freeze-critical JSON routes use a two-tier cache. L1 is process-local;
+  L2 is the authoritative current/previous-publication row in
+  `publication_api_response_cache`. Cache hits preserve exact bytes and ETag,
+  set `X-FST-Publication-Id`, and expose `X-FST-Public-Cache-Tier: l1|l2`.
+- Cache eligibility requires exactly one canonical `PublicationBound`
+  endpoint classification. `OperationalLive`, `AdminPrivate`, unclassified,
+  or conflicting metadata cannot read, build, or write the cache; path/query
+  exclusions remain a second guard. Rate limiting, authentication, and
+  authorization execute before the cache middleware.
+- `/api/songs` uses its existing canonical serializer and stable song ordering.
+  The canonical L2 key is eagerly staged with publication caches. A normal
+  five-minute catalog refresh persists the exact live provider snapshot but
+  does not rewrite this publication-owned row; guarded same-publication
+  path/max-score maintenance may rebuild it before unfreeze. Unknown query
+  parameters remain nonsemantic exactly as in the endpoint implementation;
+  `publicationId` affects generation selection but not the cache key. L1/L2
+  hits retain the endpoint's public 30-minute `Cache-Control` policy.
+- Publication preparation requires the staged canonical `/api/songs` count and
+  exact song-ID set to match `publication_song_catalog`. Deferred/restarted
+  commit repeats the check against the prepared generation. Cache inheritance
+  is allowed only when the candidate and current exact catalog hashes match;
+  catalog drift requires a rebuilt cache. These checks prevent a resumed
+  worker from mixing a newer service catalog into an older captured
+  publication.
+- Page-1 per-instrument, composite, and generic band rankings plus overview
+  sizes up to 10 resolve existing canonical rows and deterministically project
+  the requested contained window. Registered-player default profiles,
+  top-10 per-instrument leaderboards, leaderboard-all, and song-band bootstrap
+  reads use their canonical eager rows. Selected/high-cardinality variants are
+  excluded and cannot fall through to a generic canonical alias. Covered hits
+  preserve the endpoint family's `Cache-Control` and content type. Direct,
+  precomputed, and projected JSON use the same explicit relaxed Unicode
+  encoder so non-ASCII strings preserve exact UTF-8 bytes and ETags.
+- Only overview `pageSize=25|50` for the five canonical ranking metrics may
+  lazily compute and write through while unfrozen. One process-local
+  single-flight owns each publication/key build. Case, query order, and
+  equivalent integer spellings normalize to one semantic key. Responses at or above one
+  second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
+  if otherwise valid but are not cached.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
-  publication-bound route may serve only an existing published cache hit.
+  covered publication-bound route may serve only an existing L1/L2 published
+  cache hit; the cache never builds or writes while frozen.
   Otherwise affected song/path/ranking/player/band surfaces return `503` with
   `Retry-After`; path and `/api/songs` are explicitly included even though
-  they normally use live endpoint code. `/api/songs` may serve its existing
-  stable process cache; exact solo leaderboard routes, especially leeway
-  queries, use the outer published cache or return `503`.
+  they normally use live endpoint code. `/api/songs` may serve its exact
+  publication L1/L2 row. A current-generation immutable path PNG or JSON file
+  may be served when it already exists. A stale but syntactically valid
+  generation ID from a warm pre-promotion songs cache and any unavailable
+  current path return `503`/`Retry-After: 30` for the duration of maintenance;
+  the resolver never falls back to the requested old generation. Exact solo
+  leaderboard routes, especially leeway queries, use the outer published cache
+  or return `503`. These dependent routes bypass publication read-context and
+  boundary-lease acquisition only for the digest-owned max-score freeze, so a
+  maintenance lock timeout cannot become a `500`; ordinary publication
+  freezes and commit read leases are unchanged.
 - While the exclusive max-score mutation gate or its exact freeze is active,
   `POST /api/player/{accountId}/track`,
   `POST /api/backfill/{accountId}`, and
@@ -183,14 +313,108 @@ Aggregate player scopes intentionally use different formulas:
 `GET /api/service-info` remains an `OperationalLive` endpoint and retains every
 version-1 field. Contract version 2 adds:
 
-- `phasePlan.version` and ordered descriptors (`id`, label, legacy phase,
-  ordinal, default units kind, additive `reserved`);
+- `phasePlan.version`, `phasePlan.subphaseCatalogVersion`, and ordered
+  descriptors (`id`, label, legacy phase, ordinal, default units kind,
+  additive `reserved`);
 - stable operation, phase, and subphase IDs plus attempt/ordinal/plan version;
 - units kind/completed/total and `unitsTotalFinal`;
 - exact `phasePercent` only with a final denominator;
 - server-owned `overallPercentKind`, optional value/model version;
 - optional ETA lower/upper seconds, confidence, and sample count;
 - distinct `heartbeatAt` and `lastProgressAt`.
+
+The additive `startup` object separates public-read availability from mutation
+admission. Its `state` is `initializing`, `ready` or `degraded_read_only`;
+`readServingReady` and `mutationReady` are independent booleans. Nullable
+`reason` identifies the sticky decision, and `diagnostics`/`warnings` contain
+`{ publicationId, code }` entries for current/working refusals and non-serving
+previous-binding warnings. The field is optional in shared client types for
+older-server compatibility; the browser client passes it through unchanged.
+Its shared type is `StartupPublicationReadOnlyStatus`, specifically owned by
+publication startup rather than execution admission.
+
+Automatic degraded startup is not a configured rollout violation.
+`rolloutReadOnlyStartup` and `readOnlyViolationDetected` retain their existing
+meaning. In degraded mode `/healthz` remains HTTP 200 and `/readyz` returns
+HTTP 200 after persisted reads load. This particular read-serving check reports
+`Healthy` with an explicit `degraded_read_only` description/reason. The global
+`Degraded` and `Unhealthy` mappings remain HTTP 503; an unrelated degraded
+check cannot become Docker/Compose healthy merely because publication reads
+remain available.
+
+`/readyz` now returns `ServiceReadinessResponse` JSON rather than a bare status
+string: aggregate `status` (`Healthy`, `Degraded`, `Unhealthy`), structured
+`startup`, and named `checks` containing status/description. `startup` has the
+same fields as service-info and is null if the database check is absent.
+Raw exceptions are not serialized. This response does not attest that
+mutations or every publication-bound data surface are ready. Invalid data
+still fails its existing route/source contract.
+
+The outer startup guard rejects non-GET/HEAD/OPTIONS methods, WebSocket
+upgrades, and write-capable GETs (`/api/admin/epic-token`,
+`/api/player/{accountId}/stats`, `/api/bands/{bandType}/{teamKey}/sync-status`)
+before writer resolution. Responses are HTTP 503, `Cache-Control: no-store`,
+`Retry-After: 1`, and `{ error, code }`, where `code` is
+`startup_initializing` or `startup_read_only`. Selected-profile headers never
+write through either normal routes or cached hits in this state. Ordinary
+safe GET/cache behavior and publication classification remain unchanged.
+
+The same operational-live response now includes additive `catalog` telemetry:
+
+- `syncIntervalSeconds`;
+- exact `live`, `published`, and optional `working` catalog
+  version/count/publication metadata;
+- nullable added/changed/removed and aggregate `awaitingPublication` counts;
+- current path-generation pending and review-required totals.
+
+Lag counts are available only when both live and published catalogs are exact
+current-schema provider snapshots. A missing baseline is reported as unknown,
+not as the whole live catalog being newly added. The service compares full
+canonical provider entries, caches the result by live/published
+version-and-hash identity, and avoids reparsing catalog JSON on normal
+service-info polls.
+
+The anonymous `songs_changed` WebSocket message preserves `type`, `total`,
+`added`, and `at`, and additively exposes `removed`, `changed`,
+`publishedTotal`, and `awaitingPublication` when known. It signals clients to
+refresh operational lag state; it does not mean publication-bound
+`/api/songs`, paths, maxima, or rankings changed. Those public surfaces still
+advance only through publication or guarded same-publication maintenance.
+
+`currentUpdate.subphaseProgress` is an optional additive object with
+`schemaVersion=1`. It carries `id`, reset `epoch`, monotonic `sequence`,
+`kind`, optional units/completed/total/percent, the denominator-final flag,
+and optional subphase start/last-progress timestamps. `kind` is:
+
+- `exact` only when a final, positive denominator and valid numerator exist;
+- `indeterminate` when work is active but no honest exact fraction exists;
+- `not_applicable` for transition/event states where a progress bar has no
+  useful meaning.
+
+Phase and subphase progress are separate streams. A named subphase must not
+reinterpret or inherit the parent phase percentage. The object may be absent
+during a rolling upgrade; consumers must retain the existing version-2 fields
+and treat a named legacy subphase as indeterminate rather than fabricating an
+exact value.
+
+`post.band_extraction` keeps parent progress indeterminate because its
+`extracting_band_context` and `rebuilding_band_membership_summary` subphases
+use exact `songs` and `batches` epochs respectively. The registered discovery
+and targeted phase descriptors use `lookups`; completion means the Epic lookup
+and every required durable checkpoint write succeeded. Attempted
+account/band counters remain secondary telemetry and do not inflate the
+primary percentage. During `post.registered_player_band_discovery`,
+`currentUpdate.attemptProgress` is an optional schema-versioned summary with
+`attemptedThisPass` and `retryableUnavailableThisPass`. It advances
+`lastProgressAt` through the existing worker bridge even when durable
+completion remains unchanged, but it never changes `unitsCompleted`,
+`phasePercent`, or retry eligibility.
+
+For `post.leaderboard_rivals`, plan-v2 parent units remain `accounts`.
+Scheduled batched processing exposes the additive
+`leaderboard_rivals_account_instruments` subphase with exact
+`account_instruments` units. Consumers should use that subphase for intra-phase
+progress while retaining the parent account fields for compatibility.
 
 Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
 historical compatibility. `post.checkpoint` and
@@ -208,11 +432,13 @@ Initial overall progress is normally `indeterminate`. Existing `phase`,
 remain available for version-1 browser fallback.
 
 The Settings client consumes this additive payload through the existing shared
-service-info React Query request. It uses stable IDs for translated labels,
-renders exact phase percentage only when `unitsTotalFinal=true`, and shows
-server-owned overall/ETA evidence only when present and trustworthy. It does
-not derive an overall percentage from browser weights or promote legacy
-`progressPercent` into an exact value.
+service-info React Query request. It uses stable IDs for translated labels and
+renders an exact, indeterminate, or absent subphase bar. Registered-player band
+discovery adds one concise line distinguishing attempted-this-pass,
+temporarily unavailable, and durable completed lookups. Other phases do not
+display numeric progress or unit counts. The client does not derive
+browser-weighted overall progress, promote legacy `progressPercent`, or use
+parent `phasePercent` for a named subphase.
 
 Live web validation of commit `0af25b3f` accepted this browser consumption
 contract while publication `1296` stayed idle and unfrozen. Across
@@ -225,7 +451,17 @@ diagnostics. The measured evidence is under
 `service_worker_status.current_operation_json` carries the same additive v2
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
-backward-compatible operation JSON for rolling upgrades.
+backward-compatible operation JSON for rolling upgrades. Attempt-progress
+counters are projected beside a normalized attempt only when worker JSON has
+the same scrape ID, phase ID, and attempt number; a transition window omits
+the optional summary rather than combining identities. The browser clears a
+previous attempt summary when a later version-2 payload omits it, so rejected
+counters are not restored from local display memory.
+
+When parallel phase attempts are active, service-info selects the lowest phase
+ordinal deterministically, then the newest attempt for that phase. Worker JSON
+activity and heartbeat updates are fenced by worker instance/start time so an
+older process cannot replace a newer worker's fallback summary.
 
 Matched candidate scrape `1300` accepted the reserved-descriptor projection:
 the v2 plan remained 28 ordered descriptors, exactly

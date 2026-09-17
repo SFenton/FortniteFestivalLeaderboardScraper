@@ -35,6 +35,14 @@ public static partial class ApiEndpoints
                 publicReadGate.FailedCandidateIsolationActive
                 || publicReadGate.IsFrozen
                    && !publicReadGate.RequiresCachedReads;
+            var usePublicationPathArtifacts =
+                scraperOptions.Value.UsePublicationPathArtifacts;
+            var boundPublicationId =
+                httpContext.GetPublicationReadContext()?.PublicationId
+                ?? (usePublicationPathArtifacts
+                    ? metaDb.GetPublicationPointerState()
+                        .CurrentPublicationId
+                    : null);
             if (canUsePublishedFallback &&
                 !scraperOptions.Value.EnableAutomaticPathGeneration)
             {
@@ -44,12 +52,22 @@ public static partial class ApiEndpoints
                         .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                         .Value.SerializerOptions;
                     var publishedJson =
-                        SongsCacheService.BuildPublishedSongsJson(
-                            pathStore,
-                            metaDb,
-                            persistence,
-                            precomputer,
-                            fallbackJsonOptions);
+                        usePublicationPathArtifacts
+                        && boundPublicationId is long fallbackPublicationId
+                            ? SongsCacheService
+                                .BuildBoundPublicationSongsJson(
+                                    fallbackPublicationId,
+                                    pathStore,
+                                    metaDb,
+                                    persistence,
+                                    precomputer,
+                                    fallbackJsonOptions)
+                            : SongsCacheService.BuildPublishedSongsJson(
+                                pathStore,
+                                metaDb,
+                                persistence,
+                                precomputer,
+                                fallbackJsonOptions);
                     httpContext.Response.Headers.CacheControl = "no-store";
                     httpContext.Response.Headers.ETag =
                         ResponseCacheService.ComputeETag(publishedJson);
@@ -85,25 +103,57 @@ public static partial class ApiEndpoints
             string etag;
             try
             {
+                // Publication-bound mode: the durable row is owned by the
+                // publication pipeline. Hydrate from it instead of rebuilding
+                // and persisting process-local state.
+                var hydrated =
+                    songsCache.PublicationBoundReads
+                    && songsCache.TryHydrateFromDurablePublicationCache()
+                        ? songsCache.Get()
+                        : null;
+                if (hydrated is not null)
+                {
+                    httpContext.Response.ContentType =
+                        "application/json; charset=utf-8";
+                    return CacheHelper.ServeIfCached(
+                        httpContext,
+                        hydrated)!;
+                }
+
                 while (true)
                 {
                     var token = songsCache.CaptureBuildToken();
-                    jsonBytes = SongsCacheService.BuildSongsJson(
-                        service,
-                        pathStore,
-                        metaDb,
-                        persistence,
-                        precomputer,
-                        jsonOpts);
+                    jsonBytes =
+                        usePublicationPathArtifacts
+                        && boundPublicationId is long buildPublicationId
+                            ? SongsCacheService
+                                .BuildBoundPublicationSongsJson(
+                                    buildPublicationId,
+                                    pathStore,
+                                    metaDb,
+                                    persistence,
+                                    precomputer,
+                                    jsonOpts)
+                            : SongsCacheService.BuildSongsJson(
+                                service,
+                                pathStore,
+                                metaDb,
+                                persistence,
+                                precomputer,
+                                jsonOpts);
                     var writeResult = songsCache.TrySetIfBuildTokenUnchanged(
                         jsonBytes,
                         token,
-                        out etag);
+                        out etag,
+                        persistPublicationCache:
+                            !songsCache.PublicationBoundReads);
                     if (writeResult == SongsCacheWriteResult.Stored)
                     {
                         break;
                     }
-                    if (writeResult == SongsCacheWriteResult.Blocked)
+                    if (writeResult is
+                        SongsCacheWriteResult.Blocked or
+                        SongsCacheWriteResult.DurableStoreFailed)
                     {
                         httpContext.Response.Headers.CacheControl = "no-store";
                         httpContext.Response.Headers["Retry-After"] = "30";
@@ -117,6 +167,13 @@ public static partial class ApiEndpoints
             }
             catch (Exception ex)
             {
+                if (usePublicationPathArtifacts
+                    && ex is
+                        PublicationPathArtifactsUnavailableException)
+                {
+                    throw;
+                }
+
                 var stale = songsCache.GetStale();
                 if (stale is not null)
                 {
@@ -200,35 +257,43 @@ public static partial class ApiEndpoints
 
         // ── Path images ─────────────────────────────────────────
         app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}", (
+            HttpContext httpContext,
             string songId,
             string instrument,
             string difficulty,
             string? generationId,
-            PathArtifactResolver resolver) =>
+            PathArtifactResolver resolver,
+            PublicReadGateService publicReadGate) =>
             GetPathArtifactResult(
                 songId,
                 instrument,
                 difficulty,
                 "png",
                 generationId,
-                resolver))
+                resolver,
+                httpContext,
+                publicReadGate))
         .WithTags("Paths")
         .RequireRateLimiting("public");
 
         // ── Path JSON data (structured activation/score/OD data per difficulty) ─
         app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}/data", (
+            HttpContext httpContext,
             string songId,
             string instrument,
             string difficulty,
             string? generationId,
-            PathArtifactResolver resolver) =>
+            PathArtifactResolver resolver,
+            PublicReadGateService publicReadGate) =>
             GetPathArtifactResult(
                 songId,
                 instrument,
                 difficulty,
                 "json",
                 generationId,
-                resolver))
+                resolver,
+                httpContext,
+                publicReadGate))
         .WithTags("Paths")
         .RequireRateLimiting("public");
     }
@@ -239,7 +304,9 @@ public static partial class ApiEndpoints
         string difficulty,
         string extension,
         string? generationId,
-        PathArtifactResolver resolver)
+        PathArtifactResolver resolver,
+        HttpContext? httpContext = null,
+        PublicReadGateService? publicReadGate = null)
     {
         if (!PathGenerationInstruments.Definitions.Any(
                 definition => definition.Instrument == instrument))
@@ -262,26 +329,47 @@ public static partial class ApiEndpoints
             instrument,
             difficulty,
             extension,
-            generationId);
+            generationId,
+            out var resolutionFailure);
         if (artifact is null)
         {
-            if (resolver.IsUnavailableInCurrentGeneration(
-                    songId,
-                    instrument,
-                    generationId))
+            if (resolutionFailure is
+                PathArtifactResolutionFailure
+                    .RequestedGenerationUnavailable or
+                PathArtifactResolutionFailure
+                    .UnavailableInCurrentGeneration)
             {
-                return Results.NotFound(new
+                var unavailable =
+                    ServePathUnavailableDuringMaxScoreMaintenance(
+                        httpContext,
+                        publicReadGate);
+                if (unavailable is not null)
+                    return unavailable;
+
+                if (resolutionFailure ==
+                    PathArtifactResolutionFailure
+                        .UnavailableInCurrentGeneration)
                 {
-                    error = extension == "png"
-                        ? "Path image not yet generated for this song/instrument/difficulty."
-                        : "Path data not yet generated for this song/instrument/difficulty.",
-                });
+                    return Results.NotFound(new
+                    {
+                        error = extension == "png"
+                            ? "Path image not yet generated for this song/instrument/difficulty."
+                            : "Path data not yet generated for this song/instrument/difficulty.",
+                    });
+                }
             }
 
             return Results.BadRequest(new { error = "Invalid path." });
         }
         if (!File.Exists(artifact.FilePath))
         {
+            var unavailable =
+                ServePathUnavailableDuringMaxScoreMaintenance(
+                    httpContext,
+                    publicReadGate);
+            if (unavailable is not null)
+                return unavailable;
+
             return Results.NotFound(new
             {
                 error = extension == "png"
@@ -293,5 +381,35 @@ public static partial class ApiEndpoints
         return Results.File(
             artifact.FilePath,
             extension == "png" ? "image/png" : "application/json");
+    }
+
+    private static IResult?
+        ServePathUnavailableDuringMaxScoreMaintenance(
+            HttpContext? httpContext,
+            PublicReadGateService? publicReadGate)
+    {
+        if (httpContext is null
+            || publicReadGate is null)
+        {
+            return null;
+        }
+
+        var state = publicReadGate.GetState();
+        if (!state.MaxScoreMaintenance
+            || !state.RequiresCachedReads)
+        {
+            return null;
+        }
+
+        httpContext.Response.Headers.CacheControl =
+            "no-store";
+        httpContext.Response.Headers["Retry-After"] =
+            "30";
+        return Results.Problem(
+            title: "Published path unavailable",
+            detail:
+                "The requested published path artifact is not available while max-score maintenance owns the current publication. Retry after maintenance completes.",
+            statusCode:
+                StatusCodes.Status503ServiceUnavailable);
     }
 }

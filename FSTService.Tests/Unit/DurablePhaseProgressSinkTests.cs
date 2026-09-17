@@ -41,6 +41,22 @@ public sealed class DurablePhaseProgressSinkTests
         Assert.NotEqual(baseline, candidate);
     }
 
+    [Theory]
+    [InlineData("Scraper:EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace", "true")]
+    [InlineData("Scraper:EnableRegisteredBandTargetedProcessingRemainingWorkGrace", "true")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceMaxDuration", "00:01:59")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceRecentProgressWindow", "00:01:29")]
+    [InlineData("Scraper:RegisteredBandRemainingWorkGraceMaxRemainingLookups", "2")]
+    public void RemainingWorkGraceOptionsChangeDurableConfigurationIdentity(
+        string key,
+        string value)
+    {
+        var baseline = CaptureConfigIdForValue(key, "");
+        var candidate = CaptureConfigIdForValue(key, value);
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
     [Fact]
     public void Reattaching_same_scrape_and_instance_is_idempotent()
     {
@@ -161,7 +177,550 @@ public sealed class DurablePhaseProgressSinkTests
         Assert.Equal("persisting_scores", view?.SubphaseId);
         metaDb.Received(1).UpdateScrapePhaseAttemptProgress(
             Arg.Is<ScrapePhaseAttemptProgress>(progress =>
-                progress.CurrentSubphaseId == "persisting_scores"));
+                progress.CurrentSubphaseId == "persisting_scores"
+                && progress.CurrentSubphaseEpoch == 2
+                && progress.SubphaseSequence > 0
+                && progress.SubphaseProgressKind == "indeterminate"
+                && progress.SubphasePercent == null));
+    }
+
+    [Fact]
+    public void Attempt_progress_advances_without_false_durable_completion()
+    {
+        var (sink, metaDb, clock) = CreateSink();
+        sink.AttachScrape(1379, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "RegisteredPlayerBandDiscovery")!;
+        sink.StartPhase(
+            descriptor,
+            "registered_player_band_discovery");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var baseline = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation =
+                    "registered_player_band_discovery",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 0,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Equal(0, baseline.UnitsCompleted);
+        Assert.Equal(0, baseline.PhasePercent);
+        metaDb.ClearReceivedCalls();
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var attempted = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation =
+                    "registered_player_band_discovery",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 0,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+                AttemptProgress = new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 10,
+                    RetryableUnavailableThisPass = 10,
+                },
+            }));
+
+        Assert.Equal(0, attempted.UnitsCompleted);
+        Assert.Equal(0, attempted.PhasePercent);
+        Assert.Equal(
+            10,
+            attempted.AttemptProgress?.AttemptedThisPass);
+        Assert.Equal(
+            10,
+            attempted.AttemptProgress
+                ?.RetryableUnavailableThisPass);
+        Assert.True(
+            attempted.LastProgressAtUtc
+            > baseline.LastProgressAtUtc);
+        metaDb.Received(1).UpdateScrapePhaseAttemptProgress(
+            Arg.Is<ScrapePhaseAttemptProgress>(progress =>
+                progress.UnitsCompleted == 0
+                && progress.UnitsTotal == 80
+                && progress.PhasePercent == 0
+                && progress.LastProgressAtUtc
+                    == attempted.LastProgressAtUtc));
+    }
+
+    [Fact]
+    public void Persisting_scores_does_not_inherit_fetch_completion()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "fetching_leaderboards");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var fetched = Assert.Single(
+            sink.ObserveTracker(ScrapingSnapshot(10, 10)));
+        Assert.Equal("exact", fetched.SubphaseProgress?.Kind);
+        Assert.Equal(100, fetched.SubphaseProgress?.Percent);
+
+        var persisting = sink.TransitionSubphase(
+            "scrape.leaderboards",
+            "persisting_scores");
+
+        Assert.Equal(
+            "indeterminate",
+            persisting?.SubphaseProgress?.Kind);
+        Assert.Null(persisting?.SubphaseProgress?.Percent);
+        Assert.True(
+            persisting?.SubphaseProgress?.Epoch
+            > fetched.SubphaseProgress?.Epoch);
+    }
+
+    [Fact]
+    public void Subphase_exact_progress_resets_after_transition()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "BandExtraction")!;
+        sink.StartPhase(descriptor, "extracting_band_context");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var extraction = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "BandScraping",
+                SubOperation = "extracting_band_context",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 5,
+                    Total = 5,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Null(extraction.PhasePercent);
+        Assert.False(extraction.UnitsTotalFinal);
+        Assert.Equal("songs", extraction.SubphaseProgress?.UnitsKind);
+        Assert.Equal(100, extraction.SubphaseProgress?.Percent);
+
+        sink.TransitionSubphase(
+            descriptor.Id,
+            "rebuilding_band_membership_summary");
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var membership = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "BandScraping",
+                SubOperation = "rebuilding_band_membership_summary",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 1,
+                    Total = 4,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+
+        Assert.Equal(25, membership.SubphaseProgress?.Percent);
+        Assert.Equal("batches", membership.SubphaseProgress?.UnitsKind);
+        Assert.Null(membership.PhasePercent);
+        Assert.NotEqual(
+            extraction.SubphaseProgress?.Epoch,
+            membership.SubphaseProgress?.Epoch);
+    }
+
+    [Fact]
+    public void Final_total_shrink_never_persists_completed_above_total()
+    {
+        var (sink, metaDb, clock) = CreateSink();
+        sink.AttachScrape(1376, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "RegisteredBandTargetedProcessing")!;
+        sink.StartPhase(descriptor, "registered_band_targeted_processing");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var productionShaped = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation = "registered_band_targeted_processing",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 77,
+                    Total = 80,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Equal(77, productionShaped.UnitsCompleted);
+        Assert.Equal(80, productionShaped.UnitsTotal);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var defensive = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "SongMachine",
+                SubOperation = "registered_band_targeted_processing",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 4,
+                    Total = 4,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+
+        Assert.Equal(77, defensive.UnitsCompleted);
+        Assert.Equal(77, defensive.UnitsTotal);
+        Assert.Equal(100, defensive.PhasePercent);
+        Assert.Equal(77, defensive.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(77, defensive.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(100, defensive.SubphaseProgress?.Percent);
+        metaDb.Received().UpdateScrapePhaseAttemptProgress(
+            Arg.Is<ScrapePhaseAttemptProgress>(progress =>
+                progress.UnitsCompleted == 77
+                && progress.UnitsTotal == 77
+                && progress.UnitsCompleted <= progress.UnitsTotal));
+    }
+
+    [Fact]
+    public void Leaderboard_rivals_does_not_inherit_player_rivals_accounts()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var rivals = PhaseProgressCatalog.FindPostScrape("Rivals")!;
+        sink.StartPhase(rivals, "per_song_rivals");
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            100,
+            Assert.Single(sink.ObserveTracker(new OperationSnapshot
+            {
+                Operation = "ComputingRivals",
+                SubOperation = "per_song_rivals",
+                Accounts = new ProgressCounter
+                {
+                    Completed = 10,
+                    Total = 10,
+                },
+            })).SubphaseProgress?.Percent);
+        sink.CompletePhase(rivals.Id, "completed");
+
+        var leaderboard = PhaseProgressCatalog.FindPostScrape(
+            "LeaderboardRivals")!;
+        sink.StartPhase(leaderboard);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "ComputingRivals",
+                Accounts = new ProgressCounter
+                {
+                    Completed = 10,
+                    Total = 10,
+                },
+            }));
+
+        Assert.Equal(
+            "indeterminate",
+            view.SubphaseProgress?.Kind);
+        Assert.Null(view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Leaderboard_rivals_batches_publish_account_parent_and_exact_pair_subphase()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var leaderboard =
+            PhaseProgressCatalog.FindPostScrape(
+                "LeaderboardRivals")!;
+        sink.StartPhase(
+            leaderboard,
+            "leaderboard_rivals_account_instruments");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(
+            sink.ObserveTracker(
+                new OperationSnapshot
+                {
+                    Operation = "ComputingRivals",
+                    SubOperation =
+                        "leaderboard_rivals_account_instruments",
+                    Accounts = new ProgressCounter
+                    {
+                        Completed = 2,
+                        Total = 11,
+                    },
+                    WorkItems = new ProgressCounter
+                    {
+                        Completed = 18,
+                        Total = 99,
+                    },
+                    WorkItemsTotalFinal = true,
+                }));
+
+        Assert.Equal("accounts", view.UnitsKind);
+        Assert.Equal(2, view.UnitsCompleted);
+        Assert.Equal(11, view.UnitsTotal);
+        Assert.Equal(
+            "exact",
+            view.SubphaseProgress?.Kind);
+        Assert.Equal(
+            "account_instruments",
+            view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(
+            18,
+            view.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(
+            99,
+            view.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(
+            18.2,
+            view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Deep_scrape_jobs_publish_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "deep_scraping");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "deep_scraping",
+                Detail = new SubOperationDetail
+                {
+                    DeepJobsCompleted = 3,
+                    DeepJobsTotal = 8,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("deep_jobs", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(3, view.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(8, view.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(37.5, view.SubphaseProgress?.Percent);
+    }
+
+    [Theory]
+    [InlineData("flushing_solo")]
+    [InlineData("flushing_band")]
+    public void Spool_flush_pages_publish_exact_subphase_progress(
+        string subphaseId)
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0], subphaseId);
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = subphaseId,
+                Detail = new SubOperationDetail
+                {
+                    FlushPagesCompleted = 12,
+                    FlushPagesTotal = 48,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("pages", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(25, view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Online_writer_drain_pages_publish_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "draining_solo_writes");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "draining_solo_writes",
+                Detail = new SubOperationDetail
+                {
+                    OnlineWriterPagesCompleted = 6,
+                    OnlineWriterPagesTotal = 8,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("pages", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(75, view.SubphaseProgress?.Percent);
+    }
+
+    [Theory]
+    [InlineData("dropping_solo_indexes")]
+    [InlineData("creating_solo_indexes")]
+    [InlineData("dropping_band_indexes")]
+    public void Active_index_work_publishes_exact_subphase_progress(
+        string subphaseId)
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0], subphaseId);
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = subphaseId,
+                Detail = new SubOperationDetail
+                {
+                    IndexesCompleted = 3,
+                    IndexesTotal = 6,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("indexes", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(50, view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Empty_band_index_creation_is_not_applicable()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "creating_band_indexes");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "creating_band_indexes",
+                Detail = new SubOperationDetail
+                {
+                    IndexesCompleted = 0,
+                    IndexesTotal = 0,
+                },
+            }));
+
+        Assert.Equal(
+            "not_applicable",
+            view.SubphaseProgress?.Kind);
+    }
+
+    [Fact]
+    public void Band_fetch_pages_publish_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "awaiting_band");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "awaiting_band",
+                Detail = new SubOperationDetail
+                {
+                    BandPagesCompleted = 4,
+                    BandPagesTotal = 10,
+                },
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("band_pages", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(40, view.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
+    public void Band_fetch_stage_transition_resets_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(
+            PhaseProgressCatalog.All[0],
+            "awaiting_band");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var discovery = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "awaiting_band",
+                Detail = new SubOperationDetail
+                {
+                    BandPagesCompleted = 8,
+                    BandPagesTotal = 8,
+                    BandFetchEpoch = 1,
+                },
+            }));
+        Assert.Equal(100, discovery.SubphaseProgress?.Percent);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var pages = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Scraping",
+                SubOperation = "awaiting_band",
+                Detail = new SubOperationDetail
+                {
+                    BandPagesCompleted = 4,
+                    BandPagesTotal = 40,
+                    BandFetchEpoch = 2,
+                },
+            }));
+
+        Assert.Equal(10, pages.SubphaseProgress?.Percent);
+        Assert.NotNull(pages.SubphaseProgress);
+        Assert.NotNull(discovery.SubphaseProgress);
+        Assert.True(
+            pages.SubphaseProgress!.Epoch
+            > discovery.SubphaseProgress!.Epoch);
+    }
+
+    [Fact]
+    public void Player_stats_accounts_publish_exact_subphase_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "PlayerStatsTiers")!;
+        sink.StartPhase(descriptor, "population_tiers");
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        var view = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "Precomputing",
+                SubOperation = "population_tiers",
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 3,
+                    Total = 12,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+
+        Assert.Equal("exact", view.SubphaseProgress?.Kind);
+        Assert.Equal("accounts", view.SubphaseProgress?.UnitsKind);
+        Assert.Equal(25, view.SubphaseProgress?.Percent);
     }
 
     [Fact]
@@ -277,6 +836,16 @@ public sealed class DurablePhaseProgressSinkTests
         });
 
         Assert.Equal(2, writes.Count);
+        Assert.Equal(
+            "enriching_parallel_rank_recompute",
+            writes.Single(view =>
+                view.PhaseId == "post.rank_recompute")
+                .SubphaseId);
+        Assert.Equal(
+            "enriching_parallel_tail",
+            writes.Single(view =>
+                view.PhaseId == "post.first_seen_season")
+                .SubphaseId);
         metaDb.Received(1).UpdateScrapePhaseAttemptProgress(
             Arg.Is<ScrapePhaseAttemptProgress>(progress =>
                 progress.PhaseId == "post.rank_recompute"
@@ -487,6 +1056,39 @@ public sealed class DurablePhaseProgressSinkTests
                 {
                     ["Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation"] =
                         enabled.ToString(),
+                })
+            .Build();
+        var sink = new DurablePhaseProgressSink(
+            metaDb,
+            configuration,
+            NullLogger<DurablePhaseProgressSink>.Instance,
+            new FakePhaseProgressClock());
+
+        sink.AttachScrape(42, "instance-a");
+        sink.StartPhase(PhaseProgressCatalog.All[0]);
+
+        return Assert.IsType<string>(captured?.ConfigId);
+    }
+
+    private static string CaptureConfigIdForValue(string key, string value)
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        ScrapePhaseAttemptStart? captured = null;
+        metaDb.StartScrapePhaseAttempt(
+                Arg.Do<ScrapePhaseAttemptStart>(
+                    start => captured = start))
+            .Returns(1);
+        metaDb.GetSuccessfulPhaseDurationSamples(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>(),
+                Arg.Any<int>())
+            .Returns([]);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    [key] = value,
                 })
             .Build();
         var sink = new DurablePhaseProgressSink(

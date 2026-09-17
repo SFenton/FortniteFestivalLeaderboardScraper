@@ -1,0 +1,26 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  width: var(--sidebar-width);
+  height: 100%;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.panel {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  min-height: 0;
+  padding: var(--gap-md) 0 var(--gap-md) var(--gap-md);
+  overflow: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+
+.panel > * {
+  flex-shrink: 0;
+}

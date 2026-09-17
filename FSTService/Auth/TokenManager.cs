@@ -70,6 +70,7 @@ public class TokenManager
 
             // Try loading persisted refresh token from disk
             var stored = await _store.LoadAsync(ct);
+            ct.ThrowIfCancellationRequested();
             if (stored is not null && !string.IsNullOrEmpty(stored.RefreshToken))
             {
                 _log.LogInformation("Loaded stored credentials for account {AccountId}. Attempting refresh...",
@@ -116,6 +117,7 @@ public class TokenManager
             }
 
             var stored = await _store.LoadAsync(ct);
+            ct.ThrowIfCancellationRequested();
             if (stored is not null && !string.IsNullOrEmpty(stored.RefreshToken))
             {
                 _log.LogInformation("Loaded stored credentials for account {AccountId}. Attempting forced refresh...",
@@ -143,6 +145,7 @@ public class TokenManager
     {
         _log.LogInformation("Starting device code login flow...");
         var deviceAuth = await _auth.StartDeviceCodeFlowAsync(ct);
+        ct.ThrowIfCancellationRequested();
 
         _log.LogInformation("=== DEVICE CODE LOGIN ===");
         _log.LogInformation("Open this URL in your browser:");
@@ -164,11 +167,13 @@ public class TokenManager
         try
         {
             var token = await _auth.PollDeviceCodeAsync(deviceAuth, ct);
+            ct.ThrowIfCancellationRequested();
             _currentToken = token;
 
             _log.LogInformation("Login successful! Welcome, {DisplayName}.", token.DisplayName);
 
             await PersistRefreshTokenAsync(token, ct);
+            ct.ThrowIfCancellationRequested();
             _log.LogInformation("Credentials saved. Future logins will be automatic (refresh within ~8 h).");
 
             return true;
@@ -195,25 +200,49 @@ public class TokenManager
     private async Task<string?> TryRefreshAsync(string refreshToken, CancellationToken ct)
     {
         _log.LogInformation("Refreshing access token...");
+        EpicTokenResponse? refreshed = null;
         try
         {
-            var refreshed = await _auth.RefreshTokenAsync(refreshToken, ct);
-            if (refreshed is not null)
-            {
-                _currentToken = refreshed;
-                _log.LogInformation("Token refreshed for {DisplayName}. Expires at {ExpiresAt}",
-                    refreshed.DisplayName, refreshed.ExpiresAt);
-
-                // Persist the new refresh token (they roll with each refresh)
-                await PersistRefreshTokenAsync(refreshed, ct);
-                return refreshed.AccessToken;
-            }
+            refreshed = await _auth.RefreshTokenAsync(refreshToken, ct);
+        }
+        catch (OperationCanceledException)
+            when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Refresh timed out");
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Refresh failed");
         }
-        return null;
+        if (refreshed is null)
+            return null;
+
+        ct.ThrowIfCancellationRequested();
+        _currentToken = refreshed;
+        _log.LogInformation("Token refreshed for {DisplayName}. Expires at {ExpiresAt}",
+            refreshed.DisplayName, refreshed.ExpiresAt);
+
+        try
+        {
+            // Persist the new refresh token (they roll with each refresh)
+            await PersistRefreshTokenAsync(refreshed, ct);
+            ct.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not persist refreshed credentials");
+        }
+        return refreshed.AccessToken;
     }
 
     private async Task PersistRefreshTokenAsync(EpicTokenResponse token, CancellationToken ct)

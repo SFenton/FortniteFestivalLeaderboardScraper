@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "toolId": "fst.snapshot-generation-live-drop-fixture.v1",
+  "source": "committed Pro Cymbals 1314 DROP operation 333ba4b9fb69dbc098d127f0008ec709",
+  "safetyReview": {
+    "credentialLikeKeys": 0,
+    "connectionStrings": 0,
+    "emailAddresses": 0,
+    "privateEndpoints": 0,
+    "accountIdKeys": 0,
+    "absolutePathCategories": [
+      "/mnt/docker-storage",
+      "/home/sfenton"
+    ],
+    "decision": "safe-to-vendor-as-sha-pinned-deterministic-gzip-base64"
+  },
+  "plan": {
+    "file": "drop-plan-v2.json.gz.b64",
+    "rawBytes": 69342,
+    "rawSha256": "37ee215e04d4f2167d78675735e4c9130fb649826ea866a988a38928fdfe9f8b",
+    "gzipSha256": "f665eb7cb9679a1518abc92ebbba470b8018c7eb99a03568f47775a76ddc22f7",
+    "planDigest": "fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc",
+    "dropOperationId": "333ba4b9fb69dbc098d127f0008ec709"
+  },
+  "report": {
+    "file": "drop-report-v2.json.gz.b64",
+    "rawBytes": 1426,
+    "rawSha256": "1bc0a629747710d83974f9ae3274581c0b8a038aa78d47b645bdef8f160c3a4f",
+    "gzipSha256": "5bc5ce408704d869d9ec4ee6bbfd4eeaa18d1aa126c1ea4d7847d63ac349e7e2"
+  }
+}

@@ -206,7 +206,7 @@ export default function SettingsPage() {
   const { profile: selectedProfile } = useTrackedPlayer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobileChrome;
   const scrollContainerRef = useScrollContainer();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const [showResetConfirm, setShowResetConfirm] = useState(false);

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
+using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
@@ -168,6 +169,8 @@ public sealed class ScrapeProgressTracker
     private int _phaseRequests;
     private int _phaseRetries;
     private int _phaseUpdated;
+    private int _phaseAttempts;
+    private int _phaseRetryableUnavailable;
 
     // ─── Adaptive concurrency ───────────────────────────────
 
@@ -376,6 +379,17 @@ public sealed class ScrapeProgressTracker
     private long _bandPagesTotal;
     private int _bandSongsDiscovered;
     private long _bandRetries;
+    private long _bandFetchEpoch;
+
+    // Coordinated deep-scrape progress
+    private long _deepJobsCompleted;
+    private long _deepJobsTotal;
+
+    // Online solo-writer drain progress
+    private long _onlineWriterPagesCompleted;
+    private long _onlineWriterPagesTotal;
+    private long _onlineWriterEntriesCompleted;
+    private long _onlineWriterEntriesTotal;
 
     // Solo vs band completion
     private volatile bool _soloFetchComplete;
@@ -453,16 +467,44 @@ public sealed class ScrapeProgressTracker
     /// <summary>Report index drop/create progress.</summary>
     public void ReportIndexProgress(string operation, string indexName, int completed, int total)
     {
-        _indexOperation = operation;
+        if (!string.Equals(
+                _indexOperation,
+                operation,
+                StringComparison.Ordinal))
+        {
+            _indexOperation = operation;
+            Interlocked.Exchange(
+                ref _indexesCompleted,
+                Math.Max(0, completed));
+        }
+        else
+        {
+            var normalizedCompleted = Math.Max(0, completed);
+            int observed;
+            do
+            {
+                observed = Volatile.Read(ref _indexesCompleted);
+                if (normalizedCompleted <= observed)
+                    break;
+            }
+            while (Interlocked.CompareExchange(
+                       ref _indexesCompleted,
+                       normalizedCompleted,
+                       observed) != observed);
+        }
         _currentIndex = indexName;
-        _indexesCompleted = completed;
-        _indexesTotal = total;
+        Interlocked.Exchange(ref _indexesTotal, Math.Max(0, total));
         Interlocked.Increment(ref _changeSequence);
     }
 
     /// <summary>Update band fetch progress counters.</summary>
     public void SetBandFetchProgress(string bandPhase, long pagesCompleted, long pagesTotal, int songsDiscovered, long retries)
     {
+        if (!string.Equals(_bandPhase, bandPhase, StringComparison.Ordinal)
+            && !string.Equals(bandPhase, "complete", StringComparison.Ordinal))
+        {
+            Interlocked.Increment(ref _bandFetchEpoch);
+        }
         _bandPhase = bandPhase;
         Interlocked.Exchange(ref _bandPagesCompleted, pagesCompleted);
         Interlocked.Exchange(ref _bandPagesTotal, pagesTotal);
@@ -476,6 +518,36 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Mark the band fetch as complete.</summary>
     public void SetBandFetchComplete() { _bandFetchComplete = true; Interlocked.Increment(ref _changeSequence); }
+
+    /// <summary>Update coordinated deep-scrape job progress.</summary>
+    public void SetDeepScrapeProgress(long completed, long total)
+    {
+        Interlocked.Exchange(ref _deepJobsCompleted, Math.Max(0, completed));
+        Interlocked.Exchange(ref _deepJobsTotal, Math.Max(0, total));
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Update bounded online-writer drain progress.</summary>
+    public void SetOnlineWriterDrainProgress(
+        long pagesCompleted,
+        long pagesTotal,
+        long entriesCompleted,
+        long entriesTotal)
+    {
+        Interlocked.Exchange(
+            ref _onlineWriterPagesCompleted,
+            Math.Max(0, pagesCompleted));
+        Interlocked.Exchange(
+            ref _onlineWriterPagesTotal,
+            Math.Max(0, pagesTotal));
+        Interlocked.Exchange(
+            ref _onlineWriterEntriesCompleted,
+            Math.Max(0, entriesCompleted));
+        Interlocked.Exchange(
+            ref _onlineWriterEntriesTotal,
+            Math.Max(0, entriesTotal));
+        Interlocked.Increment(ref _changeSequence);
+    }
 
     /// <summary>Report progress for band rank-history maintenance, including background catch-up jobs.</summary>
     public void ReportBandRankHistoryProgress(
@@ -537,6 +609,13 @@ public sealed class ScrapeProgressTracker
         Interlocked.Exchange(ref _bandPagesTotal, 0);
         _bandSongsDiscovered = 0;
         Interlocked.Exchange(ref _bandRetries, 0);
+        Interlocked.Exchange(ref _bandFetchEpoch, 0);
+        Interlocked.Exchange(ref _deepJobsCompleted, 0);
+        Interlocked.Exchange(ref _deepJobsTotal, 0);
+        Interlocked.Exchange(ref _onlineWriterPagesCompleted, 0);
+        Interlocked.Exchange(ref _onlineWriterPagesTotal, 0);
+        Interlocked.Exchange(ref _onlineWriterEntriesCompleted, 0);
+        Interlocked.Exchange(ref _onlineWriterEntriesTotal, 0);
         _soloFetchComplete = false;
         _bandFetchComplete = false;
         _bandRankHistoryMode = null;
@@ -559,12 +638,22 @@ public sealed class ScrapeProgressTracker
         var flushInst = _flushingInstrument;
         var indexOp = _indexOperation;
         var bandPh = _bandPhase;
+        var deepJobsTotal = Interlocked.Read(ref _deepJobsTotal);
+        var onlineWriterPagesTotal = Interlocked.Read(
+            ref _onlineWriterPagesTotal);
         var soloComplete = _soloFetchComplete;
         var bandComplete = _bandFetchComplete;
         var historyStatus = _bandRankHistoryStatus;
 
         // Only emit detail when there's something to report
-        if (flushInst is null && indexOp is null && bandPh is null && !soloComplete && !bandComplete && historyStatus is null)
+        if (flushInst is null
+            && indexOp is null
+            && bandPh is null
+            && deepJobsTotal == 0
+            && onlineWriterPagesTotal == 0
+            && !soloComplete
+            && !bandComplete
+            && historyStatus is null)
             return null;
 
         return new SubOperationDetail
@@ -602,6 +691,25 @@ public sealed class ScrapeProgressTracker
             BandPagesTotal = bandPh is not null ? Interlocked.Read(ref _bandPagesTotal) : null,
             BandSongsDiscovered = bandPh is not null ? _bandSongsDiscovered : null,
             BandRetries = bandPh is not null ? Interlocked.Read(ref _bandRetries) : null,
+            BandFetchEpoch = bandPh is not null
+                ? Interlocked.Read(ref _bandFetchEpoch)
+                : null,
+            DeepJobsCompleted = deepJobsTotal > 0
+                ? Interlocked.Read(ref _deepJobsCompleted)
+                : null,
+            DeepJobsTotal = deepJobsTotal > 0 ? deepJobsTotal : null,
+            OnlineWriterPagesCompleted = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterPagesCompleted)
+                : null,
+            OnlineWriterPagesTotal = onlineWriterPagesTotal > 0
+                ? onlineWriterPagesTotal
+                : null,
+            OnlineWriterEntriesCompleted = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterEntriesCompleted)
+                : null,
+            OnlineWriterEntriesTotal = onlineWriterPagesTotal > 0
+                ? Interlocked.Read(ref _onlineWriterEntriesTotal)
+                : null,
             SoloFetchComplete = soloComplete,
             BandFetchComplete = bandComplete,
             BandRankHistoryMode = historyStatus is not null ? _bandRankHistoryMode : null,
@@ -736,6 +844,8 @@ public sealed class ScrapeProgressTracker
         _phaseRequests = 0;
         _phaseRetries = 0;
         _phaseUpdated = 0;
+        _phaseAttempts = 0;
+        _phaseRetryableUnavailable = 0;
     }
 
     /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>
@@ -758,6 +868,27 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Report one work item completed.</summary>
     public void ReportPhaseItemComplete() { Interlocked.Increment(ref _phaseCompleted); Interlocked.Increment(ref _changeSequence); }
+    /// <summary>Report multiple work items completed.</summary>
+    public void ReportPhaseItemsComplete(int count)
+    {
+        if (count <= 0) return;
+        Interlocked.Add(ref _phaseCompleted, count);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Report one logical work-item attempt in the current pass.</summary>
+    public void ReportPhaseAttempt()
+    {
+        Interlocked.Increment(ref _phaseAttempts);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Report one attempted item that remains pending after a retryable unavailable response.</summary>
+    public void ReportPhaseRetryableUnavailable()
+    {
+        Interlocked.Increment(ref _phaseRetryableUnavailable);
+        Interlocked.Increment(ref _changeSequence);
+    }
 
     /// <summary>Report one account-level unit completed.</summary>
     public void ReportPhaseAccountComplete() { Interlocked.Increment(ref _phaseAccountsCompleted); Interlocked.Increment(ref _changeSequence); }
@@ -781,6 +912,8 @@ public sealed class ScrapeProgressTracker
         _phaseRequests = 0;
         _phaseRetries = 0;
         _phaseUpdated = 0;
+        _phaseAttempts = 0;
+        _phaseRetryableUnavailable = 0;
         lock (_completedAttachments) { _completedAttachments.Clear(); }
     }
 
@@ -1120,6 +1253,9 @@ public sealed class ScrapeProgressTracker
         var requests = _phaseRequests;
         var retries = _phaseRetries;
         var updated = _phaseUpdated;
+        var attempts = Volatile.Read(ref _phaseAttempts);
+        var retryableUnavailable =
+            Volatile.Read(ref _phaseRetryableUnavailable);
 
         double? progressPercent = null;
         TimeSpan? estimatedRemaining = null;
@@ -1162,6 +1298,14 @@ public sealed class ScrapeProgressTracker
             Requests = requests > 0 ? requests : null,
             Retries = retries > 0 ? retries : null,
             EntriesUpdated = updated > 0 ? updated : null,
+            AttemptProgress = attempts > 0 || retryableUnavailable > 0
+                ? new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = attempts,
+                    RetryableUnavailableThisPass =
+                        Math.Min(attempts, retryableUnavailable),
+                }
+                : null,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
             InFlight = _adaptiveLimiter?.InFlight,
             MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
@@ -1342,6 +1486,7 @@ public sealed class OperationSnapshot
     [JsonIgnore]
     public bool? WorkItemsTotalFinal { get; init; }
     public int? EntriesUpdated { get; init; }
+    public PhaseAttemptProgressInfo? AttemptProgress { get; init; }
 
     // ── Sub-operation detail ──
     public SubOperationDetail? Detail { get; init; }
@@ -1429,6 +1574,17 @@ public sealed class SubOperationDetail
     public long? BandPagesTotal { get; init; }
     public int? BandSongsDiscovered { get; init; }
     public long? BandRetries { get; init; }
+    public long? BandFetchEpoch { get; init; }
+
+    // Coordinated deep scrape
+    public long? DeepJobsCompleted { get; init; }
+    public long? DeepJobsTotal { get; init; }
+
+    // Online bounded writer drain
+    public long? OnlineWriterPagesCompleted { get; init; }
+    public long? OnlineWriterPagesTotal { get; init; }
+    public long? OnlineWriterEntriesCompleted { get; init; }
+    public long? OnlineWriterEntriesTotal { get; init; }
 
     // Solo vs band completion
     public bool SoloFetchComplete { get; init; }

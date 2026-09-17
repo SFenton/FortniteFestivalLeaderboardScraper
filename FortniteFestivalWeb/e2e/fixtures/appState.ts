@@ -1,11 +1,13 @@
 import type { Page } from '@playwright/test';
 import { changelogHash } from '../../src/changelogHash';
 import { E2E_BAND, E2E_PLAYER } from './scenarios';
+import type { SelectedBandProfile } from '../../src/state/selectedProfile';
 
 export class AppState {
   constructor(protected readonly page: Page) {}
 
-  async reset(): Promise<void> {
+  async reset({ preserveFirstRun = false }: { preserveFirstRun?: boolean } = {}): Promise<void> {
+    const firstRun = preserveFirstRun ? await this.page.localStorage.getItem('fst:firstRun') : null;
     await this.page.goto('/e2e/fixtures/reset.html', { waitUntil: 'load' });
     await Promise.all([
       this.page.localStorage.clear(),
@@ -15,6 +17,7 @@ export class AppState {
       'fst:changelog',
       JSON.stringify({ version: 'e2e', hash: changelogHash() }),
     );
+    if (firstRun) await this.page.localStorage.setItem('fst:firstRun', firstRun);
   }
 
   async selectPlayer(
@@ -31,12 +34,12 @@ export class AppState {
     ]);
   }
 
-  async selectBand(): Promise<void> {
+  async selectBand(profile: Omit<SelectedBandProfile, 'type'> = { ...E2E_BAND, members: [...E2E_BAND.members] }): Promise<void> {
     await Promise.all([
       this.page.localStorage.removeItem('fst:trackedPlayer'),
       this.page.localStorage.setItem(
         'fst:selectedProfile',
-        JSON.stringify({ type: 'band', ...E2E_BAND }),
+        JSON.stringify({ type: 'band', ...profile }),
       ),
     ]);
   }

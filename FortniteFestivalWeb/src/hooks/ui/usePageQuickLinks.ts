@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { getScrollViewportRect } from '../../utils/scrollViewport';
 
 type QuickLinkTraceEntry = {
   timestamp: number;
@@ -93,7 +94,7 @@ export function getPageQuickLinkTestId(id: string): string {
 }
 
 function getSectionScrollTop(scrollEl: HTMLElement, sectionEl: HTMLElement): number {
-  const scrollRect = scrollEl.getBoundingClientRect();
+  const scrollRect = getScrollViewportRect(scrollEl);
   const sectionRect = sectionEl.getBoundingClientRect();
   return scrollEl.scrollTop + sectionRect.top - scrollRect.top;
 }
@@ -126,7 +127,7 @@ function isQuickLinkItemVisible<T extends PageQuickLinkItem>(
 ): boolean {
   const sectionEl = sectionRefs.get(itemId);
   if (sectionEl) {
-    const scrollRect = scrollEl.getBoundingClientRect();
+    const scrollRect = getScrollViewportRect(scrollEl);
     const sectionRect = sectionEl.getBoundingClientRect();
     return sectionRect.bottom > scrollRect.top && sectionRect.top < scrollRect.bottom;
   }

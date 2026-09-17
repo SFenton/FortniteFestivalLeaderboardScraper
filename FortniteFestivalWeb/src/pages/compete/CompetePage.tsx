@@ -88,7 +88,7 @@ export default function CompetePage() {
   const { profile, player } = useTrackedPlayer();
   const { settings } = useSettings();
   const isMobile = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobile;
   const scrollContainerRef = useScrollContainer();
 
   const accountId = player?.accountId ?? '';

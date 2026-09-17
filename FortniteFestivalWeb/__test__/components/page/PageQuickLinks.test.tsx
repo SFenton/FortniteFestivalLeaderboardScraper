@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { useEffect } from 'react';
-import { PageQuickLinksModal } from '../../../src/components/page/PageQuickLinks';
+import { PageQuickLinksModal, PageQuickLinksRail } from '../../../src/components/page/PageQuickLinks';
+import { FADE_DURATION } from '@festival/theme';
 import { TestProviders } from '../../helpers/TestProviders';
 
 vi.mock('../../../src/hooks/ui/useScrollMask', () => ({
@@ -43,6 +44,40 @@ describe('PageQuickLinksModal', () => {
     const list = screen.getByTestId('page-quick-links-modal-list');
     const content = list.parentElement as HTMLElement;
     expect(content.style.padding).toContain('safe-area-inset-bottom');
+  });
+
+  describe('PageQuickLinksRail reveal ownership', () => {
+    it('keeps the root disabled until reveal and resets for a new delayed reveal', () => {
+      vi.useFakeTimers();
+      const quickLinks = {
+        title: 'Quick Links',
+        items: [{ id: 'summary', label: 'Summary', landmarkLabel: 'Summary' }],
+        activeItemId: null,
+        visible: false,
+        onOpen: vi.fn(),
+        onClose: vi.fn(),
+        onSelect: vi.fn(),
+        desktopRailRevealDelayMs: 100,
+        maxHeight: 420,
+      };
+      const { rerender, unmount } = render(<PageQuickLinksRail quickLinks={quickLinks} />);
+      try {
+        const rail = screen.getByTestId('page-quick-links-rail');
+        expect(rail.style.pointerEvents).toBe('none');
+        expect(screen.getByRole('navigation')).toHaveStyle({ maxHeight: '420px' });
+        act(() => vi.advanceTimersByTime(100 + FADE_DURATION - 1));
+        expect(rail.style.pointerEvents).toBe('none');
+        act(() => vi.advanceTimersByTime(1));
+        expect(rail.style.pointerEvents).toBe('');
+        rerender(<PageQuickLinksRail quickLinks={{ ...quickLinks, desktopRailRevealDelayMs: 200 }} />);
+        expect(rail.style.pointerEvents).toBe('none');
+        act(() => vi.advanceTimersByTime(200 + FADE_DURATION));
+        expect(rail.style.pointerEvents).toBe('');
+      } finally {
+        unmount();
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('selects modal quick links from touch pointerup without double firing on click', () => {

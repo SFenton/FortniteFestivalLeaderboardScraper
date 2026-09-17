@@ -1,3 +1,4 @@
+using FortniteFestival.Core;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -14,6 +15,8 @@ public sealed class ScrapePassContext
     public required HashSet<string> RegisteredIds { get; init; }
     public required GlobalLeaderboardPersistence.PipelineAggregates Aggregates { get; init; }
     public required IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest> ScrapeRequests { get; init; }
+    public required IReadOnlyCollection<Song>
+        PublicationCatalogSongs { get; init; }
     public required int DegreeOfParallelism { get; init; }
     public bool EpicReportedOver100Pages { get; init; }
     public bool LeaderboardScrapeCompleted { get; init; } = true;

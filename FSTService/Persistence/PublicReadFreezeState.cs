@@ -56,3 +56,8 @@ public sealed record PublicReadFreezeState(
              or "path-repair-ranking-alignment"
          || MaxScoreMaintenance);
 }
+
+public sealed record PublicReadCacheDatabaseState(
+    long? CurrentPublicationId,
+    PublicReadFreezeState FreezeState,
+    PublicReadFreezeState FailedCandidateState);

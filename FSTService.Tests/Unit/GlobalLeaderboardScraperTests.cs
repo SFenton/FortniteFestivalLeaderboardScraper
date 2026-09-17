@@ -16,6 +16,19 @@ namespace FSTService.Tests.Unit;
 
 public class GlobalLeaderboardScraperTests
 {
+    [Fact]
+    public void InvalidLeaderboardClassification_requires_exact_error_code()
+    {
+        Assert.True(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard_later"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            """{"message":"com.epicgames.events.invalid_leaderboard"}"""));
+        Assert.False(EpicLeaderboardUnavailableException.IsExactInvalidLeaderboard(
+            "not-json com.epicgames.events.invalid_leaderboard"));
+    }
+
     private readonly ILogger<GlobalLeaderboardScraper> _log = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
     private readonly ScrapeProgressTracker _progress = new();
 
@@ -79,6 +92,24 @@ public class GlobalLeaderboardScraperTests
         dirtyField.SetValue(service, true);
         _ = service.Songs;
         return service;
+    }
+
+    [Fact]
+    public void RefreshLiveSongInstrumentSupport_UsesLivePathState()
+    {
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetLivePathGenerationStates().Returns(
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase));
+        var (scraper, _) = CreateScraper(
+            pathDataStore: pathStore);
+
+        scraper.RefreshLiveSongInstrumentSupport();
+
+        pathStore.Received(1)
+            .GetLivePathGenerationStates();
+        pathStore.DidNotReceive()
+            .GetPathGenerationStates();
     }
 
     /// <summary>
@@ -933,15 +964,32 @@ public class GlobalLeaderboardScraperTests
 
         handler.EnqueueError(HttpStatusCode.Unauthorized, "expired");
         handler.EnqueueJsonOk(OnePage);
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1,
+            minDop: 1,
+            maxDop: 1,
+            Substitute.For<
+                ILogger<AdaptiveConcurrencyLimiter>>(),
+            maxRequestsPerSecond: 1_000);
+        var acquiredRateTokens = 0;
+        limiter.OnRateTokenAcquired = _ =>
+            Interlocked.Increment(
+                ref acquiredRateTokens);
 
         var result = await scraper.ScrapeLeaderboardAsync(
-            "song1", "Solo_Guitar", "old_token", "acct", accessTokenProvider: provider);
+            "song1",
+            "Solo_Guitar",
+            "old_token",
+            "acct",
+            limiter: limiter,
+            accessTokenProvider: provider);
 
         Assert.Single(result.Entries);
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal("old_token", handler.Requests[0].Headers.Authorization?.Parameter);
         Assert.Equal("new_token", handler.Requests[1].Headers.Authorization?.Parameter);
         Assert.Equal(1, provider.RefreshCount);
+        Assert.Equal(2, acquiredRateTokens);
     }
 
     [Fact]

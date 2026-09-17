@@ -16,6 +16,8 @@ public sealed class ScrapeLifecycleNotifier
     private readonly PublicReadGateService _publicReadGate;
     private readonly PublicationReadContextService _publicationReadContext;
     private readonly ILogger<ScrapeLifecycleNotifier> _log;
+    private readonly PublicationApiResponseCacheService?
+        _publicationApiCache;
 
     public ScrapeLifecycleNotifier(
         [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
@@ -26,13 +28,16 @@ public sealed class ScrapeLifecycleNotifier
         IMetaDatabase metaDb,
         PublicReadGateService publicReadGate,
         PublicationReadContextService publicationReadContext,
-        ILogger<ScrapeLifecycleNotifier> log)
+        ILogger<ScrapeLifecycleNotifier> log,
+        PublicationApiResponseCacheService?
+            publicationApiCache = null)
     {
         _caches = [playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache];
         _metaDb = metaDb;
         _publicReadGate = publicReadGate;
         _publicationReadContext = publicationReadContext;
         _log = log;
+        _publicationApiCache = publicationApiCache;
     }
 
     /// <summary>
@@ -206,6 +211,7 @@ public sealed class ScrapeLifecycleNotifier
     {
         foreach (var cache in _caches)
             cache.InvalidateAll();
+        _publicationApiCache?.Reset();
     }
 
     private void ReleasePublicReads()

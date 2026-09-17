@@ -10,11 +10,31 @@ namespace FSTService.Persistence;
 public interface IMetaDatabase : IDisposable
 {
     void EnsureSchema();
+    Task PublishRetentionWorkerConfigurationAsync(
+        string instanceId, bool reportOnlyEnabled, string workerCodeSha256,
+        CancellationToken ct = default);
 
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();
     long StartScrapeRun(SongCatalogPersistenceToken expectedCatalog);
-    void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
+    void RecordScrapeAcquisitionCheckpoint(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedSoloLeaderboardPairs,
+        bool epicReportedOver100Pages = false);
+    void CompleteScrapeRun(
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        bool epicReportedOver100Pages = false,
+        IReadOnlyCollection<(string SongId, string Instrument)>?
+            expectedSoloLeaderboardPairs = null);
     void FailScrapeRun(
         long scrapeId,
         string phase,
@@ -70,14 +90,27 @@ public interface IMetaDatabase : IDisposable
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     PublicReadFreezeState GetFailedCandidateReadIsolationState();
+    PublicReadCacheDatabaseState?
+        GetPublicReadCacheDatabaseState();
     PublicationPointerState GetPublicationPointerState();
+    PublicationPointerState GetPublicationPointerState(
+        int commandTimeoutSeconds);
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
     PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(long scrapeId);
     IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(long publicationId);
     PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
         long publicationId,
-        string surfaceName);
+        string surfaceName,
+        int commandTimeoutSeconds = 0);
+    PublicationPathPromotionOutcome
+        ApplyWorkingPublicationPathPromotion(
+            PublicationPathPromotionRequest request);
+    IReadOnlyList<PublicationPathPromotionRow>
+        GetPublicationPathPromotions(long publicationId);
+    bool IsPathArtifactGenerationReferenced(
+        string songId,
+        string generationId);
     bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
@@ -88,10 +121,12 @@ public interface IMetaDatabase : IDisposable
         WorkerOperationInfo? currentOperation = null);
     void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
         WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
-        DateTime? updatedAtUtc = null);
+        DateTime? updatedAtUtc = null, string? instanceId = null);
     WorkerStatusInfo? GetWorkerStatus(string workerKey);
     ServiceRuntimeState GetServiceRuntimeState(
         string workerKey,
+        int commandTimeoutSeconds = 0);
+    CatalogPublicationLagState GetCatalogPublicationLagState(
         int commandTimeoutSeconds = 0);
     int InterruptOrphanedScrapePhaseAttempts(
         string workerInstanceId,
@@ -204,6 +239,7 @@ public interface IMetaDatabase : IDisposable
     void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound, string? windowId = null);
     List<RegisteredBandLookupProgressInfo> GetCheckedRegisteredBandLookups(string sourceId, string bandType, string teamKey);
     void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound, string? windowId = null);
+    void MarkRegisteredPlayerBandDiscoveryAttempted(string accountId, string songId, string bandType, string scope, int season, string? windowId = null);
     List<RegisteredPlayerBandDiscoveryProgressInfo> GetCheckedRegisteredPlayerBandDiscoveryLookups(string accountId);
     int PruneStaleWebRegistrations(DateTime staleBeforeUtc);
     string? GetAccountIdForUsername(string username);
@@ -214,6 +250,10 @@ public interface IMetaDatabase : IDisposable
     List<BackfillStatusInfo> GetPendingBackfills();
     List<BackfillStatusInfo> GetDeferredBackfills();
     BackfillStatusInfo? GetBackfillStatus(string accountId);
+    Task<RegistrationDrainStatusInfo>
+        GetRegistrationDrainStatusAsync(
+            int commandTimeoutSeconds = 5,
+            CancellationToken ct = default);
     void StartBackfill(string accountId);
     void CompleteBackfill(string accountId, bool rankingsPending = false);
     IReadOnlyList<SoloCurrentProjectionScopeKey> GetBackfillProjectionScopesCompletedBefore(
@@ -426,9 +466,18 @@ public interface IMetaDatabase : IDisposable
 
     // ── API response cache ───────────────────────────────────────────
     PublicationCacheLookup GetCurrentCacheLookup(string cacheKey);
+    int PurgeApiResponseCacheKeysWithPrefix(string cacheKeyPrefix);
     PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);
+    PublicationCachedResponse? GetCachedResponseEntry(
+        long publicationId,
+        string cacheKey);
+    PublicationCachedResponse? TrySetCurrentCachedResponse(
+        long expectedPublicationId,
+        string cacheKey,
+        byte[] json,
+        string etag);
     IDisposable AcquirePublicationCacheBuildLease(
         long publicationId,
         bool requireCurrentPublication);
@@ -441,6 +490,20 @@ public interface IMetaDatabase : IDisposable
         => Task.FromException<IMaxScoreMaintenanceLease>(
             new NotSupportedException(
                 "Max-score maintenance leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceRollbackLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance rollback leases are not supported by this metadata store."));
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceResumeLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance resume leases are not supported by this metadata store."));
     void BulkSetCachedResponses(
         IEnumerable<(string Key, byte[] Json, string ETag)> entries,
         long? publicationId = null);

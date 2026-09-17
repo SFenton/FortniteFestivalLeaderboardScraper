@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { getScrollViewportRect } from '../../utils/scrollViewport';
 
 export function useVirtualListScrollMargin({
   scrollContainerRef,
@@ -67,7 +68,7 @@ export function resolveVirtualListScrollMargin(
   listElement: HTMLElement | null,
 ): number {
   if (!scrollElement || !listElement) return 0;
-  const scrollRect = scrollElement.getBoundingClientRect();
+  const scrollRect = getScrollViewportRect(scrollElement);
   const listRect = listElement.getBoundingClientRect();
   return Math.max(
     0,

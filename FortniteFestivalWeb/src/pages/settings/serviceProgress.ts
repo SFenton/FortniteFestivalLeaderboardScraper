@@ -7,6 +7,24 @@ export type TrustedServiceEta = {
   sampleCount: number;
 };
 
+export type ServiceBarProgress = {
+  identity: string;
+  id: string | null;
+  epoch: number;
+  sequence: number;
+  kind: 'exact' | 'indeterminate' | 'not_applicable';
+  percent: number | null;
+  unitsKind: string | null;
+  unitsCompleted: number | null;
+  unitsTotal: number | null;
+  unitsTotalFinal: boolean;
+};
+
+export type ServiceAttemptProgress = {
+  attemptedThisPass: number;
+  retryableUnavailableThisPass: number;
+};
+
 export type ServiceProgressDisplay = {
   isV2: boolean;
   isDeterminate: boolean;
@@ -24,6 +42,8 @@ export type ServiceProgressDisplay = {
   restarted: boolean;
   stalePayloadIgnored: boolean;
   eta: TrustedServiceEta | null;
+  barProgress: ServiceBarProgress | null;
+  attemptProgress: ServiceAttemptProgress | null;
 };
 
 export type ServiceProgressMemory = {
@@ -59,7 +79,7 @@ function operationIdentity(serviceInfo: ServiceInfoResponse): string | null {
   const scrapeId = current.scrapeId ?? serviceInfo.activeScrapeId;
   if (scrapeId == null && !current.operationId) return null;
   return [
-    scrapeId ?? 'none',
+    scrapeId ?? current.startedAt ?? 'none',
     current.operationId ?? 'legacy',
     current.phasePlanVersion ?? serviceInfo.phasePlan?.version ?? 'unversioned',
   ].join(':');
@@ -83,6 +103,146 @@ function emptyDisplay(isV2: boolean): ServiceProgressDisplay {
     restarted: false,
     stalePayloadIgnored: false,
     eta: null,
+    barProgress: null,
+    attemptProgress: null,
+  };
+}
+
+function normalizeAttemptProgress(
+  value: ServiceInfoResponse['currentUpdate']['attemptProgress'],
+): ServiceAttemptProgress | null {
+  if (!value || value.schemaVersion !== 1) return null;
+  const attemptedThisPass = finiteNumber(value.attemptedThisPass);
+  const retryableUnavailableThisPass = finiteNumber(
+    value.retryableUnavailableThisPass,
+  );
+  if (
+    attemptedThisPass == null
+    || retryableUnavailableThisPass == null
+    || !Number.isInteger(attemptedThisPass)
+    || !Number.isInteger(retryableUnavailableThisPass)
+    || attemptedThisPass < 0
+    || retryableUnavailableThisPass < 0
+    || retryableUnavailableThisPass > attemptedThisPass
+  ) {
+    return null;
+  }
+  return {
+    attemptedThisPass,
+    retryableUnavailableThisPass,
+  };
+}
+
+function reduceBarProgress(
+  previous: ServiceBarProgress | null,
+  serviceInfo: ServiceInfoResponse,
+  operationIdentityValue: string | null,
+  phaseId: string | null,
+  phaseAttempt: number | null,
+  phasePercent: number | null,
+  phaseUnitsKind: string | null,
+  phaseUnitsCompleted: number | null,
+  phaseUnitsTotal: number | null,
+  phaseUnitsTotalFinal: boolean,
+): ServiceBarProgress | null {
+  const current = serviceInfo.currentUpdate;
+  const raw = current.subphaseProgress;
+  if (raw) {
+    const epoch = finiteNumber(raw.epoch) ?? 0;
+    const sequence = finiteNumber(raw.sequence) ?? 0;
+    const expectedId = current.subphaseId ?? null;
+    const id = raw.id ?? expectedId;
+    const identity = [
+      operationIdentityValue ?? 'none',
+      phaseId ?? 'none',
+      phaseAttempt ?? 'none',
+      id ?? 'none',
+      epoch,
+    ].join(':');
+    const sameIdentity = previous?.identity === identity;
+    if (sameIdentity && sequence < (previous?.sequence ?? 0)) {
+      return previous;
+    }
+
+    const supportedSchema = raw.schemaVersion === 1;
+    const matchingId = expectedId == null || id === expectedId;
+    const rawKind = supportedSchema
+      && matchingId
+      && (raw.kind === 'exact' || raw.kind === 'not_applicable')
+      ? raw.kind
+      : 'indeterminate';
+    const unitsTotalFinal = raw.unitsTotalFinal === true;
+    const unitsCompleted = finiteNumber(raw.unitsCompleted);
+    const unitsTotal = finiteNumber(raw.unitsTotal);
+    const exactPercent = rawKind === 'exact'
+      && unitsTotalFinal
+      && unitsTotal != null
+      && unitsTotal > 0
+      && unitsCompleted != null
+      && unitsCompleted >= 0
+      && unitsCompleted <= unitsTotal
+        ? clampPercent(finiteNumber(raw.percent))
+        : null;
+    const kind = rawKind === 'exact' && exactPercent == null
+      ? 'indeterminate'
+      : rawKind;
+    const percent = kind === 'exact'
+      && sameIdentity
+      && previous?.percent != null
+        ? Math.max(previous.percent, exactPercent!)
+        : exactPercent;
+
+    return {
+      identity,
+      id,
+      epoch,
+      sequence,
+      kind,
+      percent,
+      unitsKind: kind === 'exact' ? raw.unitsKind ?? null : null,
+      unitsCompleted: kind === 'exact' ? unitsCompleted : null,
+      unitsTotal: kind === 'exact' ? unitsTotal : null,
+      unitsTotalFinal: kind === 'exact' && unitsTotalFinal,
+    };
+  }
+
+  if (current.subphaseId) {
+    return {
+      identity: [
+        operationIdentityValue ?? 'none',
+        phaseId ?? 'none',
+        phaseAttempt ?? 'none',
+        current.subphaseId,
+        'legacy',
+      ].join(':'),
+      id: current.subphaseId,
+      epoch: 0,
+      sequence: 0,
+      kind: 'indeterminate',
+      percent: null,
+      unitsKind: null,
+      unitsCompleted: null,
+      unitsTotal: null,
+      unitsTotalFinal: false,
+    };
+  }
+
+  return {
+    identity: [
+      operationIdentityValue ?? 'none',
+      phaseId ?? 'none',
+      phaseAttempt ?? 'none',
+      'phase',
+    ].join(':'),
+    id: null,
+    epoch: 0,
+    sequence: 0,
+    kind: phasePercent != null ? 'exact' : 'indeterminate',
+    percent: phasePercent,
+    unitsKind: phaseUnitsKind,
+    unitsCompleted: phaseUnitsCompleted,
+    unitsTotal: phaseUnitsTotal,
+    unitsTotalFinal: phaseUnitsTotalFinal,
   };
 }
 
@@ -178,6 +338,24 @@ export function reduceServiceProgress(
   const overallPercent = rawOverallPercent != null && previousOverallPercent != null
     ? Math.max(previousOverallPercent, rawOverallPercent)
     : rawOverallPercent;
+  const rawAttemptProgress = normalizeAttemptProgress(
+    current.attemptProgress,
+  );
+  const previousAttemptProgress = samePhase && !restarted
+    ? previous?.display.attemptProgress ?? null
+    : null;
+  const attemptProgress = rawAttemptProgress
+    ? {
+      attemptedThisPass: Math.max(
+        previousAttemptProgress?.attemptedThisPass ?? 0,
+        rawAttemptProgress.attemptedThisPass,
+      ),
+      retryableUnavailableThisPass: Math.max(
+        previousAttemptProgress?.retryableUnavailableThisPass ?? 0,
+        rawAttemptProgress.retryableUnavailableThisPass,
+      ),
+    }
+    : null;
 
   const display: ServiceProgressDisplay = {
     isV2,
@@ -196,6 +374,19 @@ export function reduceServiceProgress(
     restarted,
     stalePayloadIgnored: false,
     eta: getTrustedEta(serviceInfo),
+    attemptProgress,
+    barProgress: reduceBarProgress(
+      previous?.display.barProgress ?? null,
+      serviceInfo,
+      identity,
+      phaseId,
+      phaseAttempt,
+      phasePercent,
+      current.unitsKind ?? null,
+      finiteNumber(current.unitsCompleted),
+      finiteNumber(current.unitsTotal),
+      unitsTotalFinal,
+    ),
   };
 
   return {

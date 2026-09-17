@@ -61,6 +61,22 @@ describe('usePageQuickLinks', () => {
     vi.useRealTimers();
   });
 
+  it('lands sections below the client viewport instead of inside its border', () => {
+    const scrollEl = createScrollContainer({ clientHeight: 600, scrollHeight: 2000 });
+    Object.defineProperty(scrollEl, 'clientTop', { value: 64 });
+    const item = { id: 'target', label: 'Target', landmarkLabel: 'Target' };
+    const { result } = renderHook(() => usePageQuickLinks({
+      items: [item],
+      scrollContainerRef: { current: scrollEl },
+      isDesktopRailEnabled: true,
+    }));
+    act(() => {
+      result.current.registerSectionRef(item.id, createSection(scrollEl, 364));
+      result.current.handleQuickLinkSelect(item);
+    });
+    expect(scrollEl.scrollTo).toHaveBeenCalledWith({ top: 268, behavior: 'smooth' });
+  });
+
   it('keeps a bottom-boundary quick link active while its section remains visible', async () => {
     const scrollEl = createScrollContainer({ clientHeight: 540, scrollHeight: 1000 });
     const scrollContainerRef = { current: scrollEl };

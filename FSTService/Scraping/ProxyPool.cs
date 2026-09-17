@@ -41,6 +41,8 @@ internal static class ProxyRequestState
     public static readonly HttpRequestOptionsKey<int> EndpointIndex = new("FSTService.ProxyEndpointIndex");
     public static readonly HttpRequestOptionsKey<string> EndpointName = new("FSTService.ProxyEndpointName");
     public static readonly HttpRequestOptionsKey<Uri> EndpointProxyUri = new("FSTService.ProxyEndpointProxyUri");
+    public static readonly HttpRequestOptionsKey<Action> WireSendRecorder =
+        new("FSTService.ProxyWireSendRecorder");
 }
 
 internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, IDisposable
@@ -574,7 +576,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private static string GetOptional(IReadOnlyList<string> values, int index)
         => index >= 0 && index < values.Count ? values[index] : "";
 
-    private static void ValidateExpectedConfiguration(ScraperOptions options)
+    internal static void ValidateExpectedConfiguration(ScraperOptions options)
     {
         int expected = options.ExpectedProxyEndpointCount;
         if (expected < 0)

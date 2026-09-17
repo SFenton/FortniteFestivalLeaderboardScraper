@@ -1,0 +1,1222 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "opportunities": [
+    {
+      "id": "database",
+      "cases": [
+        {
+          "id": "DB-01",
+          "question": "Can repeated schema initialization stay idempotent while preserving the publication singleton, trigger guard, and sequence semantics?",
+          "sources": [
+            {
+              "file": "FSTService/Persistence/DatabaseInitializer.cs",
+              "start": 49,
+              "end": 77
+            },
+            {
+              "file": "FSTService/Persistence/DatabaseInitializer.cs",
+              "start": 79,
+              "end": 142
+            },
+            {
+              "file": "FSTService/Persistence/DatabaseInitializer.cs",
+              "start": 340,
+              "end": 475
+            },
+            {
+              "file": "FSTService.Tests/Unit/DatabaseInitializerTests.cs",
+              "start": 45,
+              "end": 87
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 138,
+              "end": 149
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 222,
+              "end": 232
+            }
+          ],
+          "criteria": [
+            "Names the schema steps that are safe to repeat and the steps that are guarded by exact validation.",
+            "Recognizes the publication singleton and leaderboard mutation guard as invariants, not incidental setup.",
+            "Mentions that sequences are advanced after COPY-style inserts and are never rewound after retention/deletion."
+          ],
+          "failureCriteria": [
+            "Claims schema init creates or rewinds data rows.",
+            "Misses the concurrent-index validation path or the trigger guard check.",
+            "Treats the initialization plan as a monolithic DDL blob instead of discrete idempotent steps."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~DatabaseInitializerTests.Schema_initialization_creates_publication_singleton_without_scrape|FullyQualifiedName~DatabaseInitializerTests.EnsureSchemaAsync_creates_idempotent_leaderboard_population_guard",
+          "discriminator": "A cheaper challenger can say 'idempotent' but usually misses the exact trigger, sequence, and concurrent-index semantics that make the initialization safe."
+        },
+        {
+          "id": "DB-02",
+          "question": "Which rows may retention maintenance delete, and how does it avoid laundering provenance or deleting the wrong publication state?",
+          "sources": [
+            {
+              "file": "FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs",
+              "start": 37,
+              "end": 203
+            },
+            {
+              "file": "FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs",
+              "start": 205,
+              "end": 360
+            },
+            {
+              "file": "FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs",
+              "start": 96,
+              "end": 145
+            },
+            {
+              "file": "FSTService.Tests/Unit/DatabaseRetentionMaintenanceServiceTests.cs",
+              "start": 147,
+              "end": 290
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 79,
+              "end": 105
+            }
+          ],
+          "criteria": [
+            "Separates snapshot rewrite, metadata TTL cleanup, publication-generation retirement, and pressure gating.",
+            "Calls out the advisory lock and pressure checks as gates before any deletion.",
+            "Preserves writer-failure, published-source, and other provenance-bearing rows unless the exact cleanup rule says otherwise."
+          ],
+          "failureCriteria": [
+            "Treats retention as a generic prune/delete pass.",
+            "Misses the difference between report-only planning and executable rewrite mode.",
+            "Forgets that publication generation retirement is locked and bounded by exact source tables and timestamps."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests.RunAsync_WithMetadataTtlCleanup_PrunesOnlyUnpinnedMetadataRows|FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests.RunAsync_WithDatabasePressure_SkipsRetentionMaintenance",
+          "discriminator": "A cheaper challenger usually sees only 'cleanup' and misses the provenance-safe boundaries and lock/pressure gates that define which rows are actually eligible."
+        },
+        {
+          "id": "DB-03",
+          "question": "Why is the snapshot-generation retention schema intentionally non-executable, and what concrete invariants does it enforce?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs",
+              "start": 16,
+              "end": 105
+            },
+            {
+              "file": "FSTService.Tests/Unit/SnapshotGenerationRetentionSchemaTests.cs",
+              "start": 213,
+              "end": 250
+            },
+            {
+              "file": "FSTService/Persistence/DatabaseInitializer.cs",
+              "start": 340,
+              "end": 475
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 100,
+              "end": 111
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 127,
+              "end": 149
+            }
+          ],
+          "criteria": [
+            "States that the schema is report-only and must not contain executable work tables.",
+            "Mentions the explicit checks against DROP, DETACH, DELETE, and other destructive SQL.",
+            "Explains the check-violation and foreign-key-violation behavior as intentional guardrails."
+          ],
+          "failureCriteria": [
+            "Claims the schema includes a normal work queue or runtime executor.",
+            "Misses the no-destructive-SQL assertions.",
+            "Confuses the retention schema with a migration that rewrites current data."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~SnapshotGenerationRetentionSchemaTests.Schema_IsIdempotentImmutableAndHasNoExecutableWorkTable|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests.SchemaAndPlannerContainNoDestructiveExecutionSql",
+          "discriminator": "A cheaper challenger often recognizes the retention feature but not the hard prohibition on destructive execution SQL and work-table semantics."
+        }
+      ]
+    },
+    {
+      "id": "concurrency",
+      "cases": [
+        {
+          "id": "CONC-01",
+          "question": "Does the JS limiter actually cap concurrency and keep active/queued counters consistent under contention?",
+          "sources": [
+            {
+              "file": "packages/core/src/concurrency.ts",
+              "start": 1,
+              "end": 30
+            },
+            {
+              "file": "packages/core/src/__tests__/concurrency.test.ts",
+              "start": 5,
+              "end": 52
+            },
+            {
+              "file": ".github/skills/fst-budget-workflow/SKILL.md",
+              "start": 25,
+              "end": 34
+            },
+            {
+              "file": ".github/skills/fst-budget-workflow/SKILL.md",
+              "start": 41,
+              "end": 49
+            }
+          ],
+          "criteria": [
+            "Notes that maxConcurrency floors to 1, queueing is FIFO-ish through the internal queue, and active/queued getters settle back to zero.",
+            "Describes the concurrency cap as test-observed behavior, not a vague promise.",
+            "Keeps the answer grounded in the unit test assertions instead of inferring fairness or starvation guarantees that are not present."
+          ],
+          "failureCriteria": [
+            "Claims the limiter is unbounded or that zero concurrency is allowed.",
+            "Adds fairness/liveness guarantees not exercised by the test.",
+            "Misses the queued counter settling behavior after microtasks drain."
+          ],
+          "validator": "The three assertions in packages/core/src/__tests__/concurrency.test.ts must pass unchanged: limits concurrency, reflects active/queued state, and floors maxConcurrency to 1.",
+          "discriminator": "A cheaper challenger can summarize the limiter shape but often misses the exact queue and counter semantics the tests pin down."
+        },
+        {
+          "id": "CONC-02",
+          "question": "How do the worker-stateful commit tests prove retryable contention keeps the candidate ready instead of advancing publication?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs",
+              "start": 74,
+              "end": 156
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 226,
+              "end": 260
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 297,
+              "end": 321
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 166,
+              "end": 184
+            }
+          ],
+          "criteria": [
+            "Explains the deferred commit intent and why the generation stays Ready while the working pointer remains pinned.",
+            "Distinguishes busy/deferred contention from success and from a terminal failure.",
+            "Mentions the retry intent restoration before a later commit attempt."
+          ],
+          "failureCriteria": [
+            "Confuses contention with a completed commit.",
+            "Forgets that the candidate remains ready and the working publication remains set until retry.",
+            "Misses the busy-intent path that blocks a fresh scrape."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~ScraperWorkerStatefulTests.CommitContentionPreservesReadyGenerationForRetry",
+          "discriminator": "A cheaper challenger often equates contention with success or failure and misses the exact retry-preserving state machine."
+        },
+        {
+          "id": "CONC-03",
+          "question": "What ordering guarantee is exercised when a deferred publication is resumed before the next scrape or notification boundary?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs",
+              "start": 312,
+              "end": 420
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 67,
+              "end": 92
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 185,
+              "end": 194
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            }
+          ],
+          "criteria": [
+            "States that deferred publication is resumed before fresh scrape allocation.",
+            "Keeps notification and cache invalidation ordering after publication success, not before.",
+            "Recognizes that the freeze clears only once the publication boundary has been re-established."
+          ],
+          "failureCriteria": [
+            "Allows a new scrape allocation to race ahead of deferred publication recovery.",
+            "Misses the notification gate and cache invalidation ordering.",
+            "Treats resume as a best-effort helper rather than a strict sequencing guarantee."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~ScraperWorkerStatefulTests.WorkerPassResumesDeferredPublicationBeforeScrapeStartingOrAllocation|FullyQualifiedName~ScraperWorkerStatefulTests.ExecuteAsyncResumesDeferredPublicationBeforeNotificationGateAndAuthentication",
+          "discriminator": "A cheaper challenger can follow the naming but still miss the sequencing hazard that the tests and publication-flow docs enforce."
+        }
+      ]
+    },
+    {
+      "id": "performance",
+      "cases": [
+        {
+          "id": "PERF-01",
+          "question": "Can you justify the publication-cache cold/warm latency targets and name the exact evidence that makes them acceptable?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs",
+              "start": 24,
+              "end": 132
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 113,
+              "end": 125
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 154,
+              "end": 184
+            },
+            {
+              "file": ".github/skills/database-evaluation/SKILL.md",
+              "start": 12,
+              "end": 18
+            }
+          ],
+          "criteria": [
+            "Names the cold and warm percentile thresholds and the sample counts used to derive them.",
+            "Distinguishes correctness from speed and does not drop the current-publication cache semantics.",
+            "References the measured A/B evidence rather than claiming performance from source inspection alone."
+          ],
+          "failureCriteria": [
+            "Talks about latency without the test thresholds or sample counts.",
+            "Ignores the current-publication cache path or the correctness preconditions.",
+            "Treats a benchmark as a functional test or vice versa."
+          ],
+          "validator": "The assertions in PublicationApiCacheBenchmarkTests.Representative_songs_payload_meets_cold_and_warm_targets define the pass/fail thresholds directly in the test.",
+          "discriminator": "A cheaper challenger may repeat the numbers but miss that the benchmark is only acceptable because it is tied to correctness, sample size, and publication-state constraints."
+        },
+        {
+          "id": "PERF-02",
+          "question": "Does the lazy write-through benchmark show the current cache row scale still stays under the 500 ms p95 ceiling?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/PublicationApiCacheBenchmarkTests.cs",
+              "start": 134,
+              "end": 190
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 146,
+              "end": 173
+            },
+            {
+              "file": ".github/skills/fst-budget-workflow/SKILL.md",
+              "start": 41,
+              "end": 46
+            }
+          ],
+          "criteria": [
+            "Mentions the 10k seed-row scale, the public-route cache key shape, and the p95 ceiling.",
+            "Keeps the answer tied to current publication state and lazy write-through behavior.",
+            "Recognizes that the benchmark is about storage/cache behavior, not a generic algorithmic microbenchmark."
+          ],
+          "failureCriteria": [
+            "Forgets the seeded row scale or the p95 threshold.",
+            "Explains the result without mentioning the cache-key shape or publication binding.",
+            "Assumes the benchmark is proving a speedup without comparing the observed p95 ceiling."
+          ],
+          "validator": "The benchmark assertion in PublicationApiCacheBenchmarkTests.Lazy_write_through_meets_hard_target_at_current_row_scale is the deterministic gate.",
+          "discriminator": "A cheaper challenger may see 'benchmark' and 'p95' but miss the row-scale and publication-binding context that makes the result meaningful."
+        },
+        {
+          "id": "PERF-03",
+          "question": "Which measured A/B evidence in the docs makes the current publication-cache promotion acceptable, and which evidence would still require remeasurement?",
+          "sources": [
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 154,
+              "end": 196
+            },
+            {
+              "file": ".github/skills/database-evaluation/SKILL.md",
+              "start": 12,
+              "end": 18
+            },
+            {
+              "file": ".github/skills/database-evaluation/SKILL.md",
+              "start": 22,
+              "end": 24
+            },
+            {
+              "file": ".github/skills/fst-budget-workflow/SKILL.md",
+              "start": 41,
+              "end": 46
+            },
+            {
+              "file": ".github/skills/fst-budget-workflow/SKILL.md",
+              "start": 49,
+              "end": 50
+            }
+          ],
+          "criteria": [
+            "Separates the rejected Unicode-escaping head from the accepted repeat A/B.",
+            "Uses the measured physical/logical/WAL/free-space figures as the decision basis.",
+            "States what still needs remeasurement before promotion versus what is already accepted."
+          ],
+          "failureCriteria": [
+            "Conflates the rejected and accepted runs.",
+            "Uses source confidence instead of measured evidence.",
+            "Misses that the benchmark decision depends on both correctness and resource impact."
+          ],
+          "validator": "The documented accepted/rejected A/B blocks in data-storage.md are the evidence source of record; no live measurements are needed to validate the case.",
+          "discriminator": "A cheaper challenger may summarize 'there was an A/B' but miss which specific measurement changed the decision tier."
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "cases": [
+        {
+          "id": "STORE-01",
+          "question": "Can the storage-readiness script prove the evidence package stays on the FST drive and remains read-only?",
+          "sources": [
+            {
+              "file": "tools/postgres-storage-ownership-readiness.sh",
+              "start": 15,
+              "end": 158
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 45,
+              "end": 55
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 97,
+              "end": 105
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 127,
+              "end": 149
+            }
+          ],
+          "criteria": [
+            "Confirms the output path must stay under /mnt/docker-storage and that the script is explicitly read-only.",
+            "Mentions the manifest/checksum packaging and the preflight safety gate.",
+            "Treats the script as evidence capture, not as a mutating maintenance command."
+          ],
+          "failureCriteria": [
+            "Allows output outside the FST storage root.",
+            "Suggests the script mutates schema or data.",
+            "Forgets that the package includes both manifests and checksum material."
+          ],
+          "validator": "Run the existing script with an output directory under the FST storage root; it must create the package and checksum files without mutating production state.",
+          "discriminator": "A cheaper challenger often notices the script name but misses the storage-root boundary and the read-only evidence package contract."
+        },
+        {
+          "id": "STORE-02",
+          "question": "What must be true before reclaim, rewrite, or maintenance is allowed, and when does the guard fail closed?",
+          "sources": [
+            {
+              "file": "tools/postgres-capacity-guard.sh",
+              "start": 24,
+              "end": 66
+            },
+            {
+              "file": "tools/postgres-capacity-guard.sh",
+              "start": 136,
+              "end": 166
+            },
+            {
+              "file": "tools/postgres-capacity-guard.sh",
+              "start": 168,
+              "end": 260
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 127,
+              "end": 136
+            }
+          ],
+          "criteria": [
+            "Identifies the same-drive requirement and the supported action classes.",
+            "Explains the emergency headroom thresholds and exit-code distinctions.",
+            "Calls out that the guard uses live publication/freeze/lock state before approving action."
+          ],
+          "failureCriteria": [
+            "Ignores the 4 TB root rule or the emergency headroom model.",
+            "Treats reclaim, rewrite, and maintenance as identical.",
+            "Misses the fail-closed exit codes."
+          ],
+          "validator": "The script exits with 0/2/3/4 according to its encoded gate logic; the thresholds are deterministic and read-only.",
+          "discriminator": "A cheaper challenger may paraphrase 'capacity guard' but miss the exact gate matrix that determines whether a storage action is allowed."
+        },
+        {
+          "id": "STORE-03",
+          "question": "Why is stale solo-rank index retirement treated as completed storage history rather than current bootstrap schema?",
+          "sources": [
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 234,
+              "end": 251
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 71,
+              "end": 105
+            },
+            {
+              "file": "FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs",
+              "start": 13,
+              "end": 105
+            }
+          ],
+          "criteria": [
+            "States that ix_le_song_rank is already retired and not part of current bootstrap schema.",
+            "Recognizes that only the dedicated retirement tool may validate or perform the cycle.",
+            "Keeps the answer on history/ownership rather than generic index cleanup."
+          ],
+          "failureCriteria": [
+            "Treats the index as still live bootstrap schema.",
+            "Misses that the retirement is terminal and current docs treat it as completed history.",
+            "Confuses the index-retirement story with the snapshot-drop story."
+          ],
+          "validator": "Compare the storage doc's terminal statement with the retirement-tool test expectations; no live database access is needed.",
+          "discriminator": "A cheaper challenger can recognize 'index retirement' but miss that the current docs already record the retirement as complete and nonreversible."
+        }
+      ]
+    },
+    {
+      "id": "publication",
+      "cases": [
+        {
+          "id": "PUB-01",
+          "question": "Which routes must fail closed under publish freeze, and which are intentionally allowed to keep serving?",
+          "sources": [
+            {
+              "file": "FSTService/Api/PublicReadGateMiddleware.cs",
+              "start": 12,
+              "end": 66
+            },
+            {
+              "file": "FSTService/Api/PublicReadGateMiddleware.cs",
+              "start": 74,
+              "end": 195
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicReadGateTests.cs",
+              "start": 522,
+              "end": 731
+            },
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 88,
+              "end": 124
+            }
+          ],
+          "criteria": [
+            "Separates published-data routes from operational/control routes.",
+            "Mentions the published-mode headers and the 503 fail-closed path for uncached failed-candidate reads.",
+            "Recognizes the carve-outs for maintenance-owned `/api/songs` and `/api/paths/*` reads."
+          ],
+          "failureCriteria": [
+            "Confuses operational routes with publication-bound routes.",
+            "Forgets the endpoint-owned failed-candidate read path.",
+            "Claims all API routes behave the same under freeze."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PublicReadGateTests.PublicReadGateMiddleware_FailsClosedForUncachedFailedCandidateDerivedRoute|FullyQualifiedName~PublicReadGateTests.PublicReadGateMiddleware_AllowsClassifiedRoutesDuringScrapeFreeze|FullyQualifiedName~PublicReadGateTests.PublicReadGateMiddleware_AllowsClassifiedRoutesDuringPublishFreeze|FullyQualifiedName~PublicReadGateTests.PublicReadGateMiddleware_RoutesMaxScoreMaintenanceReadsToCacheOrEndpointGate",
+          "discriminator": "A cheaper challenger may notice the freeze headers but miss the path-specific carve-outs and fail-closed fallback."
+        },
+        {
+          "id": "PUB-02",
+          "question": "What cache and notification invalidations happen when publication changes or a same-publication freeze is released?",
+          "sources": [
+            {
+              "file": "FSTService/Api/PublicationChangeMonitorService.cs",
+              "start": 43,
+              "end": 130
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicReadGateTests.cs",
+              "start": 313,
+              "end": 377
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 186,
+              "end": 194
+            }
+          ],
+          "criteria": [
+            "Distinguishes publication-change invalidation from same-publication freeze-release invalidation.",
+            "Names the caches that are reset/invalidate and the forceRefresh notification path.",
+            "Keeps the ordering after successful publication, not before."
+          ],
+          "failureCriteria": [
+            "Treats all transitions as the same invalidation event.",
+            "Misses the same-publication refresh branch.",
+            "Assumes notifications happen before caches are cleared."
+          ],
+          "validator": "The monitor logic is fully captured in PublicationChangeMonitorService.cs and the gate tests that assert cache invalidation behavior.",
+          "discriminator": "A cheaper challenger can say 'it invalidates caches' without distinguishing the two transition paths the monitor actually handles."
+        },
+        {
+          "id": "PUB-03",
+          "question": "Does public-read freeze state round-trip correctly across set/unset/publish and failed-candidate isolation?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/PublicReadGateTests.cs",
+              "start": 73,
+              "end": 162
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 237,
+              "end": 260
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 150,
+              "end": 184
+            }
+          ],
+          "criteria": [
+            "Explains that an explicit freeze can be set, cleared, and re-set, but publish clears it.",
+            "Notes that failed-candidate isolation persists until a later publication.",
+            "Preserves the scrape ID and frozen-at semantics rather than inventing new timestamps."
+          ],
+          "failureCriteria": [
+            "Claims any freeze clears immediately without publication.",
+            "Ignores the reason-specific failed-candidate isolation state.",
+            "Misses that the freeze state is durable and round-trips through MetaDatabase."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PublicReadGateTests.MetaDatabase_PublicReadFreeze_RoundTripsAndPublishClears|FullyQualifiedName~PublicReadGateTests.MetaDatabase_FailedCandidateReadIsolation_PersistsUntilLaterPublication",
+          "discriminator": "A cheaper challenger often handles the obvious freeze toggle but misses the later-publication persistence and reason-specific isolation path."
+        }
+      ]
+    },
+    {
+      "id": "provenance",
+      "cases": [
+        {
+          "id": "PROV-01",
+          "question": "How do contract versioning and manifest hashing prove the path-artifact schema is stable but content-sensitive?",
+          "sources": [
+            {
+              "file": "FSTService/Persistence/PublicationPathArtifactSchema.cs",
+              "start": 13,
+              "end": 28
+            },
+            {
+              "file": "FSTService/Persistence/PublicationPathArtifactSchema.cs",
+              "start": 103,
+              "end": 168
+            },
+            {
+              "file": "FSTService/Persistence/PublicationPathArtifactSchema.cs",
+              "start": 218,
+              "end": 283
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicationPathArtifactTests.cs",
+              "start": 26,
+              "end": 83
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicationPathArtifactTests.cs",
+              "start": 85,
+              "end": 110
+            },
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 88,
+              "end": 124
+            }
+          ],
+          "criteria": [
+            "Separates ContractVersion from ManifestVersion.",
+            "Explains why the hash changes when stored metadata changes.",
+            "Names the authoritative binding fields and why they are part of provenance."
+          ],
+          "failureCriteria": [
+            "Conflates versioning with content hashing.",
+            "Misses that manifest hashes must change on metadata mutation.",
+            "Treats the schema as a generic snapshot without provenance semantics."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PublicationPathArtifactTests.ContractVersionMatchesRouteSurfaceContract|FullyQualifiedName~PublicationPathArtifactTests.Canonical_manifest_hash_is_deterministic_and_content_sensitive",
+          "discriminator": "A cheaper challenger may see 'versioned schema' but miss the split between stable contract version and content-sensitive manifest identity."
+        },
+        {
+          "id": "PROV-02",
+          "question": "Can bootstrap backfill rebuild only the current publication and remain idempotent on rerun?",
+          "sources": [
+            {
+              "file": "FSTService/Persistence/PublicationPathArtifactSchema.cs",
+              "start": 285,
+              "end": 342
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicationPathArtifactTests.cs",
+              "start": 112,
+              "end": 167
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 150,
+              "end": 184
+            }
+          ],
+          "criteria": [
+            "States that bootstrap targets only the current publication, not all history.",
+            "Recognizes the legacy-live-backfill source and the no-op second migration.",
+            "Mentions that captured-at timestamps and row counts remain stable on rerun."
+          ],
+          "failureCriteria": [
+            "Assumes historical publications are rebuilt by bootstrap.",
+            "Misses the idempotence proof.",
+            "Treats the backfill as a mutable live-row rewrite instead of a provenance capture."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PublicationPathArtifactTests.Bootstrap_backfills_only_the_current_publication_and_is_idempotent",
+          "discriminator": "A cheaper challenger often sees a backfill and assumes historical reconstruction, missing the current-publication-only provenance boundary."
+        },
+        {
+          "id": "PROV-03",
+          "question": "When published data is exported, should it follow the per-scope published source or the mutable live snapshot?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/PlayerDataExportPublishedSourceTests.cs",
+              "start": 31,
+              "end": 182
+            },
+            {
+              "file": "docs/architecture/data-storage.md",
+              "start": 138,
+              "end": 149
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 166,
+              "end": 184
+            }
+          ],
+          "criteria": [
+            "Explains that the published export uses per-scope published source rows, not the live mutable snapshot.",
+            "Notes that live snapshot drift must not leak into published export.",
+            "Shows the rollback path back to live behavior when the feature flag is disabled."
+          ],
+          "failureCriteria": [
+            "Uses live snapshot for published export.",
+            "Leaks legacy rows or ignores the rollback fixture.",
+            "Misses the distinction between published and live readers."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PlayerDataExportPublishedSourceTests.Published_solo_export_uses_per_scope_source_instead_of_active_snapshot",
+          "discriminator": "A cheaper challenger often confuses live state with published source-of-truth and misses the export rollback comparison."
+        }
+      ]
+    },
+    {
+      "id": "cross-contract",
+      "cases": [
+        {
+          "id": "XCTR-01",
+          "question": "Are publication-bound routes and surface contracts exactly in lockstep, with no duplicate or stale definitions?",
+          "sources": [
+            {
+              "file": "FSTService/Api/PublicationRouteSurfaceContract.cs",
+              "start": 20,
+              "end": 280
+            },
+            {
+              "file": "FSTService.Tests/Integration/PublicationRouteSurfaceContractTests.cs",
+              "start": 20,
+              "end": 100
+            },
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 49,
+              "end": 60
+            }
+          ],
+          "criteria": [
+            "States that every publication-bound route has exactly one surface contract.",
+            "Mentions the duplicate-definition and stale-definition rejection paths.",
+            "Uses the route-surface bijection as the core invariant."
+          ],
+          "failureCriteria": [
+            "Leaves room for stale or duplicate contract rows.",
+            "Treats the route list as advisory instead of exact.",
+            "Misses the bijection between route inventory and surface manifest."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~PublicationRouteSurfaceContractTests.EveryPublicationBoundRouteHasExactlyOneSurfaceContract|FullyQualifiedName~PublicationRouteSurfaceContractTests.ContractValidationRejectsDuplicateDefinitions|FullyQualifiedName~PublicationRouteSurfaceContractTests.ContractValidationRejectsUnmappedPublicationRoute|FullyQualifiedName~PublicationRouteSurfaceContractTests.ContractValidationRejectsStaleDefinition",
+          "discriminator": "A cheaper challenger may say the route set is aligned but miss the exact bijection and stale-definition checks that keep the contract honest."
+        },
+        {
+          "id": "XCTR-02",
+          "question": "Do the API route inventory, publication classifications, and shared client/server types describe the same contract?",
+          "sources": [
+            {
+              "file": "FSTService/Api/ApiPublicationClassification.cs",
+              "start": 72,
+              "end": 320
+            },
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 49,
+              "end": 124
+            },
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 214,
+              "end": 220
+            },
+            {
+              "file": "packages/core/src/api/serverTypes.ts",
+              "start": 97,
+              "end": 233
+            },
+            {
+              "file": "FSTService.Tests/Integration/ApiEndpointIntegrationTests.cs",
+              "start": 130,
+              "end": 190
+            }
+          ],
+          "criteria": [
+            "Keeps `/api/publication`, `/api/songs`, and `PathDataResponse` aligned across C#, TypeScript, and docs.",
+            "Recognizes that classification metadata and route inventory must agree.",
+            "Distinguishes operational routes from publication-bound routes without collapsing them into one bucket."
+          ],
+          "failureCriteria": [
+            "Updates one surface and leaves another stale.",
+            "Confuses operational/publication route semantics.",
+            "Misses the shared type shape as part of the contract."
+          ],
+          "validator": "Compare the classification manifest, the API contract doc, and the shared TypeScript types against the integration-test expectations for `/api/publication` and the publication-bound surface set.",
+          "discriminator": "A cheaper challenger can line up route names but still miss a cross-language drift between classification, docs, and shared types."
+        },
+        {
+          "id": "XCTR-03",
+          "question": "Is the path-artifact contract version and JSON shape consistent from schema to docs to shared types?",
+          "sources": [
+            {
+              "file": "docs/reference/api-contract.md",
+              "start": 88,
+              "end": 149
+            },
+            {
+              "file": "packages/core/src/api/serverTypes.ts",
+              "start": 97,
+              "end": 233
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicationPathArtifactTests.cs",
+              "start": 26,
+              "end": 83
+            },
+            {
+              "file": "FSTService.Tests/Unit/PublicationPathArtifactTests.cs",
+              "start": 212,
+              "end": 303
+            }
+          ],
+          "criteria": [
+            "Explains that the route behavior and `PathDataResponse` schema version move together.",
+            "Uses the path-artifact binding and JSON shape as a single cross-contract surface.",
+            "Keeps `/api/paths` and `/api/songs` semantics linked to the same publication-bound source."
+          ],
+          "failureCriteria": [
+            "Treats the route and DTO shape as unrelated.",
+            "Misses the schema-v2 instruction fields in `PathDataResponse`.",
+            "Ignores that the tests verify the binding source and content hash together."
+          ],
+          "validator": "Trace the `path_artifacts` assertions in PublicationPathArtifactTests against the route semantics described in api-contract.md and the `PathDataResponse` fields in serverTypes.ts.",
+          "discriminator": "A cheaper challenger may align route names but still miss the DTO-field contract that keeps the publication path artifact surface coherent."
+        }
+      ]
+    },
+    {
+      "id": "debugging",
+      "cases": [
+        {
+          "id": "DEBUG-01",
+          "question": "How do the worker-stateful tests prove a thrown failure stays fail-closed instead of partially publishing?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs",
+              "start": 22,
+              "end": 72
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 237,
+              "end": 260
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            }
+          ],
+          "criteria": [
+            "Explains that the injected exception propagates and leaves the publication failure-isolation state pending.",
+            "Mentions that no partial success path is allowed to hide the failure.",
+            "Keeps the answer focused on persisted state, not just the thrown exception."
+          ],
+          "failureCriteria": [
+            "Treats the thrown exception as sufficient proof of correctness.",
+            "Misses the durable isolation state remaining set.",
+            "Confuses fail-closed behavior with a successful retry path."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~ScraperWorkerStatefulTests.FailedIsolationRecordingMarksWorkerPassAsFailClosed",
+          "discriminator": "A cheaper challenger usually stops at the exception and misses the persisted isolation state that proves fail-closed behavior."
+        },
+        {
+          "id": "DEBUG-02",
+          "question": "Why does commit contention keep the candidate ready for retry instead of moving the pointer or wiping state?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs",
+              "start": 74,
+              "end": 156
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 226,
+              "end": 260
+            },
+            {
+              "file": "FSTService/Persistence/MetaDatabase.cs",
+              "start": 297,
+              "end": 321
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 166,
+              "end": 184
+            }
+          ],
+          "criteria": [
+            "Describes the deferred/restore intent and why the generation stays Ready.",
+            "Keeps the working pointer pinned until the retry intent is restored and the commit succeeds.",
+            "Separates transient contention from terminal failure."
+          ],
+          "failureCriteria": [
+            "Confuses busy/deferred contention with a completed commit.",
+            "Misses the working pointer being preserved.",
+            "Treats the retry intent restoration as optional."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~ScraperWorkerStatefulTests.CommitContentionPreservesReadyGenerationForRetry|FullyQualifiedName~ScraperWorkerStatefulTests.CommitDeadlineDefersWithoutResettingCutoverBudget|FullyQualifiedName~ScraperWorkerStatefulTests.CommitContentionShutdownPreservesReadyCandidate",
+          "discriminator": "A cheaper challenger often collapses contention into success/failure and misses the retry-preserving state machine."
+        },
+        {
+          "id": "DEBUG-03",
+          "question": "What ordering guarantee is exercised when a deferred publication is resumed before the next scrape or notification boundary?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs",
+              "start": 312,
+              "end": 420
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 67,
+              "end": 92
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 185,
+              "end": 194
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            }
+          ],
+          "criteria": [
+            "States that deferred publication is resumed before fresh scrape allocation.",
+            "Keeps notification/cache invalidation after publication success.",
+            "Recognizes the one-time freeze-clear semantics."
+          ],
+          "failureCriteria": [
+            "Allows a new scrape to race ahead of deferred publication recovery.",
+            "Misses the notification gate ordering.",
+            "Treats resume as a best-effort helper rather than a strict sequencing guarantee."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~ScraperWorkerStatefulTests.WorkerPassResumesDeferredPublicationBeforeScrapeStartingOrAllocation|FullyQualifiedName~ScraperWorkerStatefulTests.ExecuteAsyncResumesDeferredPublicationBeforeNotificationGateAndAuthentication",
+          "discriminator": "A cheaper challenger can read the test name but still miss the sequencing hazard the test is actually proving."
+        }
+      ]
+    },
+    {
+      "id": "live-operations",
+      "cases": [
+        {
+          "id": "LIVE-01",
+          "question": "Before any broad probe or maintenance, what live-safety checks are mandatory and in what order do they matter?",
+          "sources": [
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 43,
+              "end": 69
+            },
+            {
+              "file": "tools/postgres-worker-correctness-monitor.sh",
+              "start": 16,
+              "end": 183
+            },
+            {
+              "file": "tools/postgres-capacity-guard.sh",
+              "start": 24,
+              "end": 66
+            },
+            {
+              "file": "tools/postgres-capacity-guard.sh",
+              "start": 168,
+              "end": 260
+            }
+          ],
+          "criteria": [
+            "Lists Docker, PostgreSQL, freeze/publication state, active scrape, locks, disk, CPU, and memory as mandatory preflight surfaces.",
+            "Treats the probes as read-only and bounded.",
+            "Keeps the order anchored to safety, not convenience."
+          ],
+          "failureCriteria": [
+            "Omits one of the mandatory live-safety surfaces.",
+            "Treats the probe sequence as optional.",
+            "Recommends mutation before the health state is known."
+          ],
+          "validator": "The live-safety doc and both monitoring scripts encode the read-only preflight and fail-closed criteria directly.",
+          "discriminator": "A cheaper challenger often knows 'check health first' but misses the exact live surfaces that must be checked before action."
+        },
+        {
+          "id": "LIVE-02",
+          "question": "What must the worker compose guard prove before a recreate is allowed?",
+          "sources": [
+            {
+              "file": "tools/fst-worker-compose-guard.sh",
+              "start": 26,
+              "end": 260
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 45,
+              "end": 55
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 71,
+              "end": 77
+            },
+            {
+              "file": ".github/skills/database-management/SKILL.md",
+              "start": 17,
+              "end": 23
+            }
+          ],
+          "criteria": [
+            "Names the exact overlay/profile expectations and the safe mutation-lock behavior.",
+            "Separates check-only validation from recreate actions.",
+            "Recognizes the throughput-profile and egress-proxy assertions as part of the guard."
+          ],
+          "failureCriteria": [
+            "Ignores the mutation lock path or safe-file checks.",
+            "Conflates check and recreate modes.",
+            "Misses the exact profile constraints that gate recreates."
+          ],
+          "validator": "The compose guard's own argument checks, lock-path checks, and overlay assertions are deterministic and read-only.",
+          "discriminator": "A cheaper challenger may report 'compose validated' without understanding the recreate safety envelope that actually controls the action."
+        },
+        {
+          "id": "LIVE-03",
+          "question": "When does the worker correctness monitor stop, and what read-only state does it require at stop time?",
+          "sources": [
+            {
+              "file": "tools/postgres-worker-correctness-monitor.sh",
+              "start": 16,
+              "end": 183
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 57,
+              "end": 69
+            },
+            {
+              "file": "docs/architecture/data-publication-flow.md",
+              "start": 185,
+              "end": 194
+            }
+          ],
+          "criteria": [
+            "States that the monitor exits only after the scrape is no longer running, reads are unfrozen, and service-info is no longer updating.",
+            "Keeps the monitor read-only throughout its loop.",
+            "Uses the probe path and database state as the termination criteria, not an arbitrary timeout."
+          ],
+          "failureCriteria": [
+            "Stops on a temporary probe success.",
+            "Misses the unfrozen/service-info quiescence requirement.",
+            "Treats the monitor as a one-shot probe instead of a continuous read-only observer."
+          ],
+          "validator": "The exit condition is explicit in the shell script: it returns 0 only when scrape is not running, frozen=false, and api_status is not updating.",
+          "discriminator": "A cheaper challenger may see the monitor loop but miss the exact termination condition and read-only safety envelope."
+        }
+      ]
+    },
+    {
+      "id": "release-destruction",
+      "qualificationStatus": "invalidated-missing-application-release-variant",
+      "cases": [
+        {
+          "id": "RDEST-01",
+          "question": "Why is the DROP schema additive and immutable rather than a generic destructive DDL bundle?",
+          "sources": [
+            {
+              "file": "FSTService.Tests/Unit/SnapshotGenerationDropSchemaTests.cs",
+              "start": 13,
+              "end": 209
+            },
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 28,
+              "end": 71
+            },
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 88,
+              "end": 178
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 140,
+              "end": 144
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 220,
+              "end": 260
+            }
+          ],
+          "criteria": [
+            "States that the schema forbids DROP TABLE IF EXISTS, CASCADE, DROP INDEX, SECURITY DEFINER, and GRANT.",
+            "Mentions the exact counts and authorization revocation checks in the tests.",
+            "Treats the schema as a controlled release/destructive boundary, not ordinary DDL."
+          ],
+          "failureCriteria": [
+            "Assumes the schema can be rerun freely on live data.",
+            "Misses the destructive-SQL and public-grant prohibitions.",
+            "Confuses rehearsal evidence with approval to mutate production."
+          ],
+          "validator": "dotnet test FSTService.Tests/FSTService.Tests.csproj --filter FullyQualifiedName~SnapshotGenerationDropSchemaTests.SchemaIsAdditiveIdempotentAndImmutable",
+          "discriminator": "A cheaper challenger may see 'DROP' in the name and miss the protective invariants that make the operation safe enough to exist at all."
+        },
+        {
+          "id": "RDEST-02",
+          "question": "What exact evidence bundle does the drop drill and CLI require before any destructive action can be planned or confirmed?",
+          "sources": [
+            {
+              "file": "tools/postgres-snapshot-generation-drop-drill.py",
+              "start": 17,
+              "end": 41
+            },
+            {
+              "file": "tools/postgres-snapshot-generation-drop-drill.py",
+              "start": 99,
+              "end": 260
+            },
+            {
+              "file": "tools/FstSnapshotGenerationDrop/Program.cs",
+              "start": 10,
+              "end": 116
+            },
+            {
+              "file": "tools/FstSnapshotGenerationDrop/Program.cs",
+              "start": 139,
+              "end": 260
+            },
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 189,
+              "end": 260
+            }
+          ],
+          "criteria": [
+            "Names the exact subcommands and required argument keys for select-canary, plan, drop, confirm, and attest.",
+            "Mentions the archive/proof/route manifests and the collision-regression coverage.",
+            "Recognizes that the drill validates dependency isolation and package evidence before destructive execution."
+          ],
+          "failureCriteria": [
+            "Accepts ad hoc arguments or omits evidence files.",
+            "Misses the route/manifest chain or the dependency-graph isolation checks.",
+            "Treats the CLI as a general-purpose administrative entry point."
+          ],
+          "validator": "The drill script rejects missing or mismatched artifacts, and the CLI only accepts the named subcommands and their exact argument sets.",
+          "discriminator": "A cheaper challenger can identify the tool but still miss the full evidence chain and the strict subcommand surface."
+        },
+        {
+          "id": "RDEST-03",
+          "question": "What gates keep live DROP/restore from becoming an operator shortcut, and why is logical restore the rollback path after commit?",
+          "sources": [
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 30,
+              "end": 71
+            },
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 90,
+              "end": 128
+            },
+            {
+              "file": "docs/database/SnapshotGenerationDropRunbook.md",
+              "start": 191,
+              "end": 260
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 71,
+              "end": 105
+            },
+            {
+              "file": "docs/operations/live-safety.md",
+              "start": 220,
+              "end": 260
+            },
+            {
+              "file": "tools/FstSnapshotGenerationDrop/DropDatabase.cs",
+              "start": 29,
+              "end": 199
+            }
+          ],
+          "criteria": [
+            "States the explicit approvals and preflight checks required before live use.",
+            "Explains that rollback after committed DROP is logical restore, not reattach.",
+            "Uses exact evidence-root and current-publication constraints rather than generic release language."
+          ],
+          "failureCriteria": [
+            "Treats rollback as reattach after a committed DROP.",
+            "Misses the approval and preflight gates.",
+            "Assumes the operation can be inferred or auto-selected from the latest state."
+          ],
+          "validator": "The runbook and DropDatabase selection logic require exact current-cycle evidence and a nonempty canary; they reject shortcut paths deterministically.",
+          "discriminator": "A cheaper challenger often conflates the rehearsal path with the committed destructive path and misses that rollback is a separate logical restore flow."
+        }
+      ]
+    }
+  ]
+}

@@ -1,10 +1,16 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-09-12
+last_verified_commit: c0b30c41
 sources:
   - FSTService/Program.cs
+  - FSTService/Scraping/Capture/CaptureOnlyCommand.cs
+  - FSTService/Scraping/Capture/CaptureOnlyEntryPoint.cs
+  - FSTService/Scraping/Capture/CaptureOnlyRunner.cs
+  - FSTService/Scraping/Capture/CapturePaginationMaximums.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/ScraperOptions.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -19,6 +25,8 @@ sources:
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
   - FSTService/Scraping/Replay/ReplayCommand.cs
   - FSTService/Scraping/Replay/ReplayEntryPoint.cs
+  - tools/FstSnapshotGenerationRetentionReport/Program.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
 update_triggers:
   - A command-line flag, combination rule, one-shot mode, or phase expansion changes.
 ---
@@ -41,6 +49,101 @@ Use `dotnet FSTService.dll <flags>` in a built image or the equivalent
 | `--rollout-postgres-read-only` | Enforce the paired PostgreSQL read-only rollout mode |
 
 The two rollout read-only flags must be enabled together.
+
+The separate host-only
+[offline retention report executable](../database/SnapshotGenerationOfflineRetentionReport.md)
+is not an FSTService hosting flag. Its only commands are `inspect` and
+identity-asserted `observe-current`; it never starts the service/worker
+entry point, initializes schema, resumes a scrape, or sends notifications.
+`--once` remains a full scrape/publication pass, not an offline report mode.
+
+## Manual capture-only command
+
+`--capture-only` performs one provider capture, seals one
+`fst.capture-package.v2` package, prints one sanitized JSON result, and exits.
+It is default-off and manual. It is not a hosted worker mode, overlap
+scheduler, production candidate, publication action, or database import.
+
+Capture dispatch is the first `FSTService` command check. The dedicated entry
+point parses the complete argument list before loading `.env`, then loads only
+normal configuration needed for Epic authentication, enabled leaderboard
+types, pacing, and proxy routing. It does not construct `WebApplication`,
+register hosted services, create an Npgsql data source, initialize schema,
+publish worker status, allocate a publication, freeze reads, build caches,
+generate paths, run cleanup/post-process, or notify clients.
+
+The strict command shape is:
+
+```text
+--capture-only
+--capture-output <new-package-root>
+--capture-id <capture-id>
+```
+
+The output must be a nonexistent direct child of the
+`FST_CAPTURE_APPROVED_ROOT` directory. Duplicate flags, missing/empty values,
+unknown options, positional arguments, unsafe capture IDs, and every normal,
+replay, maintenance, setup, or hosting flag are rejected. The command cannot
+be combined with `--once`, phase-selection flags, `--setup`, API/worker role
+flags, replay flags, schema commands, or maintenance commands.
+
+The command requires the capture environment described in
+[Configuration](configuration.md#manual-capture-only-environment). It uses
+the configured full-scrape solo instrument switches and
+`Scraper:EnableBandScraping`. Both active solo and band paths use
+`Scraper:MaxPagesPerLeaderboard`; parallel solo mode additionally reproduces
+the active CHOpt deep-scrape/valid-entry rules, while sequential solo mode ends
+at the initial configured page range. The legacy direct band phase's separate
+page/valid-entry settings are not part of the normal worker capture plan.
+Concurrent page completion is sorted back into canonical song,
+solo-instrument, band-type, and page order. Successful HTTP responses must
+contain typed `page`, `totalPages`, `totalEntries`, and `entries` fields.
+Scope finalization cancels and awaits any detached CDN probe before binding the
+monotonic physical-send total to retained request metadata.
+An exact page-zero `event_not_found` response is represented separately from
+an HTTP-success empty page. When a parallel solo scope needs CHOpt-aware pagination,
+the command requires the catalog-bound maximum-score snapshot configured by
+`FST_CAPTURE_PAGINATION_MAX_SCORES_PATH`; it never queries PostgreSQL for that
+state. The snapshot must itself reside on the approved filesystem device. A
+valid existing device-auth credential is required; capture mode never starts
+interactive setup. Live capture also requires an absolute same-device
+`Scraper:ProxyCurlTempDirectory` even when curl is only the .NET HTTP fallback;
+fallback response files are transfer-bounded and removed after each attempt.
+Capture curl invocations disable ambient curl configuration, and proxy
+concurrency leases remain held until response bodies are consumed or disposed.
+Every page has a fixed ten-minute cumulative transport deadline across proxy
+waits, network retries, CDN recovery, and response transfer. Deadline
+exhaustion returns the typed capture failure code rather than cancellation.
+
+Exit codes are:
+
+| Code | Meaning |
+|---:|---|
+| `0` | One package sealed successfully |
+| `1` | Unexpected sanitized failure |
+| `2` | CLI or configuration usage failure |
+| `3` | Approved root, device, or output path rejected |
+| `4` | Package/shard capacity, free-space reserve, retained-count, or root-lock admission rejected |
+| `5` | Authentication unavailable or rejected |
+| `6` | Initial/final catalog was inexact, malformed, safety-merged, reconstructed, or changed |
+| `7` | A leaderboard page/scope was failed, incomplete, or inconsistent |
+| `8` | Package creation, artifact write, validation, or atomic seal failed |
+| `130` | Caller or process-signal cancellation |
+
+Success output contains only the capture ID, package root hash, bounded counts,
+and `noPublication=true`. Failure output contains only a typed failure, exit
+code, and fixed sanitized message. Credentials, tokens, request headers, the
+authenticated caller configuration, and configured addresses are never
+written to the package or terminal output. Leaderboard participant account
+identifiers are intentionally retained in the response artifacts and require
+the same access and retention controls as leaderboard history. After output
+admission, any
+authentication, catalog, page, cancellation, reserve, or seal failure leaves
+the attempt unsealed and marked interrupted. Existing packages are never
+overwritten or deleted. Both Ctrl-C and `SIGTERM` request cancellation; either
+returns `130` and uses the fixed `capture-cancelled` interruption reason.
+OAuth and transport timeouts without caller cancellation retain their
+authentication, catalog, or capture failure classification.
 
 ## Isolated phase replay candidate
 
@@ -144,6 +247,7 @@ legacy fetch.
 | Command | Default behavior | Additional flags |
 |---|---|---|
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
+| `--initialize-snapshot-retention-schema-only` | Apply only the bounded snapshot-retention schema step and exit, without a host | Exactly one argument; all other flags/selectors are rejected |
 | `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
@@ -152,6 +256,81 @@ legacy fetch.
 Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
+
+`--initialize-snapshot-retention-schema-only` dispatches before replay,
+`.env`, `WebApplication`, options/host registration or startup work. Supply
+the existing database connection through `ConnectionStrings__PostgreSQL` in
+the process environment; command-line connection/target/path/SQL overrides
+are not accepted. It does not initialize FST prerequisites, mutate
+publication/path/catalog/registration data, operate Docker, start workers or
+publish their configuration receipts. It shares the exact retention schema
+step, with 2-second lock/15-second statement/20-second command limits, a
+10-second connect limit and a 30-second cancellation deadline.
+Its original normalized credential-bearing configuration passes directly to
+the dedicated initializer's private unpooled factory. It is never recovered
+from `NpgsqlDataSource.ConnectionString`, which omits passwords with default
+`PersistSecurityInfo=false`. The command keeps that setting off; credentials
+remain process-memory only and never enter output/evidence.
+
+Output is secret-free JSON with scope `snapshot_generation_retention`.
+Exit `0` means `schema_current`; `64` rejects arguments, `2` reports missing or
+invalid connection configuration or database refusal (including SQLSTATE),
+and `130` reports cancellation/deadline exhaustion. The fresh connection is disposed
+before success is emitted. Success additionally requires
+`transactionCommitted=true` and a version-2 combined `dmlProof` with
+`statisticsSource=pg_stat_xact_user_tables`,
+`backendScope=fresh_unpooled_single_transaction`,
+`allowedRetentionRelations=[]`, zero `nonRetentionDml` inserted/updated/deleted
+totals, `allowedRetentionChanges=[]`, exact schema SQL SHA-256,
+`nonRetentionRelationIdentity` before/after set-count and identity-digest
+parity, and a deterministic SHA-256 of all ordered proof fields. The identity
+scope covers non-system/non-temporary ordinary, partitioned, materialized and
+foreign-table metadata across user schemas, excluding only the six exact
+DDL-managed public retention tables. The exact step still has no user-table
+DML allowlist entries.
+Non-retention DML refuses/rolls back with code `non_retention_dml_detected`,
+attempted totals and `transactionCommitted=false`.
+`non_retention_relation_identity_changed` likewise refuses/rolls back
+TRUNCATE, rewrite or set/OID/relfilenode drift. The static step backstop rejects
+TRUNCATE/COPY FROM and INSERT/UPDATE/DELETE/MERGE without line-position
+assumptions; it exposes no operator SQL selector.
+`transaction_statistics_unavailable` and `transaction_dml_baseline_not_zero`
+refuse unusable evidence. No SQL/table selectors or test hooks are exposed
+by the CLI.
+
+Commit-attempt acknowledgement loss exits nonzero with `outcome=uncertain`,
+`code=commit_acknowledgement_unknown`, `transactionCommitted=null`, the
+precommit combined proof and `possibleSchemaProof` identities. There is no
+automatic retry or inference of success from already-existing schema.
+Acknowledged commit followed by cleanup failure instead retains
+`transactionCommitted=true` with nonzero
+`committed_cleanup_unconfirmed`/`post_commit_cleanup_failed`.
+
+The fresh backend prevents pending counts from earlier pooled-session work
+from contaminating PG17 xact statistics. Schema admission precedes exclusive
+canonical registration admission, held through the pre-commit assertion.
+Normal migration admission and incompatible-worker
+refusals remain those of `SnapshotGenerationRetentionSchema.Sql`; the external
+idle stop and restart exclusion are still operator responsibilities.
+Name resolution is pinned to `pg_catalog,public`, with explicit schema-qualified
+DDL and built-ins.
+
+General initialization now preserves a current valid path binding's complete
+provenance and `built_at`; it is still broader than this dedicated command.
+Future/malformed current/working manifest versions and invalid ready binding
+contracts fail closed without rewriting those bindings. The full
+`--initialize-schema-only` CLI returns exit `2` with
+`path_artifact_initialization_rejected` and publication/code pairs on stderr.
+Previous invalid bindings emit structured `previous_path_binding_invalid`
+warnings without rewriting rows or refusing normal initialization. Ordinary
+service startup handles current/working refusal before runtime pools by
+selecting sticky degraded/read-only serving, not by stopping the API. This
+does not change explicit schema CLI exit codes or expand the dedicated
+retention-only command. Read-serving health alone cannot accept a deployment:
+require mutation readiness and a fresh guarded restart after any correction.
+Catalog/publication/disabled-notification compatibility writes are skipped
+when their values are already correct.
+See the [source-preserving deployment order](../database/SnapshotGenerationOfflineRetentionReport.md).
 
 `--published-scrape-id` is parsed once for improvement-notification recovery
 and max-score maintenance. Both `--published-scrape-id 1296` and
@@ -177,7 +356,8 @@ are rejected.
 | `--max-score-maintenance-stage` | `--published-scrape-id`, `--max-score-maintenance-stage-request`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete immutable generations without pointer mutation; discovery permits explicit partial maximum constraints, while promotion requires complete old/new eight-field maxima |
 | `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes, records mapped raw/eligible/outlier observed-score evidence plus publication-population and complete consumed score-history count/range/hash evidence, and emits the deterministic `planDigest` |
 | `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
-| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
+| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; phase checkpoints skip completed mutation families, failures remain frozen, and the recovery lease yields the publication lock between bounded commit fences |
+| `--max-score-maintenance-rollback` | `--published-scrape-id`, manifest, expected manifest/plan digests, `--max-score-maintenance-rollback-file`, `--expected-max-score-rollback-digest`, and a new report output; optional `--max-score-maintenance-rollback-dry-run` | Validate or execute exact resumable rollback: restore pre-apply paths, rebuild complete affected derived state, quarantine notifications, restage/validate caches, record `rolled_back`, and atomically unfreeze |
 
 Every action writes a versioned report. Apply/resume exit `2` with
 `resumable=true` after a post-freeze failure. Do not manually clear the freeze;
@@ -185,6 +365,38 @@ rerun `--max-score-maintenance-resume` with the same manifest and digests. The
 rollback snapshot timestamp comes from the persisted maintenance run, so a
 crash after file creation but before its database checkpoint reproduces and
 validates the same canonical bytes.
+
+Rollback report version `2` records dry-run/validation/terminal state, durable
+rollback phase, exact manifest/plan/rollback digests, publication IDs,
+before/after path fingerprints, restored/rebuilt/quarantined/cache counts,
+aggregate cache evidence, per-stage timestamps/status, and failure detail.
+`cleanupPending=true` means rollback data committed and reads are unfrozen, but
+the durable mutation gate still requires a retry; it is validated,
+non-successful, and resumable until cleanup is verified.
+Dry-run validates without taking the maintenance lease or mutating state.
+Execution is resumable from `rollback_validating` through
+`rollback_validated`; only terminal `rolled_back` is successful and unfrozen.
+Rollback rejects completed applies, pre-promotion path state, changed paths,
+rollback-file/database divergence, active maintenance/worker backends, waiting
+locks, or any publication/freeze mismatch. A `rollback_captured` run is
+accepted only when exact promoted path identity proves the path transaction
+committed before its phase checkpoint. Execution validates both accepted
+post-promotion and restored-maximum score-history selectors, revalidates the
+canonical rollback file before terminal unfreeze, and holds the publication
+lock only at bounded transaction commit fences. Terminal and already-rolled-back
+invocations verify the durable mutation-owner fields are cleared, reacquiring a
+cleanup lease after backend loss when necessary.
+Dry-run against terminal `rolled_back` is a read-only rejection and does not
+perform that cleanup. Apply/resume after any rollback-owned phase returns a
+non-resumable rejection with the actual freeze state.
+The report output path is normalized and atomically reserved before rollback
+preflight, so an existing path or collision with the manifest/rollback input
+fails before any database mutation.
+An unwritten reservation is removed when manifest parsing prevents creation of
+a typed failure report.
+Once a run enters `rollback_validating`, apply/resume is rejected; interruption
+must continue with the same rollback command and identities plus a new report
+path.
 
 Plan report version 6 includes `populationEvidence`, `scoreHistoryEvidence`,
 and, on every `observedScoreChecks` row, `validCutoff`,

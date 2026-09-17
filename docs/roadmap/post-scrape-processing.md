@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-09-12
+last_verified_commit: c0b30c41
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -13,16 +13,35 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/Replay/
+  - FSTService/Scraping/Capture/
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - FSTService/Scraping/Replay/CaptureEntryContracts.cs
+  - FSTService.Tests/Unit/CapturePackageContractTests.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
+  - FSTService.Tests/Unit/InstrumentDatabaseTests.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationQuarantineSchema.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
+  - tools/FstSnapshotGenerationQuarantine/
+  - tools/FstSnapshotGenerationDrop/
+  - tools/postgres-snapshot-generation-restore.py
+  - tools/FstSnapshotGenerationRetirement/
+  - docs/database/SnapshotGenerationRetirementControlPlane.md
   - FSTService/Api/HealthEndpoints.cs
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
   - docs/components/worker.md
   - docs/database/SnapshotReuseRunbook.md
+  - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
   - docs/decisions/0005-post-scrape-modular-monolith.md
 update_triggers:
   - A post-scrape phase, dependency, criticality, progress contract, replay path, deployment gate, overlap decision, or measured baseline changes.
@@ -39,20 +58,60 @@ update_triggers:
   new runner project.
 - Keep PostgreSQL as the durable source of truth. DuckDB and Parquet remain
   bounded artifact/replay companions.
-- Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
-  raw-HTTP capture as current implementation directions.
-- Treat storage capacity as the next active safety lane before another
-  post-scrape optimization. The existing
-  report-only snapshot-retention planner must fail closed on incomplete
-  statistics, and exact reclaim/workspace evidence must pass the current gate
-  before any rewrite proposal.
+- Reject microservices, runtime-loaded plugins, and direct concurrent
+  `RunScrapePassAsync` execution. The capture-package contract and default-off
+  manual capture producer are implemented as non-production prerequisites for
+  a future artifact-backed overlap design; isolated import and overlap
+  scheduling remain absent.
+- The one-instrument-at-a-time snapshot-generation conversion is accepted.
+  Scrape `1310` proved all nine generation writer paths through publication,
+  notifications, registration drain, and worker exit.
+- Make recurring generation retention the active storage lane in evidence
+  gates. The implemented first slice is default-off/report-only and has no
+  executable work state. The separate archive-only CLI and isolated prover are
+  implemented, synthetically validated, and live-accepted on unchanged Pro
+  Cymbals snapshot `1314`. Live cycles `5/1325` through `9/1329` have exact
+  agreement, zero blockers, publication rotation, and genuine candidate-set
+  changes. The no-Docker-socket quarantine/reattach executor is implemented
+  and live-accepted on Pro Cymbals snapshot `1314`. The separate
+  non-cascading DROP/logical-restore implementation is repository-ready but
+  is not live-accepted. Official scrape `1333`, publication `157`, and cycle
+  `13` are accepted; its disposable PostgreSQL 17 archive/proof plus
+  DROP/restore drill is also accepted locally. Q1 operation
+  `1b44941dc5d5ea806dabc2187c3cffed` passed scrape `1335`, publication
+  rotation `159` to `162`, cycle `15`, and the publication-162 soak. Its
+  first reattach failed closed with `42P07` and no residue after an unrelated
+  new child reused its leaf-index name. Later work reached an independently
+  approved DROP call, which failed before DDL with `42703` because the empty
+  initial operation table lacked semantic columns. After explicit upgrade,
+  operation `333ba4b9fb69dbc098d127f0008ec709` committed under plan digest
+  `fa45ca20c2c975e543b7d539d3b27cb05c5d80ff16345665205f2355eb67d5dc`.
+  Restore planning then failed before output/mutation on non-authoritative
+  Python reserialization. The corrective branch now implements immutable
+  exact-DROP tool authorization and a tool-only repair package. Final
+  H3 failed read-only on a reserved PostgreSQL alias. H4 passed that lookup
+  but failed before output or mutation on canonical decimal-string
+  opclass/collation OID arrays. H5 then committed the mandatory exact restore;
+  its raw-ZIP route attestation failed before database write. H6-prime now
+  keeps the strict post-restore parity validator and adds a separate
+  exact-manifest-pinned midnight shop rollover attribution for the sole
+  historical route difference. Authorization `0ed3cd71...` attested and
+  finalized the restore, and candidate scrape `1337`, publication `171`,
+  notifications, and cycle `17` completed with zero failures and exact
+  planner/oracle agreement. Promote through PR/CI, deploy official images, and
+  run the official-image confirmation scrape.
+  Sparse compaction remains a separate unresolved iteration.
+- Keep exact archive/restore, retained-source parity, rollback, capacity, and
+  live API gates for every remaining instrument and for any future recurring
+  generation-retention owner.
 - After a safe capacity window exists, use the accepted timing foundation to
   optimize measured bottlenecks rather than inferred phase cost. The first
   BandMaintenance target remains current projection refresh.
 
 Implementation is approved after this plan is rendered to the local autonomous
-agent outbox. All implementation, evaluation, deployment, and promotion
-decisions remain GPT-5.6 Sol owned.
+agent outbox. Known-pattern implementation and review resolve through the
+project's exact medium pipeline; deployment and promotion remain separately
+operator-authorized deterministic actions.
 
 This approval is limited to the operator-approved roadmap. It never bypasses
 the active live-safety, publication-parity, provider, storage, rollback, or
@@ -63,15 +122,18 @@ maintenance gates for a future action.
 | Field | Required value |
 |---|---|
 | Model | `gpt-5.6-sol` |
-| Reasoning effort | `max` |
-| Context tier | `long_context` |
+| Reasoning effort | `medium` |
+| Context tier | `default` |
+| Conditional critical model | `gpt-5.6-sol`, `max`, `long_context` |
+| Critical trigger IDs | `fst-live-data-loss-or-restore-conflict`, `fst-publication-provenance-conflict`, `fst-unresolved-concurrency-corruption`, `fst-release-public-health-or-rollback-conflict` |
 
 This table records the active operator-approved autonomous run's execution
 metadata. It is not standing repository authorization for a future live,
 destructive, or parity-gated action.
 
-No implementation agent may silently substitute another model, lower effort,
-or shorter context.
+No implementation agent may silently substitute another model. Sol max/long
+requires an evidence-bound listed trigger receipt; the roadmap title or
+consequence terminology is not sufficient.
 
 ## Tandem decision quality
 
@@ -96,9 +158,9 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
-| Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
+| Live progress observability | Good: normalized durable phase/subphase attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings bare-bar experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
-| Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
+| Storage sustainability | Improving but incomplete: all nine partitions and writer paths are accepted, scrape 1310 left about 2.702 TB free, and recurring whole-child retirement plus sparse-child compaction remain | High |
 | Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
@@ -138,7 +200,7 @@ public-read freeze.
 | Live writer mode | `OnlineBounded`; successful page batches are not retained as replay files |
 | Production correctness flags | Scope manifests, successful writers, publication-critical phases, and published-scope-source writes are enforced; legacy live scrape writes are disabled |
 | Snapshot reuse | All supporting correctness prerequisites are present, but `SkipUnchangedPhysicalLeaderboardSnapshots` remains false |
-| Snapshot retention | Report-only planning is enabled by the current code/appsettings default and is not explicitly set in the worker role environment; rewrite false; max one partition; free-space path `/app/data`; 500 GiB minimum free-space gate currently blocks rewrite |
+| Snapshot retention | The generation-child report-only planner did not exist at the research boundary. The legacy rewrite path was disabled and its 500 GiB free-space gate blocked rewrite |
 
 ### Workload and wall-clock baseline
 
@@ -163,13 +225,13 @@ long-run distribution.
 
 | Phase | Samples | p50 or representative duration | Tail/variance note |
 |---|---:|---:|---|
-| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1293` took 132.3 minutes: current projection 100.8 minutes (76.20%), prune 19.1 minutes, search refresh 12.4 minutes |
-| `ComputeRankings` | 10+ | About 68 minutes | Stable near 70 minutes |
-| `RefreshRegisteredUsers` | 10 | About 24 minutes | About 44-minute tail |
-| `Cleanup.PrecomputeAll` | 10 | About 13 minutes | Stable |
-| `Cleanup.SoloCurrentProjection` | 10 | About 12 minutes | About 18-minute tail |
-| `LeaderboardRivals` | 5 | About 5 minutes | One recent run about 20 minutes; feature is recent |
-| `Rivals` | 10 | About 50 seconds | One recent run about 30 minutes |
+| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1306` took 197.7 minutes; current projection alone took 166.0 minutes for 13,118/54,301 scopes, reinforcing it as the first target |
+| `ComputeRankings` | 10+ | About 68 minutes | Scrape `1306` took 72.7 minutes; rank-history snapshots were 37.7 minutes and band rankings 18.0 minutes |
+| `RefreshRegisteredUsers` | 10+ | About 24 minutes | Scrape `1306` completed in 4.1 minutes; retain the historical 44-minute tail until more bounded samples exist |
+| `Cleanup.PrecomputeAll` | 10+ | About 13 minutes | Scrape `1306` took 13.3 minutes; stable |
+| `Cleanup.SoloCurrentProjection` | 10+ | About 12 minutes | Scrape `1306` took 16.0 minutes for 6,053 scopes |
+| `LeaderboardRivals` | 9 | 8m28s current | Accepted scrape `1318` reduced the matched `1317` control from 4h26m44s to 8m28s; remaining work is selective recomputation through input fingerprints |
+| `Rivals` | 13 | About 50 seconds | Scrape `1315` took 40m21s for eight accounts: preload took 4m36s, the full account then took 35m44s and produced 53,665 samples |
 | Each shadow activation | 10 | About 2.3–2.5 minutes | Broad snapshot-state query |
 | `BandExtraction` | 10 | About 1.5 minutes | Already bounded-parallel |
 | First-seen, names, stats, checkpoint, legacy prune | 10 | Usually seconds or no-op | Not optimization priorities |
@@ -238,35 +300,62 @@ evaluation.
 ### Snapshot capacity
 
 **Verified:** snapshot generations share nine fixed instrument partitions.
-Another candidate appends one generation; it does not allocate another 2.381
-TB. Historical full-scrape evidence observed roughly 15–20 GB snapshot-family
-growth per new generation before other WAL/derived costs.
+All nine instrument roots now use snapshot-ID children. Their accepted
+generation migrations returned `2,699,337,936,896` filesystem bytes in total,
+and measured FST free space after the Pro Drums final drop is
+`2,728,956,956,672` bytes. Another scrape appends one generation child per
+instrument rather than another cumulative copy.
 
-**Inference:** most snapshot rows are older than the current and one rollback
-generation. Current plus previous mapped rows are about 1.8% of the catalog
-row estimate. This does not prove exact reclaimable bytes because row width,
-index distribution, failed-candidate evidence, source bindings, and retention
-protection vary.
+**Verified:** a complete guarded scrape is required between instrument
+migrations. Scrapes `1304`, `1305`, `1306`, and `1307` proved
+generation-aware writes for all five migrated instruments. Scrape `1307`
+completed publication `98`, notification recovery, registration drain, and
+normal worker exit; the post-Solo Drums gate is accepted. Solo Bass was then
+migrated. Scrape `1308` failed closed on one 13-row Solo Bass writer batch
+when concurrent cross-instrument generation DDL collided on a truncated
+inherited-index name. Publication `98` remained current and unfrozen. The
+global generation-DDL lock fix required a clean full retry.
 
-**Unknown:** the exact planner candidate list, protected generations, retained
-bytes, purge bytes, rewrite workspace, and rollback objects. The report-only
-planner is already enabled, but its exact result is not currently persisted in
-available evidence.
+**Verified:** scrape `1309` accepted the retry. All `8,484` manifests and
+`604,907` page statuses completed, all six physical generation children
+matched published-source sums, every default child stayed empty, publication
+`101` became current/unfrozen, notifications and registration drain completed,
+and the worker exited `0`.
 
-### Current progress defect
+**Verified:** Pro Vocals retained `34,514,935` of `633,981,317` archived rows
+across snapshots `1302-1307` and `1309`, returned `350,852,210,688`
+filesystem bytes, left an empty default child, and preserved exact
+publication/reference/API parity.
 
-**Verified:**
+**Verified:** Pro Cymbals retained `400,455` of `8,661,068` archived rows
+across snapshots `1302-1307` and `1309`, returned `4,757,069,824` filesystem
+bytes, left an empty default child, and preserved exact
+publication/reference/API parity.
 
-- `/api/progress` is process-local and was empty in `fstservice` while the
-  separate worker was actively scraping.
-- `/api/service-info` had no progress percent or ETA after more than an hour of
-  network work.
-- worker liveness heartbeats intentionally preserve operation progress
-  timestamps.
-- post-process durable updates hard-code `PostScrapeEnrichment`.
-- Settings assigns static weights that do not reflect measured duration and
-  can move overall progress backward as durable ranking child operations
-  replace the parent operation.
+**Verified:** Pro Drums retained `190,168` of `5,473,658` archived rows across
+snapshots `1302-1307` and `1309`, returned `2,942,509,056` filesystem bytes,
+left an empty default child, and preserved exact publication/reference/API
+parity.
+
+**Verified:** scrape `1310` accepted all nine generation-write paths. All
+`8,484` manifests and `605,239` persisted page statuses succeeded, all nine
+physical children exactly matched published-source sums, defaults remained
+empty, publication `103` became current/unfrozen, notification runs emitted
+`101` player and `47` band events, registration drain completed, and the
+worker exited `0`.
+
+**Verified:** the first physical-reference inventory contains six
+failed-scrape `1308` children with no active/projection/named-publication
+source, totaling `12,908,355,584` bytes. That is not accepted retention
+eligibility while same-instrument unreplayed writer-failure evidence remains.
+The nine `1310` children total `15,870,648,320` bytes, while older successful
+generations remain sparsely pinned. Whole-child retirement is necessary but
+does not by itself prove bounded steady-state storage.
+
+**Unknown:** single-leaf archive/restore behavior, guarded detach/reattach
+versus direct-drop lock duration, no-socket mailbox/prover crash recovery,
+measured eligible-child arrival rate, archive runway, and sparse-compaction
+cost until the gated drills and canaries pass.
 
 ## Exact current dependency map
 
@@ -280,8 +369,8 @@ Exact catalog selection
   -> registered-user recurring refresh
   -> early snapshot activation
   -> BandExtraction:
-       derive band rows
-       -> team membership/configuration summary rebuild
+       derive band rows (exact song subphase; indeterminate parent)
+       -> team membership/configuration summary rebuild (new exact batch epoch)
   -> registered-player band discovery
   -> registered-band targeted processing
   -> BandMaintenance:
@@ -374,7 +463,7 @@ required before performance acceptance.
 | Early snapshot activation | Use expected/manifests rather than scanning candidate snapshot rows; evaluate one activation | Potential query rewrite; final activation removal requires separate proof | Bounded plan and isolated current-state checksums | At least 30% phase reduction; exact snapshot state and current reads | Restore existing SQL/calls | `full-scrape-ab` |
 | `BandExtraction` | Make impacted teams/scopes reflect actual changed rows | Already parallel; do not increase DOP first | Same input rows, compare impacted-key sets and band outputs | Exact band rows; fewer downstream scopes | Keep broad-impact mode | `full-scrape-ab` |
 | `LegacyBandScrape` | Retain direct `--band-post-scrape`; remove only duplicate await | Mode audit proved the direct legacy launch remains supported | CLI/config matrix plus targeted tests | No supported mode loses band acquisition | Revert duplicate-await deletion | `full-scrape-ab` |
-| Band discovery/targeting | Add lookup budgets, results, retry, and checkpoint timings | Low priority; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase | Restore serial order | `full-scrape-ab` |
+| Band discovery/targeting | PR B remaining-work grace is an unaccepted tracked-off candidate: validate the typed `P/A/I/C/F` state and then run separate targeted/discovery one-variable canaries before enabling either phase | Conservative gate requires `F=0`, no projection eligibility, serial execution, immutable base-plus-120s hard cap, and unchanged provider budget | Focused deterministic tests, disabled matched full scrape, then bounded provider canaries with an eligible grant | Same teams/scopes and partial impacts; no retry/error/watchdog regression; exact deadline/state logs; a zero-grant canary does not prove efficacy | Keep both phase grace flags false or disable the affected phase flag | `full-scrape-ab` |
 | Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Secondary measured target: `1,144,264 ms` (`14.41%`) in scrape `1293` | Isolated changed-scope A/B after current projection analysis | Exact retained entries/members; ≥20% subphase reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
 | BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; separate from BandMaintenance timing and optimization | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
 | BandMaintenance current projection refresh | Analyze unchanged-scope selection and replace/delete volume before changing the algorithm | First measured target: `6,049,933 ms` (`76.20%`), `53,543` considered scopes, `8,020` refreshed | Bounded query/plan and same-input checksum probe, then one-variable full-scrape A/B | Exact current/public DTO hashes; materially fewer than `14,179,946` writes and `14,189,655` deletes; no >10% resource regression | Existing broad current refresh | `full-scrape-ab` |
@@ -384,8 +473,8 @@ required before performance acceptance.
 | Rank-history snapshots | First optimize latest-state scan; then test existing overlap flag or DOP change separately | Largest ranking subphase; do not combine concurrency hypotheses | Isolated current-history query plan and one-variable A/B | Exact histories; meaningful wall reduction; no >10% resource regression | Overlap/DOP off | `full-scrape-ab` |
 | Band rankings | Split from solo ranking stage and retain dependency on completed BandMaintenance | Can run only after prune/current band input is terminal | Phase contract tests and isolated ranking parity | Exact band rank/stat/history rows | Existing monolithic `ComputeAllAsync` | `full-scrape-ab` |
 | Solo projection prepare | Keep dormant until snapshot-overlay reader migration is promoted | No current optimization work | Existing reader migration parity gate | Full public/worker parity | Flag off | `full-scrape-ab` |
-| Song rivals | Bound account concurrency and persist skip/recompute/input counts | Potential overlap with player stats later; not before query/resource evidence | Registered-account slice replay | Exact rivals/samples; lower query count and p95 | Existing task fan-out | `full-scrape-ab` |
-| Leaderboard rivals | Bulk-load neighborhoods and selected neighbor scores; add input fingerprints | Recompute only users whose ranking neighborhood changed | One-account, then full registered-slice replay | Exact rows/samples; ≥25% query/wall reduction | Existing per-user algorithm | `full-scrape-ab` |
+| Song rivals | Accepted: bulk-load target scores once per instrument, reuse them, and cap accounts at 2. Next batch selected-rival account/song profile reads per instrument and batch selection-state fingerprints | Potential overlap with player stats later; do not raise account concurrency before query/resource evidence | Production-shaped account/song-pair fixture, then one full registered-account slice | Exact rivals/samples/fingerprints; at least 25% query or phase-wall reduction; bounded profile rows/RSS; no greater than 10% protected resource regression | Retain the current per-rival reads and accepted preload/account cap | `full-scrape-ab` |
+| Leaderboard rivals | Add input fingerprints and selectively recompute only accounts whose ranking neighborhood or relevant scores changed | Accepted instrument-first default-4 batching is the baseline; fingerprints must preserve atomic user/instrument replacement and publication semantics | Same-input full registered slice with unchanged, one-account, one-instrument, and broad-change cases | Exact rows/samples/state; unchanged inputs skip safely; changed inputs match forced recomputation; no greater than 10% protected resource regression | Force all accepted batches to recompute | `full-scrape-ab` |
 | Player stats | Add per-chunk timing | Usually seconds; leave serial unless recurring tail appears | Three comparable scrapes | No output difference; optimize only if material | Remove counters | `continuous-safe` |
 | Checkpoint/cache warm | Candidate removes verified PostgreSQL no-ops | Stable checkpoint ID remains reserved; no persistence contract remains | PostgreSQL API-absence and worker-flow tests plus full scrape parity | Zero output/cache difference | Revert deletion | `full-scrape-ab` |
 | Final snapshot activation | Prove whether wave-two marker has a current consumer; collapse only after parity | Candidate removal, not assumed redundancy | Source/reference tests and full current-state/public checksums | Exact resume, projection, publication, and API behavior | Restore second activation | `full-scrape-ab` |
@@ -430,8 +519,14 @@ See
 - **Post-phase replay** validates SQL, algorithms, projections, rankings,
   rivals, precompute, cleanup, and publication preparation.
 
-No raw HTTP capture will be implemented until a parser/network requirement and
-storage budget exist.
+The repository now has the versioned `fst.capture-package.v2` contract for
+exact catalog support evidence, canonical response DTOs, bounded response
+shards with per-request member references, exact request/scope provenance, and
+bounded admission decisions. The manual default-off producer now reuses the
+normal parser and resilient transport without database/publication services,
+and deterministic fakes prove the descriptor and Tier-0 metadata path. The
+next unresolved prerequisite is a deterministic isolated importer/parity
+proof; capture scheduling and overlap remain behind the later gates below.
 
 ### Artifact tiers
 
@@ -586,6 +681,16 @@ Full scrape N+1 during post-processing N is rejected.
 Incremental snapshot storage is tens of GB, not another 2.381 TB. That
 correction does not make overlap safe.
 
+The current boundary includes the manual, default-off `--capture-only`
+producer. It creates one immutable Tier-0-backed package from an exact provider
+catalog and complete configured solo/band request-plan scopes, then exits.
+Provider-exhausted and deliberately bounded scopes are distinguished, and
+identity/rank/page validation prevents a drifting prefix from being presented
+as complete. It has no
+database, import, publication, freeze, candidate, scheduler, or overlap
+authority. The unresolved work begins with isolated import/parity and only
+then candidate ownership and scheduling design.
+
 ### Future research-only scheduler gates
 
 Do not implement overlap until all are true:
@@ -613,41 +718,53 @@ Each iteration below is a separate branch/PR.
 
 ### Parallel storage and reclaim evidence
 
-**Establish an exact executable snapshot-retention plan**
+The default-off generation-child report-only control plane, archive-only
+package/proof tool, quarantine/reattach executor, and guarded DROP/logical
+restore tier are implemented and live-accepted. Candidate scrape `1345` and
+official scrape `1346` closed the DROP-tier promotion with zero failures,
+clean 55-route captures, and exact cycles `25`/`26`.
 
-- Planner-estimator correctness is `continuous-safe`: it changes only bounded
-  read-only evidence and fail-closed eligibility, and the live harness can
-  validate it without a scrape or deployment.
-- Use only plans with complete protected-ID coverage, reconciled row/byte
-  totals, and `CanExecute=true`.
-- Current publication-`1293` catalog evidence reconciles but all nine plans are
-  blocked: protected IDs `1293` and `1291` are absent from MCV statistics,
-  `n_live_tup` and `reltuples` are stale/inconsistent, and unknown MCV
-  remainder is material.
-- Informational candidate purge estimates are about `2.52` billion rows /
-  `1.46 TB`; executable purge estimates remain zero and full retained workspace
-  is about `2.61 TB`.
-- When catalog statistics are stale or partial, choose and validate a bounded
-  evidence source: maintenance-window statistics refresh with adequate target,
-  durable per-snapshot rollup metadata, or exact partition counts under a
-  separately approved load window.
-- Persist exact candidate partitions, protected snapshot IDs/publications,
-  retained/purge rows and bytes, required rewrite workspace, rollback objects,
-  query/runtime cost, and the current `500 GiB` free-space gate.
-- Do not enable rewrite, lower the 500 GiB gate, delete rows/indexes, repack, or
-  move data.
-- Execution remains `parity-gated-maintenance` and blocked until statistics,
-  exact-count, parity, and workspace evidence all agree.
+Cycle `33` / scrape `1353` then passed the separate large-child recovery gate
+on Solo Guitar snapshot `1311`: `3,518,955,520` source bytes,
+`6,888,770` rows, a `272,084,869`-byte archive, exact network-none restore
+fingerprint/catalog parity, complete cleanup, and no source mutation.
+
+Current code still has no automatic-retirement execution path. The first
+default-off host control-plane slice now covers bounded immutable
+authorization, status, operator deactivation, reconciliation, and
+largest-first plan persistence only. It has no archive/Docker process,
+admission lease, source mutation, or worker/API integration. Scrape `1308`
+remains protected wherever unreplayed writer-failure evidence exists.
+
+Archive execution is the next separate implementation gate. It must reuse the
+accepted immutable planner/archive/quarantine/DROP evidence while proving exact
+container binding, cooperative cancellation and owned-resource cleanup,
+full-duration admission, and interruption-safe provenance before any command
+can invoke `pg_dump` or a proof container.
 
 ### Next iterations
 
 Order is evidence-driven:
 
-1. snapshot-capacity recovery investigation: refresh the read-only protected
-   generation, row-distribution, relation-size, and exact workspace evidence;
-   do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
-   existing parity/capacity contract passes;
-2. BandMaintenance current projection refresh. PR #47 merges the
+1. implement recurring generation retention in gated tranches:
+   - merge and deploy the default-off plan-only control plane, then collect
+     read-only largest-first plan/reconcile evidence across terminal cycles;
+   - add archive execution only after exact source-container, admission-loss,
+     process-start, cancellation-cleanup, expiry, and transition-failure gates
+     pass independent review;
+   - implement default-off automatic retirement of at most one archive-first
+     eligible child per terminal cycle only after those execution gates;
+   - validate it through isolated failure/recovery tests and one complete
+     dual-lane scrape candidate before any enablement;
+   - separately gated sparse-child compaction before claiming bounded
+     steady-state storage;
+2. review and qualify the freeze-safe publication API cache candidate. The
+   repository implementation reuses canonical rows, eagerly adds songs plus
+   bounded top-10 song/instrument rows, and lazily admits only overview sizes
+   25/50 after sub-11 ms measured compute p95. Promotion still requires one
+   full scrape/publication window, same-publication freeze injection, exact
+   key/JSON/ETag parity, and no protected precompute/WAL/API regression;
+3. BandMaintenance current projection refresh. PR #47 merges the
    implementation default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
    Schema and fixture tests prove `member_index` uniqueness inside the query
@@ -661,14 +778,21 @@ Order is evidence-driven:
    Production enablement remains pending, not accepted: capacity must first
    restore a full-scrape window, then a matched full-scrape A/B must pass exact
    publication/data parity and the protected `>10%` regression rule;
-3. solo current-projection write reduction;
-4. rank-history query path and one-variable concurrency/overlap experiment;
-5. leaderboard-rivals batching/fingerprints;
-6. precompute input reuse/selective concurrency;
-7. best-effort cleanup reorder;
-8. snapshot activation consolidation;
-9. storage-retention execution after parity/capacity gates;
-10. capture-only overlap research after architecture/storage redesign.
+4. solo current-projection write reduction;
+5. rank-history query path and one-variable concurrency/overlap experiment;
+6. song-rivals selected-profile batching and fingerprint batching;
+7. leaderboard-rivals input fingerprints/selective recomputation;
+8. precompute input reuse/selective concurrency;
+9. best-effort cleanup reorder;
+10. snapshot activation consolidation;
+11. storage-retention execution after parity/capacity gates;
+12. continue the capture-overlap sequence after the manual capture producer:
+    - prove deterministic isolated import parity before any candidate-scoped
+      database work;
+    - design the candidate/publication boundary only after imported replay
+      parity exists;
+    - retain queue-depth-one scheduling, overlap, and production A/B as later
+      gates rather than behavior of `--capture-only`.
 
 ## Testing strategy
 
@@ -777,13 +901,14 @@ metrics. Correctness/publication differences reject regardless of speed.
 | Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
-| Rival tail cause | Unknown | Per-account decisions/query counts/timing | No concurrency change before attribution |
+| Rival tail cause | Partially measured | Batch and benchmark per-score selection-state fingerprint neighborhoods; preserve exact fingerprints and skip decisions | No broader concurrency increase; accepted account cap remains `2` |
 | Precompute subphase cost | Unknown | Stable subphase timing and cache counts | No parallel flag promotion |
 | Replay dataset size | Unknown | Tier 0, then bounded Tier 1 export/import size/runtime | Must fit same-drive reserve |
 | Raw compression/dedup | Deferred unknown | Only after parser requirement; bounded sample | No current work |
 | Parallel resource behavior | Unknown | Isolated same-input resource-capped A/B | Any >10% regression rejects |
 | ETA accuracy | Unknown | Backtest phase-boundary history, then collect within-phase checkpoints | Hide ETA until confidence gate |
 | Phase-attempt lifecycle | Unknown | Measure row growth and scrape-log deletion/lock behavior before proposing an FK or explicit retention | Separate evidence; no locking FK or cleanup by default |
+| Registered discovery attempt breakdown | Candidate implemented | Validate `attemptedThisPass`, `retryableUnavailableThisPass`, and durable completion on a full official scrape | Preserve retry semantics, plan v2 descriptors, publication parity, and the simplified Settings surface |
 | Future overlap benefit | Deferred unknown | Only after isolated capture and publication redesign | Research-only |
 
 ## Implementation gate
@@ -795,7 +920,19 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- Snapshot-capacity recovery evidence is the next active priority.
+- Durable publication-keyed API caching is the next active implementation;
+  broader snapshot-capacity recovery remains separately gated.
 - Current-projection optimization remains a separate later full-scrape A/B.
-- Snapshot-retention execution remains a separate parity- and capacity-gated
-  maintenance task.
+- Snapshot-generation DROP/restore is implemented as a separate manual,
+  default-inert maintenance surface. Scrape `1333`, cycle `13`, and its
+  disposable drill are accepted. DROP operation
+  `333ba4b9fb69dbc098d127f0008ec709` is committed; mandatory authenticated
+  logical restore and confirmation remain. The corrective branch now carries
+  separate immutable tool authorization and a nonduplicating repair package.
+  H3 authorization failed read-only on a reserved SQL alias; H4 authorization
+  passed that lookup but failed read-only on string-serialized OID arrays. H5
+  restored the child exactly, but route attestation stopped on volatile ZIP
+  bytes. H6-prime's hash-only midnight shop bridge, strict stabilized pair,
+  live authorization/finalization, and candidate confirmation scrape are
+  accepted. PR/official-image promotion remains.
+  Automatic retention is still a later parity- and capacity-gated task.

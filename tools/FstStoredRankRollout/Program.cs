@@ -626,7 +626,7 @@ static int RunSelfTest()
     }
 
     Console.WriteLine(
-        "{\"selfTest\":\"passed\",\"model\":\"gpt-5.6-sol\",\"reasoning\":\"max\",\"context\":\"long_context\"}");
+        "{\"selfTest\":\"passed\",\"model\":\"gpt-5.6-sol\",\"reasoning\":\"medium\",\"context\":\"default\",\"criticalProfile\":{\"model\":\"gpt-5.6-sol\",\"reasoning\":\"max\",\"context\":\"long_context\",\"triggerIds\":[\"fst-live-data-loss-or-restore-conflict\",\"fst-publication-provenance-conflict\",\"fst-unresolved-concurrency-corruption\",\"fst-release-public-health-or-rollback-conflict\"],\"requiresTriggerReceipt\":true}}");
     return 0;
 }
 

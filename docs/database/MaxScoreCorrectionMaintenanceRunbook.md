@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified_commit: bf770d49
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -12,6 +12,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceAccountIdPolicy.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommandTimeout.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -26,6 +27,7 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
@@ -33,8 +35,11 @@ sources:
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
 update_triggers:
-  - Max-score stage, plan, apply, resume, freeze, notification, cache, validation, or rollback-evidence behavior changes.
+  - Max-score stage, plan, apply, resume, rollback, freeze, notification, cache, validation, or rollback-evidence behavior changes.
 ---
 
 # Max-score correction maintenance
@@ -98,7 +103,7 @@ only maintenance cache inventory. Active-only or legacy-only songs/scopes,
 maintenance song keys or completion denominators. Every changed manifest scope
 must exist in the publication snapshot before freeze.
 
-Apply acquires locks in this order:
+Initial apply acquires locks in this order:
 
 1. exclusive registration/backfill/history mutation advisory gate, waiting for
    every active shared lifecycle to drain and blocking later admissions, then
@@ -113,6 +118,16 @@ Apply acquires locks in this order:
    fixed order;
 6. publication and song row locks inside that same bounded transaction.
 
+Resume requires the already-owned digest freeze and uses a recovery lease named
+`fst-max-score-resume`. It retains the exclusive registration mutation gate,
+path-generation lock, and durable owner token, but only proves the global
+publication lock is initially available and then yields it between
+transactions. Each resume transaction requests the transaction-scoped
+exclusive publication lock immediately before commit. Long publication input
+capture, derived work, and cache generation therefore run without queueing
+cached public readers; MVCC and the frozen cache-or-`503` gate keep uncommitted
+state invisible until the bounded commit fence.
+
 Band maintenance is the intentional writer for target-song `band_entries`
 threshold flags and affected projection scopes, so the source lock protects
 `band_member_stats` while the global publication lock, source fingerprint, and
@@ -123,8 +138,23 @@ freeze publication-bound song, path, ranking, player, and band reads use an
 already-built published cache or return `503`; the candidate state is never
 served live. Exact solo leaderboard requests, including every leeway/max-score
 query, follow the same cache-or-`503` rule. A warm `SongsCacheService` response
-may be served, but path artifacts without a separately safe published response
-remain blocked.
+may be served. An already-present immutable path PNG or JSON artifact for the
+current generation may also be served; a missing path artifact returns
+`503`/`Retry-After: 30` rather than a maintenance-time `404`. These
+max-score-dependent routes defer publication read-context and boundary-lease
+acquisition to the cache/route gate, so the exclusive maintenance lock cannot
+turn a cache hit or intentional `503` into a statement-timeout `500`.
+Ordinary publication commit/freeze read leases retain their existing order and
+behavior.
+
+After `paths_promoted`, a process-local `/api/songs` cache warmed before
+promotion can still advertise the previous generation ID. Treat that as an
+expected temporary skew: both path PNG and JSON requests with the old valid ID
+must return `503`/`Retry-After: 30`, never `400`, `500`, or the old immutable
+artifact. Requests with no generation ID or the current ID may serve only an
+already-present current artifact. Keep the freeze intact; final release
+invalidates songs/path caches, exposes the current ID, and restores the
+ordinary stale-ID `400` and missing-artifact `404` behavior.
 
 The same freeze rejects `POST /api/player/{accountId}/track`,
 `POST /api/backfill/{accountId}`, and the registration-changing band
@@ -665,8 +695,23 @@ Apply:
   rebuilds dependent band rankings without rank-history snapshots;
 - atomically replaces the complete tier-row set for each affected player-stat
   account, removing stale active-only instruments while preserving unrelated
-  accounts, then rebuilds every registered player's
-  leaderboard rivals. Per-instrument completion denominators come from the
+  accounts. Empty or whitespace-only affected account IDs are invalid source
+  rows and are excluded from score-history selectors, tier work, cache account
+  sets, and final validation. Before allowing that exclusion, plan/apply/resume
+  verifies that no blank account identity exists in score history,
+  registration, or account-specific API cache keys. The plan-digest v6 inputs
+  are unchanged: the affected-account list is not a digest field, and a blank
+  source row with no consumed history therefore remains compatible with an
+  already-frozen v6 run. Any blank identity or consumed-history difference
+  fails closed instead of adopting the old run.
+- rebuilds registered-player leaderboard rivals only for the manifest's
+  changed instruments. For each such instrument it loads the ranking
+  neighborhoods for all registered users, deduplicates users plus neighbors,
+  performs one authoritative published-snapshot-plus-overlay profile batch
+  read, applies the existing five rank methods, directions, and top-200 sample
+  rules in C#, and commits each user/instrument replacement atomically.
+  Unlisted instrument rival rows, samples, and completion state are not
+  deleted or rewritten. Per-instrument completion denominators come from the
   frozen publication scopes, the overall denominator is the exact published
   song/instrument scope count, and the cached top-level song total is the
   distinct publication-owned song count. Player-stat cache payloads include
@@ -741,6 +786,43 @@ SHA-256, manifest/plan/run timestamp, publication/catalog, and immutable
 database rollback-song rows. Missing, corrupted, or swapped files leave reads
 frozen and fail at the existing resumable phase.
 
+Phase comparisons are the execution plan. A durable
+`notifications_quarantined` phase skips path promotion, the complete derived
+rebuild, and notification alignment; it restages the complete publication
+cache, validates exact serialized API content and all derived invariants,
+checkpoints `caches_staged`/`validated`, then performs the atomic cache
+swap/completion/unfreeze transaction. The affected-account cache fingerprint
+sorts after converting raw instrument keys to public combo IDs; sorting before
+that projection caused every multi-instrument affected account to mismatch
+otherwise identical staged payloads.
+Maintenance-only cache diagnostics and failure reports represent account
+identities as bounded SHA-256 evidence IDs. Routine non-maintenance precompute
+logs keep their existing behavior; incident evidence does not need raw
+registered account IDs.
+
+### Publication 1302 recovery acceptance
+
+The reviewed phase-5 forward resume completed on 2026-08-17 from
+`notifications_quarantined/failed` using PR #52 commit `555408ad`:
+
+- paths, derived state, and notification alignment were skipped and remained
+  byte/counter unchanged;
+- 9,255 cache entries were rebuilt, semantically validated, fingerprinted, and
+  published;
+- the run committed `completed`, publication 80 remained bound to scrape 1302,
+  and the exact digest freeze was released atomically;
+- direct/web songs, overview, composite, band, Solo, path, and representative
+  player routes returned HTTP 200 with direct/web payload parity;
+- the stale emergency web songs override was removed;
+- WAL increased by `583,901,923` bytes. PostgreSQL reported
+  `178,597,552,128` cumulative temp bytes while physical free space fell from
+  `58,927,673,344` to a monitored low of `50,162,028,544` bytes before
+  recovering.
+
+Future phase-5 resume attempts require at least 16 GiB free, not the original
+5 GiB planning estimate. Full rollback remains a separate 64 GiB minimum and
+was not executed.
+
 A resume whose durable phase is `caches_staged` or `validated` re-runs the
 required cache semantic validation and exact key/ETag/JSON-hash comparison for
 both staging tables before final completion. From `caches_staged` onward,
@@ -757,6 +839,14 @@ restored to `120s` before the bounded swap/checkpoint/verification/unfreeze
 mutations. A validation or timeout-transition failure aborts the transaction,
 so missing, changed, deleted, or extra rows remain frozen and resumable;
 restore the exact checkpointed staging generation before retrying.
+
+A run durably stopped at `paths_promoted` has no derived-state checkpoint.
+Resume may therefore rerun affected rankings and complete player tiers before
+the batched changed-instrument rivals pass. Existing complete tier rows are
+safe: affected account chunks are replaced transactionally and the result is
+validated idempotently. Keep using the existing manifest and plan digest when
+the blank-account identity validation passes; do not generate or substitute a
+new digest for that frozen run.
 
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase
@@ -779,22 +869,171 @@ After success, verify:
   is unchanged; every affected-instrument published scope has a row, including
   zero-entry scopes, active-only old rows are absent, and unaffected
   instruments remain unchanged;
-- affected rankings, player stats, rivals, band rankings, and precomputed
+- affected rankings, player stats, changed-instrument rivals, band rankings,
+  and precomputed
   responses are current; target leaderboard/player cache fingerprints match
   the exact published source plus overlays, including every registered
   overlay-only affected account, affected player tiers contain no active-only
   instrument, unrelated account tier rows remain durable, cached tier payloads
   contain only `Overall` plus frozen-scope instruments, and publication-only
-  song scopes have their expected keys while active-only scopes have none;
+  song scopes have their expected keys while active-only scopes have none.
+  Rival rows, samples, and state for every instrument absent from the manifest
+  remain byte-for-byte unchanged;
 - the maintenance notification audit has `visible_delivery_count=0`;
 - no player/band visible event or publication notification marker/cursor was
   rewritten; and
 - API/web health and same-publication client refresh succeeded.
 
-There is intentionally no automatic rollback command. The rollback JSON plus
-`max_score_maintenance_rollback_songs` is authoritative. A reversal requires a
-separately reviewed transaction while reads remain frozen, restoration of
-every captured path field for every song, the same complete derived rebuild
-and notification quarantine rules, cache restaging, and full validation before
-unfreeze. Never delete the promoted immutable generations or audit rows as
-rollback.
+## Guarded rollback
+
+Release schema must be initialized before rollback; the rollback one-shot does
+not run schema initialization or hosted/background services.
+
+Run the read-only preflight first with a new report path:
+
+```bash
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --max-score-maintenance-rollback \
+  --max-score-maintenance-rollback-dry-run \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --expected-max-score-manifest-digest "$MANIFEST_SHA" \
+  --expected-max-score-plan-digest "$PLAN_DIGEST" \
+  --max-score-maintenance-rollback-file "$EVIDENCE_REL/rollback.json" \
+  --expected-max-score-rollback-digest "$ROLLBACK_SHA" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/rollback-dry-run-report.json"
+```
+
+Dry-run validates exact publication/freeze/run phase, zero maintenance/worker
+backends and waiting locks, canonical rollback bytes/digest, rollback
+file/database row parity, exact manifest song/instrument scope, current
+promoted paths, immutable current/staged artifacts, and the worker-offline
+gate. It never acquires the mutation lease, edits the durable phase, restores
+paths, stages caches, or unfreezes. Dry-run against an already terminal
+`rolled_back` run is rejected read-only; use the execute form when stale
+terminal-gate reconciliation is required.
+The dry-run detail names the exact durable admission phase/status so an
+operator cannot mistake the synthetic `rollback_validating` report stage for
+the current stored phase.
+
+Execute with the same identities, omit
+`--max-score-maintenance-rollback-dry-run`, and use another new report path:
+
+```bash
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --max-score-maintenance-rollback \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --expected-max-score-manifest-digest "$MANIFEST_SHA" \
+  --expected-max-score-plan-digest "$PLAN_DIGEST" \
+  --max-score-maintenance-rollback-file "$EVIDENCE_REL/rollback.json" \
+  --expected-max-score-rollback-digest "$ROLLBACK_SHA" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/rollback-report-1.json"
+```
+
+The command reserves the new report file before loading the rollback workflow
+or acquiring a database lease. Existing targets and collisions with the
+manifest or rollback input therefore fail before mutation. If the manifest
+cannot be parsed well enough to form a typed failure report, disposal removes
+the unwritten reservation rather than leaving a zero-byte path that blocks a
+retry.
+
+Keep the public-health/resource monitor active for the entire command. At
+minimum sample PostgreSQL locks/query ownership, FST free bytes, readyz, web
+shell, service-info, direct/public songs, rankings overview/composite/bands,
+Solo rankings, and worker state every 60 seconds. Stop only the exact rollback
+one-off on identity mismatch or unacceptable public degradation; never stop
+PostgreSQL, service/web, proxies, autovacuum, or the held worker.
+
+The executor:
+
+1. acquires the exclusive registration mutation gate and path-generation
+   advisory lock, briefly proves the global publication lock is available,
+   then yields that publication lock between transactions while preserving the
+   durable freeze and mutation owner;
+2. atomically restores every rollback path field for the exact manifest songs,
+   including nullable pre-apply maxima and the prior expected-instrument set,
+   without deleting promoted immutable generations or audit rows;
+3. rebuilds affected solo/band rankings, complete affected player-tier sets,
+   leaderboard rivals, and related derived state from the restored maxima plus
+   the immutable publication-1302 source/population;
+4. quarantines and aligns rollback notification candidates with zero visible
+   delivery under a direction-specific audit digest, so an identical or empty
+   apply candidate set cannot suppress restored-state alignment; the audit,
+   alignment mutations, rollback audit ID/counts, and
+   `rollback_notifications_quarantined` checkpoint commit atomically;
+5. stages both legacy and publication-addressed caches and captures separate
+   immutable rollback cache-entry evidence;
+6. validates paths, population, both the accepted post-promotion and exact
+   restored-maximum score-history selectors, rankings, tiers, rivals,
+   notifications, cache keys/content, unchanged rank history, and the
+   canonical rollback file again immediately before completion;
+7. atomically swaps validated caches, records `rolled_back`, and releases the
+   exact freeze.
+
+Rollback does not retain the global publication advisory lock across derived
+rebuild or cache generation. Each lease-owned transaction performs its work
+under the durable freeze/source guards, then requests the transaction-scoped
+exclusive publication lock immediately before commit. PostgreSQL MVCC keeps
+uncommitted rows invisible; existing publication readers drain before the
+commit, and later readers observe either the preceding or committed unit. The
+existing `5s` lock timeout rejects and rolls back a contended unit rather than
+allowing a long rollback command to queue public reads. Cached public routes
+therefore remain available between these bounded commit fences; cold routes
+remain cache-or-`503` until terminal unfreeze.
+The active digest-owned max-score freeze blocks every normal cache-build lease,
+cache swap, and non-owner staging mutation from rollback admission onward, not
+only after rollback cache evidence is captured. This prevents intermediate
+rollback checkpoints from becoming a published cache generation.
+The guard remains active even if an unexpected working-publication pointer
+appears. Canonical scrape allocation also rejects the max-score freeze or
+durable mutation token, so no new working publication may begin while rollback
+owns the current generation.
+Schema initialization remains restart-safe: its row-scoped retention delete may
+remove only staging rows whose publication is not current, previous, or
+working. Current-generation insert/update/delete and every truncate remain
+blocked for non-owners.
+
+Durable rollback phases are `rollback_validating`,
+`rollback_paths_restored`, `rollback_derived_state_rebuilt`,
+`rollback_notifications_quarantined`, `rollback_caches_staged`,
+`rollback_validated`, and `rolled_back`. Path restoration and its checkpoint
+share one serializable transaction. Later work is resumable and idempotent;
+rerun the same command and identities with a new report path after interruption.
+From `rollback_caches_staged` onward, rollback cache evidence blocks normal
+cache-build leases and non-owner staging DML exactly like apply cache evidence.
+An already `rolled_back` run returns its terminal report without applying
+again. A run still recorded as `rollback_captured` is eligible only when every
+current path already exactly matches the manifest's promoted identity, covering
+an acknowledged path commit whose phase checkpoint was lost. If paths still
+match the pre-promotion identity, rollback rejects without mutation. A final
+commit acknowledgement failure is reconciled from durable `rolled_back` plus
+an unfrozen publication. Before reporting success, the executor disposes or
+replaces the lease under the exclusive mutation gate and verifies every
+durable mutation-owner field is null. A terminal retry performs the same
+stale-gate cleanup, so backend loss after commit cannot leave registration
+blocked while returning a false success.
+If cleanup itself cannot complete, report v2 records terminal `rolled_back`
+with `cleanupPending=true`, `succeeded=false`, `resumable=true`, and unfrozen
+reads. Retry the same execute command and identities with a new report path;
+do not edit the gate manually.
+Apply/resume invoked after rollback ownership begins returns a truthful
+non-resumable rejection report with the actual rollback phase and freeze state;
+it never presents rollback as an apply-resumable failure.
+Post-commit success reconciliation is enabled only after this invocation has
+passed terminal path/publication validation and attempted the final completion
+or terminal cleanup. A failed terminal preflight is never converted into
+success merely because the durable run was already `rolled_back`.
+
+Any mismatch or failure keeps the freeze, rollback evidence, original apply
+failure/audit fields, promoted immutable generations, and the last durable
+rollback phase. The report records rollback-specific stage timestamps,
+path/cache fingerprints, counts, and failure detail. Never manually clear the
+freeze, edit phase/status, delete promoted generations/audit rows, or substitute
+ad-hoc SQL for this command.

@@ -13,8 +13,12 @@ import {
 } from './diagnostics/scrollFadeTestModeBridge';
 import { installStaleChunkRecovery } from './utils/staleChunkRecovery';
 import { migrateDirectPathToHashRoute } from './utils/directRouteMigration';
+import { installFocusAppearance } from './utils/focusAppearance';
 import i18n from './i18n';
 import './index.css';
+
+const disposeFocusAppearance = installFocusAppearance();
+import.meta.hot?.dispose(disposeFocusAppearance);
 
 const PwaIconCapture = lazy(() => import('./components/icons/PwaIconCapture'));
 const ModalAccessibilityFixture = lazy(() => import('./diagnostics/ModalAccessibilityFixture'));

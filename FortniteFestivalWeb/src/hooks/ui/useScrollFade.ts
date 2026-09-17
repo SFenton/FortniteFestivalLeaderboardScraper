@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useScrollUpdateScheduler } from './useScrollUpdateScheduler';
+import { getScrollViewportRect } from '../../utils/scrollViewport';
 
 export interface ScrollFadeOptions {
   /** How many pixels the fade zone extends inward from each scroll edge. Default: 36 */
@@ -58,7 +59,7 @@ export function useScrollFade(
     const scrollEl = getScrollElement();
     if (!listEl || !scrollEl) return;
 
-    const scrollRect = scrollEl.getBoundingClientRect();
+    const scrollRect = getScrollViewportRect(scrollEl);
     const vh = scrollRect.height;
     const atTop = scrollEl.scrollTop <= 0;
     const atBottom = scrollEl.scrollTop + vh >= scrollEl.scrollHeight - 1;

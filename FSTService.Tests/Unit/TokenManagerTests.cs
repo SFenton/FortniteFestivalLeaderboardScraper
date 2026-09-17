@@ -126,6 +126,127 @@ public class TokenManagerTests
         Assert.Null(result);
     }
 
+    [Fact]
+    public async Task GetAccessTokenAsync_RefreshTimeoutReturnsNull()
+    {
+        var handler =
+            new Helpers.MockHttpMessageHandler();
+        handler.EnqueueHang();
+        var http = new HttpClient(handler)
+        {
+            Timeout =
+                TimeSpan.FromMilliseconds(50),
+        };
+        var auth = new EpicAuthService(
+            http,
+            Substitute.For<
+                ILogger<EpicAuthService>>());
+        _store.LoadAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new StoredCredentials
+                {
+                    AccountId = "acct1",
+                    RefreshToken = "refresh",
+                });
+        var manager = CreateManager(auth);
+
+        var result =
+            await manager.GetAccessTokenAsync(
+                CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_PropagatesCredentialLoadCancellation()
+    {
+        _store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(
+                Task.FromException<StoredCredentials?>(
+                    new OperationCanceledException()));
+        var manager = CreateManager();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => manager.GetAccessTokenAsync(
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_PropagatesRefreshStoreCancellation()
+    {
+        var handler =
+            new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk(
+            MakeTokenJson(
+                "access",
+                "refresh-new",
+                "acct1",
+                hoursFromNow: 2));
+        var auth = new EpicAuthService(
+            new HttpClient(handler),
+            Substitute.For<ILogger<EpicAuthService>>());
+        _store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(
+                new StoredCredentials
+                {
+                    AccountId = "acct1",
+                    RefreshToken = "refresh-old",
+                });
+        _store.SaveAsync(
+                Arg.Any<StoredCredentials>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                Task.FromException(
+                    new OperationCanceledException()));
+        var manager = CreateManager(auth);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => manager.GetAccessTokenAsync());
+    }
+
+    [Fact]
+    public async Task FileCredentialStorePropagatesReadCancellation()
+    {
+        var directory = Path.Combine(
+            AppContext.BaseDirectory,
+            ".test-temp",
+            $"credential-cancel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(
+                directory,
+                "device-auth.json");
+            await File.WriteAllTextAsync(
+                path,
+                """
+                {
+                  "accountId": "acct1",
+                  "refreshToken": "refresh"
+                }
+                """);
+            var store = new FileCredentialStore(
+                path,
+                Substitute.For<
+                    ILogger<FileCredentialStore>>());
+            using var cancellation =
+                new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<
+                OperationCanceledException>(() =>
+                store.LoadAsync(
+                    cancellation.Token));
+        }
+        finally
+        {
+            Directory.Delete(
+                directory,
+                recursive: true);
+        }
+    }
+
     // ─── GetAccessTokenAsync: in-memory refresh works ───
 
     [Fact]

@@ -51,6 +51,89 @@ public sealed class RivalsCalculator
         _log = log;
     }
 
+    public async Task<
+        IReadOnlyDictionary<string, RivalsPreparedUserData>>
+        PrepareCurrentScoresForAccountsAsync(
+            IReadOnlyCollection<string> accountIds,
+            CancellationToken ct = default)
+    {
+        var normalizedAccountIds = accountIds
+            .Where(static accountId =>
+                !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static accountId => accountId,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var scoresByAccount =
+            new Dictionary<
+                string,
+                Dictionary<string, IReadOnlyList<PlayerScoreDto>>>(
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var accountId in normalizedAccountIds)
+        {
+            scoresByAccount[accountId] =
+                new Dictionary<string, IReadOnlyList<PlayerScoreDto>>(
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (var instrument in _persistence.GetInstrumentKeys()
+                     .OrderBy(static instrument => instrument,
+                         StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            var profiles =
+                await ((InstrumentDatabase)_persistence
+                    .GetOrCreateInstrumentDb(instrument))
+                .GetCurrentStatePlayerScoresForAccountsAsync(
+                    normalizedAccountIds,
+                    ct: ct);
+            foreach (var accountId in normalizedAccountIds)
+            {
+                scoresByAccount[accountId][instrument] =
+                    profiles.TryGetValue(
+                        accountId,
+                        out var accountScores)
+                        ? accountScores
+                            .Where(score => string.Equals(
+                                score.Instrument,
+                                instrument,
+                                StringComparison.OrdinalIgnoreCase))
+                            .ToArray()
+                        : Array.Empty<PlayerScoreDto>();
+            }
+        }
+
+        var prepared =
+            new Dictionary<string, RivalsPreparedUserData>(
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var accountId in normalizedAccountIds)
+        {
+            var scoresByInstrument = scoresByAccount[accountId];
+            var songCountsByInstrument =
+                scoresByInstrument.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => pair.Value.Count,
+                    StringComparer.OrdinalIgnoreCase);
+            var validInstruments = scoresByInstrument
+                .Where(static pair =>
+                    pair.Value.Count >= MinUserSongsPerInstrument)
+                .Select(static pair => pair.Key)
+                .OrderBy(static instrument => instrument,
+                    StringComparer.Ordinal)
+                .ToList();
+            var combos = GenerateCombos(validInstruments);
+            AddProDrumsFamilyScopeIfEligible(
+                combos,
+                songCountsByInstrument);
+            prepared[accountId] =
+                new RivalsPreparedUserData(
+                    scoresByInstrument,
+                    combos.Count);
+        }
+
+        return prepared;
+    }
+
     /// <summary>Invalidate all cached song gap results (call after scrape completion).</summary>
     public void InvalidateSongGapsCache() => _songGapsCache.Clear();
 
@@ -61,7 +144,11 @@ public sealed class RivalsCalculator
     public RivalSelectionStateSnapshot ComputeSelectionState(
         string userId,
         IReadOnlySet<string>? instruments = null,
-        IReadOnlyDictionary<string, IReadOnlySet<string>>? songFilterByInstrument = null)
+        IReadOnlyDictionary<string, IReadOnlySet<string>>?
+            songFilterByInstrument = null,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedScoresByInstrument = null,
+        CancellationToken ct = default)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var now = DateTime.UtcNow.ToString("o");
@@ -70,11 +157,15 @@ public sealed class RivalsCalculator
 
         foreach (var instrument in instrumentKeys)
         {
+            ct.ThrowIfCancellationRequested();
             if (instruments is not null && !instruments.Contains(instrument))
                 continue;
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var userScores = db.GetCurrentStatePlayerScores(userId);
+            var userScores = ResolveUserScores(
+                userId,
+                instrument,
+                preparedScoresByInstrument);
 
             instrumentStates.Add(new RivalInstrumentStateRow
             {
@@ -94,6 +185,7 @@ public sealed class RivalsCalculator
 
             foreach (var score in scoresToFingerprint)
             {
+                ct.ThrowIfCancellationRequested();
                 fingerprints.Add(BuildSongFingerprint(userId, instrument, db, score, now));
             }
         }
@@ -136,7 +228,13 @@ public sealed class RivalsCalculator
     /// Compute rivals for a single user across all valid instruments and combos.
     /// Returns the total number of rival rows produced.
     /// </summary>
-    public RivalsResult ComputeRivals(string userId, IReadOnlySet<string>? dirtyInstruments = null, Action<int>? onProgress = null)
+    public RivalsResult ComputeRivals(
+        string userId,
+        IReadOnlySet<string>? dirtyInstruments = null,
+        Action<int>? onProgress = null,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedScoresByInstrument = null,
+        CancellationToken ct = default)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var perInstrument = new Dictionary<string, InstrumentRivalsData>(StringComparer.OrdinalIgnoreCase);
@@ -147,12 +245,20 @@ public sealed class RivalsCalculator
         // Step 1+3: Gather user entries and scan neighborhoods per instrument
         foreach (var instrument in instrumentKeys)
         {
+            ct.ThrowIfCancellationRequested();
             if (dirtyInstruments is not null && !dirtyInstruments.Contains(instrument))
                 continue;
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var userScores = db.GetCurrentStatePlayerScores(userId);
-            var scan = ScanInstrumentCandidates(db, userId, userScores);
+            var userScores = ResolveUserScores(
+                userId,
+                instrument,
+                preparedScoresByInstrument);
+            var scan = ScanInstrumentCandidates(
+                db,
+                userId,
+                userScores,
+                ct);
             songCountsByInstrument[instrument] = scan.UserSongCount;
             if (scan.UserSongCount < MinUserSongsPerInstrument)
             {
@@ -210,11 +316,15 @@ public sealed class RivalsCalculator
         AddProDrumsFamilyScopeIfEligible(combos, songCountsByInstrument);
         foreach (var instruments in combos)
         {
+            ct.ThrowIfCancellationRequested();
             if (instruments.Count < 2) continue; // singles already handled
 
             var comboId = ComboIds.ToRivalScopeId(instruments);
             var combinedCandidates = ComboIds.IsProDrumsFamilyScope(comboId)
-                ? ScanProDrumsFamilyCandidates(userId)
+                ? ScanProDrumsFamilyCandidates(
+                    userId,
+                    preparedScoresByInstrument,
+                    ct)
                 : IntersectCandidates(instruments, allCandidates);
             SelectRivals(userId, comboId, combinedCandidates.Values, MinSharedSongsPerInstrumentInCombo,
                 RivalsPerDirection, now, rivalRows);
@@ -230,15 +340,19 @@ public sealed class RivalsCalculator
 
         foreach (var instrument in validInstruments)
         {
+            ct.ThrowIfCancellationRequested();
             var data = perInstrument[instrument];
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
-            // Load user scores once for this instrument
-            var userScores = db.GetCurrentStatePlayerScores(userId);
+            var userScores = ResolveUserScores(
+                userId,
+                instrument,
+                preparedScoresByInstrument);
             var userScoreMap = userScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
 
             foreach (var rivalId in selectedRivalIds)
             {
+                ct.ThrowIfCancellationRequested();
                 if (!data.Candidates.TryGetValue(rivalId, out var candidate))
                     continue;
 
@@ -252,6 +366,7 @@ public sealed class RivalsCalculator
                 var details = new List<(int AbsDelta, RivalSongSampleRow Row)>();
                 foreach (var songId in sharedSongIds)
                 {
+                    ct.ThrowIfCancellationRequested();
                     if (!userScoreMap.TryGetValue(songId, out var userScore)) continue;
                     if (!rivalScoreMap.TryGetValue(songId, out var rivalScore)) continue;
 
@@ -288,7 +403,11 @@ public sealed class RivalsCalculator
             .Select(r => r.RivalAccountId)
             .Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            sampleRows.AddRange(ComputeDirectProDrumsFamilySongSamples(userId, rivalId)
+            sampleRows.AddRange(ComputeDirectProDrumsFamilySongSamples(
+                    userId,
+                    rivalId,
+                    preparedScoresByInstrument,
+                    ct)
                 .OrderBy(row => Math.Abs(row.RankDelta))
                 .Take(MaxSamplesPerRivalPerInstrument));
         }
@@ -357,25 +476,36 @@ public sealed class RivalsCalculator
 
     public IReadOnlyList<RivalSongSampleRow> ComputeDirectProDrumsFamilySongSamples(
         string userId,
-        string rivalId)
+        string rivalId,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedUserScoresByInstrument = null,
+        CancellationToken ct = default)
     {
-        var userScoresBySong = LoadFamilyScoresBySong(userId);
-        var rivalScoresBySong = LoadFamilyScoresBySong(rivalId);
+        var userScoresBySong = LoadFamilyScoresBySong(
+            userId,
+            preparedUserScoresByInstrument,
+            ct);
+        var rivalScoresBySong = LoadFamilyScoresBySong(
+            rivalId,
+            ct: ct);
         var sampleRows = new List<RivalSongSampleRow>();
 
         foreach (var songId in userScoresBySong.Keys.Intersect(rivalScoresBySong.Keys, StringComparer.OrdinalIgnoreCase))
         {
+            ct.ThrowIfCancellationRequested();
             RivalSongSampleRow? best = null;
             var bestAbsDelta = int.MaxValue;
 
             foreach (var userScore in userScoresBySong[songId])
             {
+                ct.ThrowIfCancellationRequested();
                 var userRank = ResolveEffectiveRank(userScore);
                 if (userRank <= 0)
                     continue;
 
                 foreach (var rivalScore in rivalScoresBySong[songId])
                 {
+                    ct.ThrowIfCancellationRequested();
                     var rivalRank = ResolveEffectiveRank(rivalScore);
                     if (rivalRank <= 0)
                         continue;
@@ -410,13 +540,20 @@ public sealed class RivalsCalculator
         return sampleRows;
     }
 
-    private Dictionary<string, List<PlayerScoreDto>> LoadFamilyScoresBySong(string accountId)
+    private Dictionary<string, List<PlayerScoreDto>> LoadFamilyScoresBySong(
+        string accountId,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedScoresByInstrument = null,
+        CancellationToken ct = default)
     {
         var bySong = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
         foreach (var instrument in ComboIds.ProDrumsFamilyInstruments)
         {
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            foreach (var score in db.GetCurrentStatePlayerScores(accountId))
+            ct.ThrowIfCancellationRequested();
+            foreach (var score in ResolveUserScores(
+                         accountId,
+                         instrument,
+                         preparedScoresByInstrument))
             {
                 if (!bySong.TryGetValue(score.SongId, out var entries))
                 {
@@ -434,7 +571,8 @@ public sealed class RivalsCalculator
     private static InstrumentScanResult ScanInstrumentCandidates(
         IInstrumentDatabase db,
         string userId,
-        IReadOnlyList<PlayerScoreDto> userScores)
+        IReadOnlyList<PlayerScoreDto> userScores,
+        CancellationToken ct = default)
     {
         var candidates = new Dictionary<string, RivalCandidate>(StringComparer.OrdinalIgnoreCase);
         int songsSkippedUnranked = 0;
@@ -454,6 +592,7 @@ public sealed class RivalsCalculator
         var songCounts = db.GetCurrentStateAllSongCounts();
         foreach (var entry in userScores)
         {
+            ct.ThrowIfCancellationRequested();
             // Prefer dense Rank (set by RecomputeAllRanks for scrape entries) because
             // GetNeighborhood queries the Rank column. ApiRank is the global Epic rank
             // which can be 100K+ and won't match any dense-ranked entries in the DB.
@@ -506,13 +645,21 @@ public sealed class RivalsCalculator
         };
     }
 
-    internal Dictionary<string, RivalCandidate> ScanProDrumsFamilyCandidates(string userId)
+    internal Dictionary<string, RivalCandidate>
+        ScanProDrumsFamilyCandidates(
+            string userId,
+            IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+                preparedScoresByInstrument = null,
+            CancellationToken ct = default)
     {
         var userScoresByInstrument = ComboIds.ProDrumsFamilyInstruments
             .Select(instrument => new
             {
                 Instrument = instrument,
-                Scores = _persistence.GetOrCreateInstrumentDb(instrument).GetCurrentStatePlayerScores(userId),
+                Scores = ResolveUserScores(
+                    userId,
+                    instrument,
+                    preparedScoresByInstrument),
             })
             .ToList();
 
@@ -528,14 +675,17 @@ public sealed class RivalsCalculator
 
         foreach (var source in userScoresByInstrument)
         {
+            ct.ThrowIfCancellationRequested();
             foreach (var userScore in source.Scores)
             {
+                ct.ThrowIfCancellationRequested();
                 var effectiveRank = ResolveEffectiveRank(userScore);
                 if (effectiveRank <= 0)
                     continue;
 
                 foreach (var targetInstrument in ComboIds.ProDrumsFamilyInstruments)
                 {
+                    ct.ThrowIfCancellationRequested();
                     var songCounts = songCountsByInstrument[targetInstrument];
                     if (!songCounts.TryGetValue(userScore.SongId, out var entryCount) || entryCount <= 1)
                         continue;
@@ -552,6 +702,7 @@ public sealed class RivalsCalculator
 
                     foreach (var (neighborId, neighborRank, _) in neighbors)
                     {
+                        ct.ThrowIfCancellationRequested();
                         if (!candidates.TryGetValue(neighborId, out var candidate))
                         {
                             candidate = new FamilyCandidateAccumulator(neighborId);
@@ -1290,6 +1441,26 @@ public sealed class RivalsCalculator
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
+
+    private IReadOnlyList<PlayerScoreDto> ResolveUserScores(
+        string userId,
+        string instrument,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedScoresByInstrument)
+    {
+        if (preparedScoresByInstrument is not null)
+        {
+            return preparedScoresByInstrument.TryGetValue(
+                instrument,
+                out var preparedScores)
+                ? preparedScores
+                : Array.Empty<PlayerScoreDto>();
+        }
+
+        return _persistence
+            .GetOrCreateInstrumentDb(instrument)
+            .GetCurrentStatePlayerScores(userId);
+    }
 }
 
 // ─── Diagnostic types ────────────────────────────────────────────
@@ -1375,6 +1546,15 @@ public sealed class RivalSelectionStateSnapshot
 {
     public IReadOnlyList<RivalSongFingerprintRow> Fingerprints { get; init; } = Array.Empty<RivalSongFingerprintRow>();
     public IReadOnlyList<RivalInstrumentStateRow> InstrumentStates { get; init; } = Array.Empty<RivalInstrumentStateRow>();
+}
+
+public sealed record RivalsPreparedUserData(
+    IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>
+        ScoresByInstrument,
+    int TotalCombos)
+{
+    public int ScoreCount =>
+        ScoresByInstrument.Values.Sum(static scores => scores.Count);
 }
 
 /// <summary>

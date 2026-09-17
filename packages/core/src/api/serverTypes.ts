@@ -291,6 +291,10 @@ export type SongsChangedMessage = {
   type: 'songs_changed';
   total: number;
   added?: number;
+  removed?: number;
+  changed?: number;
+  publishedTotal?: number | null;
+  awaitingPublication?: number | null;
   at: string;
 };
 
@@ -635,11 +639,58 @@ export type FeatureFlagsResponse = {
   appManual: boolean;
 };
 
+export type ServiceInfoSubphaseProgress = {
+  schemaVersion: number;
+  id: string | null;
+  epoch: number;
+  sequence: number;
+  kind: 'exact' | 'indeterminate' | 'not_applicable' | string;
+  unitsKind?: string | null;
+  unitsCompleted?: number | null;
+  unitsTotal?: number | null;
+  unitsTotalFinal: boolean;
+  percent?: number | null;
+  startedAt?: string | null;
+  lastProgressAt?: string | null;
+};
+
+export type ServiceInfoPhaseAttemptProgress = {
+  schemaVersion: number;
+  attemptedThisPass: number;
+  retryableUnavailableThisPass: number;
+};
+
 export type ServiceInfoResponse = {
   contractVersion?: 2 | number;
   phasePlan?: {
     version: string;
+    subphaseCatalogVersion?: string;
     phases: ServiceInfoPhaseDescriptor[];
+  };
+  catalog?: {
+    syncIntervalSeconds: number;
+    live: {
+      version?: number | null;
+      songCount?: number | null;
+      capturedAt?: string | null;
+    };
+    published: {
+      publicationId?: number | null;
+      version?: number | null;
+      songCount?: number | null;
+      capturedAt?: string | null;
+    };
+    working?: {
+      publicationId?: number | null;
+      version?: number | null;
+      songCount?: number | null;
+    } | null;
+    awaitingPublication: number | null;
+    addedAwaitingPublication: number | null;
+    changedAwaitingPublication: number | null;
+    removedAwaitingPublication: number | null;
+    pathGenerationPending: number;
+    pathGenerationReviewRequired: number;
   };
   lastCompletedUpdate: {
     scrapeId?: number;
@@ -681,6 +732,8 @@ export type ServiceInfoResponse = {
     etaUpperSeconds?: number | null;
     etaConfidence?: 'low' | 'medium' | 'high' | string | null;
     etaSampleCount?: number | null;
+    subphaseProgress?: ServiceInfoSubphaseProgress | null;
+    attemptProgress?: ServiceInfoPhaseAttemptProgress | null;
     heartbeatAt?: string | null;
     lastProgressAt?: string | null;
     branches?: Array<{
@@ -703,6 +756,7 @@ export type ServiceInfoResponse = {
     frozenScrapeId: number | null;
     freezeReason: string | null;
   };
+
   workerStatus: {
     workerKey: string;
     status: 'online' | 'offline' | 'stale' | 'starting' | 'stopping' | 'unknown' | string;
@@ -734,7 +788,26 @@ export type ServiceInfoResponse = {
     startedAtUtc: string;
   };
   readOnlyViolationDetected?: boolean;
+  startup?: StartupPublicationReadOnlyStatus;
   nextScheduledUpdateAt: string | null;
+};
+
+export type StartupPublicationReadOnlyStatus = {
+  state: 'initializing' | 'ready' | 'degraded_read_only';
+  readServingReady: boolean;
+  mutationReady: boolean;
+  reason?: string | null;
+  diagnostics: { publicationId: number; code: string }[];
+  warnings: { publicationId: number; code: string }[];
+};
+
+export type ServiceReadinessResponse = {
+  status: 'Healthy' | 'Degraded' | 'Unhealthy';
+  startup: StartupPublicationReadOnlyStatus | null;
+  checks: Record<string, {
+    status: 'Healthy' | 'Degraded' | 'Unhealthy';
+    description: string | null;
+  }>;
 };
 
 export type ServiceInfoPhaseDescriptor = {
@@ -751,6 +824,7 @@ export type ServiceInfoWorkerOperation = {
   operationKey: string;
   operationLabel: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' | string;
+  scrapeId?: number | null;
   phase?: string | null;
   subOperation?: string | null;
   detail?: string | null;
@@ -781,6 +855,8 @@ export type ServiceInfoWorkerOperation = {
   etaSampleCount?: number | null;
   heartbeatAt?: string | null;
   lastProgressAt?: string | null;
+  subphaseProgress?: ServiceInfoSubphaseProgress | null;
+  attemptProgress?: ServiceInfoPhaseAttemptProgress | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */

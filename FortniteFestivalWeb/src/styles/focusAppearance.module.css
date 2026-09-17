@@ -1,0 +1,18 @@
+@media (forced-colors: none) {
+  .root:global([data-fst-quiet-focus]) :global(:where(
+    button,
+    a[href],
+    [role="button"],
+    [role="link"],
+    summary,
+    label[for],
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    #main-content,
+    [data-modal-root] [role="dialog"][tabindex="-1"],
+    [data-modal-root] [role="alertdialog"][tabindex="-1"]
+  ):focus) {
+    outline: none;
+  }
+}

@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "tools": [
+    {
+      "id": "check-docs",
+      "kind": "command",
+      "argv": ["node", "tools/check-docs.mjs"],
+      "cwd": ".",
+      "timeoutSeconds": 300,
+      "sideEffect": "none",
+      "environment": []
+    },
+    {
+      "id": "validate-publish-contract",
+      "kind": "command",
+      "argv": ["node", "--test", "tools/validate-publish-image-workflow.test.mjs", "tools/agent-opportunity-preflight.test.mjs"],
+      "cwd": ".",
+      "timeoutSeconds": 900,
+      "sideEffect": "workspace",
+      "environment": []
+    },
+    {
+      "id": "preflight-publication",
+      "kind": "command",
+      "argv": ["node", "tools/agent-opportunity-preflight.mjs", "publication"],
+      "cwd": ".",
+      "timeoutSeconds": 300,
+      "sideEffect": "none",
+      "environment": []
+    },
+    {
+      "id": "preflight-provenance",
+      "kind": "command",
+      "argv": ["node", "tools/agent-opportunity-preflight.mjs", "provenance"],
+      "cwd": ".",
+      "timeoutSeconds": 300,
+      "sideEffect": "none",
+      "environment": []
+    },
+    {
+      "id": "preflight-application-release",
+      "kind": "command",
+      "argv": ["node", "tools/agent-opportunity-preflight.mjs", "application-release"],
+      "cwd": ".",
+      "timeoutSeconds": 600,
+      "sideEffect": "none",
+      "environment": []
+    },
+    {
+      "id": "preflight-destructive-maintenance",
+      "kind": "command",
+      "argv": ["node", "tools/agent-opportunity-preflight.mjs", "destructive-maintenance"],
+      "cwd": ".",
+      "timeoutSeconds": 600,
+      "sideEffect": "none",
+      "environment": []
+    },
+    {
+      "id": "test-web-formatters",
+      "kind": "command",
+      "argv": ["node", "FortniteFestivalWeb/node_modules/vitest/vitest.mjs", "run", "--config=FortniteFestivalWeb/vitest.shared.config.ts", "packages/core/src/app/__tests__/formatters.test.ts"],
+      "cwd": ".",
+      "timeoutSeconds": 900,
+      "sideEffect": "workspace",
+      "environment": []
+    },
+    {
+      "id": "test-service",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore"],
+      "cwd": ".",
+      "timeoutSeconds": 3600,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-database-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~DatabaseRetentionMaintenanceServiceTests|FullyQualifiedName~SnapshotGenerationRetentionSchemaTests"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-concurrency-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~ScraperWorkerStatefulTests.CommitContention|FullyQualifiedName~ScraperWorkerStatefulTests.WorkerPassResumesDeferredPublication|FullyQualifiedName~ScraperWorkerStatefulTests.ExecuteAsyncResumesDeferredPublication"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-publication-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~PublicReadGateTests"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-provenance-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~PublicationPathArtifactTests|FullyQualifiedName~PlayerDataExportPublishedSourceTests"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-cross-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~PublicationRouteSurfaceContractTests|FullyQualifiedName~PublicationPathArtifactTests.ContractVersionMatchesRouteSurfaceContract"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "test-debugging-contracts",
+      "kind": "command",
+      "argv": ["dotnet", "test", "FSTService.Tests/FSTService.Tests.csproj", "--no-restore", "--filter", "FullyQualifiedName~ScraperWorkerStatefulTests.FailedIsolationRecordingMarksWorkerPassAsFailClosed|FullyQualifiedName~ScraperWorkerStatefulTests.CommitContention|FullyQualifiedName~ScraperWorkerStatefulTests.WorkerPassResumesDeferredPublication"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "local-container",
+      "environment": []
+    },
+    {
+      "id": "build-web",
+      "kind": "command",
+      "argv": ["corepack", "yarn", "--cwd", "FortniteFestivalWeb", "build"],
+      "cwd": ".",
+      "timeoutSeconds": 1800,
+      "sideEffect": "workspace",
+      "environment": []
+    },
+    {
+      "id": "git-release-disabled",
+      "kind": "disabled",
+      "reason": "Exact Git and pull-request release driver is not implemented",
+      "sideEffect": "github",
+      "environment": []
+    },
+    {
+      "id": "publish-images-disabled",
+      "kind": "disabled",
+      "reason": "Immutable image workflow dispatch and observation driver is not implemented",
+      "sideEffect": "github",
+      "environment": []
+    },
+    {
+      "id": "deploy-production-disabled",
+      "kind": "disabled",
+      "reason": "Production image deployment driver is not implemented",
+      "sideEffect": "production",
+      "environment": []
+    },
+    {
+      "id": "verify-production-disabled",
+      "kind": "disabled",
+      "reason": "Public-path and publication parity verification driver is not implemented",
+      "sideEffect": "production",
+      "environment": []
+    },
+    {
+      "id": "rollback-production-disabled",
+      "kind": "disabled",
+      "reason": "Production image rollback driver is not implemented",
+      "sideEffect": "production",
+      "environment": []
+    },
+    {
+      "id": "capture-live-state-disabled",
+      "kind": "disabled",
+      "reason": "Authorization-time production state capture driver is not implemented",
+      "sideEffect": "production",
+      "environment": []
+    },
+    {
+      "id": "restore-rehearsal-disabled",
+      "kind": "disabled",
+      "reason": "Logical restore rehearsal driver is not implemented",
+      "sideEffect": "database",
+      "environment": []
+    },
+    {
+      "id": "destructive-maintenance-disabled",
+      "kind": "disabled",
+      "reason": "Exact-object destructive maintenance driver is not implemented",
+      "sideEffect": "destructive",
+      "environment": []
+    },
+    {
+      "id": "rollback-logical-restore-disabled",
+      "kind": "disabled",
+      "reason": "Logical archive restore driver is not implemented",
+      "sideEffect": "destructive",
+      "environment": []
+    },
+    {
+      "id": "cleanup-release-disabled",
+      "kind": "disabled",
+      "reason": "Release and maintenance cleanup driver is not implemented",
+      "sideEffect": "workspace",
+      "environment": []
+    }
+  ]
+}

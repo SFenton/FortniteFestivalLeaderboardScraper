@@ -1,0 +1,9 @@
+.wideScrollContainer {
+  box-sizing: border-box;
+  border-top: var(--header-portal-h, 0) solid transparent;
+}
+
+.wideHeaderPortal {
+  overflow: auto;
+  overscroll-behavior: contain;
+}

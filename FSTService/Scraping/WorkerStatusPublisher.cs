@@ -17,6 +17,7 @@ public sealed class WorkerStatusPublisher
     private readonly Dictionary<string, WorkerOperationInfo> _activeOperations = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _instanceId;
     private readonly DateTime _startedAtUtc;
+    private long? _scrapeId;
     private WorkerOperationInfo? _currentOperation;
     private WorkerOperationInfo? _lastOperation;
 
@@ -36,10 +37,28 @@ public sealed class WorkerStatusPublisher
 
     public void AttachScrape(long scrapeId)
     {
-        _phaseProgress?.AttachScrape(scrapeId, _instanceId);
+        if (scrapeId <= 0)
+            return;
+
         WorkerOperationInfo? current;
+        var operationBound = false;
         lock (_gate)
+        {
+            _scrapeId = scrapeId;
             current = _currentOperation;
+            if (current is not null
+                && !current.ScrapeId.HasValue)
+            {
+                current = CopyOperation(
+                    current,
+                    scrapeId: scrapeId);
+                _currentOperation = current;
+                _activeOperations[current.OperationKey] =
+                    current;
+                operationBound = true;
+            }
+        }
+        _phaseProgress?.AttachScrape(scrapeId, _instanceId);
         if (current is null)
             return;
 
@@ -48,7 +67,19 @@ public sealed class WorkerStatusPublisher
             ? null
             : _phaseProgress?.StartPhase(descriptor, current.SubOperation);
         if (view is not null)
+        {
             ApplyDurableProgress(view);
+            return;
+        }
+
+        if (operationBound)
+        {
+            TryPublish(() => _metaDb.UpdateWorkerActivity(
+                ScraperWorkerKey,
+                current,
+                updatedAtUtc: DateTime.UtcNow,
+                instanceId: _instanceId));
+        }
     }
 
     public void PublishHeartbeat(string status = "running", string? message = null)
@@ -91,44 +122,60 @@ public sealed class WorkerStatusPublisher
         var durableView = descriptor is null
             ? null
             : _phaseProgress?.StartPhase(descriptor, subOperation);
-        var operation = new WorkerOperationInfo
-        {
-            ContractVersion = 2,
-            OperationKey = operationKey,
-            OperationLabel = operationLabel,
-            Status = "running",
-            Phase = phase,
-            SubOperation = subOperation,
-            Detail = detail,
-            StartedAtUtc = now,
-            UpdatedAtUtc = now,
-            ProgressPercent = progressPercent,
-            OperationId = durableView?.OperationId,
-            PhaseId = durableView?.PhaseId,
-            PhaseStatus = durableView?.PhaseStatus,
-            SubphaseId = durableView?.SubphaseId,
-            PhasePlanVersion = durableView?.PlanVersion,
-            PhaseOrdinal = durableView?.PhaseOrdinal,
-            PhaseAttempt = durableView?.Attempt,
-            UnitsKind = durableView?.UnitsKind,
-            UnitsCompleted = durableView?.UnitsCompleted,
-            UnitsTotal = durableView?.UnitsTotal,
-            UnitsTotalFinal = durableView?.UnitsTotalFinal,
-            PhasePercent = durableView?.PhasePercent,
-            OverallPercentKind = durableView?.OverallPercentKind
-                ?? "indeterminate",
-            OverallPercent = durableView?.OverallPercent,
-            OverallModelVersion = durableView?.OverallModelVersion,
-            EtaLowerSeconds = durableView?.EtaLowerSeconds,
-            EtaUpperSeconds = durableView?.EtaUpperSeconds,
-            EtaConfidence = durableView?.EtaConfidence,
-            EtaSampleCount = durableView?.EtaSampleCount,
-            LastProgressAtUtc = durableView?.LastProgressAtUtc,
-            HeartbeatAtUtc = now,
-        };
-
+        WorkerOperationInfo operation;
         lock (_gate)
         {
+            operation = new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = operationKey,
+                OperationLabel = operationLabel,
+                Status = "running",
+                ScrapeId = durableView?.ScrapeId
+                    ?? _scrapeId,
+                Phase = phase,
+                SubOperation = subOperation,
+                Detail = detail,
+                StartedAtUtc = now,
+                UpdatedAtUtc = now,
+                ProgressPercent = progressPercent,
+                OperationId = durableView?.OperationId,
+                PhaseId = durableView?.PhaseId,
+                PhaseStatus = durableView?.PhaseStatus,
+                SubphaseId = durableView?.SubphaseId,
+                PhasePlanVersion =
+                    durableView?.PlanVersion,
+                PhaseOrdinal = durableView?.PhaseOrdinal,
+                PhaseAttempt = durableView?.Attempt,
+                UnitsKind = durableView?.UnitsKind,
+                UnitsCompleted = durableView?.UnitsCompleted,
+                UnitsTotal = durableView?.UnitsTotal,
+                UnitsTotalFinal =
+                    durableView?.UnitsTotalFinal,
+                PhasePercent = durableView?.PhasePercent,
+                OverallPercentKind =
+                    durableView?.OverallPercentKind
+                    ?? "indeterminate",
+                OverallPercent =
+                    durableView?.OverallPercent,
+                OverallModelVersion =
+                    durableView?.OverallModelVersion,
+                EtaLowerSeconds =
+                    durableView?.EtaLowerSeconds,
+                EtaUpperSeconds =
+                    durableView?.EtaUpperSeconds,
+                EtaConfidence =
+                    durableView?.EtaConfidence,
+                EtaSampleCount =
+                    durableView?.EtaSampleCount,
+                LastProgressAtUtc =
+                    durableView?.LastProgressAtUtc,
+                HeartbeatAtUtc = now,
+                SubphaseProgress =
+                    durableView?.SubphaseProgress,
+                AttemptProgress =
+                    durableView?.AttemptProgress,
+            };
             _activeOperations[operationKey] = operation;
             _currentOperation = operation;
         }
@@ -137,7 +184,8 @@ public sealed class WorkerStatusPublisher
             ScraperWorkerKey,
             operation,
             status: "running",
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
 
     public void UpdateOperation(string operationKey, string? operationLabel = null,
@@ -177,7 +225,8 @@ public sealed class WorkerStatusPublisher
         TryPublish(() => _metaDb.UpdateWorkerActivity(
             ScraperWorkerKey,
             operation,
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
 
     public void CompleteOperation(string operationKey, string status = "completed", string? detail = null)
@@ -185,6 +234,10 @@ public sealed class WorkerStatusPublisher
         WorkerOperationInfo? current;
         WorkerOperationInfo? completed;
         var now = DateTime.UtcNow;
+        var endsScrape = string.Equals(
+            operationKey,
+            "scrape.pass",
+            StringComparison.OrdinalIgnoreCase);
 
         lock (_gate)
         {
@@ -222,6 +275,8 @@ public sealed class WorkerStatusPublisher
             }
 
             current = _currentOperation;
+            if (endsScrape)
+                _scrapeId = null;
         }
 
         TryPublish(() => _metaDb.UpdateWorkerActivity(
@@ -229,9 +284,10 @@ public sealed class WorkerStatusPublisher
             current,
             completed,
             status: "running",
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
 
-        if (string.Equals(operationKey, "scrape.pass", StringComparison.OrdinalIgnoreCase))
+        if (endsScrape)
             _phaseProgress?.EndScrape(detail);
     }
 
@@ -246,6 +302,17 @@ public sealed class WorkerStatusPublisher
         {
             if (_currentOperation is null)
                 return;
+            if (!_scrapeId.HasValue
+                || view.ScrapeId != _scrapeId.Value)
+            {
+                return;
+            }
+            if (IsStaleDurableProgress(
+                    _currentOperation,
+                    view))
+            {
+                return;
+            }
             operation = CopyOperation(
                 _currentOperation,
                 updatedAtUtc: view.LastProgressAtUtc,
@@ -258,8 +325,96 @@ public sealed class WorkerStatusPublisher
         TryPublish(() => _metaDb.UpdateWorkerActivity(
             ScraperWorkerKey,
             operation,
-            updatedAtUtc: now));
+            updatedAtUtc: now,
+            instanceId: _instanceId));
     }
+
+    private static bool IsStaleDurableProgress(
+        WorkerOperationInfo current,
+        DurablePhaseProgressView candidate)
+    {
+        if (current.ScrapeId.HasValue
+            && current.ScrapeId.Value
+                != candidate.ScrapeId)
+        {
+            return false;
+        }
+
+        if (current.PhaseOrdinal.HasValue)
+        {
+            if (candidate.PhaseOrdinal
+                < current.PhaseOrdinal.Value)
+            {
+                return true;
+            }
+            if (candidate.PhaseOrdinal
+                > current.PhaseOrdinal.Value)
+            {
+                return false;
+            }
+        }
+
+        if (!string.Equals(
+                current.PhaseId,
+                candidate.PhaseId,
+                StringComparison.Ordinal))
+        {
+            return current.LastProgressAtUtc.HasValue
+                && candidate.LastProgressAtUtc
+                    <= current.LastProgressAtUtc.Value;
+        }
+
+        if (current.PhaseAttempt.HasValue)
+        {
+            if (!candidate.Attempt.HasValue
+                || candidate.Attempt.Value
+                    < current.PhaseAttempt.Value)
+            {
+                return true;
+            }
+            if (candidate.Attempt.Value
+                > current.PhaseAttempt.Value)
+            {
+                return false;
+            }
+        }
+
+        if (current.LastProgressAtUtc.HasValue)
+        {
+            if (candidate.LastProgressAtUtc
+                < current.LastProgressAtUtc.Value)
+            {
+                return true;
+            }
+            if (candidate.LastProgressAtUtc
+                > current.LastProgressAtUtc.Value)
+            {
+                return false;
+            }
+        }
+
+        var currentSequence =
+            current.SubphaseProgress?.Sequence ?? 0;
+        var candidateSequence =
+            candidate.SubphaseProgress?.Sequence ?? 0;
+        if (candidateSequence < currentSequence)
+            return true;
+
+        return IsTerminalPhaseStatus(
+                   current.PhaseStatus)
+               && !IsTerminalPhaseStatus(
+                   candidate.PhaseStatus);
+    }
+
+    private static bool IsTerminalPhaseStatus(
+        string? status) =>
+        status?.ToLowerInvariant() is
+            "completed"
+            or "failed"
+            or "cancelled"
+            or "interrupted"
+            or "skipped"
+            or "deferred";
 
     private static WorkerOperationInfo CopyOperation(WorkerOperationInfo source,
         string? operationLabel = null,
@@ -273,13 +428,18 @@ public sealed class WorkerStatusPublisher
         double? elapsedSeconds = null,
         double? estimatedRemainingSeconds = null,
         DurablePhaseProgressView? durableProgress = null,
-        DateTime? heartbeatAtUtc = null)
+        DateTime? heartbeatAtUtc = null,
+        long? scrapeId = null)
         => new()
         {
             ContractVersion = 2,
             OperationKey = source.OperationKey,
             OperationLabel = operationLabel ?? source.OperationLabel,
             Status = status ?? source.Status,
+            ScrapeId = scrapeId
+                ?? (durableProgress is null
+                    ? source.ScrapeId
+                    : durableProgress.ScrapeId),
             Phase = phase ?? source.Phase,
             SubOperation = subOperation ?? source.SubOperation,
             Detail = detail ?? source.Detail,
@@ -310,6 +470,12 @@ public sealed class WorkerStatusPublisher
             EtaSampleCount = durableProgress is null ? source.EtaSampleCount : durableProgress.EtaSampleCount,
             LastProgressAtUtc = durableProgress is null ? source.LastProgressAtUtc : durableProgress.LastProgressAtUtc,
             HeartbeatAtUtc = heartbeatAtUtc ?? source.HeartbeatAtUtc,
+            SubphaseProgress = durableProgress is null
+                ? source.SubphaseProgress
+                : durableProgress.SubphaseProgress,
+            AttemptProgress = durableProgress is null
+                ? source.AttemptProgress
+                : durableProgress.AttemptProgress,
         };
 
     private void TryPublish(Action action)

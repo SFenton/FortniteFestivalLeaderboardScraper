@@ -10,6 +10,7 @@ import {
 } from '../api/serverTypes';
 import type {
   ServiceInfoResponse,
+  ServiceReadinessResponse,
   ServerInstrumentKey,
   ServerSong,
   SoloFamilyScopeId,
@@ -72,6 +73,51 @@ describe('server API runtime helpers', () => {
     expect(serverInstrumentLabel('Unknown' as ServerInstrumentKey)).toBe('Unknown');
     expect(soloFamilyScopeLabel('pro_strings')).toBe('Pro Strings');
     expect(soloFamilyScopeLabel('unknown' as SoloFamilyScopeId)).toBe('unknown');
+  });
+
+  test('types sticky read-only startup independently of rollout violations', () => {
+    const response: Pick<ServiceInfoResponse,
+      'startup' | 'rolloutReadOnlyStartup' | 'readOnlyViolationDetected'> = {
+      rolloutReadOnlyStartup: false,
+      readOnlyViolationDetected: false,
+      startup: {
+        state: 'degraded_read_only',
+        readServingReady: true,
+        mutationReady: false,
+        reason: 'publication_path_artifact_validation_failed',
+        diagnostics: [{publicationId: 23, code: 'binding_expected_count_invalid'}],
+        warnings: [{publicationId: 22, code: 'manifest_version_future'}],
+      },
+    };
+    const olderResponse: Pick<ServiceInfoResponse, 'startup'> = {};
+
+    expect(response.startup?.diagnostics[0].publicationId).toBe(23);
+    expect(response.startup?.warnings[0].code).toBe('manifest_version_future');
+    expect(response.startup?.mutationReady).toBe(false);
+    expect(response.readOnlyViolationDetected).toBe(false);
+    expect(olderResponse.startup).toBeUndefined();
+  });
+
+  test('types read-serving health separately from unrelated degraded checks', () => {
+    const response: ServiceReadinessResponse = {
+      status: 'Degraded',
+      startup: {
+        state: 'degraded_read_only',
+        readServingReady: true,
+        mutationReady: false,
+        reason: 'publication_path_artifact_validation_failed',
+        diagnostics: [{publicationId: 23, code: 'binding_expected_count_invalid'}],
+        warnings: [],
+      },
+      checks: {
+        database: {status: 'Healthy', description: 'degraded_read_only: serving persisted public reads'},
+        unrelated: {status: 'Degraded', description: 'unrelated condition'},
+      },
+    };
+
+    expect(response.status).toBe('Degraded');
+    expect(response.checks.database.status).toBe('Healthy');
+    expect(response.startup?.mutationReady).toBe(false);
   });
 
   test('detects charted song difficulties', () => {

@@ -9,16 +9,17 @@ using Microsoft.Extensions.Options;
 namespace FSTService;
 
 /// <summary>
-/// API-service-owned song catalog refresher. Keeps /api/songs fresh, broadcasts
-/// catalog changes to connected clients, and generates CHOpt/path metadata for
-/// newly discovered or changed songs without involving the scrape worker.
+/// API-service-owned song catalog refresher. Keeps /api/songs fresh and
+/// broadcasts catalog changes to connected clients.
+/// It never generates paths: path generation is owned by the worker
+/// publication-safe scrape pass and by explicit admin requests, so a catalog
+/// refresh can never promote mutable live song rows out of band.
 /// </summary>
 public sealed class SongCatalogRefreshWorker : BackgroundService
 {
     private readonly FestivalService _festivalService;
     private readonly StartupInitializer _startup;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
     private readonly ScrapeTimePrecomputer _precomputer;
@@ -31,7 +32,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         FestivalService festivalService,
         StartupInitializer startup,
         GlobalLeaderboardPersistence persistence,
-        PathGenerationCoordinator pathGeneration,
         IPathDataStore pathDataStore,
         SongsCacheService songsCache,
         ScrapeTimePrecomputer precomputer,
@@ -43,7 +43,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         _festivalService = festivalService;
         _startup = startup;
         _persistence = persistence;
-        _pathGeneration = pathGeneration;
         _pathDataStore = pathDataStore;
         _songsCache = songsCache;
         _precomputer = precomputer;
@@ -59,15 +58,11 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         {
             await _startup.WaitForReadyAsync(stoppingToken);
             _log.LogInformation(
-                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}, AutomaticPathGeneration={AutomaticPathGenerationEnabled}",
+                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}. Catalog refresh never generates paths.",
                 _options.Value.SongSyncInterval,
-                _options.Value.EnablePathGeneration,
-                _options.Value.EnableAutomaticPathGeneration);
+                _options.Value.EnablePathGeneration);
 
             PrimeSongsCache();
-            _ = Task.Run(
-                () => TryGeneratePathsAsync(stoppingToken),
-                CancellationToken.None);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -89,27 +84,68 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
     {
         try
         {
-            var before = _festivalService.Songs.Count;
-            await _festivalService.SyncSongsWithResultAsync();
-            var after = _festivalService.Songs.Count;
-            var added = Math.Max(0, after - before);
-
-            if (added > 0)
+            var beforeSnapshot = SongCatalogSnapshotBuilder
+                .Create(_festivalService.Songs);
+            var syncResult =
+                await _festivalService.SyncSongsWithResultAsync();
+            var afterSnapshot = SongCatalogSnapshotBuilder
+                .Create(_festivalService.Songs);
+            if (syncResult.PersistenceToken is not null)
             {
+                SongCatalogSnapshotBuilder.ValidateToken(
+                    afterSnapshot,
+                    syncResult.PersistenceToken);
+            }
+
+            if (HasExactCatalogChanged(
+                    beforeSnapshot.ContentHash,
+                    syncResult))
+            {
+                var changeSet = SongCatalogSnapshotBuilder
+                    .ComputeChangeSet(
+                    beforeSnapshot.CatalogJson,
+                    afterSnapshot.CatalogJson);
                 _log.LogInformation(
-                    "Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
-                    added,
-                    after);
-                _persistence.InvalidateTotalSongCount();
+                    "Song catalog refresh changed the exact provider catalog: {AddedCount} added, {ChangedCount} changed, {RemovedCount} removed ({Total} total).",
+                    changeSet.Added,
+                    changeSet.Changed,
+                    changeSet.Removed,
+                    afterSnapshot.SongCount);
+                if (beforeSnapshot.SongCount
+                    != afterSnapshot.SongCount)
+                {
+                    _persistence.InvalidateTotalSongCount();
+                }
+                _songsCache.InvalidateForContentChange();
                 PrimeSongsCache();
-                await _notifications.NotifySongsChangedAsync(after, added);
+                CatalogPublicationLagState? lag = null;
+                try
+                {
+                    lag = _persistence.Meta
+                        .GetCatalogPublicationLagState(
+                            commandTimeoutSeconds: 5);
+                }
+                catch (Exception ex)
+                    when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Song catalog refresh persisted, but catalog-lag telemetry could not be read before notification.");
+                }
+                await _notifications.NotifySongsChangedAsync(
+                    afterSnapshot.SongCount,
+                    changeSet.Added,
+                    changeSet.Removed,
+                    changeSet.Changed,
+                    lag?.PublishedSongCount,
+                    lag?.AwaitingPublication);
             }
             else
             {
-                _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
+                _log.LogDebug(
+                    "Song catalog refresh: {Total} songs in catalog (no exact changes).",
+                    afterSnapshot.SongCount);
             }
-
-            await TryGeneratePathsAsync(ct);
         }
         catch (SongCatalogPersistenceBusyException ex)
         {
@@ -123,43 +159,33 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         }
     }
 
-    private async Task<bool> TryGeneratePathsAsync(CancellationToken ct)
-    {
-        var opts = _options.Value;
-        if (!opts.EnablePathGeneration ||
-            !opts.EnableAutomaticPathGeneration)
-            return false;
-
-        try
-        {
-            var songs = _festivalService.Songs
-                .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
-                .ToList();
-            if (songs.Count == 0)
-                return false;
-
-            var result = await _pathGeneration.GenerateAutomaticPathsAsync(
-                songs,
-                ct);
-            return result.Changed;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Path generation failed. Song catalog refresh continues unaffected.");
-            return false;
-        }
-    }
+    internal static bool HasExactCatalogChanged(
+        string beforeContentHash,
+        SongCatalogSyncResult syncResult) =>
+        syncResult.IsExact
+        && syncResult.PersistenceToken is not null
+        && !string.Equals(
+            beforeContentHash,
+            syncResult.PersistenceToken.ContentHash,
+            StringComparison.Ordinal);
 
     private void PrimeSongsCache()
     {
         try
         {
-            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _persistence, _precomputer, _jsonOpts);
+            _songsCache.Prime(
+                _festivalService,
+                _pathDataStore,
+                _persistence.Meta,
+                _persistence,
+                _precomputer,
+                _jsonOpts,
+                persistPublicationCache: true);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to prime songs cache; will rebuild on next request.");
-            _songsCache.Invalidate();
+            _songsCache.InvalidateForContentChange();
         }
     }
 

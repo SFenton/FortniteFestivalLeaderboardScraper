@@ -14,6 +14,7 @@ import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../../../src/hooks/ui/usePageQuickLinks';
 import PlayerContentBase from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
+import quickLinksCss from '../../../../../src/components/page/PageQuickLinks.module.css';
 import { SyncPhase } from '@festival/core/runtime';
 
 const PlayerContent = PlayerContentBase as unknown as (props: any) => React.JSX.Element;
@@ -657,7 +658,8 @@ describe('PlayerContent', () => {
 
     expect(quickLinksPortal).toContainElement(quickLinksRail);
     expect(scrollContainer).not.toContainElement(quickLinksRail);
-    expect(quickLinksNav).toHaveStyle({ overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: '620px' });
+    expect(quickLinksNav).toHaveStyle({ maxHeight: '620px' });
+    expect(quickLinksNav).toHaveClass(quickLinksCss.navigation!);
     expect(screen.queryByText('Quick Links')).toBeNull();
     expect(globalLink).toBeDefined();
     expect(guitarLink).toBeDefined();

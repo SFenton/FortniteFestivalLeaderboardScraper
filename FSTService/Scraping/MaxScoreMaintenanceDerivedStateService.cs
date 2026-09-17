@@ -153,29 +153,28 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             maintenanceLease,
             ct);
 
-        var registeredAccounts = _persistence.Meta
-            .GetRegisteredAccountIds()
-            .OrderBy(accountId => accountId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var rivalsRebuilt = 0;
-        foreach (var accountId in registeredAccounts)
-        {
-            ct.ThrowIfCancellationRequested();
-            await _leaderboardRivals
-                .ComputeForUserForMaxScoreMaintenanceAsync(
-                    accountId,
-                    maintenanceLease,
-                    rankingsAuthoritative: true,
-                    ct);
-            rivalsRebuilt++;
-        }
+        var registeredAccounts =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(
+                    _persistence.Meta
+                        .GetRegisteredAccountIds());
+        _log.LogInformation(
+            "Rebuilding leaderboard rivals for {RegisteredAccountCount:N0} registered accounts across {AffectedInstrumentCount:N0} changed instruments.",
+            registeredAccounts.Length,
+            affectedInstruments.Length);
+        await _leaderboardRivals
+            .ComputeForUsersForMaxScoreMaintenanceAsync(
+                registeredAccounts,
+                affectedInstruments,
+                maintenanceLease,
+                ct);
 
         return new MaxScoreMaintenanceDerivedStateResult(
             affectedInstruments.Length,
             bandThresholdRowsUpdated,
             bandScopes.Length,
             affectedStatsAccounts.Count,
-            rivalsRebuilt);
+            registeredAccounts.Length);
     }
 
     private async Task<IReadOnlyList<BandCurrentProjectionScopeKey>>
@@ -263,6 +262,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte}
             SELECT DISTINCT resolved.account_id
             FROM resolved_rows resolved
+            WHERE btrim(resolved.account_id) <> ''
             ORDER BY resolved.account_id
             """;
         cmd.Parameters.Add(
@@ -277,7 +277,8 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             result.Add(reader.GetString(0));
-        return result;
+        return MaxScoreMaintenanceAccountIdPolicy
+            .NormalizeSet(result);
     }
 
     internal static async Task<long>
@@ -301,7 +302,10 @@ public sealed class MaxScoreMaintenanceDerivedStateService
                 "The player-stats validation transaction must belong to the supplied connection.",
                 nameof(transaction));
         }
-        if (accountIds.Count == 0)
+        var normalizedAccountIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(accountIds);
+        if (normalizedAccountIds.Length == 0)
             return 0;
         if (minimumUpdatedAtUtc.Kind != DateTimeKind.Utc)
         {
@@ -346,7 +350,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         command.Parameters.Add(
             "accountIds",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            accountIds.ToArray();
+            normalizedAccountIds;
         command.Parameters.Add(
             "publishedInstruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =

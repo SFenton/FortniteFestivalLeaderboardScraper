@@ -390,7 +390,7 @@ export default function PlayerContent({
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate]);
 
-  const isWideDesktop = useIsWideDesktop();
+  const isWideViewport = useIsWideDesktop();
 
   // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
@@ -509,6 +509,7 @@ export default function PlayerContent({
 
   // --- Top Songs heading ---
   const hasFab = useIsMobileChrome();
+  const isWideDesktop = isWideViewport && !hasFab;
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
 
   items.push({

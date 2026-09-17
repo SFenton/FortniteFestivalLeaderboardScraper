@@ -13,15 +13,7 @@ public static partial class ApiEndpoints
            .WithTags("Health")
            .RequireRateLimiting("public");
 
-        app.MapHealthChecks("/readyz", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-        {
-            ResultStatusCodes =
-            {
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = 200,
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = 503,
-                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = 503,
-            },
-        });
+        app.MapHealthChecks("/readyz", CreateReadinessHealthCheckOptions());
 
         app.MapGet("/api/version", (HttpContext httpContext) =>
         {
@@ -135,6 +127,28 @@ public static partial class ApiEndpoints
                     Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds));
             var durableV2Operation = durableCurrent
                 ?? (currentStatus == "failed" ? lastFailedOperation : null);
+            var currentSubphaseProgress = currentAttempt is not null
+                ? new SubphaseProgressInfo
+                {
+                    Id = currentAttempt.CurrentSubphaseId,
+                    Epoch = currentAttempt.CurrentSubphaseEpoch,
+                    Sequence = currentAttempt.SubphaseSequence,
+                    Kind = currentAttempt.SubphaseProgressKind,
+                    UnitsKind = currentAttempt.SubphaseUnitsKind,
+                    UnitsCompleted = currentAttempt.SubphaseUnitsCompleted,
+                    UnitsTotal = currentAttempt.SubphaseUnitsTotal,
+                    UnitsTotalFinal = currentAttempt.SubphaseUnitsTotalFinal,
+                    Percent = currentAttempt.SubphasePercent,
+                    StartedAtUtc = currentAttempt.SubphaseStartedAtUtc,
+                    LastProgressAtUtc =
+                        currentAttempt.SubphaseLastProgressAtUtc,
+                }
+                : durableV2Operation?.SubphaseProgress;
+            var currentAttemptProgress = SelectAttemptProgress(
+                currentAttempt,
+                durableV2Operation,
+                localCurrent,
+                activeScrape?.Id);
             var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
                 runtime,
                 currentStatus,
@@ -149,6 +163,7 @@ public static partial class ApiEndpoints
                 phasePlan = new
                 {
                     version = PhaseProgressCatalog.PlanVersion,
+                    subphaseCatalogVersion = "fst.subphase-plan.v1",
                     phases = PhaseProgressCatalog.All.Select(descriptor => new
                     {
                         id = descriptor.Id,
@@ -158,6 +173,75 @@ public static partial class ApiEndpoints
                         defaultUnitsKind = descriptor.DefaultUnitsKind,
                         reserved = descriptor.Reserved,
                     }),
+                },
+                catalog = new
+                {
+                    syncIntervalSeconds =
+                        scraperOptions.Value
+                            .SongSyncInterval.TotalSeconds,
+                    live = new
+                    {
+                        version =
+                            runtime.CatalogLag
+                                .LiveCatalogVersion,
+                        songCount =
+                            runtime.CatalogLag
+                                .LiveSongCount,
+                        capturedAt =
+                            FormatUtc(
+                                runtime.CatalogLag
+                                    .LiveCapturedAtUtc),
+                    },
+                    published = new
+                    {
+                        publicationId =
+                            runtime.CatalogLag
+                                .PublishedPublicationId,
+                        version =
+                            runtime.CatalogLag
+                                .PublishedCatalogVersion,
+                        songCount =
+                            runtime.CatalogLag
+                                .PublishedSongCount,
+                        capturedAt =
+                            FormatUtc(
+                                runtime.CatalogLag
+                                    .PublishedCatalogCapturedAtUtc),
+                    },
+                    working =
+                        runtime.CatalogLag.WorkingPublicationId
+                            .HasValue
+                        ? new
+                        {
+                            publicationId =
+                                runtime.CatalogLag
+                                    .WorkingPublicationId,
+                            version =
+                                runtime.CatalogLag
+                                    .WorkingCatalogVersion,
+                            songCount =
+                                runtime.CatalogLag
+                                    .WorkingSongCount,
+                        }
+                        : null,
+                    awaitingPublication =
+                        runtime.CatalogLag
+                            .AwaitingPublication,
+                    addedAwaitingPublication =
+                        runtime.CatalogLag
+                            .AddedAwaitingPublication,
+                    changedAwaitingPublication =
+                        runtime.CatalogLag
+                            .ChangedAwaitingPublication,
+                    removedAwaitingPublication =
+                        runtime.CatalogLag
+                            .RemovedAwaitingPublication,
+                    pathGenerationPending =
+                        runtime.CatalogLag
+                            .PathGenerationPending,
+                    pathGenerationReviewRequired =
+                        runtime.CatalogLag
+                            .PathGenerationReviewRequired,
                 },
                 lastCompletedUpdate = publishedScrape is null ? null : new
                 {
@@ -209,6 +293,8 @@ public static partial class ApiEndpoints
                     etaUpperSeconds = currentAttempt?.EtaUpperSeconds ?? durableV2Operation?.EtaUpperSeconds,
                     etaConfidence = currentAttempt?.EtaConfidence ?? durableV2Operation?.EtaConfidence,
                     etaSampleCount = currentAttempt?.EtaSampleCount ?? durableV2Operation?.EtaSampleCount,
+                    subphaseProgress = currentSubphaseProgress,
+                    attemptProgress = currentAttemptProgress,
                     heartbeatAt = FormatUtc(storedWorker?.LastHeartbeatAtUtc),
                     lastProgressAt = FormatUtc(currentAttempt?.LastProgressAtUtc)
                         ?? FormatUtc(durableV2Operation?.LastProgressAtUtc)
@@ -233,12 +319,34 @@ public static partial class ApiEndpoints
                 postgresConnectionTarget = postgresRuntimeTarget,
                 serviceInstance,
                 readOnlyViolationDetected = readOnlyViolations.HasViolation,
+                startup = startup.PublicationStartupStatus,
                 nextScheduledUpdateAt,
             });
         })
         .WithTags("Health")
         .RequireRateLimiting("public");
     }
+
+    internal static Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions CreateReadinessHealthCheckOptions() =>
+        new()
+        {
+            ResultStatusCodes =
+            {
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = 200,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = 503,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = 503,
+            },
+            ResponseWriter = static (context, report) => context.Response.WriteAsJsonAsync(new
+            {
+                status = report.Status.ToString(),
+                startup = report.Entries.TryGetValue("database", out var database)
+                    && database.Data.TryGetValue("startup", out var value)
+                    && value is StartupPublicationReadOnlyStatus startup ? startup : null,
+                checks = report.Entries.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => new { status = pair.Value.Status.ToString(), description = pair.Value.Description }),
+            }, context.RequestAborted),
+        };
 
     private static object BuildWorkerStatus(WorkerStatusInfo? stored, DateTime nowUtc)
     {
@@ -374,6 +482,7 @@ public static partial class ApiEndpoints
             operationKey = operation.OperationKey,
             operationLabel = operation.OperationLabel,
             status = operation.Status,
+            scrapeId = operation.ScrapeId,
             phase = operation.Phase,
             subOperation = operation.SubOperation,
             detail = operation.Detail,
@@ -406,7 +515,40 @@ public static partial class ApiEndpoints
                 ?? FormatUtc(heartbeatAtUtc),
             lastProgressAt = FormatUtc(operation.LastProgressAtUtc)
                 ?? FormatUtc(operation.UpdatedAtUtc),
+            subphaseProgress = operation.SubphaseProgress,
+            attemptProgress = operation.AttemptProgress,
         };
+    }
+
+    private static PhaseAttemptProgressInfo?
+        SelectAttemptProgress(
+            ScrapePhaseAttemptInfo? currentAttempt,
+            WorkerOperationInfo? operation,
+            OperationSnapshot? localCurrent,
+            long? activeScrapeId)
+    {
+        if (currentAttempt is null)
+        {
+            if (operation?.AttemptProgress is not null
+                && (!activeScrapeId.HasValue
+                    || operation.ScrapeId
+                        == activeScrapeId.Value))
+            {
+                return operation.AttemptProgress;
+            }
+            return localCurrent?.AttemptProgress;
+        }
+
+        return operation?.ScrapeId
+                    == currentAttempt.ScrapeId
+               && string.Equals(
+                   operation.PhaseId,
+                   currentAttempt.PhaseId,
+                   StringComparison.Ordinal)
+               && operation.PhaseAttempt
+                    == currentAttempt.Attempt
+            ? operation.AttemptProgress
+            : null;
     }
 
     private static string? FormatUtc(DateTime? value)

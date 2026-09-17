@@ -138,6 +138,7 @@ function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | nu
   );
 }
 import { appStyles } from './appStyles';
+import shellCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
@@ -210,11 +211,12 @@ import { queryClient } from './api/queryClient';
 import { invalidateLeaderboardData } from './api/queryPolicy';
 import { isKnownRoutePath, normalizeRoutePathname, Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
-import { ScrollContainerProvider, useShellRefs, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useShellRefs } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
 import { RouteAccessibility, RouteMain } from './components/shell/RouteAccessibility';
 import ShellScrollRestoration from './components/shell/ShellScrollRestoration';
+import { usePageWheelHandoff, usePanelWheelHandoff } from './hooks/ui/useWheelHandoff';
 
 const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
@@ -393,11 +395,18 @@ function WideDesktopLayout({
   fallbackHeading: boolean;
   pageHeaderLabel: string;
 }) {
+  const headerRef = useRef<HTMLDivElement>(null);
+  usePageWheelHandoff(shellScrollRef);
+  usePanelWheelHandoff(headerRef);
+  const setHeader = useCallback((element: HTMLDivElement | null) => {
+    headerRef.current = element;
+    shellPortalRefCallback(element);
+  }, [shellPortalRefCallback]);
   return (
     <div style={appStyles.bodySection}>
-      {/* Scroll container starts below the header overlay — content can never reach it.
-         top is driven by a CSS custom property updated outside React to avoid re-render cascades. */}
-      <div data-testid="app-scroll-container" ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)` }}>
+      {/* The transparent border receives native gutter input while the client viewport
+          remains below the header. Scroll geometry consumers exclude that border. */}
+      <div data-testid="app-scroll-container" ref={shellScrollRef} className={shellCss.wideScrollContainer} style={appStyles.scrollContainerFull}>
         <div style={appStyles.scrollContentRow}>
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
@@ -425,7 +434,8 @@ function WideDesktopLayout({
       <div style={appStyles.headerOverlay}>
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
         <div
-          ref={shellPortalRefCallback}
+          ref={setHeader}
+          className={shellCss.wideHeaderPortal}
           role="region"
           aria-label={pageHeaderLabel}
           style={appStyles.headerPortalWide}

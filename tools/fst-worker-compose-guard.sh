@@ -12,7 +12,19 @@ RUNONCE_ACTION_REQUESTED=false
 THROUGHPUT_PROFILE="baseline-up-to-800-32-4"
 DATA_PROFILE="none"
 EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
+EXPECTED_WORKER_IMAGE_ID=""
+EXPECTED_WORKER_REVISION=""
+EXPECTED_WORKER_CONFIG_SHA256=""
+PUBLICATION_COMMIT_DEFERRED_REASON="publication-commit-deferred"
 WORKER_MUTATION_LOCK_PATH="${FST_WORKER_COMPOSE_GUARD_LOCK_PATH:-}"
+INHERITED_WORKER_LOCK_FD=""
+INHERITED_WORKER_LOCK_OWNER_PID=""
+WORKER_LOCK_FD=""
+WORKER_CREATE_ATTEMPTED=0
+CREATED_WORKER_CONTAINER_ID=""
+PREVIOUS_WORKER_CONTAINER_ID=""
+DIRECT_WORKER_START_ACCEPTED=0
+WORKER_CLEANUP_FAILED=0
 RECOVERY_CORE_WAIT_SECONDS="${FST_WORKER_RECOVERY_CORE_WAIT_SECONDS:-60}"
 RECOVERY_INITIAL_WAIT_SECONDS="${FST_WORKER_RECOVERY_INITIAL_WAIT_SECONDS:-360}"
 RECOVERY_RECREATE_WAIT_SECONDS="${FST_WORKER_RECOVERY_RECREATE_WAIT_SECONDS:-360}"
@@ -55,11 +67,27 @@ Options:
                              registered-refresh-repair
                              catalog-path-notification-source-cut
                              snapshot-reuse
+                             leaderboard-rivals-batch
                              legacy-reader-migration
+                             scrape-resume
                            Every run-once config requires a data profile.
   --expected-worker-image I
                            Require the resolved fstworker image to match I.
-                           Required whenever --data-profile is not none.
+                           Enforced whenever supplied and required whenever
+                           --data-profile is not none.
+  --expected-worker-image-id I
+                           Require I to be the exact local image ID resolved
+                           by --expected-worker-image before and after startup.
+  --expected-worker-revision R
+                           Require the image and started worker OCI revision
+                           label to match the exact 40-hex commit R.
+  --expected-worker-config-sha256 H
+                           Require the canonical resolved fstworker service
+                           configuration, excluding only image, to hash to H.
+  --inherited-worker-lock-fd N
+                           For a mutating action, require descriptor N to
+                           already own the canonical worker lock in this same
+                           process. The guard retains it through startup.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
 EOF
@@ -76,6 +104,11 @@ while [[ $# -gt 0 ]]; do
         --throughput-profile) THROUGHPUT_PROFILE="$2"; shift 2 ;;
         --data-profile) DATA_PROFILE="$2"; shift 2 ;;
         --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
+        --expected-worker-image-id) EXPECTED_WORKER_IMAGE_ID="$2"; shift 2 ;;
+        --expected-worker-revision) EXPECTED_WORKER_REVISION="$2"; shift 2 ;;
+        --expected-worker-config-sha256) EXPECTED_WORKER_CONFIG_SHA256="$2"; shift 2 ;;
+        --inherited-worker-lock-fd) INHERITED_WORKER_LOCK_FD="$2"; shift 2 ;;
+        --inherited-worker-lock-owner-pid) INHERITED_WORKER_LOCK_OWNER_PID="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'ERROR: unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
@@ -139,7 +172,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -158,8 +191,42 @@ if [[ "$ACTION" == "recover-start" && "$DATA_PROFILE" != "none" ]]; then
     exit 64
 fi
 
+if [[ "$DATA_PROFILE" == "scrape-resume" \
+    && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
+then
+    printf 'ERROR: data profile scrape-resume requires --check-runonce or --recreate-runonce\n' >&2
+    exit 64
+fi
+
 if [[ "$DATA_PROFILE" != "none" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
     printf 'ERROR: --expected-worker-image is required with --data-profile\n' >&2
+    exit 64
+fi
+
+if [[ -n "$EXPECTED_WORKER_IMAGE_ID" \
+    && ! "$EXPECTED_WORKER_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+then
+    printf 'ERROR: --expected-worker-image-id must be a lowercase sha256 image ID\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_REVISION" \
+    && ! "$EXPECTED_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]
+then
+    printf 'ERROR: --expected-worker-revision must be a lowercase 40-hex commit\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_CONFIG_SHA256" \
+    && ! "$EXPECTED_WORKER_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]]
+then
+    printf 'ERROR: --expected-worker-config-sha256 must be a lowercase SHA-256\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_IMAGE_ID" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
+    printf 'ERROR: --expected-worker-image-id requires --expected-worker-image\n' >&2
+    exit 64
+fi
+if [[ -n "$EXPECTED_WORKER_REVISION" && -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+    printf 'ERROR: --expected-worker-revision requires --expected-worker-image-id\n' >&2
     exit 64
 fi
 
@@ -174,6 +241,44 @@ MUTATING_WORKER_ACTION=false
 if [[ "$ACTION" =~ ^(recreate|recreate-runonce|recover-start)$ ]]; then
     MUTATING_WORKER_ACTION=true
 fi
+
+if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
+    require_inherited_lock_action="$MUTATING_WORKER_ACTION"
+    if [[ "$require_inherited_lock_action" != "true" ]]; then
+        printf 'ERROR: --inherited-worker-lock-fd requires a mutating worker action\n' >&2
+        exit 64
+    fi
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" \
+        || -z "$EXPECTED_WORKER_REVISION" \
+        || -z "$EXPECTED_WORKER_CONFIG_SHA256" ]]
+    then
+        printf 'ERROR: inherited worker handoff requires exact image ID, revision, and configuration assertions\n' >&2
+        exit 64
+    fi
+    if [[ ! "$EXPECTED_WORKER_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+        printf 'ERROR: inherited worker handoff requires an immutable digest image reference\n' >&2
+        exit 64
+    fi
+    if [[ -z "$INHERITED_WORKER_LOCK_OWNER_PID" ]]; then
+        INHERITED_WORKER_LOCK_OWNER_PID="$$"
+    fi
+fi
+
+if [[ -n "${COMPOSE_FILE:-}" \
+    || -n "${COMPOSE_PROJECT_NAME:-}" \
+    || -n "${COMPOSE_ENV_FILES:-}" \
+    || -n "${COMPOSE_PROFILES:-}" \
+    || -n "${DOCKER_HOST:-}" \
+    || -n "${DOCKER_CONTEXT:-}" ]]
+then
+    printf 'ERROR: Docker/Compose routing environment overrides are not permitted\n' >&2
+    exit 64
+fi
+DOCKER_HOST="unix:///var/run/docker.sock"
+DOCKER_CONFIG="/nonexistent/fst-worker-compose-guard"
+COMPOSE_PROJECT_NAME="festivalservicetracker"
+export DOCKER_HOST DOCKER_CONFIG COMPOSE_PROJECT_NAME
+unset DOCKER_CONTEXT COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES
 
 for command in docker python3 realpath; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -203,6 +308,95 @@ require_positive_integer() {
         printf 'ERROR: %s must be greater than zero\n' "$name" >&2
         exit 64
     fi
+}
+
+verify_inherited_worker_mutation_lock() {
+    if [[ -z "$INHERITED_WORKER_LOCK_FD" ]]; then
+        return 0
+    fi
+    python3 - "$WORKER_MUTATION_LOCK_PATH" "$INHERITED_WORKER_LOCK_FD" \
+        "$INHERITED_WORKER_LOCK_OWNER_PID" <<'PY'
+import fcntl
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+descriptor = int(sys.argv[2])
+owner_pid = int(sys.argv[3])
+if descriptor < 3 or not path.is_absolute():
+    raise SystemExit("ERROR: inherited worker lock descriptor or path is invalid")
+parent = path.parent
+parent_before = parent.stat()
+parent_descriptor = os.open(
+    parent,
+    os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW,
+)
+try:
+    parent_opened = os.fstat(parent_descriptor)
+    if (
+        (parent_opened.st_dev, parent_opened.st_ino)
+        != (parent_before.st_dev, parent_before.st_ino)
+        or not stat.S_ISDIR(parent_opened.st_mode)
+    ):
+        raise SystemExit("ERROR: canonical worker lock parent identity changed")
+    before = os.stat(
+        path.name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+    ):
+        raise SystemExit("ERROR: canonical worker lock path is not a safe owned regular file")
+    opened = os.open(
+        path.name,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        dir_fd=parent_descriptor,
+    )
+finally:
+    os.close(parent_descriptor)
+try:
+    canonical = os.fstat(opened)
+    inherited = os.fstat(descriptor)
+    if (
+        (before.st_dev, before.st_ino) != (canonical.st_dev, canonical.st_ino)
+        or (canonical.st_dev, canonical.st_ino)
+        != (inherited.st_dev, inherited.st_ino)
+        or not stat.S_ISREG(inherited.st_mode)
+        or inherited.st_uid != os.getuid()
+    ):
+        raise SystemExit("ERROR: inherited worker lock inode identity changed")
+    matches = []
+    for line in pathlib.Path("/proc/locks").read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[1:4] != ["FLOCK", "ADVISORY", "WRITE"]:
+            continue
+        device = fields[5].split(":")
+        if len(device) != 3:
+            continue
+        if (
+            int(fields[4]) == owner_pid
+            and int(device[0], 16) == os.major(inherited.st_dev)
+            and int(device[1], 16) == os.minor(inherited.st_dev)
+            and int(device[2]) == inherited.st_ino
+        ):
+            matches.append(line)
+    if len(matches) != 1:
+        raise SystemExit("ERROR: inherited worker lock is not owned by this exact process")
+    try:
+        fcntl.flock(opened, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    else:
+        fcntl.flock(opened, fcntl.LOCK_UN)
+        raise SystemExit("ERROR: canonical worker lock path is not excluded by the inherited lock")
+finally:
+    os.close(opened)
+PY
 }
 
 acquire_worker_mutation_lock() {
@@ -242,6 +436,18 @@ acquire_worker_mutation_lock() {
         exit 1
     fi
 
+    if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
+        require_positive_integer \
+            inherited_worker_lock_fd \
+            "$INHERITED_WORKER_LOCK_FD"
+        require_positive_integer \
+            inherited_worker_lock_owner_pid \
+            "$INHERITED_WORKER_LOCK_OWNER_PID"
+        WORKER_LOCK_FD="$INHERITED_WORKER_LOCK_FD"
+        verify_inherited_worker_mutation_lock
+        return
+    fi
+
     if ! exec 9>>"$WORKER_MUTATION_LOCK_PATH"; then
         printf 'ERROR: worker mutation lock file could not be opened\n' >&2
         exit 1
@@ -250,6 +456,7 @@ acquire_worker_mutation_lock() {
         printf 'ERROR: another fstworker start/recreate action is already running\n' >&2
         exit 1
     fi
+    WORKER_LOCK_FD=9
 }
 
 if [[ "$ACTION" == "recover-start" ]]; then
@@ -346,8 +553,12 @@ if $MUTATING_WORKER_ACTION; then
     acquire_worker_mutation_lock
 fi
 
-if [[ "$(basename "$pia_overlay")" != "docker-compose.pia-30.yml" ]]; then
-    printf 'ERROR: canonical PIA overlay must be docker-compose.pia-30.yml\n' >&2
+if [[ "$base_file" != "$compose_dir/docker-compose.yml" ]]; then
+    printf 'ERROR: canonical base file must resolve inside the Compose directory\n' >&2
+    exit 1
+fi
+if [[ "$pia_overlay" != "$compose_dir/docker-compose.pia-30.yml" ]]; then
+    printf 'ERROR: canonical PIA overlay must resolve inside the Compose directory\n' >&2
     exit 1
 fi
 for file in "$base_file" "$pia_overlay"; do
@@ -356,6 +567,140 @@ for file in "$base_file" "$pia_overlay"; do
         exit 1
     fi
 done
+
+compose_json_worker_binding() {
+    python3 -c '
+import hashlib
+import json
+import sys
+
+config = json.load(sys.stdin)
+worker = dict((config.get("services") or {}).get("fstworker") or {})
+image = str(worker.get("image") or "").strip()
+normalized = dict(worker)
+normalized.pop("image", None)
+config_sha256 = hashlib.sha256(
+    json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+).hexdigest()
+print(image)
+print(config_sha256)
+' <<< "$1"
+}
+
+load_resolved_compose_json() {
+    local require_run_once="$1"
+
+    if [[ "$require_run_once" == "true" ]]; then
+        if [[ ! -f "$runonce_overlay" ]]; then
+            printf 'ERROR: run-once overlay not found: %s\n' \
+                "$runonce_overlay" >&2
+            return 1
+        fi
+        (
+            cd "$compose_dir"
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$compose_dir" --profile worker \
+                -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
+                config --format json
+        )
+        return 0
+    fi
+
+    (
+        cd "$compose_dir"
+        docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+            --project-directory "$compose_dir" --profile worker \
+            -f "$base_file" -f "$pia_overlay" config --format json
+    )
+}
+
+validate_scrape_resume_worker_binding() {
+    local compose_json_arg="$1"
+    local expected_scrape_id="${2:-}"
+    local expected_worker_image="${3:-}"
+    local binding_context="${4:-data profile scrape-resume}"
+
+    python3 -c '
+import json
+import sys
+
+config = json.load(sys.stdin)
+worker = dict((config.get("services") or {}).get("fstworker") or {})
+environment = dict(worker.get("environment") or {})
+expected_scrape_id = sys.argv[1].strip()
+expected_worker_image = sys.argv[2].strip()
+binding_context = sys.argv[3].strip()
+
+def fail(message):
+    raise SystemExit(f"ERROR: {binding_context} requires {message}")
+
+def require_exact(name, expected):
+    actual = str(environment.get(name) or "").strip()
+    if actual != expected:
+        display = actual if actual else "<empty>"
+        fail(f"{name}={expected}, found {display}")
+
+def require_positive_integer(name):
+    actual = str(environment.get(name) or "").strip()
+    try:
+        value = int(actual)
+    except ValueError as exc:
+        raise SystemExit(
+            f"ERROR: {binding_context} requires {name} to be an integer"
+        ) from exc
+    if value <= 0:
+        raise SystemExit(
+            f"ERROR: {binding_context} requires {name} to be greater than zero"
+        )
+    return actual
+
+image = str(worker.get("image") or "").strip()
+restart = str(worker.get("restart") or "").strip().lower()
+if expected_worker_image and image != expected_worker_image:
+    raise SystemExit(
+        f"ERROR: {binding_context} image must match {expected_worker_image}"
+    )
+if restart != "no":
+    display_restart = restart or "<empty>"
+    raise SystemExit(
+        f"ERROR: {binding_context} requires restart policy no, found {display_restart}"
+    )
+
+require_exact("Scraper__RunOnce", "true")
+require_exact("Scraper__ApiOnly", "false")
+require_exact("Scraper__DisableScraperWorker", "false")
+require_exact("Scraper__RegistrationSyncWorkerOnly", "false")
+require_exact("Scraper__EnabledPhases", "SoloRankings")
+require_exact("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+resume_scrape_id = require_positive_integer("Scraper__ResumeScrapeId")
+if expected_scrape_id and resume_scrape_id != expected_scrape_id:
+    fail(
+        f"Scraper__ResumeScrapeId={expected_scrape_id}, found {resume_scrape_id}"
+    )
+require_exact("Scraper__RivalsMaxDegreeOfParallelism", "2")
+for name in (
+    "Features__EnforcePublicationCriticalPhases",
+    "Features__EnforceScopeCompletenessManifests",
+    "Features__RequireSuccessfulScrapeWriters",
+    "Features__UseLeaderboardScopeFingerprints",
+    "Features__WritePublishedScopeSources",
+    "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+):
+    require_exact(name, "true")
+for name in (
+    "Features__UseStoredSoloProjectionRanksForFilteredReads",
+    "Features__WriteLogicalLeaderboardVersions",
+    "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+):
+    require_exact(name, "false")
+' "$expected_scrape_id" "$expected_worker_image" "$binding_context" \
+        <<< "$compose_json_arg"
+}
+
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ && ! -f "$runonce_overlay" ]]; then
     printf 'ERROR: run-once overlay not found: %s\n' "$runonce_overlay" >&2
     exit 1
@@ -363,10 +708,7 @@ fi
 
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
     runonce_restart="$(
-        cd "$compose_dir"
-        docker compose --profile worker \
-            -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
-            config --format json \
+        load_resolved_compose_json true \
             | python3 -c 'import json,sys; print((json.load(sys.stdin).get("services", {}).get("fstworker", {}).get("restart") or "").strip())'
     )"
     if [[ "$runonce_restart" != "no" ]]; then
@@ -377,24 +719,16 @@ if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
 fi
 
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
-    compose_json="$(
-        cd "$compose_dir"
-        docker compose --profile worker \
-            -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
-            config --format json
-    )"
+    compose_json="$(load_resolved_compose_json true)"
     REQUIRE_RUN_ONCE=true
 else
-    compose_json="$(
-        cd "$compose_dir"
-        docker compose --profile worker \
-            -f "$base_file" -f "$pia_overlay" config --format json
-    )"
+    compose_json="$(load_resolved_compose_json false)"
     REQUIRE_RUN_ONCE=false
 fi
 
 validation="$(
     python3 -c '
+import hashlib
 import json
 import re
 import sys
@@ -408,7 +742,8 @@ profile_exact = sys.argv[5].casefold() == "true"
 require_run_once = sys.argv[6].casefold() == "true"
 data_profile = sys.argv[7]
 expected_worker_image = sys.argv[8]
-action = sys.argv[9]
+expected_worker_config_sha256 = sys.argv[9]
+action = sys.argv[10]
 recovery_mode = action == "recover-start"
 continuous_mode = not require_run_once
 
@@ -539,6 +874,21 @@ if data_profile == "notification-db-only":
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:06:00")
     exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
+    exact_value(
+        "Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace",
+        "false")
+    exact_value(
+        "Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace",
+        "false")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxDuration",
+        "00:02:00")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow",
+        "00:01:30")
+    exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups",
+        "3")
     for name in (
         "Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass",
         "Scraper__RegisteredBandProcessingMaxLookupsPerPass",
@@ -546,13 +896,26 @@ if data_profile == "notification-db-only":
         if nonnegative_integer(name) != 80:
             raise SystemExit(
                 f"ERROR: data profile notification-db-only requires {name}=80")
-if data_profile != "none":
+if expected_worker_image:
     actual_worker_image = str(worker.get("image") or "").strip()
     if actual_worker_image != expected_worker_image:
         display_actual = actual_worker_image if actual_worker_image else "<empty>"
         raise SystemExit(
-            f"ERROR: data profile {data_profile} requires worker image "
+            "ERROR: resolved fstworker image must match "
             f"{expected_worker_image}, found {display_actual}")
+if expected_worker_config_sha256:
+    normalized_worker = dict(worker)
+    normalized_worker.pop("image", None)
+    actual_worker_config_sha256 = hashlib.sha256(
+        json.dumps(
+            normalized_worker,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if actual_worker_config_sha256 != expected_worker_config_sha256:
+        raise SystemExit(
+            "ERROR: resolved fstworker non-image configuration hash does not match")
 
 if data_profile == "publication-cache-generation":
     exact_value("Scraper__EnabledPhases", "All")
@@ -643,6 +1006,78 @@ if data_profile == "snapshot-reuse":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile snapshot-reuse requires {name}=false")
+if data_profile == "leaderboard-rivals-batch":
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    if integer("Scraper__InitialCdnLearnedMaxDop") != 360:
+        raise SystemExit(
+            "ERROR: data profile leaderboard-rivals-batch requires "
+            "Scraper__InitialCdnLearnedMaxDop=360")
+    if integer("Scraper__RivalsMaxDegreeOfParallelism") != 2:
+        raise SystemExit(
+            "ERROR: data profile leaderboard-rivals-batch requires "
+            "Scraper__RivalsMaxDegreeOfParallelism=2")
+    if integer("Scraper__LeaderboardRivalsMaxDegreeOfParallelism") != 4:
+        raise SystemExit(
+            "ERROR: data profile leaderboard-rivals-batch requires "
+            "Scraper__LeaderboardRivalsMaxDegreeOfParallelism=4")
+    for name in (
+        "Scraper__UsePublicationPathArtifacts",
+        "Scraper__EnableScrapePassPathGeneration",
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
+        "Features__WritePublishedScopeSources",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+        "ImprovementNotifications__Enabled",
+        "ImprovementNotifications__IncludePlayers",
+        "ImprovementNotifications__IncludeBands",
+        "ImprovementNotifications__IncludeSongEvents",
+        "ImprovementNotifications__IncludeRankings",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                "ERROR: data profile leaderboard-rivals-batch "
+                f"requires {name}=true")
+    for name in (
+        "Scraper__EnableAutomaticPathGeneration",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                "ERROR: data profile leaderboard-rivals-batch "
+                f"requires {name}=false")
+if data_profile == "scrape-resume":
+    exact_value("Scraper__EnabledPhases", "SoloRankings")
+    exact_value("Scraper__RegistrationSyncWorkerOnly", "false")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    integer("Scraper__ResumeScrapeId")
+    if integer("Scraper__RivalsMaxDegreeOfParallelism") != 2:
+        raise SystemExit(
+            "ERROR: data profile scrape-resume requires "
+            "Scraper__RivalsMaxDegreeOfParallelism=2")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
+        "Features__WritePublishedScopeSources",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile scrape-resume requires {name}=true")
+    for name in (
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile scrape-resume requires {name}=false")
 if data_profile == "legacy-reader-migration":
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
@@ -819,9 +1254,24 @@ if recovery_mode:
         "$PROFILE_MAX_PER_ENDPOINT_RPS" \
         "$PROFILE_MAX_PER_ENDPOINT_CONCURRENCY" "$PROFILE_EXACT" \
         "$REQUIRE_RUN_ONCE" "$DATA_PROFILE" \
-        "$EXPECTED_WORKER_IMAGE" "$ACTION" \
+        "$EXPECTED_WORKER_IMAGE" "$EXPECTED_WORKER_CONFIG_SHA256" "$ACTION" \
         <<< "$compose_json"
 )"
+
+compose_snapshot() {
+    local include_worker_profile="$1"
+    shift
+    if [[ "$include_worker_profile" == "true" ]]; then
+        printf '%s\n' "$compose_json" \
+            | docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$compose_dir" --profile worker \
+                -f - "$@"
+    else
+        printf '%s\n' "$compose_json" \
+            | docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$compose_dir" -f - "$@"
+    fi
+}
 
 summary="$(head -n 1 <<< "$validation")"
 IFS='|' read -r _ throughput_profile data_profile expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency connection_reuse_disabled curl_transport_enabled run_once <<< "$summary"
@@ -834,6 +1284,200 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     printf 'ERROR: internal guard node-count mismatch\n' >&2
     exit 1
 fi
+
+if [[ "$DATA_PROFILE" == "scrape-resume" ]]; then
+    if ! validate_scrape_resume_worker_binding \
+        "$compose_json" \
+        "" \
+        "" \
+        "data profile scrape-resume"
+    then
+        exit 1
+    fi
+fi
+
+verify_expected_worker_image_object() {
+    local identity actual_id actual_revision
+
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        return 0
+    fi
+    if ! identity="$(
+        docker image inspect --format \
+            '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+            "$EXPECTED_WORKER_IMAGE" 2>/dev/null
+    )"
+    then
+        printf 'ERROR: expected worker image object is unavailable\n' >&2
+        exit 1
+    fi
+    IFS='|' read -r actual_id actual_revision <<< "$identity"
+    if [[ "$actual_id" != "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        printf 'ERROR: expected worker image reference resolved to a different image ID\n' >&2
+        exit 1
+    fi
+    if [[ -n "$EXPECTED_WORKER_REVISION" \
+        && "$actual_revision" != "$EXPECTED_WORKER_REVISION" ]]
+    then
+        printf 'ERROR: expected worker image revision label does not match\n' >&2
+        exit 1
+    fi
+}
+
+remove_created_worker() {
+    local container_id="$1"
+    if [[ "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        if ! docker rm --force "$container_id" >/dev/null 2>&1; then
+            WORKER_CLEANUP_FAILED=1
+            printf 'ERROR: unaccepted worker cleanup failed for exact container %s; stop and remove it before retry\n' \
+                "$container_id" >&2
+            return 0
+        fi
+        if docker inspect "$container_id" >/dev/null 2>&1 \
+            || ! docker info >/dev/null 2>&1
+        then
+            WORKER_CLEANUP_FAILED=1
+            printf 'ERROR: unaccepted worker absence could not be proven for exact container %s; stop and remove it before retry\n' \
+                "$container_id" >&2
+            return 0
+        fi
+        if [[ "$CREATED_WORKER_CONTAINER_ID" == "$container_id" ]]; then
+            CREATED_WORKER_CONTAINER_ID=""
+        fi
+    fi
+}
+
+verify_created_worker_image_identity() {
+    local container_id="$1"
+    local expected_state="$2"
+    local identity actual_container actual_id actual_image actual_revision
+    local actual_running actual_status actual_exit_code actual_started_at
+
+    if ! identity="$(
+        docker inspect --format \
+            '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{.State.Running}}|{{.State.Status}}|{{.State.ExitCode}}|{{.State.StartedAt}}' \
+            "$container_id" 2>/dev/null
+    )"
+    then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker identity is unavailable\n' >&2
+        exit 1
+    fi
+    IFS='|' read -r actual_container actual_id actual_image actual_revision \
+        actual_running actual_status actual_exit_code actual_started_at <<< "$identity"
+    if [[ "$actual_container" != "$container_id" ]]
+    then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker runtime identity changed\n' >&2
+        exit 1
+    fi
+    case "$expected_state" in
+        created)
+            if [[ "$actual_running" != "false" \
+                || "$actual_status" != "created" \
+                || "$actual_started_at" != "0001-01-01T00:00:00Z" ]]
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: worker executed before identity acceptance\n' >&2
+                exit 1
+            fi
+            ;;
+        continuous)
+            if [[ "$actual_running" != "true" \
+                || "$actual_status" != "running" ]]
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: continuous worker did not remain running after start\n' >&2
+                exit 1
+            fi
+            ;;
+        runonce)
+            if [[ "$actual_started_at" == "0001-01-01T00:00:00Z" ]] \
+                || { [[ "$actual_running" != "true" ]] \
+                    && { [[ "$actual_status" != "exited" ]] \
+                        || [[ "$actual_exit_code" != "0" ]]; }; }
+            then
+                remove_created_worker "$container_id"
+                printf 'ERROR: run-once worker start was not observed\n' >&2
+                exit 1
+            fi
+            ;;
+        *)
+            printf 'ERROR: internal worker identity state is invalid\n' >&2
+            exit 1
+            ;;
+    esac
+    if [[ -z "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+        return 0
+    fi
+    if [[ "$actual_id" == "$EXPECTED_WORKER_IMAGE_ID" \
+        && "$actual_image" == "$EXPECTED_WORKER_IMAGE" ]] \
+        && { [[ -z "$EXPECTED_WORKER_REVISION" ]] \
+            || [[ "$actual_revision" == "$EXPECTED_WORKER_REVISION" ]]; }
+    then
+        return 0
+    fi
+    remove_created_worker "$container_id"
+    printf 'ERROR: created worker image identity does not match the approved image\n' >&2
+    exit 1
+}
+
+create_and_start_worker() {
+    local container_id post_start_state
+
+    PREVIOUS_WORKER_CONTAINER_ID="$(
+        docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+    )"
+    WORKER_CREATE_ATTEMPTED=1
+
+    if ! compose_snapshot true up --no-start --no-deps --force-recreate \
+        --pull never fstworker >/dev/null 2>&1
+    then
+        container_id="$(
+            compose_snapshot true ps --all --quiet fstworker 2>/dev/null \
+                | head -n 1 || true
+        )"
+        if [[ "$container_id" != "$PREVIOUS_WORKER_CONTAINER_ID" ]]; then
+            CREATED_WORKER_CONTAINER_ID="$container_id"
+            remove_created_worker "$container_id"
+        fi
+        printf 'ERROR: fstworker create failed\n' >&2
+        return 1
+    fi
+    if ! container_id="$(
+        compose_snapshot true ps --all --quiet fstworker \
+            | head -n 1
+    )"
+    then
+        container_id="$(
+            docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+        )"
+        CREATED_WORKER_CONTAINER_ID="$container_id"
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker container identity is unavailable\n' >&2
+        return 1
+    fi
+    if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        remove_created_worker "$container_id"
+        printf 'ERROR: created worker container identity is unavailable\n' >&2
+        return 1
+    fi
+    CREATED_WORKER_CONTAINER_ID="$container_id"
+    verify_created_worker_image_identity "$container_id" created
+    if ! docker start "$container_id" >/dev/null; then
+        remove_created_worker "$container_id"
+        printf 'ERROR: fstworker start failed\n' >&2
+        return 1
+    fi
+    post_start_state=continuous
+    if [[ "$ACTION" == "recreate-runonce" ]]; then
+        post_start_state=runonce
+    fi
+    verify_created_worker_image_identity "$container_id" "$post_start_state"
+    DIRECT_WORKER_START_ACCEPTED=1
+}
+
+verify_expected_worker_image_object
 
 inspect_container_state() {
     local container="$1"
@@ -905,20 +1549,34 @@ wait_for_core_ready() {
 
 recovery_baseline_worker_instance=""
 recovery_baseline_worker_heartbeat=""
+recovery_current_update_status=""
+recovery_current_scrape_id=""
+recovery_public_reads_frozen=""
+recovery_freeze_reason=""
+recovery_published_scrape_id=""
+recovery_worker_api_status=""
+recovery_worker_api_instance=""
+recovery_worker_api_heartbeat=""
+recovery_worker_api_heartbeat_age=""
+recovery_worker_api_stale_after=""
 
-capture_recovery_safety_snapshot() {
-    local worker_state worker_runtime_status service_info snapshot
+read_recovery_service_snapshot() {
+    local allow_worker_present="${1:-false}"
+    local worker_state worker_runtime_status service_info
+    local -a snapshot
 
     worker_state="$(inspect_container_state "$worker_container")"
     worker_runtime_status="${worker_state%%|*}"
-    case "$worker_runtime_status" in
-        missing|created|exited|dead)
-            ;;
-        *)
-            printf 'ERROR: recovery requires fstworker to be stopped or absent\n' >&2
-            return 1
-            ;;
-    esac
+    if [[ "$allow_worker_present" != "true" ]]; then
+        case "$worker_runtime_status" in
+            missing|created|exited|dead)
+                ;;
+            *)
+                printf 'ERROR: recovery requires fstworker to be stopped or absent\n' >&2
+                return 1
+                ;;
+        esac
+    fi
 
     if ! service_info="$(
         docker exec "$service_container" \
@@ -930,7 +1588,7 @@ capture_recovery_safety_snapshot() {
         return 1
     fi
 
-    if ! snapshot="$(
+    if ! mapfile -t snapshot < <(
         python3 -c '
 import json
 import sys
@@ -942,34 +1600,555 @@ except (json.JSONDecodeError, TypeError):
         "ERROR: recovery received an invalid operational service response")
 
 current = payload.get("currentUpdate")
-if not isinstance(current, dict) or current.get("status") != "idle":
-    raise SystemExit(
-        "ERROR: recovery requires the current update state to be idle")
-
 publication = payload.get("publication")
-if not isinstance(publication, dict) or publication.get("publicReadsFrozen") is not False:
+if not isinstance(current, dict) or not isinstance(publication, dict):
     raise SystemExit(
-        "ERROR: recovery requires public reads to be unfrozen")
+        "ERROR: recovery requires current update and publication state")
 
 worker = payload.get("workerStatus")
 if not isinstance(worker, dict):
     worker = {}
-instance = worker.get("instanceId")
-heartbeat = worker.get("lastHeartbeatAt")
-print(instance if isinstance(instance, str) else "")
-print(heartbeat if isinstance(heartbeat, str) else "")
+
+def stringify(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+print(stringify(current.get("status")))
+print(stringify(current.get("scrapeId")))
+print(stringify(publication.get("publicReadsFrozen")))
+print(stringify(publication.get("freezeReason")))
+print(stringify(publication.get("publishedScrapeId")))
+print(stringify(worker.get("status")))
+print(stringify(worker.get("instanceId")))
+print(stringify(worker.get("lastHeartbeatAt")))
+print(stringify(worker.get("heartbeatAgeSeconds")))
+print(stringify(worker.get("staleAfterSeconds")))
 ' <<< "$service_info"
-    )"
+    )
     then
         return 1
     fi
 
-    recovery_baseline_worker_instance="${snapshot%%$'\n'*}"
-    if [[ "$snapshot" == *$'\n'* ]]; then
-        recovery_baseline_worker_heartbeat="${snapshot#*$'\n'}"
-    else
-        recovery_baseline_worker_heartbeat=""
+    recovery_current_update_status="${snapshot[0]:-}"
+    recovery_current_scrape_id="${snapshot[1]:-}"
+    recovery_public_reads_frozen="${snapshot[2]:-}"
+    recovery_freeze_reason="${snapshot[3]:-}"
+    recovery_published_scrape_id="${snapshot[4]:-}"
+    recovery_worker_api_status="${snapshot[5]:-}"
+    recovery_worker_api_instance="${snapshot[6]:-}"
+    recovery_worker_api_heartbeat="${snapshot[7]:-}"
+    recovery_worker_api_heartbeat_age="${snapshot[8]:-}"
+    recovery_worker_api_stale_after="${snapshot[9]:-}"
+}
+
+worker_api_is_stale_or_offline() {
+    if [[ "$recovery_worker_api_status" != "online" ]]; then
+        return 0
     fi
+    if [[ -n "$recovery_worker_api_heartbeat_age" \
+        && "$recovery_worker_api_heartbeat_age" =~ ^[0-9]+([.][0-9]+)?$ \
+        && -n "$recovery_worker_api_stale_after" \
+        && "$recovery_worker_api_stale_after" =~ ^[0-9]+([.][0-9]+)?$ ]]
+    then
+        python3 -c '
+import sys
+age = float(sys.argv[1])
+stale_after = float(sys.argv[2])
+raise SystemExit(0 if stale_after > 0 and age > stale_after else 1)
+' "$recovery_worker_api_heartbeat_age" "$recovery_worker_api_stale_after"
+        return $?
+    fi
+    return 1
+}
+
+capture_recovery_safety_snapshot() {
+    if ! read_recovery_service_snapshot true; then
+        return 1
+    fi
+    if [[ "$recovery_current_update_status" != "idle" ]]; then
+        printf 'ERROR: recovery requires the current update state to be idle\n' >&2
+        return 1
+    fi
+    if [[ "$recovery_public_reads_frozen" != "false" ]]; then
+        printf 'ERROR: recovery requires public reads to be unfrozen\n' >&2
+        return 1
+    fi
+
+    recovery_baseline_worker_instance="$recovery_worker_api_instance"
+    recovery_baseline_worker_heartbeat="$recovery_worker_api_heartbeat"
+}
+
+validate_scrape_resume_runtime_state() {
+    local worker_state worker_runtime_status service_info resume_scrape_id
+
+    worker_state="$(inspect_container_state "fstworker")"
+    worker_runtime_status="${worker_state%%|*}"
+    case "$worker_runtime_status" in
+        missing|created|exited|dead)
+            ;;
+        *)
+            printf 'ERROR: scrape resume requires fstworker to be stopped or absent\n' >&2
+            return 1
+            ;;
+    esac
+
+    resume_scrape_id="$(
+        python3 -c '
+import json
+import sys
+config = json.load(sys.stdin)
+environment = (
+    config.get("services", {})
+    .get("fstworker", {})
+    .get("environment", {})
+)
+print(environment.get("Scraper__ResumeScrapeId", ""))
+' <<< "$compose_json"
+    )"
+
+    if ! service_info="$(
+        docker exec fstservice \
+            curl -fsS --connect-timeout 2 --max-time 10 \
+            http://localhost:8080/api/service-info 2>/dev/null
+    )"
+    then
+        printf 'ERROR: scrape resume could not read the operational service state\n' >&2
+        return 1
+    fi
+
+    if ! python3 -c '
+import json
+import sys
+
+expected_scrape_id = int(sys.argv[1])
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, TypeError):
+    raise SystemExit(
+        "ERROR: scrape resume received an invalid operational service response")
+
+current = payload.get("currentUpdate")
+publication = payload.get("publication")
+if not isinstance(current, dict) or not isinstance(publication, dict):
+    raise SystemExit(
+        "ERROR: scrape resume requires current update and publication state")
+if current.get("status") not in {"updating", "stalled"}:
+    raise SystemExit(
+        "ERROR: scrape resume requires the current update state to be updating or stalled")
+if current.get("scrapeId") != expected_scrape_id:
+    raise SystemExit(
+        "ERROR: scrape resume current update does not match the configured scrape")
+if publication.get("publicReadsFrozen") is not True:
+    raise SystemExit(
+        "ERROR: scrape resume requires public reads to remain frozen")
+if publication.get("freezeReason") != "post-process":
+    raise SystemExit(
+        "ERROR: scrape resume requires publication freeze reason post-process")
+if publication.get("publishedScrapeId") == expected_scrape_id:
+    raise SystemExit(
+        "ERROR: scrape resume target is already published")
+' "$resume_scrape_id" <<< "$service_info"
+    then
+        return 1
+    fi
+
+    printf 'compose_guard resume=preflight worker=stopped scrape=%s update=resume-eligible reads=frozen\n' \
+        "$resume_scrape_id"
+}
+
+recovery_boot_mode=""
+recovery_active_scrape_id=""
+recovery_deferred_publication_id=""
+recovery_active_resume_state_json=""
+
+resolve_worker_image_binding() {
+    local image_ref="$1"
+    local identity actual_id actual_revision
+
+    if ! identity="$(
+        docker image inspect --format \
+            '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+            "$image_ref" 2>/dev/null
+    )"
+    then
+        printf 'ERROR: expected worker image object is unavailable\n' >&2
+        return 1
+    fi
+    IFS='|' read -r actual_id actual_revision <<< "$identity"
+    printf '%s\n%s\n' "$actual_id" "$actual_revision"
+}
+
+load_active_resume_state_json() {
+    local scrape_id="$1"
+
+    docker exec "$postgres_container" \
+        psql -X -A -t -q \
+            -v ON_ERROR_STOP=1 \
+            -c "/* fst_boot_active_recovery_state */ WITH target_scrape AS (
+                    SELECT
+                        scrape.id,
+                        scrape.started_at,
+                        scrape.status,
+                        scrape.acquisition_completed_at,
+                        scrape.songs_scraped,
+                        scrape.total_entries,
+                        scrape.total_requests,
+                        scrape.total_bytes,
+                        scrape.epic_reported_over_100_pages,
+                        scrape.expected_solo_scope_count,
+                        scrape.expected_solo_scope_fingerprint_version,
+                        scrape.expected_solo_scope_fingerprint
+                    FROM scrape_log scrape
+                    WHERE scrape.id = ${scrape_id}
+                ),
+                manifest_counts AS (
+                    SELECT
+                        COUNT(*)::int AS manifest_count,
+                        COUNT(*) FILTER (WHERE is_complete)::int
+                            AS complete_manifest_count
+                    FROM leaderboard_scope_manifests
+                    WHERE scrape_id = ${scrape_id}
+                ),
+                writer_failures AS (
+                    SELECT COUNT(*)::int AS writer_failure_count
+                    FROM scrape_writer_failures
+                    WHERE scrape_id = ${scrape_id}
+                ),
+                critical_failures AS (
+                    SELECT COUNT(*)::int AS critical_failure_count
+                    FROM scrape_phase_outcomes
+                    WHERE scrape_id = ${scrape_id}
+                      AND criticality = 'publication_critical'
+                      AND status <> 'completed'
+                ),
+                candidate_generation AS (
+                    SELECT publication_id, status
+                    FROM publication_generations
+                    WHERE scrape_id = ${scrape_id}
+                ),
+                publication_state AS (
+                    SELECT
+                        published_scrape_id,
+                        working_publication_id,
+                        public_reads_frozen_reason,
+                        improvement_notifications_scrape_id,
+                        improvement_notifications_status
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                ),
+                catalog AS (
+                    SELECT
+                        catalog.publication_id,
+                        catalog.catalog_version,
+                        catalog.schema_version,
+                        catalog.catalog_json::text AS catalog_json,
+                        catalog.content_hash,
+                        catalog.song_count
+                    FROM candidate_generation generation
+                    JOIN publication_song_catalog catalog
+                      ON catalog.publication_id = generation.publication_id
+                    JOIN publication_surface_bindings binding
+                      ON binding.publication_id = generation.publication_id
+                     AND binding.surface_name = 'song_catalog'
+                    WHERE catalog.is_exact
+                      AND catalog.source_kind = 'provider_exact'
+                      AND binding.binding_kind =
+                            'generation_catalog_snapshot'
+                      AND binding.status = 'ready'
+                      AND binding.row_count = catalog.song_count
+                      AND binding.content_hash = catalog.content_hash
+                ),
+                complete_solo_pairs AS (
+                    SELECT DISTINCT manifest.song_id, manifest.instrument
+                    FROM leaderboard_scope_manifests manifest
+                    WHERE manifest.scrape_id = ${scrape_id}
+                      AND manifest.scope_kind = 'alltime'
+                      AND manifest.is_complete
+                      AND manifest.instrument = ANY(ARRAY[
+                          'Solo_Guitar',
+                          'Solo_Bass',
+                          'Solo_Vocals',
+                          'Solo_Drums',
+                          'Solo_PeripheralGuitar',
+                          'Solo_PeripheralBass',
+                          'Solo_PeripheralVocals',
+                          'Solo_PeripheralCymbals',
+                          'Solo_PeripheralDrums'
+                      ])
+                )
+                SELECT row_to_json(result)::text
+                FROM (
+                    SELECT
+                        target.id AS \"scrapeId\",
+                        target.started_at AS \"startedAtUtc\",
+                        target.status,
+                        publication.published_scrape_id AS \"publishedScrapeId\",
+                        publication.working_publication_id AS \"workingPublicationId\",
+                        publication.public_reads_frozen_reason
+                            AS \"publicReadsFrozenReason\",
+                        publication.improvement_notifications_scrape_id
+                            AS \"improvementNotificationsScrapeId\",
+                        publication.improvement_notifications_status
+                            AS \"improvementNotificationsStatus\",
+                        generation.publication_id AS \"candidatePublicationId\",
+                        generation.status AS \"candidatePublicationStatus\",
+                        manifests.manifest_count AS \"manifestCount\",
+                        manifests.complete_manifest_count
+                            AS \"completeManifestCount\",
+                        writers.writer_failure_count
+                            AS \"writerFailureCount\",
+                        critical.critical_failure_count
+                            AS \"criticalPhaseFailureCount\",
+                        target.acquisition_completed_at
+                            AS \"acquisitionCompletedAtUtc\",
+                        target.songs_scraped AS \"songsScraped\",
+                        target.total_entries AS \"totalEntries\",
+                        target.total_requests AS \"totalRequests\",
+                        target.total_bytes AS \"totalBytes\",
+                        target.epic_reported_over_100_pages
+                            AS \"epicReportedOver100Pages\",
+                        target.expected_solo_scope_count
+                            AS \"expectedSoloScopeCount\",
+                        target.expected_solo_scope_fingerprint_version
+                            AS \"expectedSoloScopeFingerprintVersion\",
+                        target.expected_solo_scope_fingerprint
+                            AS \"expectedSoloScopeFingerprint\",
+                        catalog.catalog_version
+                            AS \"publicationCatalogVersion\",
+                        catalog.schema_version
+                            AS \"publicationCatalogSchemaVersion\",
+                        catalog.content_hash
+                            AS \"publicationCatalogContentHash\",
+                        catalog.song_count AS \"publicationSongCount\",
+                        catalog.catalog_json AS \"publicationCatalogJson\",
+                        COALESCE((
+                            SELECT json_agg(
+                                json_build_array(song_id, instrument)
+                                ORDER BY instrument, song_id)
+                            FROM complete_solo_pairs
+                        ), '[]'::json) AS \"completeSoloPairs\",
+                        EXISTS (
+                            SELECT 1
+                            FROM scrape_publication_state state
+                            LEFT JOIN publication_generations working
+                              ON working.publication_id =
+                                    state.working_publication_id
+                            WHERE state.id = TRUE
+                              AND (
+                                  state.public_reads_frozen_reason =
+                                      '${PUBLICATION_COMMIT_DEFERRED_REASON}'
+                                  OR working.status = 'ready'
+                              )
+                        ) AS \"startupShouldResumeDeferredPublication\"
+                    FROM target_scrape target
+                    LEFT JOIN manifest_counts manifests ON TRUE
+                    LEFT JOIN writer_failures writers ON TRUE
+                    LEFT JOIN critical_failures critical ON TRUE
+                    LEFT JOIN publication_state publication ON TRUE
+                    LEFT JOIN candidate_generation generation ON TRUE
+                    LEFT JOIN catalog ON TRUE
+                ) result"
+}
+
+validate_active_resume_state() {
+    local expected_scrape_id="$1"
+    local expected_published_scrape_id="$2"
+
+    if ! recovery_active_resume_state_json="$(
+        load_active_resume_state_json "$expected_scrape_id"
+    )"
+    then
+        printf 'ERROR: recovery could not read the durable resume candidate state\n' >&2
+        return 1
+    fi
+    if [[ -z "$recovery_active_resume_state_json" ]]; then
+        printf 'ERROR: recovery resume candidate scrape is missing\n' >&2
+        return 1
+    fi
+
+    if ! python3 -c '
+import hashlib
+import json
+import struct
+import sys
+
+expected_scrape_id = int(sys.argv[1])
+expected_published_scrape_id = int(sys.argv[2])
+state = json.load(sys.stdin)
+canonical_instruments = [
+    "Solo_Guitar",
+    "Solo_Bass",
+    "Solo_Vocals",
+    "Solo_Drums",
+    "Solo_PeripheralGuitar",
+    "Solo_PeripheralBass",
+    "Solo_PeripheralVocals",
+    "Solo_PeripheralCymbals",
+    "Solo_PeripheralDrums",
+]
+
+def fail(message):
+    raise SystemExit(f"ERROR: {message}")
+
+if state.get("scrapeId") != expected_scrape_id:
+    fail("recovery resume candidate scrape does not match the service state")
+if state.get("status") != "running":
+    fail("recovery resume candidate is not running")
+if state.get("publishedScrapeId") != expected_published_scrape_id:
+    fail("recovery published scrape does not match the service state")
+if state.get("candidatePublicationId") != state.get("workingPublicationId"):
+    fail("recovery candidate publication is not the working publication")
+if state.get("candidatePublicationStatus") == "ready" or state.get("startupShouldResumeDeferredPublication"):
+    fail("recovery candidate should resume through the existing deferred-publication startup path")
+if state.get("manifestCount", 0) <= 0:
+    fail("recovery candidate has no durable manifests")
+if state.get("completeManifestCount") != state.get("manifestCount"):
+    fail("recovery candidate manifests are incomplete")
+if state.get("writerFailureCount") != 0:
+    fail("recovery candidate has writer failures")
+if state.get("criticalPhaseFailureCount") != 0:
+    fail("recovery candidate has publication-critical failures")
+if state.get("acquisitionCompletedAtUtc") is None:
+    fail("recovery candidate acquisition checkpoint is missing")
+for field in ("songsScraped", "totalEntries", "totalRequests", "totalBytes"):
+    value = state.get(field)
+    if not isinstance(value, int) or value <= 0:
+        fail(f"recovery candidate {field} must be a positive persisted value")
+if not isinstance(state.get("epicReportedOver100Pages"), bool):
+    fail("recovery candidate Epic page-count signal is missing")
+if state.get("expectedSoloScopeFingerprintVersion") != 1:
+    fail("recovery candidate solo scope fingerprint version is unsupported")
+fingerprint = state.get("expectedSoloScopeFingerprint")
+if not isinstance(fingerprint, str) or len(fingerprint) != 64 or any(ch not in "0123456789abcdef" for ch in fingerprint):
+    fail("recovery candidate solo scope fingerprint is invalid")
+catalog_json = state.get("publicationCatalogJson")
+if not isinstance(catalog_json, str) or not catalog_json:
+    fail("recovery candidate publication song catalog is missing")
+catalog = json.loads(catalog_json)
+catalog_song_ids = []
+for item in catalog:
+    if not isinstance(item, dict):
+        fail("recovery candidate publication song catalog is invalid")
+    track = item.get("track")
+    song_id = track.get("su") if isinstance(track, dict) else None
+    if not isinstance(song_id, str) or not song_id.strip():
+        fail("recovery candidate publication song catalog is invalid")
+    catalog_song_ids.append(song_id)
+catalog_song_set = set(catalog_song_ids)
+if len(catalog_song_set) != len(catalog_song_ids):
+    fail("recovery candidate publication song catalog is invalid")
+if state.get("publicationSongCount") != len(catalog_song_ids):
+    fail("recovery candidate publication song count does not match the catalog")
+if state.get("songsScraped") > len(catalog_song_ids):
+    fail("recovery candidate songs scraped exceeds the publication song catalog")
+expected_scope_count = len(catalog_song_ids) * len(canonical_instruments)
+if state.get("expectedSoloScopeCount") != expected_scope_count:
+    fail("recovery candidate solo scope count does not cover the exact catalog and canonical instruments")
+pairs = state.get("completeSoloPairs")
+if not isinstance(pairs, list):
+    fail("recovery candidate complete solo manifests are invalid")
+normalized_pairs = []
+for pair in pairs:
+    if not isinstance(pair, list) or len(pair) != 2:
+        fail("recovery candidate complete solo manifests are invalid")
+    song_id, instrument = pair
+    if not isinstance(song_id, str) or not song_id.strip():
+        fail("recovery candidate complete solo manifests are invalid")
+    if instrument not in canonical_instruments:
+        fail("recovery candidate complete solo manifests include a noncanonical instrument")
+    if song_id not in catalog_song_set:
+        fail("recovery candidate complete solo manifests are not owned by the publication catalog")
+    normalized_pairs.append((song_id, instrument))
+if len(set(normalized_pairs)) != expected_scope_count:
+    fail("recovery candidate complete solo manifest count differs from the acquisition checkpoint")
+if set(normalized_pairs) != {
+    (song_id, instrument)
+    for song_id in catalog_song_ids
+    for instrument in canonical_instruments
+}:
+    fail("recovery candidate solo scope does not cover every catalog song and canonical instrument")
+hash_state = hashlib.sha256()
+hash_state.update(b"fst-solo-acquisition-scope\x00v1\x00")
+for song_id, instrument in sorted(normalized_pairs, key=lambda item: (item[1], item[0])):
+    instrument_bytes = instrument.encode()
+    song_bytes = song_id.encode()
+    hash_state.update(struct.pack(">i", len(instrument_bytes)))
+    hash_state.update(instrument_bytes)
+    hash_state.update(struct.pack(">i", len(song_bytes)))
+    hash_state.update(song_bytes)
+if hash_state.hexdigest() != fingerprint:
+    fail("recovery candidate complete solo manifest fingerprint differs from the acquisition checkpoint")
+' "$expected_scrape_id" "$expected_published_scrape_id" \
+        <<< "$recovery_active_resume_state_json"
+    then
+        return 1
+    fi
+}
+
+determine_recovery_boot_mode() {
+    recovery_boot_mode=""
+    recovery_active_scrape_id=""
+    recovery_deferred_publication_id=""
+
+    if ! read_recovery_service_snapshot; then
+        return 1
+    fi
+
+    recovery_baseline_worker_instance="$recovery_worker_api_instance"
+    recovery_baseline_worker_heartbeat="$recovery_worker_api_heartbeat"
+
+    if [[ "$recovery_current_update_status" == "idle" \
+        && "$recovery_public_reads_frozen" == "false" ]]
+    then
+        recovery_boot_mode="continuous-idle"
+        return 0
+    fi
+
+    if [[ "$recovery_current_update_status" == "idle" \
+        && "$recovery_public_reads_frozen" == "true" \
+        && "$recovery_freeze_reason" == "$PUBLICATION_COMMIT_DEFERRED_REASON" ]]
+    then
+        recovery_boot_mode="continuous-deferred"
+        recovery_deferred_publication_id="$recovery_published_scrape_id"
+        return 0
+    fi
+    if [[ "$recovery_current_update_status" == "idle" ]]; then
+        printf 'ERROR: recovery requires public reads to be unfrozen\n' >&2
+        return 1
+    fi
+
+    if [[ "$recovery_current_update_status" != "updating" \
+        && "$recovery_current_update_status" != "stalled" ]]
+    then
+        printf 'ERROR: recovery requires the current update state to be idle, updating, or stalled\n' >&2
+        return 1
+    fi
+    if [[ "$recovery_public_reads_frozen" != "true" ]]; then
+        printf 'ERROR: recovery requires the current update state to be idle\n' >&2
+        return 1
+    fi
+    if [[ ! "$recovery_current_scrape_id" =~ ^[0-9]+$ ]]; then
+        printf 'ERROR: recovery active candidate state is missing the current scrape ID\n' >&2
+        return 1
+    fi
+    if [[ "$recovery_freeze_reason" != "post-process" ]]; then
+        printf 'ERROR: recovery active candidate requires publication freeze reason post-process\n' >&2
+        return 1
+    fi
+    if [[ "$recovery_published_scrape_id" == "$recovery_current_scrape_id" ]]; then
+        printf 'ERROR: recovery active candidate is already published\n' >&2
+        return 1
+    fi
+    if ! worker_api_is_stale_or_offline; then
+        printf 'ERROR: recovery active candidate requires the prior worker heartbeat to be stale or offline\n' >&2
+        return 1
+    fi
+
+    recovery_boot_mode="active-resume"
+    recovery_active_scrape_id="$recovery_current_scrape_id"
 }
 
 declare -a unhealthy_effective_nodes=()
@@ -1035,9 +2214,7 @@ recreate_unhealthy_effective_proxies() {
         return 2
     fi
     if ! (
-        cd "$compose_dir"
-        docker compose -f "$base_file" -f "$pia_overlay" \
-            up -d --no-deps --force-recreate \
+        compose_snapshot false up -d --no-deps --force-recreate \
             "${unhealthy_effective_nodes[@]}" >/dev/null 2>&1
     )
     then
@@ -1128,6 +2305,384 @@ wait_for_worker_recovery_ready() {
     done
 }
 
+worker_identity_matches_binding() {
+    local expected_image="$1"
+    local expected_image_id="$2"
+    local expected_revision="$3"
+    local identity actual_container actual_id actual_image actual_revision
+    local actual_running actual_status actual_exit_code actual_started_at
+
+    if ! identity="$(
+        docker inspect --format \
+            '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{.State.Running}}|{{.State.Status}}|{{.State.ExitCode}}|{{.State.StartedAt}}' \
+            "$worker_container" 2>/dev/null
+    )"
+    then
+        return 1
+    fi
+    IFS='|' read -r actual_container actual_id actual_image actual_revision \
+        actual_running actual_status actual_exit_code actual_started_at <<< "$identity"
+    [[ "$actual_id" == "$expected_image_id" \
+        && "$actual_image" == "$expected_image" \
+        && "$actual_revision" == "$expected_revision" ]]
+}
+
+run_proxy_recovery_sequence() {
+    local initial_wait_status recreate_status recreate_wait_status
+
+    printf 'compose_guard recovery=proxy-wait phase=initial\n'
+    initial_wait_status=0
+    wait_for_effective_proxy_health "$RECOVERY_INITIAL_WAIT_SECONDS" \
+        || initial_wait_status=$?
+    if ((initial_wait_status == 0)); then
+        printf 'compose_guard recovery=proxy-convergence phase=initial status=healthy\n'
+        return 0
+    fi
+    if ((initial_wait_status == 2)); then
+        return 1
+    fi
+
+    printf 'compose_guard recovery=proxy-convergence phase=initial unhealthy=%s\n' \
+        "${#unhealthy_effective_nodes[@]}"
+    if ! core_is_ready; then
+        printf 'ERROR: core readiness was lost before proxy recovery\n' >&2
+        return 1
+    fi
+    if ! enforce_recovery_total_deadline; then
+        return 1
+    fi
+    recreate_status=0
+    recreate_unhealthy_effective_proxies || recreate_status=$?
+    if ((recreate_status == 2)); then
+        return 1
+    fi
+    if ((recreate_status != 0)); then
+        return 1
+    fi
+
+    printf 'compose_guard recovery=proxy-wait phase=post-recreate\n'
+    recreate_wait_status=0
+    wait_for_effective_proxy_health "$RECOVERY_RECREATE_WAIT_SECONDS" \
+        || recreate_wait_status=$?
+    if ((recreate_wait_status == 2)); then
+        return 1
+    fi
+    if ((recreate_wait_status != 0)); then
+        printf 'ERROR: effective proxies did not become healthy after bounded recovery\n' >&2
+        return 1
+    fi
+    printf 'compose_guard recovery=proxy-convergence phase=post-recreate status=healthy\n'
+}
+
+start_continuous_worker_after_preflight() {
+    printf 'compose_guard recovery=worker-start service=fstworker mode=continuous\n'
+    recovery_worker_start_attempted=1
+    verify_inherited_worker_mutation_lock
+    verify_expected_worker_image_object
+    if ! create_and_start_worker
+    then
+        printf 'ERROR: fstworker recreate/start failed\n' >&2
+        return 1
+    fi
+    if ! enforce_recovery_total_deadline; then
+        return 1
+    fi
+
+    printf 'compose_guard recovery=worker-wait\n'
+    worker_wait_status=0
+    wait_for_worker_recovery_ready || worker_wait_status=$?
+    if ((worker_wait_status == 2)); then
+        return 1
+    fi
+    if ((worker_wait_status != 0)); then
+        printf 'ERROR: fstworker health and fresh heartbeat did not converge\n' >&2
+        return 1
+    fi
+    if ! enforce_recovery_total_deadline; then
+        return 1
+    fi
+
+    recovery_worker_accepted=1
+    printf 'compose_guard recovery=ok recreated=%s worker=online heartbeat=fresh\n' \
+        "$recreated_proxy_count"
+}
+
+start_runonce_worker_with_existing_lock() {
+    local runonce_compose_json_arg="$1"
+    local runonce_worker_image_arg="$2"
+    local expected_worker_image_id_arg="$3"
+    local expected_worker_revision_arg="$4"
+    local runonce_worker_config_sha256_arg="$5"
+    local original_action="$ACTION"
+    local original_data_profile="$DATA_PROFILE"
+    local original_require_run_once="$REQUIRE_RUN_ONCE"
+    local original_compose_json="$compose_json"
+    local original_expected_worker_image="$EXPECTED_WORKER_IMAGE"
+    local original_expected_worker_image_id="$EXPECTED_WORKER_IMAGE_ID"
+    local original_expected_worker_revision="$EXPECTED_WORKER_REVISION"
+    local original_expected_worker_config_sha256="$EXPECTED_WORKER_CONFIG_SHA256"
+
+    ACTION="recreate-runonce"
+    DATA_PROFILE="scrape-resume"
+    REQUIRE_RUN_ONCE=true
+    compose_json="$runonce_compose_json_arg"
+    EXPECTED_WORKER_IMAGE="$runonce_worker_image_arg"
+    EXPECTED_WORKER_IMAGE_ID="$expected_worker_image_id_arg"
+    EXPECTED_WORKER_REVISION="$expected_worker_revision_arg"
+    EXPECTED_WORKER_CONFIG_SHA256="$runonce_worker_config_sha256_arg"
+
+    recovery_worker_start_attempted=1
+    verify_expected_worker_image_object
+    if ! create_and_start_worker; then
+        ACTION="$original_action"
+        DATA_PROFILE="$original_data_profile"
+        REQUIRE_RUN_ONCE="$original_require_run_once"
+        compose_json="$original_compose_json"
+        EXPECTED_WORKER_IMAGE="$original_expected_worker_image"
+        EXPECTED_WORKER_IMAGE_ID="$original_expected_worker_image_id"
+        EXPECTED_WORKER_REVISION="$original_expected_worker_revision"
+        EXPECTED_WORKER_CONFIG_SHA256="$original_expected_worker_config_sha256"
+        return 1
+    fi
+
+    ACTION="$original_action"
+    DATA_PROFILE="$original_data_profile"
+    REQUIRE_RUN_ONCE="$original_require_run_once"
+    compose_json="$original_compose_json"
+    EXPECTED_WORKER_IMAGE="$original_expected_worker_image"
+    EXPECTED_WORKER_IMAGE_ID="$original_expected_worker_image_id"
+    EXPECTED_WORKER_REVISION="$original_expected_worker_revision"
+    EXPECTED_WORKER_CONFIG_SHA256="$original_expected_worker_config_sha256"
+}
+
+run_active_resume_recovery() {
+    local continuous_binding runonce_compose_json runonce_binding
+    local -a continuous_binding_lines runonce_binding_lines
+    local -a worker_image_identity
+    local continuous_worker_image continuous_worker_config_sha256
+    local runonce_worker_image runonce_worker_config_sha256
+    local expected_worker_image_id expected_worker_revision
+
+    if ! mapfile -t continuous_binding_lines < <(
+        compose_json_worker_binding "$compose_json"
+    )
+    then
+        printf 'ERROR: recovery could not resolve the continuous worker binding\n' >&2
+        return 1
+    fi
+    continuous_worker_image="${continuous_binding_lines[0]:-}"
+    continuous_worker_config_sha256="${continuous_binding_lines[1]:-}"
+    if [[ -z "$continuous_worker_image" \
+        || ! "$continuous_worker_config_sha256" =~ ^[0-9a-f]{64}$ ]]
+    then
+        printf 'ERROR: recovery could not resolve the continuous worker binding\n' >&2
+        return 1
+    fi
+    if [[ ! "$continuous_worker_image" =~ @sha256:[0-9a-f]{64}$ ]]; then
+        printf 'ERROR: recovery active candidate requires an immutable digest worker image reference\n' >&2
+        return 1
+    fi
+    if ! mapfile -t worker_image_identity < <(
+        resolve_worker_image_binding "$continuous_worker_image"
+    )
+    then
+        return 1
+    fi
+    expected_worker_image_id="${worker_image_identity[0]:-}"
+    expected_worker_revision="${worker_image_identity[1]:-}"
+    if [[ ! "$expected_worker_image_id" =~ ^sha256:[0-9a-f]{64}$ \
+        || ! "$expected_worker_revision" =~ ^[0-9a-f]{40}$ ]]
+    then
+        printf 'ERROR: recovery could not resolve the exact worker image identity\n' >&2
+        return 1
+    fi
+
+    if ! runonce_compose_json="$(load_resolved_compose_json true)"; then
+        return 1
+    fi
+    if ! mapfile -t runonce_binding_lines < <(
+        compose_json_worker_binding "$runonce_compose_json"
+    )
+    then
+        printf 'ERROR: recovery could not resolve the run-once scrape-resume binding\n' >&2
+        return 1
+    fi
+    runonce_worker_image="${runonce_binding_lines[0]:-}"
+    runonce_worker_config_sha256="${runonce_binding_lines[1]:-}"
+    if [[ "$runonce_worker_image" != "$continuous_worker_image" ]]; then
+        printf 'ERROR: recovery run-once worker image must match the continuous worker image\n' >&2
+        return 1
+    fi
+    if [[ ! "$runonce_worker_config_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+        printf 'ERROR: recovery could not resolve the run-once scrape-resume binding\n' >&2
+        return 1
+    fi
+    if ! validate_scrape_resume_worker_binding \
+        "$runonce_compose_json" \
+        "$recovery_active_scrape_id" \
+        "$continuous_worker_image" \
+        "recovery run-once worker"
+    then
+        return 1
+    fi
+
+    if ! validate_active_resume_state \
+        "$recovery_active_scrape_id" \
+        "$recovery_published_scrape_id"
+    then
+        return 1
+    fi
+
+    printf 'compose_guard recovery=active-candidate scrape=%s published=%s mode=scrape-resume\n' \
+        "$recovery_active_scrape_id" \
+        "$recovery_published_scrape_id"
+    if ! start_runonce_worker_with_existing_lock \
+        "$runonce_compose_json" \
+        "$runonce_worker_image" \
+        "$expected_worker_image_id" \
+        "$expected_worker_revision" \
+        "$runonce_worker_config_sha256"
+    then
+        printf 'ERROR: active recovery could not start the scrape-resume worker\n' >&2
+        return 1
+    fi
+
+    while true; do
+        local worker_state worker_runtime_status
+
+        if ! enforce_recovery_total_deadline; then
+            printf 'ERROR: active recovery exceeded its total deadline before publication convergence\n' >&2
+            return 1
+        fi
+        if ! read_recovery_service_snapshot; then
+            return 1
+        fi
+        if ! recovery_active_resume_state_json="$(
+            load_active_resume_state_json "$recovery_active_scrape_id"
+        )"
+        then
+            printf 'ERROR: active recovery could not refresh the durable candidate state\n' >&2
+            return 1
+        fi
+        if [[ -z "$recovery_active_resume_state_json" ]]; then
+            printf 'ERROR: active recovery candidate scrape is missing\n' >&2
+            return 1
+        fi
+
+        durable_status=0
+        if durable_message="$(
+            python3 -c '
+import json
+import sys
+
+expected_scrape_id = int(sys.argv[1])
+state = json.load(sys.stdin)
+status = state.get("status")
+if status == "failed":
+    raise SystemExit("ERROR: active recovery candidate recorded a durable failure")
+if status == "completed":
+    notifications_scrape_id = state.get("improvementNotificationsScrapeId")
+    notifications_status = state.get("improvementNotificationsStatus")
+    if notifications_scrape_id == expected_scrape_id and notifications_status in {"pending", "running", "failed"}:
+        raise SystemExit("ERROR: active recovery candidate still requires improvement notification recovery")
+    raise SystemExit(0)
+if status != "running":
+    raise SystemExit("ERROR: active recovery candidate entered an unexpected durable state")
+raise SystemExit(3)
+' "$recovery_active_scrape_id" \
+                <<< "$recovery_active_resume_state_json" 2>&1
+        )"
+        then
+            durable_status=0
+        else
+            durable_status=$?
+        fi
+        case "$durable_status" in
+            0)
+                ;;
+            3)
+                ;;
+            *)
+                if [[ -n "$durable_message" ]]; then
+                    printf '%s\n' "$durable_message" >&2
+                fi
+                return 1
+                ;;
+        esac
+
+        worker_state="$(inspect_container_state "$worker_container")"
+        worker_runtime_status="${worker_state%%|*}"
+        if [[ "$worker_runtime_status" == "running" \
+            || "$worker_runtime_status" == "restarting" \
+            || "$worker_runtime_status" == "paused" ]]
+        then
+            if ! worker_identity_matches_binding \
+                "$runonce_worker_image" \
+                "$expected_worker_image_id" \
+                "$expected_worker_revision"
+            then
+                printf 'ERROR: active recovery worker identity drifted during publication recovery\n' >&2
+                return 1
+            fi
+        fi
+
+        if ((durable_status == 0)) \
+            && [[ "$recovery_current_update_status" == "idle" ]] \
+            && [[ "$recovery_public_reads_frozen" == "false" ]] \
+            && [[ "$recovery_published_scrape_id" == "$recovery_active_scrape_id" ]] \
+            && [[ "$worker_runtime_status" != "running" ]] \
+            && [[ "$worker_runtime_status" != "restarting" ]] \
+            && [[ "$worker_runtime_status" != "paused" ]]
+        then
+            break
+        fi
+
+        if [[ "$recovery_current_update_status" == "idle" \
+            && "$recovery_public_reads_frozen" == "false" \
+            && "$recovery_published_scrape_id" != "$recovery_active_scrape_id" ]]
+        then
+            printf 'ERROR: active recovery state drifted before the candidate became the published scrape\n' >&2
+            return 1
+        fi
+        if [[ "$recovery_current_update_status" != "updating" \
+            && "$recovery_current_update_status" != "stalled" \
+            && "$recovery_current_update_status" != "idle" ]]
+        then
+            printf 'ERROR: active recovery current update state drifted unexpectedly\n' >&2
+            return 1
+        fi
+        if [[ "$recovery_public_reads_frozen" == "true" \
+            && "$recovery_freeze_reason" != "post-process" ]]
+        then
+            printf 'ERROR: active recovery freeze state drifted away from post-process\n' >&2
+            return 1
+        fi
+
+        sleep_until_deadline "$RECOVERY_TOTAL_DEADLINE_AT"
+    done
+
+    if ! enforce_recovery_total_deadline; then
+        return 1
+    fi
+    if ! core_is_ready; then
+        printf 'ERROR: core readiness was lost before continuous worker restart\n' >&2
+        return 1
+    fi
+    if ! capture_recovery_safety_snapshot; then
+        return 1
+    fi
+    if ! run_proxy_recovery_sequence; then
+        return 1
+    fi
+
+    EXPECTED_WORKER_IMAGE="$continuous_worker_image"
+    EXPECTED_WORKER_IMAGE_ID="$expected_worker_image_id"
+    EXPECTED_WORKER_REVISION="$expected_worker_revision"
+    EXPECTED_WORKER_CONFIG_SHA256="$continuous_worker_config_sha256"
+    verify_expected_worker_image_object
+    start_continuous_worker_after_preflight
+}
+
 stop_recovery_worker() {
     local state status
 
@@ -1184,6 +2739,32 @@ raise SystemExit(0 if status == "idle" and frozen is False else 3)
 recovery_worker_start_attempted=0
 recovery_worker_accepted=0
 
+cleanup_unaccepted_direct_worker() {
+    local status=$?
+    local container_id="$CREATED_WORKER_CONTAINER_ID"
+
+    trap - EXIT INT TERM
+    if ((WORKER_CREATE_ATTEMPTED != 0 && DIRECT_WORKER_START_ACCEPTED == 0)); then
+        if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+            container_id="$(
+                docker inspect --format '{{.Id}}' fstworker 2>/dev/null || true
+            )"
+            if [[ "$container_id" == "$PREVIOUS_WORKER_CONTAINER_ID" ]]; then
+                container_id=""
+            fi
+        fi
+        remove_created_worker "$container_id"
+    fi
+    exit "$status"
+}
+
+exit_direct_from_signal() {
+    local status="$1"
+
+    trap '' INT TERM
+    exit "$status"
+}
+
 cleanup_unaccepted_recovery_worker() {
     local status=$?
     local state runtime_status stop_safety_status
@@ -1226,6 +2807,12 @@ exit_recovery_from_signal() {
     exit "$status"
 }
 
+if [[ "$ACTION" =~ ^(recreate|recreate-runonce)$ ]]; then
+    trap cleanup_unaccepted_direct_worker EXIT
+    trap 'exit_direct_from_signal 130' INT
+    trap 'exit_direct_from_signal 143' TERM
+fi
+
 if [[ "$ACTION" == "recover-start" ]]; then
     trap cleanup_unaccepted_recovery_worker EXIT
     trap 'exit_recovery_from_signal 130' INT
@@ -1248,60 +2835,36 @@ if [[ "$ACTION" == "recover-start" ]]; then
     if ! enforce_recovery_total_deadline; then
         exit 1
     fi
-    if ! capture_recovery_safety_snapshot; then
+    if ! determine_recovery_boot_mode; then
         exit 1
     fi
     if ! enforce_recovery_total_deadline; then
         exit 1
     fi
-    printf 'compose_guard recovery=preflight core=ready worker=stopped update=idle reads=unfrozen\n'
-
-    printf 'compose_guard recovery=proxy-wait phase=initial\n'
-    initial_wait_status=0
-    wait_for_effective_proxy_health "$RECOVERY_INITIAL_WAIT_SECONDS" \
-        || initial_wait_status=$?
-    if ((initial_wait_status == 0)); then
-        printf 'compose_guard recovery=proxy-convergence phase=initial status=healthy\n'
-    elif ((initial_wait_status == 2)); then
-        exit 1
-    else
-        printf 'compose_guard recovery=proxy-convergence phase=initial unhealthy=%s\n' \
-            "${#unhealthy_effective_nodes[@]}"
-        if ! core_is_ready; then
-            printf 'ERROR: core readiness was lost before proxy recovery\n' >&2
+    case "$recovery_boot_mode" in
+        continuous-idle)
+            printf 'compose_guard recovery=preflight core=ready worker=stopped update=idle reads=unfrozen\n'
+            if ! run_proxy_recovery_sequence; then
+                exit 1
+            fi
+            ;;
+        continuous-deferred)
+            printf 'compose_guard recovery=preflight core=ready worker=stopped update=idle reads=frozen deferred-publication=%s\n' \
+                "${recovery_deferred_publication_id:-unknown}"
+            if ! run_proxy_recovery_sequence; then
+                exit 1
+            fi
+            ;;
+        active-resume)
+            printf 'compose_guard recovery=preflight core=ready worker=stopped update=%s reads=frozen scrape=%s\n' \
+                "$recovery_current_update_status" \
+                "$recovery_active_scrape_id"
+            ;;
+        *)
+            printf 'ERROR: internal recovery boot mode is invalid\n' >&2
             exit 1
-        fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-        if ! capture_recovery_safety_snapshot; then
-            exit 1
-        fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-        recreate_status=0
-        recreate_unhealthy_effective_proxies || recreate_status=$?
-        if ((recreate_status == 2)); then
-            exit 1
-        fi
-        if ((recreate_status != 0)); then
-            exit 1
-        fi
-
-        printf 'compose_guard recovery=proxy-wait phase=post-recreate\n'
-        recreate_wait_status=0
-        wait_for_effective_proxy_health "$RECOVERY_RECREATE_WAIT_SECONDS" \
-            || recreate_wait_status=$?
-        if ((recreate_wait_status == 2)); then
-            exit 1
-        fi
-        if ((recreate_wait_status != 0)); then
-            printf 'ERROR: effective proxies did not become healthy after bounded recovery\n' >&2
-            exit 1
-        fi
-        printf 'compose_guard recovery=proxy-convergence phase=post-recreate status=healthy\n'
-    fi
+            ;;
+    esac
 else
     printf 'compose_guard config=ok overlay=%s throughput_profile=%s data_profile=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s connection_reuse=disabled transport=curl run_once=%s\n' \
         "$(basename "$pia_overlay")" "$throughput_profile" "$data_profile" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps" "$per_endpoint_concurrency" "$run_once"
@@ -1473,19 +3036,24 @@ print(hashlib.sha256(value.encode()).hexdigest())
     fi
 fi
 
+if $RUNTIME_PROBES && [[ "$DATA_PROFILE" == "scrape-resume" ]]; then
+    if ! validate_scrape_resume_runtime_state; then
+        exit 1
+    fi
+fi
+
 case "$ACTION" in
     check|check-runonce)
         ;;
     recreate)
-        cd "$compose_dir"
-        docker compose --profile worker -f "$base_file" -f "$pia_overlay" \
-            up -d --no-deps --force-recreate fstworker
+        verify_inherited_worker_mutation_lock
+        verify_expected_worker_image_object
+        create_and_start_worker
         ;;
     recreate-runonce)
-        cd "$compose_dir"
-        docker compose --profile worker \
-            -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
-            up -d --no-deps --force-recreate fstworker
+        verify_inherited_worker_mutation_lock
+        verify_expected_worker_image_object
+        create_and_start_worker
         ;;
     recover-start)
         if ! enforce_recovery_total_deadline; then
@@ -1495,48 +3063,29 @@ case "$ACTION" in
             printf 'ERROR: core readiness was lost before worker startup\n' >&2
             exit 1
         fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-        if ! capture_recovery_safety_snapshot; then
-            exit 1
-        fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-
-        printf 'compose_guard recovery=worker-start service=fstworker mode=continuous\n'
-        recovery_worker_start_attempted=1
-        if ! (
-            cd "$compose_dir"
-            docker compose --profile worker -f "$base_file" -f "$pia_overlay" \
-                up -d --no-deps --force-recreate fstworker \
-                >/dev/null 2>&1
-        )
-        then
-            printf 'ERROR: fstworker recreate/start failed\n' >&2
-            exit 1
-        fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-
-        printf 'compose_guard recovery=worker-wait\n'
-        worker_wait_status=0
-        wait_for_worker_recovery_ready || worker_wait_status=$?
-        if ((worker_wait_status == 2)); then
-            exit 1
-        fi
-        if ((worker_wait_status != 0)); then
-            printf 'ERROR: fstworker health and fresh heartbeat did not converge\n' >&2
-            exit 1
-        fi
-        if ! enforce_recovery_total_deadline; then
-            exit 1
-        fi
-
-        recovery_worker_accepted=1
-        printf 'compose_guard recovery=ok recreated=%s worker=online heartbeat=fresh\n' \
-            "$recreated_proxy_count"
+        case "$recovery_boot_mode" in
+            active-resume)
+                if ! run_active_resume_recovery; then
+                    exit 1
+                fi
+                ;;
+            continuous-idle|continuous-deferred)
+                if [[ "$recovery_boot_mode" == "continuous-idle" ]]; then
+                    if ! capture_recovery_safety_snapshot; then
+                        exit 1
+                    fi
+                else
+                    recovery_baseline_worker_instance="$recovery_worker_api_instance"
+                    recovery_baseline_worker_heartbeat="$recovery_worker_api_heartbeat"
+                fi
+                if ! start_continuous_worker_after_preflight; then
+                    exit 1
+                fi
+                ;;
+            *)
+                printf 'ERROR: internal recovery boot mode is invalid\n' >&2
+                exit 1
+                ;;
+        esac
         ;;
 esac

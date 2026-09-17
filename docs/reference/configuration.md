@@ -1,16 +1,24 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
+  - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Scraping/PathGenerationModels.cs
+  - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/Program.cs
   - FSTService/FeatureOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/DatabaseMaintenanceOptions.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - docker-compose.yml
   - .env.example
   - deploy/docker-compose.yml
@@ -19,6 +27,13 @@ sources:
   - deploy/.env.example
   - tools/fst-worker-compose-guard.sh
   - FSTService/Scraping/Replay/ReplaySecurity.cs
+  - FSTService/Scraping/Capture/CaptureOnlyCommand.cs
+  - FSTService/Scraping/Capture/CaptureOnlyComposition.cs
+  - FSTService/Scraping/Capture/CapturePaginationMaximums.cs
+  - FSTService/Scraping/Capture/CaptureOnlyStorage.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - tools/FstSnapshotGenerationRetirement/
+  - tools/postgres-snapshot-generation-retirement.sh
 update_triggers:
   - An appsettings section, environment key, secret, role file, or configuration precedence rule changes.
 ---
@@ -52,13 +67,77 @@ overrides intentionally diverge between the public service and mutation worker.
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
 
+## Snapshot-generation report-only retention
+
+| Key | Default | Effective bound | Purpose |
+|---|---:|---:|---|
+| `DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled` | `false` | Boolean | Enables terminal worker-owned observation only; it cannot create executable work |
+| `DatabaseMaintenance:SnapshotGenerationRetentionCommandTimeoutSeconds` | `30` | clamped to `5`-`120` | Npgsql and transaction-local statement/idle timeout for one repeatable-read observation and its short evidence write |
+| `DatabaseMaintenance:ServiceMaintenanceLockWaitMilliseconds` | `500` | clamped to `0`-`5000` | Bounded wait used by metadata TTL and generation observation for the shared service-maintenance advisory lock |
+
+The tracked configuration is safe-by-default. There is no option that enables
+archive/detach/drop/delete behavior and no option that disables unreplayed
+writer-failure protection. The legacy
+`DatabaseMaintenance:SnapshotRetentionRewriteEnabled` remains `false` and is
+not reused as the generation-child oracle.
+
+Enabling report-only observation is a worker-role change and does not expose a
+browser feature flag or public API. The enabled worker uses a code-bounded
+128-item keyed FIFO. Planner deferrals remain at its head instead of being
+overwritten. Runnable registration work first receives a code-bounded
+30-second, non-cancelling adaptive drain window; if still incomplete, the FIFO
+is retained and the scheduled scrape may proceed without recording a cycle.
+It must be enabled only for a later coordinator-owned observation window. See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+## Publication API cache safety bounds
+
+Freeze-safe cache coverage is code-owned rather than a deployment feature flag.
+This prevents a role override from widening request-time cache writes or
+weakening fail-closed behavior.
+
+| Bound | Value | Purpose |
+|---|---:|---|
+| Lazy route family | overview only | Excludes arbitrary/high-cardinality routes |
+| Lazy page sizes | `25`, `50` | Ten finite metric/size variants |
+| Maximum measured build | `< 1000 ms` | Hard admission limit; target is `< 500 ms` |
+| Maximum lazy payload | `2 MiB` | Bounds memory, PostgreSQL row size, and response capture |
+| Operation telemetry | last `256` | Bounded diagnostics without raw cache keys |
+| L2 retention | current + previous publication | Existing publication cleanup contract |
+
+Changing these bounds is an API/publication behavior change requiring matched
+benchmarks, freeze tests, documentation, and a separate promotion decision.
+
+## Song catalog refresh
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `Scraper:SongSyncInterval` | `00:05:00` | Boundary-aligned interval for fetching and persisting the exact Spark Tracks catalog |
+
+The public service role owns this refresh. A successful exact change updates
+`live_song_catalog` and live song metadata, invalidates process-local song
+state, emits aggregate `songs_changed` telemetry, and retries later when the
+publication lock is busy. It does not generate paths and, with publication
+path artifacts enabled, does not mutate the canonical published
+`/api/songs` row, maxima, rankings, or publication pointer. Those surfaces
+remain tied to the catalog captured when the worker allocated its publication.
+
+The repository Compose files contain only a commented 15-minute example.
+Production keeps the code default unless the production-owned Compose project
+explicitly overrides `Scraper__SongSyncInterval`.
+
 ## Path generation
 
 | Key | Default | Purpose |
 |---|---|---|
 | `Scraper:CHOptPath` | `tools/CHOpt` | Bundled CHOpt launcher or binary |
 | `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
-| `Scraper:EnableAutomaticPathGeneration` | `false` | Processes only pending songs from background catalog refresh when enabled |
+| `Scraper:EnableAutomaticPathGeneration` | `false` | Legacy API-owned pending-song promotion. Rejected at startup until publication-safe scrape-pass staging replaces it |
+| `Scraper:UsePublicationPathArtifacts` | `false` | Backend-only source flag. Serves effective published path state and CHOpt maxima from the publication-bound `publication_path_artifacts` snapshot instead of live `songs` rows |
+| `Scraper:EnableScrapePassPathGeneration` | `false` | Worker-only publication-safe scrape-pass staging. Stages pending-song generations into the working publication snapshot; live rows change only at publication commit |
+| `Scraper:ScrapePassPathGenerationMaxSongs` | `25` | Maximum pending songs staged per scrape pass (1–500) |
+| `Scraper:ScrapePassPathGenerationTimeout` | `00:20:00` | Whole-batch staging budget (1 minute–6 hours) |
+| `Scraper:ScrapePassPathGenerationAllowChangedMaxima` | `false` | Applies a regenerated song whose existing maxima changed. Off records `max_score_change_requires_review` and leaves the song pending |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
 | `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v4` | Semantic identity for the dedicated plastic-drums MIDI variant, authored activation-window contract, eight-instrument scope, and artifact schema |
 
@@ -67,6 +146,52 @@ documentation, artifacts, or commands. Profile changes invalidate selected
 older generations but do not select the full catalogue; use the guarded
 sequential procedure in [Path generation](../components/path-generation.md).
 
+The scrape-pass staging options have no browser exposure and are owned by the
+`fstworker` role only; the `fstservice` role ignores them apart from the admin
+regeneration gate. `Scraper:EnableScrapePassPathGeneration` requires both
+`Scraper:EnablePathGeneration` and `Scraper:UsePublicationPathArtifacts`,
+because staged generations are only readable through the publication-bound
+snapshot. Out-of-range max-song or timeout values are rejected at startup, and
+`Scraper:EnableAutomaticPathGeneration=true` is still rejected at startup.
+
+Staging failures never abort a scrape pass, and songs deferred for review or
+retry are excluded from automatic selection until an explicit successful
+promotion, a provider catalog identity change, or
+`POST /api/admin/path-generation/rearm` re-arms them.
+
+Automatic staging runs only when the resolved phase set is `ScrapePhase.All`.
+Phase-selective runs leave pending songs untouched because staged maxima may be
+published only with rebuilt rankings, statistics, and the canonical
+`public-api:songs:v1` payload.
+
+When automatic staging is enabled, `Scraper:MidiEncryptionKey` is a startup
+prerequisite and must be a 32- or 64-character hexadecimal AES key. The worker
+fails option validation before readiness when the key is missing or invalid;
+tracked role files never contain the secret.
+
+A role that never runs schema DDL - `Scraper:ApiOnly=true`,
+`Scraper:SkipStartupSchemaInitialization=true`, or
+`Scraper:RolloutReadOnlyStartup=true` - and also sets
+`Scraper:UsePublicationPathArtifacts=true` verifies the current publication's
+path artifact release at startup. The rollout read-only mode performs this
+check before its early return. Start the API/schema-initializing role first,
+then no-DDL roles; see
+[Deployment topology](../operations/deployment.md).
+
+Enabling `Scraper:UsePublicationPathArtifacts` also disables immediate admin
+path regeneration on the service role: `POST /api/admin/regenerate-paths`
+returns `409 Conflict` because live promotion is no longer a supported path
+state change in publication-bound mode.
+
+`Scraper:UsePublicationPathArtifacts` has no browser exposure. It is owned by
+both the `fstservice` (read) and `fstworker` (capture/maintenance) roles and
+takes effect only after a restart. Mutation, generation, and maintenance code
+paths always read live rows regardless of its value. Published API reads and
+scrape-derived computation read the exact current or working publication
+snapshot. Rollback is setting
+`Scraper__UsePublicationPathArtifacts=false` and restarting. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
 The option classes are authoritative when a property exists but is omitted from
 `appsettings.json`.
 
@@ -74,12 +199,12 @@ The option classes are authoritative when a property exists but is omitted from
 
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
-| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume evidence and revalidation |
+| `Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` | `600` | `1`-`86400` | Npgsql command and transaction-local PostgreSQL statement timeout for live-scale max-score plan/apply/resume/rollback evidence and revalidation |
 
 The production Compose-form override is
 `Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`. The value applies
 uniformly to publication population, complete consumed score-history,
-notification, affected-account, cache, final validation, and apply/resume
+notification, affected-account, cache, final validation, and apply/resume/rollback
 revalidation commands. It does not change ordinary scrape or cleanup command
 timeouts. During final completion, the transaction-local PostgreSQL
 `statement_timeout` uses this value only for the immutable cache-entry
@@ -105,16 +230,100 @@ rollback. Enabling it in production requires a capacity-safe matched full
 scrape A/B and exact publication/data parity; isolated replay timing is not
 promotion evidence.
 
+## Registered-band remaining-work grace
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace` | `false` | Boolean | Enables one remaining-work-gated extension for discovery |
+| `Scraper:EnableRegisteredBandTargetedProcessingRemainingWorkGrace` | `false` | Boolean | Enables one remaining-work-gated extension for targeted processing |
+| `Scraper:RegisteredBandRemainingWorkGraceMaxDuration` | `00:02:00` | `00:00:01`-`00:02:00` | Immutable maximum extension beyond the base timeout |
+| `Scraper:RegisteredBandRemainingWorkGraceRecentProgressWindow` | `00:01:30` | `00:00:01` through max duration | Maximum durable-checkpoint age and grace-idle interval |
+| `Scraper:RegisteredBandRemainingWorkGraceMaxRemainingLookups` | `3` | `1`-`3` | Maximum exact `planned - durable completed` work at the base deadline |
+
+Compose maps these to
+`ENABLE_REGISTERED_PLAYER_BAND_DISCOVERY_REMAINING_WORK_GRACE`,
+`ENABLE_REGISTERED_BAND_TARGETED_PROCESSING_REMAINING_WORK_GRACE`,
+`REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_DURATION`,
+`REGISTERED_BAND_REMAINING_WORK_GRACE_RECENT_PROGRESS_WINDOW`, and
+`REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_REMAINING_LOOKUPS`.
+All tracked enable defaults remain false. Enabling either phase requires its
+resolved discovery/targeted base timeout to be positive; zero retains the
+legacy unlimited wait only while grace is disabled. Invalid thresholds fail
+startup. All five values participate in durable phase `config_id`.
+
+With the bounded defaults, enabled maximum network/await budgets are eight
+minutes for discovery (`6m + 2m`) and seven minutes for targeted processing
+(`5m + 2m`). Production enablement requires a separate matched full-scrape A/B;
+configuration rollback is independently setting each enable flag to `false`.
+
+## Player rivals
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
+
+The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
+post-scrape rivals first load all target users' current scores once per
+instrument, sequentially across instruments, then reuse those immutable score
+lists for combo counting, neighborhood scans, and selection-state persistence.
+The account limit applies only after that shared preload. Direct single-user
+and backfill calls retain their existing on-demand read path.
+
+Lower the value to reduce PostgreSQL memory, temp-file, and parallel-query
+pressure. Raising it requires a matched full-scrape capacity test because each
+account can execute many neighborhood reads and fingerprint queries. The
+setting changes scheduling only; rival eligibility, methods, directions,
+samples, persistence, publication criticality, and result ordering are
+unchanged.
+
+## Leaderboard rivals
+
+| Key | Default | Valid range | Purpose |
+|---|---:|---:|---|
+| `Scraper:LeaderboardRivalsMaxDegreeOfParallelism` | `4` | positive integer | Registered accounts included in each per-instrument ranking/profile batch |
+
+The Compose form is
+`Scraper__LeaderboardRivalsMaxDegreeOfParallelism`. Despite the retained key
+name, scheduled processing no longer fans out that many accounts concurrently.
+It processes one instrument at a time and chunks registered accounts by this
+value. Each chunk loads rankings and its deduplicated user/neighbor profiles
+once, then persists every user/instrument independently.
+
+Lower values reduce peak profile memory but repeat the full-instrument profile
+query more often. Higher values reduce query count while retaining more
+profiles and score DTOs in memory. The setting does not change rank methods,
+neighbor radius, sample caps, persistence shape, or publication behavior.
+Direct single-user calls and max-score maintenance keep their separate
+on-demand and maintenance-lease paths.
+
 ## Role differences
 
 `deploy/config/fstservice-role.env` enables published-source reads while
 disabling published-source writes, stored-rank rollout, unchanged-snapshot
-reuse, automatic path generation, and publication read context.
+reuse, legacy automatic path generation, and publication read context. It sets
+`Scraper__UsePublicationPathArtifacts=true`, so the service serves path state
+and CHOpt maxima from the publication snapshot and rejects immediate admin path
+regeneration. It intentionally does not set
+`Scraper__EnableScrapePassPathGeneration`: staging is worker-only.
 
-`deploy/config/fstworker-role.env` skips startup schema initialization, enables
+`deploy/config/fstworker-role.env` sets
+`Scraper__UsePublicationPathArtifacts=true` and
+`Scraper__EnableScrapePassPathGeneration=true` with the bounded
+`ScrapePassPathGenerationMaxSongs=25`,
+`ScrapePassPathGenerationTimeout=00:20:00`, and
+`ScrapePassPathGenerationAllowChangedMaxima=false`. Legacy
+`Scraper__EnableAutomaticPathGeneration` stays `false` on both roles and is
+rejected at startup, so the supported production configuration replaces the
+legacy generator rather than leaving the catalog without one. The shipped
+option defaults remain `false` for generic safety; enabling them is a role
+configuration decision, and either flag can be reverted independently on
+restart.
+
+`deploy/config/fstworker-role.env` also skips startup schema initialization, enables
 the three publication correctness gates, writes published scope sources, keeps
-public-read ownership off the worker, leaves unchanged-snapshot reuse and
-publication read context disabled, and sets
+public-read ownership off the worker, enables scope fingerprints and
+unchanged-snapshot reuse after accepted scrape 1303, leaves publication read
+context disabled, and sets
 `WriteLegacyLiveLeaderboardDuringScrape=false`.
 With that value, the post-scrape legacy stored-rank phase completes its
 publication-critical contract without performing a rank update. It is never
@@ -164,6 +373,100 @@ which the isolated target must not match.
 Tests inject their root/target policy directly; there is no environment flag
 that weakens production root, device, marker, cluster, or publication refusal.
 
+## Manual capture-only environment
+
+Capture-only mode loads the normal `.env`, appsettings, environment-specific
+appsettings, and process environment solely to obtain Epic authentication,
+enabled leaderboard types, pacing, and proxy-routing behavior. It never reads
+or creates an Npgsql data source and does not require a PostgreSQL connection.
+Resolved values, credentials, tokens, configured addresses, and authenticated
+account configuration must not be copied into logs, packages, exception
+artifacts, or documentation. Captured leaderboard participant account IDs are
+data payload and require the same access and retention controls as leaderboard
+history.
+
+Every production invocation requires these explicit values:
+
+| Variable | Requirement |
+|---|---|
+| `FST_CAPTURE_APPROVED_ROOT` | Existing capture root under the canonical 4 TB FST `fst-data/capture` or `fst-data/evidence/capture` tree |
+| `FST_CAPTURE_APPROVED_DEVICE` | Exact filesystem device identity (`major:minor` on Linux) for that root |
+| `FST_CAPTURE_MAX_PACKAGE_BYTES` | Maximum final sealed-package size; must exceed the bounded 24 MiB pre-metadata allowance and is used as the conservative pre-provider admission size |
+| `FST_CAPTURE_MIN_FREE_SPACE_RESERVE_BYTES` | Non-negative free-space reserve that must remain after admission and sealing |
+| `FST_CAPTURE_MAX_RETAINED_SEALED_PACKAGES` | Positive count ceiling; reaching it refuses capture and never deletes an older package |
+| `FST_CAPTURE_GIT_COMMIT` | Exact 40- or 64-character implementation commit |
+| `FST_CAPTURE_IMAGE_DIGEST` | Exact OCI SHA-256 image digest |
+| `FST_CAPTURE_IMAGE_REVISION` | Exact 40- or 64-character OCI revision |
+| `FST_CAPTURE_PAGINATION_MAX_SCORES_PATH` | Optional canonical `fst.capture-pagination-max-scores.v1` regular file beneath the approved root and on its filesystem device; required whenever a non-exhausted parallel solo scope needs CHOpt-aware pagination |
+
+The approved root and every ancestor are rejected if they contain Tier-0
+package marker files; a sealed package can never be reused as a capture
+container.
+
+`FST_CAPTURE_RESPONSE_SHARD_BYTES` is optional and defaults to 64 MiB. It must
+be greater than the 8 MiB response-record ceiling and no larger than the
+64 MiB contract ceiling. The default geometry provides 128 GiB of response
+capacity, above the measured approximately 92.8 GB workload. Before provider
+traffic, checked arithmetic verifies that the configured shard size multiplied
+by the fixed 2,048-shard ceiling can contain the admitted package response
+budget. The command rechecks current and projected final package bytes
+independently from future metadata/workspace bytes. A no-follow approved-root
+lock is acquired for preflight and held through the final free-space and
+retained-count decision and sealing, including between different output
+directories. It never performs retention deletion.
+
+The normal `Scraper` keys that select full-scrape solo instruments,
+`Scraper:EnableBandScraping`, `Scraper:MaxPagesPerLeaderboard`, concurrency,
+the global request rate, and the existing aligned
+proxy/pacing/cooldown/retry/self-heal settings are reused. Parallel solo mode
+also reuses the active valid-entry/deep-scrape thresholds and batch size;
+sequential solo and the active band fetcher stop at the initial common page
+cap. The legacy direct band phase's separate page/valid-entry settings are not
+used by capture-only mode.
+Pages may complete concurrently, but package records are restored to canonical
+scope/page order before sealing. A scope that could be truncated fails closed
+unless catalog acquisition supplies the exact non-database maximum-score
+snapshot needed by the ordinary pagination decision. The configured curl scratch directory is required for every live capture,
+including .NET-HTTP fallback when curl is not the primary proxy transport. It
+must be the exact absolute
+`<FST_CAPTURE_APPROVED_ROOT>/.capture-curl-scratch` path, outside every output
+package and any existing Tier-0 package ancestor. Capture revalidates that path
+before every curl write and caps every curl response during transfer at the
+capture response-record byte limit. Curl ignores ambient configuration, and
+proxy concurrency ownership remains active until each response body is
+consumed or disposed. Initial storage admission reserves one
+maximum response per configured capture page-concurrency slot in addition to
+the maximum package and sealing workspace.
+
+The maximum-score file is strict canonical JSON bound to the exact provider
+catalog SHA-256. It contains one ordinal song record per catalog song and one
+entry, in canonical solo-instrument order, for every supported maximum; a
+missing maximum omits the `maximumScore` member. Capture reads it as a regular
+no-follow file on the approved device, records its SHA-256 in package lineage,
+and revalidates it with the final catalog fetch. It is pagination input only
+and grants no database or path-generation authority.
+
+```json
+{"formatId":"fst.capture-pagination-max-scores.v1","providerContentSha256":"<sha256>","songs":[{"maximums":[{"leaderboardType":"Solo_Guitar","maximumScore":123456}],"songId":"song-id"}],"version":1}
+```
+
+The abbreviated example shows one maximum; an admitted file must contain every
+catalog song and every capture-contract solo instrument in canonical order.
+
+## Snapshot-retirement plan environment
+
+The separate host-run retirement plan tool does not load service appsettings or
+Compose role files. It accepts only:
+
+| Variable | Requirement |
+|---|---|
+| `FST_SNAPSHOT_RETIREMENT_CONNECTION_STRING` | Operator-supplied PostgreSQL connection string; treated as a secret and never emitted |
+| `FST_SNAPSHOT_RETIREMENT_BINARY_SHA256` | Lowercase SHA-256 of the published self-contained single-file Release supervisor executable; the wrapper and process both verify it |
+
+These variables do not enable worker behavior. A matching explicit immutable
+policy epoch is still required before `plan-cycle` can write a plan. See
+[Snapshot generation retirement plan control plane](../database/SnapshotGenerationRetirementControlPlane.md).
+
 ## Environment naming
 
 Use the .NET key in prose (`Features:AppManual`) and the Compose form in
@@ -175,6 +478,33 @@ examples (`Features__AppManual`). Shell-friendly aliases such as
 These variables configure host-side
 `tools/fst-worker-compose-guard.sh` mutation/recovery behavior. They are not
 FSTService options and do not belong in container environment arrays.
+
+Run-once guard actions require a named data profile. `scrape-resume` is the
+only profile that permits `Scraper:EnabledPhases=SoloRankings`; it also
+requires a positive `Scraper:ResumeScrapeId`, explicit full-worker hosting
+(`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
+publication correctness and snapshot-reuse gates, and
+`Scraper:RivalsMaxDegreeOfParallelism=2`. This profile is for an existing
+resume-eligible candidate only and does not authorize a new network scrape.
+The worker ignores legacy `Scraper:ResumeSongsScraped`,
+`Scraper:ResumeTotalEntries`, `Scraper:ResumeTotalRequests`,
+`Scraper:ResumeTotalBytes`, and
+`Scraper:ResumeEpicReportedOver100Pages` values and instead loads the exact
+metrics from the candidate's PostgreSQL acquisition checkpoint. The legacy
+keys remain bindable so older worker images and environment files can coexist
+during a rolling deployment. Worker database validation also requires the
+checkpoint's versioned solo-scope count/fingerprint to match the requested
+scrape's complete all-time manifests for all nine canonical solo instruments;
+band manifests are not considered, and in-worker resume admission rejects any
+reduced canonical `Scraper:Query*` solo scope before post-processing begins.
+Terminal completion does not create a missing checkpoint for legacy rows.
+With runtime probes enabled, the guard also requires a stopped worker, an
+`updating` or `stalled` service state for the exact configured resume scrape,
+frozen public reads with reason `post-process`, and a different published
+scrape ID before it may recreate the worker. The profile is rejected for
+ordinary `--check`/`--recreate`; only `--check-runonce` and
+`--recreate-runonce` may use it.
 
 | Variable | Default | Purpose |
 |---|---:|---|

@@ -1,11 +1,17 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-27
+last_verified_commit: c35b7f47
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
+  - deploy/config/fstservice-role.env
+  - deploy/config/fstworker-role.env
+  - FSTService/StartupInitializer.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/PublicationGeneration.cs
+  - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
   - FortniteFestivalWeb/Dockerfile
@@ -14,6 +20,7 @@ sources:
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.yml
 update_triggers:
   - Compose services, images, roles, volumes, ports, networks, health checks, or production ownership change.
+  - Role startup ordering or startup readiness gates change.
 ---
 
 # Deployment topology
@@ -50,13 +57,21 @@ wiring the boot unit remain production operations; repository templates do not
 install or mutate that live wiring.
 
 `--recover-start` does not recreate or restart core services. It requires
-PostgreSQL and `fstservice` to be healthy/ready, checks that worker/publication
-state is safe, converges only the effective proxy set, runs the full proxy
-qualification probes, and finally recreates only `fstworker` with `--no-deps`.
-Failure leaves the public service, web, and database containers under their
-normal ownership. A failed start stops the worker only while operational state
-remains idle and unfrozen; if work or a freeze has begun, the worker remains
-running for the guarded no-progress recovery procedure.
+PostgreSQL and `fstservice` to be healthy/ready, validates the continuous
+worker image/config binding, and then branches under the same shared
+worker-mutation lock. Idle and unfrozen state keeps the existing bounded
+effective-proxy recovery, runtime qualification, and continuous worker
+recreate path. A stopped/absent worker plus exact active-candidate state
+(`currentUpdate.status` `updating` or `stalled`, frozen reads with
+`freezeReason=post-process`, a different published scrape, and a stale/offline
+prior worker heartbeat) instead loads the durable PostgreSQL resume state,
+rejects legacy/null/incomplete checkpoints, starts only the existing
+`scrape-resume` run-once worker, waits for publication and unfreeze
+convergence, and only then recreates the continuous worker. Failure leaves the
+public service, web, and database containers under their normal ownership. A
+failed start stops the worker only while operational state remains idle and
+unfrozen; if work or a freeze has begun, the worker remains running for the
+guarded no-progress recovery procedure.
 
 This two-step boundary is necessary because a Docker restart policy does not
 start a dependent that never passed `service_healthy`. Do not replace it with a
@@ -138,6 +153,68 @@ backend network.
 Gluetun services expose HTTP proxy/control ports only inside the Compose
 network. The worker talks to those service names; the browser and public API do
 not.
+
+## Role startup ordering
+
+Only the schema-initializing role applies database releases. Any role that sets
+`Scraper__ApiOnly=true`, `Scraper__SkipStartupSchemaInitialization=true`, or
+`Scraper__RolloutReadOnlyStartup=true` never runs DDL, so a release that
+changes publication-bound surfaces must be applied before those roles start:
+
+1. Stop or hold the old worker before applying a path-manifest release so an
+   older binary cannot prepare or commit a candidate after the schema cut.
+2. Start the API/schema-initializing role (`fstservice`, which keeps
+   `Scraper__SkipStartupSchemaInitialization=false`). Its startup applies the
+   schema plan, including the bounded
+   `publication-generation-retirement-columns`,
+   `publication-generation-foreign-keys` migration, the
+   concurrent `publication-generation-retirement-index` migration, the
+   `publication-path-artifacts` migration, and the rebinding of retained active
+   pointer snapshots to the current path manifest version. Retirement columns
+   use a short transaction; the exact partial index uses bounded
+   `CREATE INDEX CONCURRENTLY` under a migration advisory lock and repairs an
+   invalid interrupted artifact on retry. The foreign-key step additively
+   installs a separately named restrictive FK plus a `BEFORE DELETE` guard.
+   An old `c35b7f47` service may restore the legacy named FK to CASCADE without
+   removing either new invariant. All steps use bounded lock/statement/command
+   timeouts and fail startup for retry rather than continuing partially.
+3. Confirm that role is healthy on `/readyz`.
+4. Start `fstworker`, any API-only role, and any rollout read-only role. With
+   `Scraper__UsePublicationPathArtifacts=true` each verifies the current
+   publication's path artifact release before signalling ready, including
+   before the rollout read-only early return, and fails fast with an explicit
+   remediation message if the schema-initializing step has not been applied.
+
+The service role currently enables `UsePublishedScopeSources`. It therefore
+does not signal startup readiness until the current publication owns an exact
+authoritative source binding, and `/readyz` continues to revalidate that
+binding through a one-second keyed cache. Apply the schema and allow a
+publication produced by the binding-hash-aware worker before starting that
+role. A legacy or partial current mapping is intentionally unhealthy rather
+than silently served; a role that deliberately retains the old read path may
+keep `UsePublishedScopeSources=false` during a coordinated rolling transition.
+
+The worker deployment must also provide `MIDI_ENCRYPTION_KEY` as a valid 32-
+or 64-character hexadecimal AES key when scrape-pass staging is enabled.
+Startup option validation fails before readiness when this prerequisite is
+missing or malformed; the API-only service role does not need the worker
+secret.
+
+Every publication commit also revalidates the candidate path manifest version,
+row count, canonical hash, and cache ownership. A stale deferred candidate or a
+candidate with staged paths but an inherited songs cache fails before pointer
+movement.
+
+The stored-rank `compose.true.yml` and `compose.false.yml` read-only overlays
+are post-schema canaries, not schema bootstrap configurations. After any image
+or publication-manifest release, apply their sibling `compose.recovery.yml`
+first and wait for `fstservice` readiness; only then apply the read-only true or
+false overlay. If the release gate rejects a canary, return to the recovery
+overlay rather than weakening the gate.
+
+See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md)
+for the exact readiness conditions and the path-generation role flags.
 
 ## Deployment safety
 

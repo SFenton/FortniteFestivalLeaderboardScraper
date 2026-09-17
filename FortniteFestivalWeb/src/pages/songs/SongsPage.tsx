@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { observeScrollViewportRect } from '../../utils/scrollViewport';
 import { useQuery } from '@tanstack/react-query';
 import { IoCompass, IoFunnel, IoSwapVerticalSharp } from 'react-icons/io5';
 import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
@@ -36,6 +37,7 @@ import { SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../constants/keyboard
 import { safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
+import CatalogUpdateBanner from '../../components/page/CatalogUpdateBanner';
 import CollapseOnExit from '../../components/page/CollapseOnExit';
 import EmptyState from '../../components/common/EmptyState';
 import { ActionPill } from '../../components/common/ActionPill';
@@ -86,6 +88,7 @@ import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQui
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
+import { useCatalogPublicationLag } from '../../hooks/data/useCatalogPublicationLag';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -356,13 +359,14 @@ function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number
 
 export default function SongsPage() {
   const { t } = useTranslation();
+  const catalogLag = useCatalogPublicationLag();
   const {
     state: { songs, isLoading, error },
   } = useFestival();
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobileChrome;
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const { profile } = useTrackedPlayer();
   const selectedBand = profile?.type === 'band' ? profile : null;
@@ -1051,6 +1055,7 @@ export default function SongsPage() {
     overscan: 8,
     gap: VIRTUAL_ROW_GAP,
     getScrollElement: () => scrollContainerRef.current,
+    observeElementRect: observeScrollViewportRect,
     scrollMargin: listScrollMargin,
     scrollPaddingStart: DEFAULT_SONGS_SCROLL_OFFSET,
   });
@@ -1238,6 +1243,12 @@ export default function SongsPage() {
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>
+        {typeof catalogLag?.awaitingPublication === 'number'
+          && catalogLag.awaitingPublication > 0 && (
+          <CatalogUpdateBanner
+            count={catalogLag.awaitingPublication}
+          />
+        )}
         {(bannerVisible || !bannerCollapsed) && (
           <CollapseOnExit show={bannerVisible} onCollapsed={() => setBannerCollapsed(true)}>
             {isSyncing ? (

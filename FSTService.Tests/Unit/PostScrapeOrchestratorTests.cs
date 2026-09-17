@@ -1,5 +1,6 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Diagnostics;
+using FortniteFestival.Core;
 using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
@@ -200,6 +201,70 @@ public class PostScrapeOrchestratorTests : IDisposable
         return new SongProcessingMachine.MachineResult();
     }
 
+    [Fact]
+    public async Task RegisteredLookupGraceDisabledUsesLegacyOperationPath()
+    {
+        var calls = 0;
+
+        var result = await _sut.RunRegisteredLookupPhaseWithTimeoutAsync(
+            "RegisteredPlayerBandDiscovery",
+            "registered-player band discovery",
+            new RegisteredLookupGracePolicy(
+                false,
+                TimeSpan.FromSeconds(1),
+                TimeSpan.FromMinutes(2),
+                TimeSpan.FromSeconds(90),
+                3),
+            (state, token) =>
+            {
+                calls++;
+                state.Initialize(0);
+                return Task.FromResult(17);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(17, result);
+        Assert.Equal(1, calls);
+        Assert.DoesNotContain(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "registered_lookup_grace_evaluation",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RegisteredLookupGraceWithZeroBaseIsUnlimitedAndUnevaluated()
+    {
+        var completion = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var run = _sut.RunRegisteredLookupPhaseWithTimeoutAsync(
+            "RegisteredBandTargetedProcessing",
+            "registered-band targeted processing",
+            new RegisteredLookupGracePolicy(
+                true,
+                TimeSpan.Zero,
+                TimeSpan.FromMinutes(2),
+                TimeSpan.FromSeconds(90),
+                3),
+            (state, token) =>
+            {
+                state.Initialize(0);
+                return completion.Task;
+            },
+            CancellationToken.None);
+
+        await Task.Delay(20);
+        Assert.False(run.IsCompleted);
+        completion.SetResult(23);
+        Assert.Equal(23, await run);
+        Assert.DoesNotContain(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "registered_lookup_grace_evaluation",
+                StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -235,6 +300,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         HashSet<string>? registeredIds = null,
         GlobalLeaderboardPersistence.PipelineAggregates? aggregates = null,
         IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>? scrapeRequests = null,
+        IReadOnlyCollection<Song>? publicationCatalogSongs = null,
         bool leaderboardScrapeCompleted = true)
     {
         return new ScrapePassContext
@@ -245,6 +311,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             RegisteredIds = registeredIds ?? new HashSet<string>(),
             Aggregates = aggregates ?? new GlobalLeaderboardPersistence.PipelineAggregates(),
             ScrapeRequests = scrapeRequests ?? Array.Empty<GlobalLeaderboardScraper.SongScrapeRequest>(),
+            PublicationCatalogSongs =
+                publicationCatalogSongs ?? [],
             DegreeOfParallelism = 4,
             LeaderboardScrapeCompleted = leaderboardScrapeCompleted,
         };
@@ -264,8 +332,11 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     private PostScrapeOrchestrator CreateOrchestratorWithImprovementNotifications(
-        ImprovementNotificationOptions? improvementOptions = null)
+        ImprovementNotificationOptions? improvementOptions = null,
+        ScraperOptions? scraperOptions = null)
     {
+        var resolvedScraperOptions =
+            scraperOptions ?? new ScraperOptions();
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
@@ -276,9 +347,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             _progress,
             new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
             new ResponseCacheService(TimeSpan.FromMinutes(5)),
-            Substitute.For<ILogger<RivalsOrchestrator>>());
+            Substitute.For<ILogger<RivalsOrchestrator>>(),
+            Options.Create(resolvedScraperOptions));
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
-        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(resolvedScraperOptions), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var notificationOptions = Options.Create(improvementOptions ?? new ImprovementNotificationOptions
         {
             Enabled = true,
@@ -308,10 +380,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             new BandScrapePhase(
                 scraper,
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                _pathDataStore, _pool, _progress, Options.Create(resolvedScraperOptions),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions()), _log,
+            Options.Create(resolvedScraperOptions), _log,
             _registrationMutations, null,
             improvementNotifications: improvementNotifications,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
@@ -1456,8 +1528,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 20).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"p_{i}", Score = 1000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"p_{i}",
+                Score = 1000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -1498,8 +1573,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"p_{i}", Score = 10000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"p_{i}",
+                Score = 10000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -1556,7 +1634,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
-                Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log, _registrationMutations, null);
+                Substitute.For<ILogger<BandScrapePhase>>()), new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()), opts, _log, _registrationMutations, null);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 â†’ no-op
@@ -1579,8 +1657,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 5).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"rank_{i}", Score = 10000 - i * 100,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"rank_{i}",
+                Score = 10000 - i * 100,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("rankSong", entries);
 
@@ -2290,6 +2371,55 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_AllowsCompletedMarkerWhileFrozen()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications(
+            scraperOptions: new ScraperOptions
+            {
+                RunOnce = true,
+                ResumeScrapeId = 1305,
+                EnabledPhases = ScrapePhase.SoloRankings,
+            });
+        var publishedScrapeId = PublishCompletedScrape();
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            "later-candidate");
+
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        var status = notifications.GetPublicationStatus();
+        Assert.Equal(publishedScrapeId, status.MarkerScrapeId);
+        Assert.Equal("completed", status.MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_RejectsCompletedMarkerWhileFrozenOutsideResume()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+            CancellationToken.None);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            "later-candidate");
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sut.RecoverPendingImprovementNotificationsOnStartupAsync(
+                    CancellationToken.None));
+
+        Assert.Contains("public reads are frozen", exception.Message);
+    }
+
+    [Fact]
     public async Task RecoverPendingImprovementNotificationsOnStartupAsync_PreservesDisabledMarker()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
@@ -2386,8 +2516,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         var entries = Enumerable.Range(0, 50).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"prune_{i}", Score = 10000 - i * 100,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"prune_{i}",
+                Score = 10000 - i * 100,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
         db.UpsertEntries("song1", entries);
 
@@ -2638,7 +2771,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         InsertSnapshotEntry(84, songId, "Solo_Vocals", accountId, 93_189, isFullCombo: true);
         InsertProjectionScope(songId, "Solo_Vocals", sourceSnapshotId: 83);
 
-        var ctx = CreateContext(scrapeId: 84, registeredIds: new HashSet<string> { accountId });
+        var ctx = CreateContext(
+            scrapeId: 84,
+            registeredIds: new HashSet<string> { accountId },
+            publicationCatalogSongs:
+            [
+                new Song
+                {
+                    track = new Track
+                    {
+                        su = songId,
+                        tt = "Cache Projection",
+                        an = "Artist",
+                        @in = new In { vl = 1 },
+                    },
+                },
+            ]);
 
         await _sut.RunPublicationCleanupAsync(
             ctx,
@@ -2706,16 +2854,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         var overEntries = Enumerable.Range(0, 150).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"exploiter_{i}", Score = 5000 - i * 10,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"exploiter_{i}",
+                Score = 5000 - i * 10,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
 
         // 200 valid entries (scores 1000 down to 5, all â‰¤ raw CHOpt max 1000)
         var validEntries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"valid_{i}", Score = 1000 - i * 5,
-                Accuracy = 95, Stars = 5, Season = 3,
+                AccountId = $"valid_{i}",
+                Score = 1000 - i * 5,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
             }).ToList();
 
         db.UpsertEntries("song1", overEntries);
@@ -3164,6 +3318,55 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeLeaderboardRivalsAsync_ReportsRegisteredAccountProgress()
+    {
+        var ctx = CreateContext(registeredIds:
+        [
+            "leaderboard-rival-1",
+            "leaderboard-rival-2",
+        ]);
+
+        await _sut.ComputeLeaderboardRivalsAsync(
+            ctx,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal("ComputingRivals", current!.Operation);
+        Assert.Equal(
+            "leaderboard_rivals_account_instruments",
+            current.SubOperation);
+        Assert.Equal(18, current.WorkItems?.Completed);
+        Assert.Equal(18, current.WorkItems?.Total);
+        Assert.True(current.WorkItemsTotalFinal);
+        Assert.Equal(2, current.Accounts?.Completed);
+        Assert.Equal(2, current.Accounts?.Total);
+    }
+
+    [Fact]
+    public async Task ComputePlayerStatsTiersAsync_ReportsNormalizedAccountProgress()
+    {
+        var ctx = CreateContext(registeredIds:
+        [
+            "player-stats-1",
+            " ",
+            "player-stats-2",
+        ]);
+
+        await _sut.ComputePlayerStatsTiersAsync(
+            ctx,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal("Precomputing", current!.Operation);
+        Assert.Equal("population_tiers", current.SubOperation);
+        Assert.Equal(2, current.WorkItems?.Completed);
+        Assert.Equal(2, current.WorkItems?.Total);
+        Assert.True(current.WorkItemsTotalFinal);
+    }
+
+    [Fact]
     public void CriticalSkipRecorder_RejectsBeforePersisting()
     {
         var scrapeId = _metaDb.StartScrapeRun();
@@ -3342,6 +3545,64 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal("failed", reader.GetString(0));
         Assert.Equal("first-seen failed", reader.GetString(1));
         Assert.True(reader.IsDBNull(2));
+    }
+
+    [Fact]
+    public async Task ResultBearingFailurePreservesPartialImpactAndRecordsFailure()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.AttachScrape(scrapeId);
+        var ctx = CreateContext(scrapeId);
+        var partial = new RegisteredBandProcessingResult
+        {
+            BandsProcessed = 1,
+            LookupsChecked = 77,
+            EntriesPersisted = 1,
+            ImpactedTeamsByBandType =
+                new Dictionary<string, IReadOnlyCollection<string>>
+                {
+                    ["Band_Duets"] = ["team-a"],
+                },
+            ImpactedCurrentProjectionScopes =
+            [
+                new BandCurrentProjectionScopeKey(
+                    "song-a",
+                    "Band_Duets",
+                    "combo",
+                    "0:1"),
+            ],
+        };
+
+        var result = await _sut.RunClassifiedResultPhaseForTestAsync(
+            ctx,
+            "RegisteredBandTargetedProcessing",
+            () => throw new PartialResultFailureException<RegisteredBandProcessingResult>(
+                partial,
+                new TimeoutException("phase budget elapsed")),
+            RegisteredBandProcessingResult.Empty);
+
+        Assert.Same(partial, result);
+        Assert.Contains(
+            "team-a",
+            result.ImpactedTeamsByBandType["Band_Duets"]);
+        Assert.Single(result.ImpactedCurrentProjectionScopes);
+        var failed = Assert.Single(ctx.PostScrapeOutcomes.FailedBestEffortPhases);
+        Assert.False(failed.Success);
+        Assert.Equal("failed", failed.Status);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT status, error_message
+            FROM scrape_phase_outcomes
+            WHERE scrape_id = @scrapeId
+              AND phase = 'RegisteredBandTargetedProcessing'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("failed", reader.GetString(0));
+        Assert.Equal("phase budget elapsed", reader.GetString(1));
     }
 
     [Fact]

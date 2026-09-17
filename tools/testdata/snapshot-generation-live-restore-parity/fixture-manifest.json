@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "toolId": "fst.snapshot-generation-live-restore-parity-fixture.v1",
+  "source": {
+    "dropOperationId": "333ba4b9fb69dbc098d127f0008ec709",
+    "restoreOperationId": "da07c4ce4d07b9692a45a1498313f8b3",
+    "restorePlanDigest": "149b7f91e9980fdff46adcf81d8afaed926dda0cd98bff154d6c3642b08a12e0",
+    "predecessorAuthorizationId": "b20cf7aa76fc8648172db08df58c7ee7"
+  },
+  "captures": {
+    "postDrop": {
+      "manifestSha256": "36e56f8f083f1bda619718a0aa62e9f8a863f17e87f2307fa2cb6c22255dcc6f",
+      "checksumsSha256": "3b05dda87c12e87e6aa158d8b0bca439869ef33ac99cc4fe3211cedda69b0015"
+    },
+    "postRestore": {
+      "manifestSha256": "8273f9b2d96b75751f44d57f87b7163a0043e1d40cc2c7675697677a9e848d35",
+      "checksumsSha256": "42bc8ba202a658b986d4dd6a8ca6788e39603192afb6fa37bb6fff494cf943c0"
+    },
+    "postRestoreRepeat": {
+      "manifestSha256": "0ca1b104b7d40ddf426093f4076af648d0c8c7582e54bfeb86ae4f6cd56047ba",
+      "checksumsSha256": "94a759d33f2f31615746402fd14ce69b2984dcd265688489cbc2cb113c5c8cbe"
+    }
+  },
+  "routes": {
+    "band-export": {
+      "bytes": 422583,
+      "semanticSha256": "6e84def5c11574cfbfee8803fd61ea13cad160e62d61f216b66b64c611bc966d",
+      "outerWorkbookCount": 1
+    },
+    "player-export": {
+      "bytes": 3882943,
+      "semanticSha256": "b2ce01a0f0f5e9e60e844d485622ff8862bb41ba34551813f04a8e9d4ca0f04b",
+      "outerWorkbookCount": 11
+    }
+  },
+  "differenceCategories": [
+    "outer-xlsx-generated-timestamp",
+    "office-root-core-property-relationship",
+    "random-core-property-part-name"
+  ],
+  "safetyReview": {
+    "exportBodies": 0,
+    "entryNames": 0,
+    "playerContent": 0,
+    "credentials": 0,
+    "privateEndpoints": 0,
+    "decision": "safe-hash-only-fixture"
+  }
+}

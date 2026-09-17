@@ -166,6 +166,9 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     [InlineData(
         MaxScoreMaintenanceCommand.ResumeFlag,
         MaxScoreMaintenanceAction.Resume)]
+    [InlineData(
+        MaxScoreMaintenanceCommand.RollbackFlag,
+        MaxScoreMaintenanceAction.Rollback)]
     public void Max_score_actions_route_equals_form_shared_scrape_id(
         string actionFlag,
         MaxScoreMaintenanceAction expectedAction)
@@ -224,6 +227,24 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                     MaxScoreMaintenanceCommand
                         .ExpectedPlanDigestFlag,
                     new string('b', 64),
+                ]);
+                break;
+            case MaxScoreMaintenanceAction.Rollback:
+                args.AddRange(
+                [
+                    MaxScoreMaintenanceCommand.ManifestFlag,
+                    "manifest.json",
+                    MaxScoreMaintenanceCommand.RollbackFileFlag,
+                    "rollback.json",
+                    MaxScoreMaintenanceCommand
+                        .ExpectedManifestDigestFlag,
+                    new string('a', 64),
+                    MaxScoreMaintenanceCommand
+                        .ExpectedPlanDigestFlag,
+                    new string('b', 64),
+                    MaxScoreMaintenanceCommand
+                        .ExpectedRollbackDigestFlag,
+                    new string('c', 64),
                 ]);
                 break;
             default:
@@ -285,6 +306,101 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 .GetProperty(
                     "overlayOnlyAccountFingerprint")
                 .GetString());
+    }
+
+    [Fact]
+    public async Task Unwritten_report_reservation_is_removed()
+    {
+        const string relativePath =
+            "unwritten-rollback-report.json";
+        await using (var reservation =
+                     MaxScoreMaintenanceFileStore
+                         .ReserveNewReport(
+                             _dataDirectory,
+                             relativePath))
+        {
+            Assert.True(
+                File.Exists(reservation.FullPath));
+        }
+
+        Assert.False(
+            File.Exists(
+                Path.Combine(
+                    _dataDirectory,
+                    relativePath)));
+    }
+
+    [Fact]
+    public async Task Rollback_report_v2_round_trips_terminal_evidence()
+    {
+        var now = DateTime.SpecifyKind(
+            new DateTime(2026, 8, 16, 0, 0, 0),
+            DateTimeKind.Utc);
+        var cacheEvidence = new MaxScoreMaintenanceCacheEvidence(
+            10,
+            new string('a', 64),
+            4,
+            new string('b', 64),
+            2,
+            new string('c', 64),
+            3,
+            new string('d', 64),
+            1,
+            new string('e', 64));
+        var report = new MaxScoreMaintenanceRollbackReport(
+            MaxScoreMaintenanceRollbackReport.CurrentReportVersion,
+            Validated: true,
+            Succeeded: true,
+            DryRun: false,
+            Resumable: false,
+            PublicReadsFrozen: false,
+            CleanupPending: false,
+            new string('1', 64),
+            new string('2', 64),
+            new string('3', 64),
+            MaxScoreMaintenancePhase.RolledBack,
+            1296,
+            80,
+            new string('4', 64),
+            new string('5', 64),
+            2,
+            2,
+            0,
+            0,
+            10,
+            cacheEvidence,
+            now,
+            now.AddMinutes(1),
+            [
+                new MaxScoreMaintenanceRollbackStageReport(
+                    MaxScoreMaintenancePhase.RolledBack,
+                    MaxScoreMaintenanceRollbackStageStatus.Completed,
+                    now,
+                    now.AddMinutes(1),
+                    new string('4', 64),
+                    new string('5', 64),
+                    2,
+                    null),
+            ],
+            null,
+            null);
+
+        await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
+            _dataDirectory,
+            "rollback-report-v2.json",
+            report,
+            CancellationToken.None);
+        var loaded =
+            await MaxScoreMaintenanceFileStore
+                .LoadRollbackReportAsync(
+                    _dataDirectory,
+                    "rollback-report-v2.json",
+                    CancellationToken.None);
+
+        Assert.Equal(
+            report with { Stages = loaded.Stages },
+            loaded);
+        Assert.Equal(report.Stages, loaded.Stages);
     }
 
     [Fact]
@@ -415,6 +531,65 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
         Assert.Contains(
             MaxScoreMaintenanceCommand.RollbackOutputFlag,
             error.Message);
+    }
+
+    [Fact]
+    public void Rollback_parser_requires_exact_file_and_digest()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.RollbackFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.ManifestFlag,
+                "manifest.json",
+                MaxScoreMaintenanceCommand.ExpectedManifestDigestFlag,
+                new string('a', 64),
+                MaxScoreMaintenanceCommand.ExpectedPlanDigestFlag,
+                new string('b', 64),
+                MaxScoreMaintenanceCommand.RollbackFileFlag,
+                "rollback.json",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "report.json",
+            ]));
+
+        Assert.Contains(
+            MaxScoreMaintenanceCommand.ExpectedRollbackDigestFlag,
+            error.Message);
+    }
+
+    [Fact]
+    public void Rollback_parser_accepts_explicit_dry_run()
+    {
+        var command = MaxScoreMaintenanceCommand.Parse(
+        [
+            MaxScoreMaintenanceCommand.RollbackFlag,
+            "--published-scrape-id=1296",
+            MaxScoreMaintenanceCommand.ManifestFlag,
+            "manifest.json",
+            MaxScoreMaintenanceCommand.ExpectedManifestDigestFlag,
+            new string('a', 64),
+            MaxScoreMaintenanceCommand.ExpectedPlanDigestFlag,
+            new string('b', 64),
+            MaxScoreMaintenanceCommand.RollbackFileFlag,
+            "rollback.json",
+            MaxScoreMaintenanceCommand.ExpectedRollbackDigestFlag,
+            new string('c', 64),
+            MaxScoreMaintenanceCommand.RollbackDryRunFlag,
+            MaxScoreMaintenanceCommand.ReportOutputFlag,
+            "rollback-report.json",
+        ]);
+
+        Assert.NotNull(command);
+        Assert.Equal(
+            MaxScoreMaintenanceAction.Rollback,
+            command.Action);
+        Assert.Equal("rollback.json", command.RollbackFilePath);
+        Assert.Equal(
+            new string('c', 64),
+            command.ExpectedRollbackDigest);
+        Assert.True(command.RollbackDryRun);
     }
 
     [Fact]

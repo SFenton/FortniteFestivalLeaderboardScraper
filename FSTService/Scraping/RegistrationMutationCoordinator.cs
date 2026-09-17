@@ -7,15 +7,18 @@ public sealed class RegistrationMutationCoordinator
     private readonly IMetaDatabase _metaDatabase;
     private readonly IPathDataStore _pathStore;
     private readonly ISongInstrumentSupportCache _instrumentSupportCache;
+    private readonly StartupPublicationReadOnlyState? _publicationStartup;
 
     public RegistrationMutationCoordinator(
         IMetaDatabase metaDatabase,
         IPathDataStore pathStore,
-        ISongInstrumentSupportCache instrumentSupportCache)
+        ISongInstrumentSupportCache instrumentSupportCache,
+        StartupPublicationReadOnlyState? publicationStartup = null)
     {
         _metaDatabase = metaDatabase;
         _pathStore = pathStore;
         _instrumentSupportCache = instrumentSupportCache;
+        _publicationStartup = publicationStartup;
     }
 
     public IRegistrationMutationLease AcquireLease(
@@ -62,6 +65,8 @@ public sealed class RegistrationMutationCoordinator
             CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (_publicationStartup?.IsLatched == true)
+            throw new RegistrationMutationBlockedException();
         var lease = tryOnly
             ? await _metaDatabase
                 .TryAcquireRegistrationMutationLeaseAsync(ct)

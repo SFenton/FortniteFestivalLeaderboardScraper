@@ -44,11 +44,15 @@ public sealed class RivalsOrchestratorTests : IDisposable
 
     private (RivalsOrchestrator Orch, ScrapeProgressTracker Progress) CreateOrchestrator(
         GlobalLeaderboardPersistence persistence,
-        ILogger<RivalsOrchestrator>? log = null)
+        ILogger<RivalsOrchestrator>? log = null,
+        int maxDegreeOfParallelism = 4)
     {
         var calculator = new RivalsCalculator(persistence, NullLogger<RivalsCalculator>.Instance);
         var progress = new ScrapeProgressTracker();
-        var orch = new RivalsOrchestrator(calculator, persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), log ?? NullLogger<RivalsOrchestrator>.Instance);
+        var orch = new RivalsOrchestrator(calculator, persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), log ?? NullLogger<RivalsOrchestrator>.Instance, Options.Create(new ScraperOptions
+        {
+            RivalsMaxDegreeOfParallelism = maxDegreeOfParallelism,
+        }));
         return (orch, progress);
     }
 
@@ -64,6 +68,35 @@ public sealed class RivalsOrchestratorTests : IDisposable
         // Both accounts should have RivalsStatus rows
         Assert.NotNull(_metaFixture.Db.GetRivalsStatus("acct_1"));
         Assert.NotNull(_metaFixture.Db.GetRivalsStatus("acct_2"));
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_preloads_scores_and_logs_account_limit()
+    {
+        var persistence = CreatePersistence();
+        var log = new TestLogger<RivalsOrchestrator>();
+        var (orch, _) = CreateOrchestrator(
+            persistence,
+            log,
+            maxDegreeOfParallelism: 1);
+
+        await orch.ComputeAllAsync(
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "acct_1",
+                "acct_2",
+            },
+            null,
+            CancellationToken.None);
+
+        Assert.Contains(log.Entries, entry =>
+            entry.Message.Contains(
+                "Preloaded current rivals scores for 2 account(s)",
+                StringComparison.Ordinal));
+        Assert.Contains(log.Entries, entry =>
+            entry.Message.Contains(
+                "maxDegree=1",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -300,6 +333,24 @@ public sealed class RivalsOrchestratorTests : IDisposable
         Assert.Equal("complete", status!.Status);
         Assert.Equal(0, status.CombosComputed);
         Assert.Equal(0, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ComputeForUser_honors_pre_canceled_token()
+    {
+        var persistence = CreatePersistence();
+        var (orch, _) = CreateOrchestrator(persistence);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            orch.ComputeForUser(
+                "acct_cancelled",
+                forceRecompute: true,
+                ct: cts.Token));
+        Assert.Null(
+            _metaFixture.Db.GetRivalsStatus(
+                "acct_cancelled"));
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -75,6 +76,33 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var version = json.GetProperty("version").GetString();
         Assert.NotNull(version);
         Assert.NotEqual("unknown", version);
+    }
+
+    [Fact]
+    public void HttpJsonAndPrecomputeSerializerUseRelaxedUnicodeEncoding()
+    {
+        var options = _factory.Services
+            .GetRequiredService<
+                IOptions<
+                    Microsoft.AspNetCore.Http.Json
+                        .JsonOptions>>()
+            .Value.SerializerOptions;
+        var json = JsonSerializer.SerializeToUtf8Bytes(
+            new
+            {
+                displayName = "Jöhn Łukasz",
+            },
+            options);
+        var text = Encoding.UTF8.GetString(json);
+
+        Assert.Contains(
+            "Jöhn Łukasz",
+            text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "\\u",
+            text,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -202,14 +230,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.ItemShop);
-        Assert.Contains(
+        // Path artifacts are now bound to publication_path_artifacts, so the
+        // surface is ready while item_shop remains legacy live-bound.
+        Assert.DoesNotContain(
             unreadySurfaces,
             surface => surface.GetProperty("surface").GetString() ==
                        PublicationSurfaceNames.PathArtifacts);
+        var pathBinding = Assert.Single(
+            metaDb.GetPublicationSurfaceBindings(publicationId),
+            binding => binding.SurfaceName ==
+                       PublicationSurfaceNames.PathArtifacts);
+        Assert.Equal(
+            "generation_path_artifact_manifest",
+            pathBinding.BindingKind);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            pathBinding.Status);
         foreach (var legacySurfaceName in new[]
                  {
                      PublicationSurfaceNames.ItemShop,
-                     PublicationSurfaceNames.PathArtifacts,
                  })
         {
             var legacySurface = Assert.Single(
@@ -273,6 +312,745 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             $"/api/songs?publicationId={pointers.CurrentPublicationId + 1}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task FreezeSafePublicationCache_ServesSongsAndRankingAliases()
+    {
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId!.Value;
+        var songsJson = Encoding.UTF8.GetBytes(
+            "{\"source\":\"durable-songs\"}");
+        var compositeJson = Encoding.UTF8.GetBytes(
+            "{\"page\":1,\"pageSize\":50,\"totalAccounts\":10,"
+            + "\"entries\":[1,2,3,4,5,6,7,8,9,10]}");
+        var overviewJson = Encoding.UTF8.GetBytes(
+            "{\"rankBy\":\"adjusted\",\"pageSize\":10,"
+            + "\"instruments\":{\"Solo_Guitar\":{"
+            + "\"totalAccounts\":10,"
+            + "\"entries\":[1,2,3,4,5,6,7,8,9,10]}}}");
+        var keys = new[]
+        {
+            PublicationApiCacheKeys.Songs,
+            "rankings:composite:adjusted:1:50",
+            "rankings:overview:adjusted:10",
+        };
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                keys[0],
+                songsJson,
+                ResponseCacheService.ComputeETag(
+                    songsJson)),
+            (
+                keys[1],
+                compositeJson,
+                ResponseCacheService.ComputeETag(
+                    compositeJson)),
+            (
+                keys[2],
+                overviewJson,
+                ResponseCacheService.ComputeETag(
+                    overviewJson)),
+        ]);
+        metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('c', 64));
+        var gate = _factory.Services
+            .GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+        var cache = _factory.Services
+            .GetRequiredService<
+                PublicationApiResponseCacheService>();
+        cache.InvalidateAll();
+
+        try
+        {
+            var songs = await _client.GetAsync(
+                "/api/songs");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                songs.StatusCode);
+            Assert.Equal(
+                "l2",
+                songs.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                Encoding.UTF8.GetString(songsJson),
+                await songs.Content.ReadAsStringAsync());
+
+            var composite = await _client.GetAsync(
+                "/api/rankings/composite?page=1&pageSize=5");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                composite.StatusCode);
+            var compositeBody =
+                await composite.Content.ReadFromJsonAsync<
+                    JsonElement>();
+            Assert.Equal(
+                5,
+                compositeBody.GetProperty("pageSize")
+                    .GetInt32());
+            Assert.Equal(
+                5,
+                compositeBody.GetProperty("entries")
+                    .GetArrayLength());
+
+            var overview = await _client.GetAsync(
+                "/api/rankings/overview?pageSize=5");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                overview.StatusCode);
+            var overviewBody =
+                await overview.Content.ReadFromJsonAsync<
+                    JsonElement>();
+            Assert.Equal(
+                5,
+                overviewBody.GetProperty("pageSize")
+                    .GetInt32());
+            Assert.Equal(
+                5,
+                overviewBody.GetProperty("instruments")
+                    .GetProperty("Solo_Guitar")
+                    .GetProperty("entries")
+                    .GetArrayLength());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(
+                _factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
+            cache.InvalidateAll();
+            using var connection = _factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+            using var cleanup = connection.CreateCommand();
+            cleanup.CommandText = """
+                DELETE FROM api_response_cache
+                WHERE cache_key = ANY(@keys);
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId
+                  AND cache_key = ANY(@keys);
+                """;
+            cleanup.Parameters.AddWithValue("keys", keys);
+            cleanup.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            cleanup.ExecuteNonQuery();
+        }
+    }
+
+    [Fact]
+    public async Task FreezeSafeSongsCache_MatchesEndpointQueryAndSamePublicationRevision()
+    {
+        const string songId = "testSong1";
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var metaDb =
+            services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var dataSource =
+            services.GetRequiredService<NpgsqlDataSource>();
+        var gate =
+            services.GetRequiredService<PublicReadGateService>();
+        var publicationCache =
+            services.GetRequiredService<
+                PublicationApiResponseCacheService>();
+        var songsCache =
+            services.GetRequiredService<SongsCacheService>();
+        var pathStore =
+            services.GetRequiredService<PathDataStore>();
+        var festivalService =
+            services.GetRequiredService<FestivalService>();
+        var persistence =
+            services.GetRequiredService<
+                GlobalLeaderboardPersistence>();
+        var precomputer =
+            services.GetRequiredService<
+                ScrapeTimePrecomputer>();
+        var jsonOptions = services
+            .GetRequiredService<
+                IOptions<
+                    Microsoft.AspNetCore.Http.Json
+                        .JsonOptions>>()
+            .Value.SerializerOptions;
+        var exactKey =
+            PublicApiResponseCachePolicy
+                .BuildCacheKeyForRequestTarget(
+                    "/api/songs");
+        var keys = new[]
+        {
+            PublicationApiCacheKeys.Songs,
+            exactKey,
+        };
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            keys);
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        publicationCache.Reset();
+
+        try
+        {
+            SetPathGeneration(
+                pathStore,
+                songId,
+                "songs-cache-revision-a",
+                111_111,
+                "songs-cache-hash-a");
+            songsCache.InvalidateForContentChange();
+            var expectedA =
+                SongsCacheService.BuildSongsJson(
+                    festivalService,
+                    pathStore,
+                    metaDb,
+                    persistence,
+                    precomputer,
+                    jsonOptions);
+
+            using var baseline = await client.GetAsync(
+                "/api/songs?limit=10&futureFlag=ignored");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                baseline.StatusCode);
+            var baselineBytes =
+                await baseline.Content.ReadAsByteArrayAsync();
+            Assert.Equal(expectedA, baselineBytes);
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedA),
+                baseline.Headers.ETag?.ToString());
+            Assert.Equal(
+                "application/json",
+                baseline.Content.Headers.ContentType
+                    ?.MediaType);
+            Assert.Equal(
+                "public, max-age=1800, stale-while-revalidate=3600",
+                baseline.Headers.CacheControl?.ToString());
+            Assert.Equal(
+                publicationId.ToString(),
+                baseline.Headers.GetValues(
+                    PublicationReadContextMiddleware
+                        .PublicationHeader)
+                    .Single());
+
+            var durableA =
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    PublicationApiCacheKeys.Songs);
+            Assert.NotNull(durableA);
+            Assert.Equal(expectedA, durableA.Json);
+            Assert.Equal(
+                Sha256Hex(expectedA),
+                durableA.ContentSha256);
+
+            using var queryVariant =
+                await client.GetAsync(
+                    $"/api/songs?publicationId={publicationId}&limit=999");
+            Assert.Equal(
+                baselineBytes,
+                await queryVariant.Content
+                    .ReadAsByteArrayAsync());
+            Assert.Equal(
+                baseline.Headers.ETag?.ToString(),
+                queryVariant.Headers.ETag?.ToString());
+
+            using var baselineDocument =
+                JsonDocument.Parse(baselineBytes);
+            var songs = baselineDocument.RootElement
+                .GetProperty("songs")
+                .EnumerateArray()
+                .ToArray();
+            Assert.Equal(
+                songs.Length,
+                baselineDocument.RootElement
+                    .GetProperty("count")
+                    .GetInt32());
+            var songIds = songs
+                .Select(song =>
+                    song.GetProperty("songId")
+                        .GetString()!)
+                .ToArray();
+            Assert.Equal(
+                songIds.Order(
+                    StringComparer.Ordinal),
+                songIds);
+            Assert.DoesNotContain(
+                songs,
+                song =>
+                    string.IsNullOrWhiteSpace(
+                        song.GetProperty("songId")
+                            .GetString()));
+            var revisedSongA = Assert.Single(
+                songs,
+                song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId);
+            Assert.Equal(
+                111_111,
+                revisedSongA
+                    .GetProperty("maxScores")
+                    .GetProperty("Solo_Guitar")
+                    .GetInt32());
+            Assert.Equal(
+                "songs-cache-revision-a",
+                revisedSongA
+                    .GetProperty(
+                        "pathArtifactGenerationId")
+                    .GetString());
+
+            SetPathGeneration(
+                pathStore,
+                songId,
+                "songs-cache-revision-b",
+                222_222,
+                "songs-cache-hash-b");
+            songsCache.InvalidateForContentChange();
+            var expectedB =
+                SongsCacheService.BuildSongsJson(
+                    festivalService,
+                    pathStore,
+                    metaDb,
+                    persistence,
+                    precomputer,
+                    jsonOptions);
+            using var revised = await client.GetAsync(
+                "/api/songs?ignored=still-nonsemantic");
+            var revisedBytes =
+                await revised.Content.ReadAsByteArrayAsync();
+            Assert.Equal(expectedB, revisedBytes);
+            Assert.NotEqual(
+                Sha256Hex(expectedA),
+                Sha256Hex(expectedB));
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedB),
+                revised.Headers.ETag?.ToString());
+            var durableB =
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    PublicationApiCacheKeys.Songs);
+            Assert.NotNull(durableB);
+            Assert.Equal(expectedB, durableB.Json);
+            Assert.Equal(
+                Sha256Hex(expectedB),
+                durableB.ContentSha256);
+
+            metaDb.SetPublicReadFreeze(
+                true,
+                pointers.PublishedScrapeId,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('e', 64));
+            gate.Invalidate();
+            publicationCache.InvalidateAll();
+            songsCache.Invalidate();
+
+            using var frozen = await client.GetAsync(
+                "/api/songs?limit=1");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                frozen.StatusCode);
+            Assert.Equal(
+                "l2",
+                frozen.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                expectedB,
+                await frozen.Content
+                    .ReadAsByteArrayAsync());
+            Assert.Equal(
+                ResponseCacheService.ComputeETag(
+                    expectedB),
+                frozen.Headers.ETag?.ToString());
+            Assert.Equal(
+                "public, max-age=1800, stale-while-revalidate=3600",
+                frozen.Headers.CacheControl
+                    ?.ToString());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            publicationCache.Reset();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                keys);
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/rankings/composite?page=1&pageSize=5",
+        "/api/rankings/composite?page=1&pageSize=50",
+        "rankings:composite:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar?page=1&pageSize=5",
+        "/api/rankings/Solo_Guitar?page=1&pageSize=50",
+        "rankings:Solo_Guitar:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets?page=1&pageSize=5",
+        "/api/rankings/bands/Band_Duets?page=1&pageSize=50",
+        "rankings:bands:Band_Duets:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/overview?pageSize=5",
+        "/api/rankings/overview?pageSize=10",
+        "rankings:overview:adjusted:10")]
+    [InlineData(
+        "/api/rankings/composite?page=2&pageSize=5",
+        "/api/rankings/composite?page=1&pageSize=50",
+        "rankings:composite:adjusted:1:50")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar?rankBy=weighted&page=2&pageSize=5",
+        "/api/rankings/Solo_Guitar?rankBy=weighted&page=1&pageSize=50",
+        "rankings:Solo_Guitar:weighted:1:50")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets?rankBy=weighted&page=2&pageSize=5",
+        "/api/rankings/bands/Band_Duets?rankBy=weighted&page=1&pageSize=50",
+        "rankings:bands:Band_Duets:weighted:1:50")]
+    [InlineData(
+        "/api/rankings/overview?rankBy=maxscore&pageSize=5",
+        "/api/rankings/overview?rankBy=maxscore&pageSize=10",
+        "rankings:overview:maxscore:10")]
+    public async Task FreezeSafeFirstPageAlias_IsByteAndEtagEquivalentToUncachedEndpoint(
+        string requestedTarget,
+        string canonicalTarget,
+        string canonicalKey)
+    {
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId!.Value;
+        var requestedUri = new Uri(
+            "http://localhost" + requestedTarget);
+        var requestContext = new DefaultHttpContext();
+        requestContext.Request.Method = HttpMethods.Get;
+        requestContext.Request.Path =
+            requestedUri.AbsolutePath;
+        requestContext.Request.QueryString =
+            new QueryString(requestedUri.Query);
+        var exactKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                requestContext.Request);
+        var keys = new[] { canonicalKey, exactKey };
+        var dataSource = factory.Services
+            .GetRequiredService<NpgsqlDataSource>();
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            keys);
+        var gate = factory.Services
+            .GetRequiredService<PublicReadGateService>();
+        var cache = factory.Services
+            .GetRequiredService<
+                PublicationApiResponseCacheService>();
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        cache.InvalidateAll();
+
+        try
+        {
+            var baseline = await client.GetAsync(
+                requestedTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                baseline.StatusCode);
+            var baselineBytes =
+                await baseline.Content.ReadAsByteArrayAsync();
+            var baselineEtag =
+                baseline.Headers.ETag?.ToString()
+                ?? ResponseCacheService.ComputeETag(
+                    baselineBytes);
+
+            var canonical = await client.GetAsync(
+                canonicalTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                canonical.StatusCode);
+            var canonicalBytes =
+                await canonical.Content.ReadAsByteArrayAsync();
+            metaDb.BulkSetCachedResponses(
+            [
+                (
+                    canonicalKey,
+                    canonicalBytes,
+                    ResponseCacheService.ComputeETag(
+                        canonicalBytes)),
+            ]);
+            cache.InvalidateAll();
+            metaDb.SetPublicReadFreeze(
+                true,
+                publishedScrapeId,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('d', 64));
+            gate.Invalidate();
+
+            var frozen = await client.GetAsync(
+                requestedTarget);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                frozen.StatusCode);
+            Assert.Equal(
+                baselineBytes,
+                await frozen.Content.ReadAsByteArrayAsync());
+            Assert.Equal(
+                baselineEtag,
+                frozen.Headers.ETag?.ToString());
+            Assert.Equal(
+                Sha256Hex(baselineBytes),
+                Sha256Hex(
+                    await frozen.Content
+                        .ReadAsByteArrayAsync()));
+            Assert.Equal(
+                baseline.Content.Headers.ContentType
+                    ?.MediaType,
+                frozen.Content.Headers.ContentType
+                    ?.MediaType);
+            Assert.Equal(
+                baseline.Headers.CacheControl?.ToString(),
+                frozen.Headers.CacheControl?.ToString());
+            Assert.Equal(
+                "l2",
+                frozen.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                publicationId.ToString(),
+                frozen.Headers.GetValues(
+                    PublicationReadContextMiddleware
+                        .PublicationHeader)
+                    .Single());
+            Assert.Null(
+                metaDb.GetCachedResponseEntry(
+                    publicationId,
+                    exactKey));
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            cache.InvalidateAll();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                keys);
+        }
+    }
+
+    [Fact]
+    public async Task FreezeSafeAliases_DoNotCrossSelectedOrHighCardinalityContexts()
+    {
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var metaDb =
+            services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var dataSource =
+            services.GetRequiredService<NpgsqlDataSource>();
+        var gate =
+            services.GetRequiredService<PublicReadGateService>();
+        var cache = services.GetRequiredService<
+            PublicationApiResponseCacheService>();
+        var requests = new[]
+        {
+            "/api/rankings/bands/Band_Duets?page=1&pageSize=5&accountId=account-secret",
+            "/api/rankings/bands/Band_Duets?page=1&pageSize=5&combo=Solo_Guitar%2BSolo_Bass",
+            "/api/player/account-secret?leeway=1",
+            "/api/rankings/overview?pageSize=5&accountId=account-secret",
+        };
+        var exactKeys = requests
+            .Select(
+                PublicApiResponseCachePolicy
+                    .BuildCacheKeyForRequestTarget)
+            .ToArray();
+        var canonicalKeys = new[]
+        {
+            "rankings:bands:Band_Duets:adjusted:1:50",
+            "player:account-secret:::",
+            "rankings:overview:adjusted:10",
+        };
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            exactKeys.Concat(canonicalKeys)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray());
+        metaDb.BulkSetCachedResponses(
+            canonicalKeys.Select(key =>
+            {
+                var json = Encoding.UTF8.GetBytes(
+                    $"{{\"canonicalMarker\":\"{key}\"}}");
+                return (
+                    Key: key,
+                    Json: json,
+                    ETag: ResponseCacheService
+                        .ComputeETag(json));
+            }).ToArray());
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('f', 64));
+        gate.Invalidate();
+        cache.Reset();
+
+        try
+        {
+            foreach (var target in requests)
+            {
+                using var response =
+                    await client.GetAsync(target);
+                Assert.Equal(
+                    HttpStatusCode.ServiceUnavailable,
+                    response.StatusCode);
+                Assert.DoesNotContain(
+                    "canonicalMarker",
+                    await response.Content
+                        .ReadAsStringAsync(),
+                    StringComparison.Ordinal);
+            }
+
+            foreach (var exactKey in exactKeys)
+            {
+                Assert.Null(
+                    metaDb.GetCachedResponseEntry(
+                        publicationId,
+                        exactKey));
+            }
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            cache.Reset();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                exactKeys.Concat(canonicalKeys)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray());
+        }
+    }
+
+    [Fact]
+    public async Task ProtectedTelemetryAuthenticationExecutesBeforePublicationCache()
+    {
+        const string target =
+            "/api/admin/public-cache-telemetry";
+        var metaDb =
+            _factory.Services
+                .GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var cacheKey =
+            PublicApiResponseCachePolicy
+                .BuildCacheKeyForRequestTarget(target);
+        var dataSource =
+            _factory.Services
+                .GetRequiredService<NpgsqlDataSource>();
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            [cacheKey]);
+        var marker = Encoding.UTF8.GetBytes(
+            "{\"privateCacheLeak\":true}");
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                Key: cacheKey,
+                Json: marker,
+                ETag: ResponseCacheService
+                    .ComputeETag(marker)),
+        ]);
+
+        try
+        {
+            using var unauthorized =
+                await _client.GetAsync(target);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                unauthorized.StatusCode);
+            Assert.DoesNotContain(
+                "privateCacheLeak",
+                await unauthorized.Content
+                    .ReadAsStringAsync(),
+                StringComparison.Ordinal);
+
+            using var authorized =
+                await _authedClient.GetAsync(target);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                authorized.StatusCode);
+            Assert.DoesNotContain(
+                "privateCacheLeak",
+                await authorized.Content
+                    .ReadAsStringAsync(),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                [cacheKey]);
+        }
     }
 
     [Fact]
@@ -465,21 +1243,78 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task MaxScoreMaintenanceFreeze_ServesStableSongsAndLeaderboardCachesAndBlocksColdReads()
     {
-        const string songId = "maxScoreGateSong";
+        const string songId = "testSong1";
+        const string unavailableSongId = "testSongNoMic";
+        const string cachedGenerationId = "generation-before-promotion";
+        const string currentGenerationId = "generation-after-promotion";
+        const string unavailableGenerationId = "generation-without-artifacts";
+        using var factory =
+            _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
         var metaDb =
-            _factory.Services.GetRequiredService<MetaDatabase>();
+            factory.Services.GetRequiredService<MetaDatabase>();
         var pointers = EnsureCurrentPublication(metaDb);
         var gate =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<PublicReadGateService>();
         var songsCache =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<SongsCacheService>();
-        songsCache.Invalidate();
-        var warmSongs = await _client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, warmSongs.StatusCode);
+        var pathStore =
+            factory.Services
+                .GetRequiredService<PathDataStore>();
+        var dataDirectory =
+            factory.Services
+                .GetRequiredService<
+                    IOptions<ScraperOptions>>()
+                .Value.DataDirectory;
+
+        SetPathGeneration(
+            pathStore,
+            songId,
+            cachedGenerationId,
+            100_000,
+            "cached-generation-hash");
+        songsCache.InvalidateForContentChange();
+        using var prePromotionSongs =
+            await client.GetAsync("/api/songs");
+        Assert.Equal(
+            HttpStatusCode.OK,
+            prePromotionSongs.StatusCode);
         var warmSongsJson =
-            await warmSongs.Content.ReadAsByteArrayAsync();
+            await prePromotionSongs.Content
+                .ReadAsByteArrayAsync();
+        using var prePromotionSongsJson =
+            JsonDocument.Parse(warmSongsJson);
+        Assert.Equal(
+            cachedGenerationId,
+            prePromotionSongsJson.RootElement
+                .GetProperty("songs")
+                .EnumerateArray()
+                .Single(song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId)
+                .GetProperty("pathArtifactGenerationId")
+                .GetString());
+
+        SetPathGeneration(
+            pathStore,
+            songId,
+            currentGenerationId,
+            100_001,
+            "current-generation-hash");
+        SetPathGeneration(
+            pathStore,
+            unavailableSongId,
+            unavailableGenerationId,
+            90_000,
+            "unavailable-generation-hash");
+        await WritePathArtifactsAsync(
+            dataDirectory,
+            songId,
+            currentGenerationId,
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
 
         var cachedLeaderboard =
             $"/api/leaderboard/{songId}/Solo_Guitar?leeway=1";
@@ -495,22 +1330,39 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             pointers.PublishedScrapeId,
             reason);
         gate.Invalidate();
+        using var lockConnection =
+            factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction =
+                lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
 
         try
         {
-            var songs = await _client.GetAsync("/api/songs");
+            var songs = await client
+                .GetAsync("/api/songs")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.OK, songs.StatusCode);
             Assert.Equal(
                 warmSongsJson,
                 await songs.Content.ReadAsByteArrayAsync());
-            songsCache.Invalidate();
-            var coldSongs = await _client.GetAsync("/api/songs");
-            Assert.Equal(
-                HttpStatusCode.ServiceUnavailable,
-                coldSongs.StatusCode);
 
             var leaderboard =
-                await _client.GetAsync(cachedLeaderboard);
+                await client.GetAsync(cachedLeaderboard)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.OK,
                 leaderboard.StatusCode);
@@ -526,25 +1378,167 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 .GetProperty("source")
                 .GetString());
 
-            var coldLeaderboard = await _client.GetAsync(
-                $"/api/leaderboard/{songId}/Solo_Guitar?leeway=2");
+            var coldLeaderboard = await client
+                .GetAsync(
+                    $"/api/leaderboard/{songId}/Solo_Guitar?leeway=2")
+                .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
                 coldLeaderboard.StatusCode);
-
-            var coldPath = await _client.GetAsync(
-                $"/api/paths/{songId}/Solo_Guitar/expert");
             Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                coldLeaderboard.Headers
+                    .RetryAfter?.Delta);
+
+            await AssertPathStatusAsync(
+                client,
+                songId,
+                GenerationQuery(cachedGenerationId),
                 HttpStatusCode.ServiceUnavailable,
-                coldPath.StatusCode);
+                TimeSpan.FromSeconds(30),
+                "Published path unavailable");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                string.Empty,
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                GenerationQuery(currentGenerationId),
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                string.Empty,
+                HttpStatusCode.ServiceUnavailable,
+                TimeSpan.FromSeconds(30));
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                GenerationQuery(unavailableGenerationId),
+                HttpStatusCode.ServiceUnavailable,
+                TimeSpan.FromSeconds(30));
+
+            songsCache.Invalidate();
+            var coldSongs = await client
+                .GetAsync("/api/songs")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                coldSongs.StatusCode);
+            Assert.Equal(
+                "l2",
+                coldSongs.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                warmSongsJson,
+                await coldSongs.Content.ReadAsByteArrayAsync());
+
+            var serviceInfo = await client
+                .GetAsync("/api/service-info")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                serviceInfo.StatusCode);
+        }
+        finally
+        {
+            lockTransaction.Rollback();
+            ClearPublicReadFreezeForTest(
+                factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
+        }
+
+        await AssertPathStatusAsync(
+            client,
+            songId,
+            GenerationQuery(cachedGenerationId),
+            HttpStatusCode.BadRequest);
+        await AssertPathContentsAsync(
+            client,
+            songId,
+            string.Empty,
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
+        await AssertPathContentsAsync(
+            client,
+            songId,
+            GenerationQuery(currentGenerationId),
+            [1, 2, 3],
+            "{\"path\":\"current\"}");
+        await AssertPathStatusAsync(
+            client,
+            unavailableSongId,
+            string.Empty,
+            HttpStatusCode.NotFound);
+        await AssertPathStatusAsync(
+            client,
+            unavailableSongId,
+            GenerationQuery(unavailableGenerationId),
+            HttpStatusCode.NotFound);
+
+        songsCache.InvalidateForContentChange();
+        var refreshedSongs =
+            await client.GetFromJsonAsync<JsonElement>(
+                "/api/songs");
+        Assert.Equal(
+            currentGenerationId,
+            refreshedSongs
+                .GetProperty("songs")
+                .EnumerateArray()
+                .Single(song =>
+                    song.GetProperty("songId")
+                        .GetString() == songId)
+                .GetProperty("pathArtifactGenerationId")
+                .GetString());
+
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            "publish");
+        gate.Invalidate();
+
+        try
+        {
+            await AssertPathStatusAsync(
+                client,
+                songId,
+                GenerationQuery(cachedGenerationId),
+                HttpStatusCode.BadRequest);
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                string.Empty,
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathContentsAsync(
+                client,
+                songId,
+                GenerationQuery(currentGenerationId),
+                [1, 2, 3],
+                "{\"path\":\"current\"}");
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                string.Empty,
+                HttpStatusCode.NotFound);
+            await AssertPathStatusAsync(
+                client,
+                unavailableSongId,
+                GenerationQuery(unavailableGenerationId),
+                HttpStatusCode.NotFound);
         }
         finally
         {
             ClearPublicReadFreezeForTest(
-                _factory.Services
+                factory.Services
                     .GetRequiredService<NpgsqlDataSource>());
             gate.Invalidate();
-            songsCache.Invalidate();
         }
     }
 
@@ -1059,12 +2053,50 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.TryGetProperty("lastCompletedUpdate", out _));
+        if (json.TryGetProperty(
+                "lastCompletedUpdate",
+                out var lastCompletedUpdate))
+        {
+            Assert.Contains(
+                lastCompletedUpdate.ValueKind,
+                new[]
+                {
+                    JsonValueKind.Null,
+                    JsonValueKind.Object,
+                });
+        }
         var updateStatus = json.GetProperty("currentUpdate").GetProperty("status").GetString();
         Assert.Contains(updateStatus, new[] { "idle", "updating", "failed", "stalled" });
         Assert.True(json.TryGetProperty("workerStatus", out _));
-        if (updateStatus is "idle" or "failed")
-            Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+        var catalog = json.GetProperty("catalog");
+        Assert.True(
+            catalog.GetProperty("syncIntervalSeconds")
+                .GetDouble() > 0);
+        Assert.Equal(
+            JsonValueKind.Object,
+            catalog.GetProperty("live").ValueKind);
+        Assert.Equal(
+            JsonValueKind.Object,
+            catalog.GetProperty("published").ValueKind);
+        Assert.True(
+            catalog.GetProperty("pathGenerationPending")
+                .GetInt32() >= 0);
+        Assert.True(
+            catalog.GetProperty(
+                    "pathGenerationReviewRequired")
+                .GetInt32() >= 0);
+        if (json.TryGetProperty(
+                "nextScheduledUpdateAt",
+                out var nextScheduledUpdateAt))
+        {
+            Assert.Contains(
+                nextScheduledUpdateAt.ValueKind,
+                new[]
+                {
+                    JsonValueKind.Null,
+                    JsonValueKind.String,
+                });
+        }
     }
 
     [Fact]
@@ -1100,10 +2132,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task ApiServiceInfo_ReflectsWorkerStatusActivity()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        var startedAt = DateTime.UtcNow.AddMinutes(-10);
-        var heartbeatAt = DateTime.UtcNow.AddSeconds(-5);
-        var operationStartedAt = DateTime.UtcNow.AddMinutes(-2);
-        var operationUpdatedAt = DateTime.UtcNow.AddSeconds(-20);
+        var now = DateTime.UtcNow;
+        var startedAt = now.AddMinutes(-1);
+        var heartbeatAt = now.AddSeconds(-5);
+        var operationStartedAt = now.AddSeconds(-45);
+        var operationUpdatedAt = now.AddSeconds(-20);
 
         metaDb.UpsertWorkerHeartbeat(
             WorkerStatusPublisher.ScraperWorkerKey,
@@ -1157,20 +2190,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             "durable-progress-v2",
             now.AddMinutes(-1),
             now);
-        metaDb.UpdateWorkerActivity(
-            WorkerStatusPublisher.ScraperWorkerKey,
-            new WorkerOperationInfo
-            {
-                ContractVersion = 2,
-                OperationKey = "scrape.post_process",
-                OperationLabel = "Post-processing leaderboard update",
-                Status = "running",
-                Phase = "PostScrapeEnrichment",
-                SubOperation = "BandMaintenance",
-                StartedAtUtc = now.AddMinutes(-1),
-                UpdatedAtUtc = now.AddSeconds(-10),
-            },
-            updatedAtUtc: now.AddSeconds(-10));
         var attempt = metaDb.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
             scrapeId,
             "post.band_maintenance",
@@ -1196,7 +2215,42 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             now.AddSeconds(-10),
             now,
             "build-test",
-            "config-test"));
+            "config-test",
+            CurrentSubphaseEpoch: 1,
+            SubphaseSequence: 3,
+            SubphaseProgressKind: "exact",
+            SubphaseUnitsKind: "scopes",
+            SubphaseUnitsCompleted: 25,
+            SubphaseUnitsTotal: 100,
+            SubphaseUnitsTotalFinal: true,
+            SubphasePercent: 25,
+            SubphaseStartedAtUtc: now.AddMinutes(-1),
+            SubphaseLastProgressAtUtc: now.AddSeconds(-10)));
+        WorkerOperationInfo Operation(int phaseAttempt) =>
+            new()
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.post_process",
+                OperationLabel =
+                    "Post-processing leaderboard update",
+                Status = "running",
+                ScrapeId = scrapeId,
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "BandMaintenance",
+                PhaseId = "post.band_maintenance",
+                PhaseAttempt = phaseAttempt,
+                AttemptProgress = new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass = 10,
+                    RetryableUnavailableThisPass = 10,
+                },
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now.AddSeconds(-10),
+            };
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Operation(attempt),
+            updatedAtUtc: now.AddSeconds(-10));
 
         try
         {
@@ -1207,6 +2261,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(2, json.GetProperty("contractVersion").GetInt32());
             var phasePlan = json.GetProperty("phasePlan");
             Assert.Equal(PhaseProgressCatalog.PlanVersion, phasePlan.GetProperty("version").GetString());
+            Assert.Equal(
+                "fst.subphase-plan.v1",
+                phasePlan.GetProperty("subphaseCatalogVersion").GetString());
             Assert.Equal(
                 PhaseProgressCatalog.All.Count,
                 phasePlan.GetProperty("phases").GetArrayLength());
@@ -1245,8 +2302,30 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(100, current.GetProperty("unitsTotal").GetInt64());
             Assert.True(current.GetProperty("unitsTotalFinal").GetBoolean());
             Assert.Equal(25, current.GetProperty("phasePercent").GetDouble());
+            var subphaseProgress = current.GetProperty("subphaseProgress");
+            Assert.Equal(1, subphaseProgress.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("current_projection_refresh", subphaseProgress.GetProperty("id").GetString());
+            Assert.Equal(1, subphaseProgress.GetProperty("epoch").GetInt32());
+            Assert.Equal(3, subphaseProgress.GetProperty("sequence").GetInt64());
+            Assert.Equal("exact", subphaseProgress.GetProperty("kind").GetString());
+            Assert.Equal(25, subphaseProgress.GetProperty("percent").GetDouble());
             Assert.Equal("indeterminate", current.GetProperty("overallPercentKind").GetString());
             Assert.False(current.TryGetProperty("overallPercent", out _));
+            var attemptProgress =
+                current.GetProperty("attemptProgress");
+            Assert.Equal(
+                1,
+                attemptProgress.GetProperty("schemaVersion")
+                    .GetInt32());
+            Assert.Equal(
+                10,
+                attemptProgress.GetProperty("attemptedThisPass")
+                    .GetInt64());
+            Assert.Equal(
+                10,
+                attemptProgress.GetProperty(
+                        "retryableUnavailableThisPass")
+                    .GetInt64());
             Assert.Equal(JsonValueKind.String, current.GetProperty("heartbeatAt").ValueKind);
             Assert.Equal(JsonValueKind.String, current.GetProperty("lastProgressAt").ValueKind);
 
@@ -1254,6 +2333,24 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal("Post-processing leaderboard update", operation.GetProperty("operationLabel").GetString());
             Assert.Equal(2, operation.GetProperty("contractVersion").GetInt32());
             Assert.Equal(JsonValueKind.String, operation.GetProperty("heartbeatAt").ValueKind);
+            Assert.Equal(
+                10,
+                operation.GetProperty("attemptProgress")
+                    .GetProperty("attemptedThisPass")
+                    .GetInt64());
+
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                Operation(attempt + 1),
+                updatedAtUtc: now);
+            var mismatched = (await (await _client.GetAsync(
+                    "/api/service-info"))
+                .Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("currentUpdate");
+            Assert.False(
+                mismatched.TryGetProperty(
+                    "attemptProgress",
+                    out _));
         }
         finally
         {
@@ -1280,6 +2377,185 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 currentOperation: null,
                 status: "running",
                 updatedAtUtc: completedAt);
+        }
+    }
+
+    [Theory]
+    [InlineData("indeterminate")]
+    [InlineData("not_applicable")]
+    public async Task ApiServiceInfo_ProjectsNonExactSubphaseKinds(
+        string progressKind)
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var scrapeId = metaDb.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        const string instanceId = "subphase-kind-test";
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            instanceId,
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.post_process",
+                OperationLabel = "Post-processing leaderboard update",
+                Status = "running",
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "BandMaintenance",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            },
+            updatedAtUtc: now);
+        var subphaseId = progressKind == "not_applicable"
+            ? "skipping_band_after_timeout"
+            : "maintaining_band_projection";
+        var attempt = metaDb.StartScrapePhaseAttempt(
+            new ScrapePhaseAttemptStart(
+                scrapeId,
+                "post.band_maintenance",
+                "scrape.update",
+                300,
+                PhaseProgressCatalog.PlanVersion,
+                instanceId,
+                subphaseId,
+                "running",
+                "scopes",
+                null,
+                null,
+                false,
+                null,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now.AddMinutes(-1),
+                now,
+                now,
+                "build-test",
+                "config-test",
+                CurrentSubphaseEpoch: 2,
+                SubphaseSequence: 4,
+                SubphaseProgressKind: progressKind,
+                SubphaseUnitsTotalFinal: false,
+                SubphaseStartedAtUtc: now.AddMinutes(-1),
+                SubphaseLastProgressAtUtc: now));
+
+        try
+        {
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var subphaseProgress = json
+                .GetProperty("currentUpdate")
+                .GetProperty("subphaseProgress");
+
+            Assert.Equal(
+                progressKind,
+                subphaseProgress.GetProperty("kind").GetString());
+            Assert.False(subphaseProgress.GetProperty("unitsTotalFinal").GetBoolean());
+            Assert.False(subphaseProgress.TryGetProperty("percent", out _));
+            Assert.False(subphaseProgress.TryGetProperty("unitsCompleted", out _));
+            Assert.False(subphaseProgress.TryGetProperty("unitsTotal", out _));
+        }
+        finally
+        {
+            var completedAt = DateTime.UtcNow;
+            metaDb.CompleteScrapePhaseAttempt(
+                new ScrapePhaseAttemptCompletion(
+                    scrapeId,
+                    "post.band_maintenance",
+                    attempt,
+                    "completed",
+                    completedAt,
+                    completedAt,
+                    completedAt,
+                    null,
+                    null));
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                songsScraped: 0,
+                totalEntries: 0,
+                totalRequests: 0,
+                totalBytes: 0);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                currentOperation: null,
+                status: "running",
+                updatedAtUtc: completedAt);
+        }
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_AllowsLegacyV2OperationWithoutSubphaseProgress()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var now = DateTime.UtcNow;
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "legacy-v2-subphase",
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.leaderboards",
+                OperationLabel = "Scraping leaderboard scores",
+                Status = "running",
+                Phase = "Scraping",
+                SubOperation = "persisting_scores",
+                PhaseId = "scrape.leaderboards",
+                SubphaseId = "persisting_scores",
+                PhasePlanVersion = PhaseProgressCatalog.PlanVersion,
+                PhaseOrdinal = 100,
+                PhaseAttempt = 1,
+                UnitsKind = "leaderboards",
+                UnitsCompleted = 10,
+                UnitsTotal = 10,
+                UnitsTotalFinal = true,
+                PhasePercent = 100,
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            },
+            updatedAtUtc: now);
+
+        try
+        {
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var current = (await response.Content
+                    .ReadFromJsonAsync<JsonElement>())
+                .GetProperty("currentUpdate");
+
+            Assert.Equal(
+                "persisting_scores",
+                current.GetProperty("subphaseId").GetString());
+            Assert.Equal(100, current.GetProperty("phasePercent").GetDouble());
+            Assert.False(current.TryGetProperty(
+                "subphaseProgress",
+                out _));
+        }
+        finally
+        {
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                currentOperation: null,
+                status: "running",
+                updatedAtUtc: DateTime.UtcNow);
         }
     }
 
@@ -1612,15 +2888,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task PublishedResolver_ForcedFrozenColdMissAndExportIgnoreActiveProjectionAndSnapshot()
     {
-        using var factory = _factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureServices(services =>
-            {
-                services.PostConfigure<FeatureOptions>(options => options.UsePublishedScopeSources = true);
-                services.PostConfigure<ScraperOptions>(
-                    options => options.EnableAutomaticPathGeneration = false);
-            });
-        });
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
         using var client = factory.CreateClient();
         var services = factory.Services;
         var metaDb = services.GetRequiredService<MetaDatabase>();
@@ -1737,6 +3007,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             cmd.Parameters.AddWithValue("activeId", activeId);
             cmd.ExecuteNonQuery();
         }
+        SetExactCurrentPublicationScopeSourceBinding(
+            dataSource,
+            publishedId);
 
         metaDb.SetPublicReadFreeze(true, reason: "scrape");
         services.GetRequiredService<PublicReadGateService>().Invalidate();
@@ -1777,7 +3050,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var unfrozenWorkbookXml = await ReadExportWorkbookXmlAsync(unfrozenExportResponse);
         Assert.Contains("100000", unfrozenWorkbookXml);
         Assert.DoesNotContain("900000", unfrozenWorkbookXml);
-
         metaDb.FailScrapeRun(
             activeId,
             MetaDatabase.FailedCandidateReadIsolationFailurePhase,
@@ -1794,14 +3066,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.DoesNotContain(900_000, isolatedScores);
 
         var isolatedSongsResponse = await client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, isolatedSongsResponse.StatusCode);
         Assert.Equal(
-            "published-catalog-fallback",
-            isolatedSongsResponse.Headers.GetValues(
-                "X-FST-Songs-Source").Single());
-        Assert.Equal(
-            "no-store",
-            isolatedSongsResponse.Headers.CacheControl?.ToString());
+            HttpStatusCode.ServiceUnavailable,
+            isolatedSongsResponse.StatusCode);
 
         var isolatedPlayerResponse = await client.GetAsync(
             "/api/player/acct_published");
@@ -1815,7 +3082,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var pendingPlayerResponse = await client.GetAsync(
             "/api/player/acct_pending");
         Assert.Equal(
-            HttpStatusCode.Accepted,
+            HttpStatusCode.ServiceUnavailable,
             pendingPlayerResponse.StatusCode);
         Assert.Equal(
             "no-store",
@@ -1852,6 +3119,100 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             cmd.ExecuteNonQuery();
         }
         services.GetRequiredService<PublicReadGateService>().Invalidate();
+    }
+
+    [Fact]
+    public async Task PublishedScopeSourceLossMakesPublicationBoundApiFailClosed()
+    {
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        using (var connection = factory.Services
+                   .GetRequiredService<NpgsqlDataSource>()
+                   .OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                pointers.PublishedScrapeId!.Value);
+            command.ExecuteNonQuery();
+        }
+        factory.Services
+            .GetRequiredService<
+                PublicationReadContextService>()
+            .Invalidate();
+
+        using var response = await client.GetAsync(
+            "/api/leaderboard/testSong1/Solo_Guitar");
+
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode);
+        Assert.Equal(
+            "1",
+            response.Headers.GetValues(
+                "Retry-After")
+                .Single());
+    }
+
+    [Fact]
+    public async Task PublishedScopeSourceLossCannotLeakLazyOverviewCacheHit()
+    {
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        var leakedJson = Encoding.UTF8.GetBytes(
+            "{\"mustNotLeak\":true}");
+        Assert.NotNull(
+            metaDb.TrySetCurrentCachedResponse(
+                pointers.CurrentPublicationId!.Value,
+                "rankings:overview:adjusted:25",
+                leakedJson,
+                ResponseCacheService.ComputeETag(
+                    leakedJson)));
+        using (var connection = factory.Services
+                   .GetRequiredService<NpgsqlDataSource>()
+                   .OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM leaderboard_published_scope_source
+                WHERE published_scrape_id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                pointers.PublishedScrapeId!.Value);
+            command.ExecuteNonQuery();
+        }
+        factory.Services
+            .GetRequiredService<
+                PublicationReadContextService>()
+            .Invalidate();
+
+        using var response = await client.GetAsync(
+            "/api/rankings/overview?pageSize=25");
+        var body = await response.Content
+            .ReadAsStringAsync();
+
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode);
+        Assert.DoesNotContain(
+            "mustNotLeak",
+            body,
+            StringComparison.Ordinal);
     }
 
     // ─── Songs ──────────────────────────────────────────────────
@@ -2490,18 +3851,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     """;
                 command.ExecuteNonQuery();
             }
-            var publishedProfile = Encoding.UTF8.GetBytes(
-                $$"""{"accountId":"{{selectedAccountId}}","scores":[]}""");
-            metaDb.BulkSetCachedResponses(
-            [
-                (
-                    $"player:{selectedAccountId}:::",
-                    publishedProfile,
-                    ResponseCacheService.ComputeETag(publishedProfile)
-                ),
-            ]);
-            Assert.NotNull(precomputer.TryGet($"player:{selectedAccountId}:::"));
-
             foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
             {
                 var database = Assert.IsType<InstrumentDatabase>(
@@ -2570,6 +3919,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 command.Parameters.AddWithValue("instrument", instrument);
                 command.ExecuteNonQuery();
             }
+            SetExactCurrentPublicationScopeSourceBinding(
+                dataSource,
+                50);
+            var publishedProfile = Encoding.UTF8.GetBytes(
+                $$"""{"accountId":"{{selectedAccountId}}","scores":[]}""");
+            metaDb.BulkSetCachedResponses(
+            [
+                (
+                    $"player:{selectedAccountId}:::",
+                    publishedProfile,
+                    ResponseCacheService.ComputeETag(publishedProfile)
+                ),
+            ]);
+            Assert.NotNull(
+                precomputer.TryGet(
+                    $"player:{selectedAccountId}:::"));
         }
     }
 
@@ -5145,6 +6510,118 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(json.GetProperty("totalEntries").GetInt32() >= 3);
     }
 
+    private static void SetPathGeneration(
+        PathDataStore pathStore,
+        string songId,
+        string generationId,
+        int maxLeadScore,
+        string datFileHash)
+    {
+        EnsureSongRow(pathStore, songId);
+        pathStore.UpdateMaxScores(
+            songId,
+            new SongMaxScores
+            {
+                MaxLeadScore = maxLeadScore,
+                ArtifactGenerationId = generationId,
+                ExpectedInstruments = ["Solo_Guitar"],
+            },
+            datFileHash);
+    }
+
+    private static async Task WritePathArtifactsAsync(
+        string dataDirectory,
+        string songId,
+        string generationId,
+        byte[] png,
+        string json)
+    {
+        var pathDirectory = Path.Combine(
+            PathArtifactResolver.GetGenerationDirectory(
+                dataDirectory,
+                songId,
+                generationId),
+            "Solo_Guitar");
+        Directory.CreateDirectory(pathDirectory);
+        await File.WriteAllBytesAsync(
+            Path.Combine(pathDirectory, "expert.png"),
+            png);
+        await File.WriteAllTextAsync(
+            Path.Combine(pathDirectory, "expert.json"),
+            json);
+    }
+
+    private static string GenerationQuery(string generationId)
+        => "?generationId=" + Uri.EscapeDataString(generationId);
+
+    private static async Task AssertPathStatusAsync(
+        HttpClient client,
+        string songId,
+        string query,
+        HttpStatusCode expectedStatus,
+        TimeSpan? retryAfter = null,
+        string? problemTitle = null)
+    {
+        foreach (var route in new[]
+                 {
+                     $"/api/paths/{songId}/Solo_Guitar/expert",
+                     $"/api/paths/{songId}/Solo_Guitar/expert/data",
+                 })
+        {
+            using var response = await client
+                .GetAsync(route + query)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(expectedStatus, response.StatusCode);
+            if (retryAfter.HasValue)
+            {
+                Assert.Equal(
+                    retryAfter,
+                    response.Headers.RetryAfter?.Delta);
+            }
+
+            if (problemTitle is not null)
+            {
+                Assert.Equal(
+                    "no-store",
+                    response.Headers.CacheControl?.ToString());
+                Assert.Equal(
+                    problemTitle,
+                    (await response.Content
+                        .ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("title")
+                    .GetString());
+            }
+        }
+    }
+
+    private static async Task AssertPathContentsAsync(
+        HttpClient client,
+        string songId,
+        string query,
+        byte[] expectedPng,
+        string expectedJson)
+    {
+        using var png = await client
+            .GetAsync(
+                $"/api/paths/{songId}/Solo_Guitar/expert"
+                + query)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(HttpStatusCode.OK, png.StatusCode);
+        Assert.Equal(
+            expectedPng,
+            await png.Content.ReadAsByteArrayAsync());
+
+        using var json = await client
+            .GetAsync(
+                $"/api/paths/{songId}/Solo_Guitar/expert/data"
+                + query)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(HttpStatusCode.OK, json.StatusCode);
+        Assert.Equal(
+            expectedJson,
+            await json.Content.ReadAsStringAsync());
+    }
+
     /// <summary>
     /// Ensures a row for the given songId exists in the PG songs table
     /// so UpdateMaxScores can UPDATE the row.
@@ -6783,6 +8260,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Admin_RearmPathGeneration_RequiresAuth()
+    {
+        var response = await _client.PostAsync(
+            "/api/admin/path-generation/rearm?songId=song-a",
+            null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // Account Endpoints
     // ═══════════════════════════════════════════════════════════
@@ -8098,6 +9584,20 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Admin_RearmPathGeneration_WithAuth_ValidatesSong()
+    {
+        var missingSongId = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm",
+            null);
+        Assert.Equal(HttpStatusCode.BadRequest, missingSongId.StatusCode);
+
+        var unknownSong = await _authedClient.PostAsync(
+            "/api/admin/path-generation/rearm?songId=not-a-real-song",
+            null);
+        Assert.Equal(HttpStatusCode.NotFound, unknownSong.StatusCode);
+    }
+
+    [Fact]
     public async Task Admin_ShopRefresh_WithAuth_ReturnsResult()
     {
         var response = await _authedClient.PostAsync("/api/admin/shop/refresh", null);
@@ -8178,6 +9678,216 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         Assert.Null(pointers.WorkingPublicationId);
         return pointers;
+    }
+
+    private static void
+        SetExactCurrentPublicationScopeSourceBinding(
+            NpgsqlDataSource dataSource,
+            long scrapeId)
+    {
+        long publicationId;
+        long? previousPublicationId;
+        var keys = new List<PublishedScopeSourceKey>();
+        using (var connection = dataSource.OpenConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            using (var generation = connection.CreateCommand())
+            {
+                generation.Transaction = transaction;
+                generation.CommandText = """
+                    INSERT INTO publication_generations (
+                        scrape_id,
+                        status,
+                        created_at,
+                        source_cut_at,
+                        ready_at,
+                        published_at)
+                    VALUES (
+                        @scrapeId,
+                        'current',
+                        now(),
+                        now(),
+                        now(),
+                        now())
+                    ON CONFLICT (scrape_id) DO UPDATE SET
+                        ready_at = COALESCE(
+                            publication_generations.ready_at,
+                            EXCLUDED.ready_at),
+                        published_at = COALESCE(
+                            publication_generations.published_at,
+                            EXCLUDED.published_at)
+                    RETURNING publication_id
+                    """;
+                generation.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                publicationId =
+                    (long)generation.ExecuteScalar()!;
+            }
+
+            using (var pointer = connection.CreateCommand())
+            {
+                pointer.Transaction = transaction;
+                pointer.CommandText = """
+                    SELECT
+                        current_publication_id,
+                        previous_publication_id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                    FOR UPDATE
+                    """;
+                using var reader = pointer.ExecuteReader();
+                Assert.True(reader.Read());
+                long? currentPublicationId =
+                    reader.IsDBNull(0)
+                        ? null
+                        : reader.GetInt64(0);
+                previousPublicationId =
+                    currentPublicationId ==
+                        publicationId
+                        ? reader.IsDBNull(1)
+                            ? (long?)null
+                            : reader.GetInt64(1)
+                        : currentPublicationId;
+            }
+
+            using (var sourceKeys = connection.CreateCommand())
+            {
+                sourceKeys.Transaction = transaction;
+                sourceKeys.CommandText = """
+                    SELECT instrument, song_id, scope_kind
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                    ORDER BY
+                        instrument COLLATE "C",
+                        song_id COLLATE "C",
+                        scope_kind COLLATE "C"
+                    """;
+                sourceKeys.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                using var reader = sourceKeys.ExecuteReader();
+                while (reader.Read())
+                {
+                    keys.Add(
+                        new PublishedScopeSourceKey(
+                            reader.GetString(0),
+                            reader.GetString(1),
+                            reader.GetString(2)));
+                }
+            }
+            Assert.NotEmpty(keys);
+
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = """
+                    UPDATE publication_generations
+                    SET status = 'retained'
+                    WHERE status = 'current'
+                      AND publication_id <> @publicationId;
+
+                    UPDATE publication_generations
+                    SET status = 'current',
+                        previous_publication_id =
+                            @previousPublicationId,
+                        source_cut_at = COALESCE(
+                            source_cut_at,
+                            now()),
+                        ready_at = COALESCE(
+                            ready_at,
+                            now()),
+                        published_at = COALESCE(
+                            published_at,
+                            now()),
+                        metadata = metadata
+                            || jsonb_build_object(
+                                'publicationPreparation',
+                                jsonb_build_object(
+                                    'scrapeId',
+                                        @scrapeId,
+                                    'publicationId',
+                                        @publicationId,
+                                    'expectedPublishedScopeCount',
+                                        @expectedCount))
+                    WHERE publication_id = @publicationId;
+
+                    INSERT INTO publication_surface_bindings (
+                        publication_id,
+                        surface_name,
+                        binding_kind,
+                        binding_json,
+                        row_count,
+                        content_hash,
+                        status,
+                        built_at)
+                    VALUES (
+                        @publicationId,
+                        'solo_scope_sources',
+                        'scrape_id',
+                        jsonb_build_object(
+                            'publicationId',
+                                @publicationId,
+                            'table',
+                                'leaderboard_published_scope_source',
+                            'publishedScrapeId',
+                                @scrapeId,
+                            'keyHashVersion',
+                                1),
+                        @expectedCount,
+                        @keyHash,
+                        'ready',
+                        now())
+                    ON CONFLICT (
+                        publication_id,
+                        surface_name)
+                    DO UPDATE SET
+                        binding_kind =
+                            EXCLUDED.binding_kind,
+                        binding_json =
+                            EXCLUDED.binding_json,
+                        row_count = EXCLUDED.row_count,
+                        content_hash =
+                            EXCLUDED.content_hash,
+                        status = EXCLUDED.status,
+                        built_at = EXCLUDED.built_at;
+
+                    UPDATE scrape_publication_state
+                    SET published_scrape_id = @scrapeId,
+                        current_publication_id =
+                            @publicationId,
+                        previous_publication_id =
+                            @previousPublicationId,
+                        working_publication_id = NULL,
+                        public_reads_frozen = FALSE,
+                        updated_at = now()
+                    WHERE id = TRUE;
+                    """;
+                update.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                update.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                update.Parameters.Add(
+                    "previousPublicationId",
+                    NpgsqlTypes.NpgsqlDbType.Bigint)
+                    .Value =
+                    previousPublicationId.HasValue
+                        ? previousPublicationId.Value
+                        : DBNull.Value;
+                update.Parameters.AddWithValue(
+                    "expectedCount",
+                    keys.Count);
+                update.Parameters.AddWithValue(
+                    "keyHash",
+                    PublishedScopeSourceBindingContract
+                        .ComputeKeyHash(keys));
+                update.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
     }
 
     private static void SeedRouteCache(
@@ -8305,6 +10015,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                             scrapeId,
                             binding.RowCount,
                             binding.ContentHash),
+                    PublicationSurfaceNames.PathArtifacts =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            binding.ContentHash),
                     _ => null,
                 };
             });
@@ -8365,6 +10083,32 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             },
             PublicationGenerationStatus.Ready,
             DateTime.UtcNow);
+    }
+
+    private static string Sha256Hex(byte[] bytes) =>
+        Convert.ToHexString(
+                SHA256.HashData(bytes))
+            .ToLowerInvariant();
+
+    private static void DeleteCacheKeys(
+        NpgsqlDataSource dataSource,
+        long publicationId,
+        string[] keys)
+    {
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM api_response_cache
+            WHERE cache_key = ANY(@keys);
+            DELETE FROM publication_api_response_cache
+            WHERE publication_id = @publicationId
+              AND cache_key = ANY(@keys);
+            """;
+        command.Parameters.AddWithValue("keys", keys);
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        command.ExecuteNonQuery();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -8585,7 +10329,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Scraper:DataDirectory"] = _tempDir,
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
-                    ["Scraper:EnableAutomaticPathGeneration"] = "true",
+                    ["Scraper:EnableAutomaticPathGeneration"] = "false",
+                    ["Scraper:UsePublicationPathArtifacts"] = "false",
                     ["Scraper:RolloutReadOnlyStartup"] =
                         _rolloutReadOnly.ToString(),
                     ["Scraper:RolloutPostgresReadOnly"] =
@@ -8602,15 +10347,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
             builder.ConfigureServices(services =>
             {
-                // Override the NpgsqlDataSource that Program.cs creates eagerly
-                // from builder.Configuration (which still has appsettings.json values
-                // at that point, before test config overrides are applied).
+                // This fixture owns its initialized schema and bypasses production
+                // pre-pool selection; the executable drill covers that startup path.
                 services.RemoveAll<NpgsqlDataSource>();
                 var testDs = _rolloutReadOnly
                     ? NpgsqlDataSource.Create(_serviceConnectionString)
                     : SharedPostgresContainer.CreateDatabase(
                         _maxPoolSize);
+                if (UsePublishedScopeSources)
+                {
+                    SeedPublishedScopeSourceReadiness(testDs);
+                }
                 services.AddSingleton(testDs);
+                services.RemoveAll<StartupPublicationReadOnlyState>();
+                var startupState = StartupPublicationReadOnlyState.ForInitializedDatabase(_rolloutReadOnly);
+                startupState.MarkReady();
+                services.AddSingleton(startupState);
                 services.RemoveAll<
                     PostgresUnpooledConnectionFactory>();
                 services.AddSingleton(
@@ -8693,6 +10445,73 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 services.AddHttpClient<EpicAuthService>()
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);
             });
+        }
+
+        private static void SeedPublishedScopeSourceReadiness(
+            NpgsqlDataSource dataSource)
+        {
+            DatabaseInitializer.EnsureSchemaAsync(dataSource)
+                .GetAwaiter()
+                .GetResult();
+            var metaDb = new MetaDatabase(
+                dataSource,
+                NullLogger<MetaDatabase>.Instance);
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                songsScraped: 1,
+                totalEntries: 0,
+                totalRequests: 1,
+                totalBytes: 1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            using (var connection =
+                   dataSource.OpenConnection())
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO leaderboard_published_scope_source (
+                        published_scrape_id,
+                        song_id,
+                        instrument,
+                        scope_kind,
+                        source_kind,
+                        source_snapshot_id,
+                        source_scrape_id,
+                        row_count,
+                        content_fingerprint,
+                        coverage_fingerprint,
+                        reported_total_entries,
+                        reported_total_pages,
+                        is_complete,
+                        created_at,
+                        validated_at)
+                    VALUES (
+                        @scrapeId,
+                        'factory-readiness',
+                        'Solo_Guitar',
+                        'alltime',
+                        'empty',
+                        NULL,
+                        @scrapeId,
+                        0,
+                        'empty-content',
+                        'empty-coverage',
+                        0,
+                        0,
+                        TRUE,
+                        now(),
+                        now())
+                    """;
+                command.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                command.ExecuteNonQuery();
+            }
+            SetExactCurrentPublicationScopeSourceBinding(
+                dataSource,
+                scrapeId);
         }
 
         private static FestivalService CreateTestFestivalService()

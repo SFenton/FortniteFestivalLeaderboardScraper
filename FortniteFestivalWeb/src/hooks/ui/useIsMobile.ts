@@ -16,7 +16,7 @@ export function useIsMobileChrome(): boolean {
   return dimensionMobile || IS_IOS || IS_ANDROID || IS_PWA;
 }
 
-/** True when viewport is wide enough for a persistent pinned sidebar (≥1200px). */
+/** True when viewport is wide enough for a persistent pinned sidebar (≥1440px). */
 export function useIsWideDesktop(): boolean {
   return useMediaQuery(WIDE_QUERY);
 }

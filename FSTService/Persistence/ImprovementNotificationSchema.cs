@@ -99,7 +99,13 @@ public static class ImprovementNotificationSchema
             improvement_notifications_projection_scopes = '[]'::jsonb,
             improvement_notifications_projection_ready = false,
             improvement_notifications_projection_scrape_id = NULL
-        WHERE improvement_notifications_status = 'disabled';
+        WHERE improvement_notifications_status = 'disabled'
+          AND (
+              improvement_notifications_scrape_id IS NOT NULL
+              OR improvement_notifications_projection_scopes IS DISTINCT FROM '[]'::jsonb
+              OR improvement_notifications_projection_ready IS DISTINCT FROM false
+              OR improvement_notifications_projection_scrape_id IS NOT NULL
+          );
 
         DO $$
         BEGIN

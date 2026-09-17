@@ -176,10 +176,22 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             IHostApplicationLifetime lifetime,
             IOptions<ScraperOptions> scraperOptions,
+            IMetaDatabase metaDb,
             ILogger<PathGenerationCoordinator> logger) =>
         {
             if (!scraperOptions.Value.EnablePathGeneration)
                 return Results.BadRequest(new { error = "Path generation is disabled." });
+
+            // Immediate generation promotes live song rows. While publication
+            // path artifacts are the read source, that must never race a
+            // candidate snapshot promotion staged for a working publication.
+            var regenerationConflict =
+                AdminPathRegenerationGate.GetConflictReason(
+                    scraperOptions.Value,
+                    metaDb.GetPublicationPointerState);
+            if (regenerationConflict is not null)
+                return Results.Conflict(new { error = regenerationConflict });
+
             if (string.IsNullOrWhiteSpace(songId))
             {
                 return Results.BadRequest(new
@@ -227,6 +239,33 @@ public static partial class ApiEndpoints
             {
                 message = $"Path regeneration started for song {songId}.",
                 force = force ?? false,
+            });
+        })
+        .WithTags("Paths")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        // ── Path staging deferral reset (admin) ─────────────────
+        app.MapPost("/api/admin/path-generation/rearm", (
+            string? songId,
+            IPathDataStore pathDataStore) =>
+        {
+            if (string.IsNullOrWhiteSpace(songId))
+                return Results.BadRequest(new { error = "songId is required." });
+
+            if (!pathDataStore.RearmPathGeneration(songId))
+                return Results.NotFound(new { error = "No matching song found." });
+
+            var state = pathDataStore.GetPathGenerationDeferralState(songId);
+            return Results.Ok(new
+            {
+                songId,
+                message =
+                    $"Automatic path staging re-armed for song {songId}.",
+                pending = state?.Pending ?? false,
+                reviewRequired = state?.ReviewRequired ?? false,
+                nextAttemptAtUtc = state?.NextAttemptAtUtc,
+                attemptCount = state?.AttemptCount ?? 0,
             });
         })
         .WithTags("Paths")

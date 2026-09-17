@@ -40,6 +40,11 @@ public interface IInstrumentDatabase : IDisposable
     List<PlayerScoreDto> GetCurrentStatePlayerScoresForSongs(string accountId, IReadOnlyCollection<string> songIds);
     List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null);
     List<PlayerScoreDto> GetCurrentStatePlayerScores(string accountId, string? songId = null);
+    Dictionary<string, List<PlayerScoreDto>>
+        GetCurrentStatePlayerScoresForAccounts(
+            IReadOnlyCollection<string> accountIds,
+            string? songId = null,
+            bool includeBlankAccountIds = false);
     Dictionary<string, int> GetPlayerRankings(string accountId, string? songId = null);
     Dictionary<string, int> GetCurrentStatePlayerRankings(string accountId, string? songId = null);
     Dictionary<string, int> GetPlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null);
@@ -110,6 +115,7 @@ public interface IInstrumentDatabase : IDisposable
     int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true);
     int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1);
     (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50);
+    List<AccountRankingDto> GetAllAccountRankings();
     AccountRankingDto? GetAccountRanking(string accountId);
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);

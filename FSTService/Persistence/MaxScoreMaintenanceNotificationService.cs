@@ -137,6 +137,44 @@ public sealed class MaxScoreMaintenanceNotificationService
                     manifestSha256,
                     planDigest,
                     expectedScoreSourceFingerprint,
+                    expectedRunPhase:
+                        "derived_state_rebuilt",
+                    nextRunPhase:
+                        "notifications_quarantined",
+                    alignmentDirection: "apply",
+                    advancePrimaryRun: true,
+                    connection,
+                    transaction,
+                    token),
+            IsolationLevel.RepeatableRead,
+            ct);
+    }
+
+    public async Task<MaxScoreMaintenanceNotificationQuarantineResult>
+        QuarantineAndAlignRollbackAsync(
+            MaxScoreMaintenanceManifest manifest,
+            string manifestSha256,
+            string planDigest,
+            string expectedScoreSourceFingerprint,
+            IMaxScoreMaintenanceLease maintenanceLease,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        return await maintenanceLease.ExecuteTransactionAsync(
+            "rollback-notification-quarantine",
+            requireSourceLocks: true,
+            (connection, transaction, token) =>
+                QuarantineAndAlignInTransactionAsync(
+                    manifest,
+                    manifestSha256,
+                    planDigest,
+                    expectedScoreSourceFingerprint,
+                    expectedRunPhase:
+                        "rollback_derived_state_rebuilt",
+                    nextRunPhase:
+                        "rollback_notifications_quarantined",
+                    alignmentDirection: "rollback",
+                    advancePrimaryRun: false,
                     connection,
                     transaction,
                     token),
@@ -150,6 +188,10 @@ public sealed class MaxScoreMaintenanceNotificationService
             string manifestSha256,
             string planDigest,
             string expectedScoreSourceFingerprint,
+            string expectedRunPhase,
+            string nextRunPhase,
+            string alignmentDirection,
+            bool advancePrimaryRun,
             NpgsqlConnection conn,
             NpgsqlTransaction tx,
             CancellationToken ct)
@@ -161,6 +203,11 @@ public sealed class MaxScoreMaintenanceNotificationService
             throw new ArgumentException(
                 "The notification quarantine transaction must belong to the supplied connection.",
                 nameof(tx));
+        }
+        if (alignmentDirection is not ("apply" or "rollback"))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(alignmentDirection));
         }
         var normalizedManifest = manifest.ValidateAndNormalize();
         var normalizedManifestDigest =
@@ -270,6 +317,7 @@ public sealed class MaxScoreMaintenanceNotificationService
             normalizedManifestDigest,
             normalizedPlanDigest,
             normalizedManifest.ExpectedPublishedScrapeId,
+            alignmentDirection,
             candidates);
         var candidateDigest = Convert.ToHexStringLower(
             SHA256.HashData(
@@ -337,12 +385,13 @@ public sealed class MaxScoreMaintenanceNotificationService
                 ct);
         }
 
-        await using (var advance = conn.CreateCommand())
+        if (advancePrimaryRun)
         {
+            await using var advance = conn.CreateCommand();
             advance.Transaction = tx;
             advance.CommandText = """
                 UPDATE max_score_maintenance_runs
-                SET phase = 'notifications_quarantined',
+                SET phase = @nextPhase,
                     status = 'running',
                     notification_maintenance_run_id =
                         @notificationMaintenanceRunId,
@@ -354,9 +403,15 @@ public sealed class MaxScoreMaintenanceNotificationService
                 WHERE manifest_sha256 = @manifestSha256
                   AND plan_digest = @planDigest
                   AND phase IN (
-                      'derived_state_rebuilt',
-                      'notifications_quarantined')
+                      @expectedPhase,
+                      @nextPhase)
                 """;
+            advance.Parameters.AddWithValue(
+                "expectedPhase",
+                expectedRunPhase);
+            advance.Parameters.AddWithValue(
+                "nextPhase",
+                nextRunPhase);
             advance.Parameters.AddWithValue(
                 "notificationMaintenanceRunId",
                 maintenanceRunId);
@@ -373,6 +428,56 @@ public sealed class MaxScoreMaintenanceNotificationService
             {
                 throw new InvalidOperationException(
                     "Max-score workflow phase changed before notification quarantine committed.");
+            }
+        }
+        else
+        {
+            await using var advance = conn.CreateCommand();
+            advance.Transaction = tx;
+            advance.CommandText = """
+                UPDATE max_score_maintenance_runs
+                SET phase = @nextPhase,
+                    status = 'running',
+                    rollback_notifications_quarantined_at =
+                        COALESCE(
+                            rollback_notifications_quarantined_at,
+                            now()),
+                    rollback_notification_maintenance_run_id =
+                        @notificationMaintenanceRunId,
+                    rollback_quarantined_candidate_count =
+                        @candidateCount,
+                    rollback_visible_delivery_count = 0,
+                    rollback_failure_stage = NULL,
+                    rollback_failure_detail = NULL,
+                    updated_at = now()
+                WHERE manifest_sha256 = @manifestSha256
+                  AND plan_digest = @planDigest
+                  AND phase IN (
+                      @expectedPhase,
+                      @nextPhase)
+                """;
+            advance.Parameters.AddWithValue(
+                "expectedPhase",
+                expectedRunPhase);
+            advance.Parameters.AddWithValue(
+                "nextPhase",
+                nextRunPhase);
+            advance.Parameters.AddWithValue(
+                "notificationMaintenanceRunId",
+                maintenanceRunId);
+            advance.Parameters.AddWithValue(
+                "candidateCount",
+                candidates.LongLength);
+            advance.Parameters.AddWithValue(
+                "manifestSha256",
+                normalizedManifestDigest);
+            advance.Parameters.AddWithValue(
+                "planDigest",
+                normalizedPlanDigest);
+            if (await advance.ExecuteNonQueryAsync(ct) != 1)
+            {
+                throw new InvalidOperationException(
+                    "Max-score rollback phase changed before notification quarantine committed.");
             }
         }
 
@@ -1098,6 +1203,7 @@ public sealed class MaxScoreMaintenanceNotificationService
         string manifestSha256,
         string planDigest,
         long publishedScrapeId,
+        string alignmentDirection,
         IReadOnlyList<MaxScoreMaintenanceCandidate> candidates)
         => JsonSerializer.Serialize(
             new
@@ -1109,6 +1215,7 @@ public sealed class MaxScoreMaintenanceNotificationService
                 manifestSha256,
                 planDigest,
                 publishedScrapeId,
+                alignmentDirection,
                 candidates,
             },
             MaxScoreMaintenanceJson.Canonical);

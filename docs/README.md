@@ -1,13 +1,21 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified: 2026-08-27
+last_verified_commit: 21d7193c
 sources:
   - README.md
   - AGENTS.md
   - .github/instructions/documentation.instructions.md
   - docs/architecture/replay-artifacts.md
+  - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/ProBassSnapshotRewritePilot.md
+  - docs/database/SnapshotGenerationPartitionMigration.md
+  - docs/database/SnapshotGenerationRetentionSafety.md
+  - docs/database/SnapshotGenerationRetirementControlPlane.md
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
+  - docs/database/SnapshotGenerationDropRunbook.md
+  - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -25,6 +33,10 @@ evidence remain the behavioral sources of truth.
 | Understand the whole system | [System overview](architecture/system-overview.md) |
 | Follow data from Epic to the browser | [Scrape and publication flow](architecture/data-publication-flow.md) |
 | Understand PostgreSQL ownership and data shapes | [Data storage](architecture/data-storage.md) |
+| Review snapshot-generation retention safety | [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md) |
+| Operate the plan-only retirement control plane | [Snapshot generation retirement plan control plane](database/SnapshotGenerationRetirementControlPlane.md) |
+| Produce current retention evidence after an external idle stop | [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md) |
+| Execute the gated snapshot-generation DROP/restore canary | [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
@@ -43,6 +55,13 @@ evidence remain the behavioral sources of truth.
 | Find active future work | [Roadmap](roadmap/README.md) |
 | Understand why a boundary exists | [Architecture decisions](decisions/README.md) |
 | Change documentation safely | [Documentation governance](governance/documentation.md) |
+| Route agent work within a budget | [Budget-aware agents](governance/agent-budget.md) |
+
+## Database safety
+
+- [Snapshot generation retention safety](database/SnapshotGenerationRetentionSafety.md)
+- [Snapshot generation retirement plan control plane](database/SnapshotGenerationRetirementControlPlane.md)
+- [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md)
 
 ## Living runbooks
 
@@ -51,9 +70,14 @@ again. Verify their preconditions and current code before execution.
 
 - [Improvement notification recovery](database/ImprovementNotificationRecoveryRunbook.md)
 - [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
+- [Pro-bass snapshot archive/rewrite pilot](database/ProBassSnapshotRewritePilot.md)
+- [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
+- [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
+- [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
+- [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)
 - [Runbook index and lifecycle](operations/runbooks/README.md)
 
 ## Documentation classes

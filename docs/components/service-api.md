@@ -1,20 +1,35 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FSTService/Program.cs
+  - FSTService/StartupPublicationReadOnlyState.cs
+  - FSTService/StartupInitializer.cs
+  - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/HealthEndpoints.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicApiCacheTelemetry.cs
+  - FSTService/Api/SongEndpoints.cs
+  - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
@@ -27,6 +42,63 @@ update_triggers:
 FSTService is an ASP.NET Core .NET 9 application. The same binary can host the
 public API, the full worker, a registration-sync worker, read-only rollout
 serving, one-shot tools, or an embedded SPA.
+
+`--initialize-snapshot-retention-schema-only` is an early-dispatched exception:
+it constructs no ASP.NET host, reads no `.env`, registers no hosted services,
+and runs only the bounded retention schema step using the environment-supplied
+database connection. Every additional argument is refused. It is the reviewed
+offline retention deployment prerequisite, not an API startup or schema-wide
+maintenance mode.
+Explicit general schema initialization refuses invalid current/working path
+bindings with structured diagnostics and no binding rewrite. Invalid previous
+bindings warn without aborting startup. The shared validator checks JSON
+identity, authority, versions, counts and hash; a read-serving health result
+does not release an invalid path binding.
+
+### Sticky read-only startup
+
+`StartupPublicationReadOnlyState` selects its database policy before runtime pools and hosted
+writers exist. A private unpooled source applies general schema only for roles
+that own it. When `Scraper:UsePublicationPathArtifacts=true`, it then
+revalidates current/working path bindings under a bounded selection fence.
+Feature-off roles skip that path migration and fence, preserve inactive
+bindings unchanged, and retain writable legacy live-row operation. Invalid
+bindings or unavailable admission while the feature is enabled select
+`publication_path_artifact_validation_failed` or a specific database/fence
+reason, not `StopApplication`. All runtime pools, unpooled registration
+connections, publication-read locks and path-admission connections then use
+`default_transaction_read_only=on`. The policy cannot be re-enabled in process.
+Immediately after `builder.Build()`, `Program` eagerly resolves the main
+`NpgsqlDataSource`. Its factory selects publication startup state, fixes pool
+policy and releases the held transaction in one construction path, before
+pipeline/hosted-service construction or pool-using one-shot dispatch. There is
+no delayed DI gap through the 10-second idle timeout. One-shot/schema exemptions
+remain in the state factory; the dedicated retention-only CLI never builds a
+host or reaches this path.
+
+`StartupInitializer` loads only persisted state in that mode. It performs no
+provider sync, spool cleanup, cache purge, publication recovery, shop timer or
+registration startup writes. Mutation/background hosted services are replaced
+before construction, including scraper, heartbeat, progress bridge,
+staleness/publication monitors, catalog refresh, registration and band history.
+Transient persisted-load failures retry without admitting mutations. A fresh
+guarded restart after correcting the cause is required to restore writers.
+
+Persisted public GETs and valid cache hits remain available; existing
+publication/source gates still refuse invalid or missing data. `/readyz`
+reports this specific check as `Healthy` with an explicit `degraded_read_only`
+description/reason and HTTP 200 for read availability, not mutation readiness.
+The global `Degraded` mapping remains HTTP 503, so an unrelated degraded check
+still makes the aggregate non-healthy. Readiness JSON contains aggregate
+`status`, named `checks` with status/description, and the structured `startup`
+object; it does not serialize raw check exceptions.
+`/api/service-info.startup` exposes the selected state, separate read/mutation
+readiness, exact reason, current/working diagnostics and previous warnings.
+Configured rollout read-only flags remain separate from automatic degradation.
+The publication-only type and hosted-registration APIs deliberately differ
+from the execution-admission foundation. A future merge must compose both
+gates monotonically before pool creation, not alias either type or let one
+gate clear the other's refusal; see [ADR 0009](../decisions/0009-offline-retention-report-admission.md).
 
 ## API role
 
@@ -42,15 +114,60 @@ exists. The normal split deployment uses the standalone Nginx web container.
 
 After CORS, WebSockets, and forwarded headers, the service applies:
 
-1. rate limiting;
-2. API-key authentication and authorization;
-3. public API response caching;
-4. publication read context;
-5. publication read leases;
-6. the public-read gate;
-7. selected-profile activity tracking.
+1. startup/rollout mutation guard;
+2. rate limiting;
+3. API-key authentication and authorization;
+4. public API response caching;
+5. publication read context;
+6. publication read leases;
+7. the public-read gate;
+8. selected-profile activity tracking.
 
 This order is part of the read-safety contract.
+During initialization/degradation the outer guard rejects mutation HTTP
+methods, known write-capable GETs and WebSocket admission. Selected-profile
+activity, including cache-hit activity, is skipped before resolving writers.
+Degraded PostgreSQL write refusals return `startup_read_only`, not a rollout
+violation; the read-only pool is the backstop for an unclassified SQL writer.
+
+When the service role enables `UsePublishedScopeSources`, publication-bound
+reads have an additional fail-closed invariant across that order. The
+authoritative current `solo_scope_sources` binding must match its publication
+and scrape, positive expected count, complete source rows, and canonical
+SHA-256 key set. The outer L1/L2 cache validates the exact cached
+publication/scrape before serving, and the publication-context/boundary
+middleware validates uncached HTTP and WebSocket admission. Missing, partial,
+legacy, or malformed mappings return `503`/`Retry-After: 1`; they cannot bypass
+the check through a warm cache while request pinning remains disabled. A lazy
+overview request repeats the same validation after taking its single-flight
+lease and again immediately before cached bytes are served, so a concurrent
+lookup cannot reintroduce a row rejected before the lease.
+Startup performs an uncached check before signalling ready. `/readyz` and
+requests then use the same publication-keyed result for at most one second,
+with explicit lifecycle invalidation, so the exact hash query is bounded
+without allowing a stale result to remain healthy indefinitely.
+
+WebSocket admission records the exact validated current publication even when
+full request pinning is disabled for the service role. `NotificationService`
+holds a bounded shared publication lease across its final pointer/source
+recheck and `AddConnection`. It repeats the same validation and lease for
+`subscribe_sync` and `unsubscribe_sync`, atomically moving the account-key
+registration under an in-process mutation gate shared with publication-change
+snapshots. The lease and mutation gate are released before sending, closing,
+snapshot delivery, or the receive loop. Publication commit therefore either
+wins first and causes stale admission/rebind to be rejected, or waits until the
+socket is registered and can receive the transition notification. A
+missing/stale identity or later publication change sends `publication_changed`
+and closes the socket instead of treating a null identity as current forever.
+
+The digest-owned max-score freeze has one narrow short circuit within that
+order. After the outer public-response cache gets the first chance to serve,
+max-score-dependent song/path/exact-solo requests defer publication
+read-context and boundary-lease acquisition to the public-read/endpoint gate.
+This permits a stable cache or immutable path hit and makes every cold result
+an explicit `503` with `Retry-After`, even while maintenance holds the
+publication advisory lock. Other freeze reasons and ordinary publication
+commit/read-lease behavior keep the listed order unchanged.
 
 ## Endpoint organization
 
@@ -69,7 +186,7 @@ See [Path generation](path-generation.md).
 The path route validates the eight generated solo instruments, including the
 two plastic-drums scoring modes backed by Epic's shared `pd` chart.
 
-The current source contains 80 HTTP mappings across 14 route-bearing endpoint
+The current source contains 81 HTTP mappings across 14 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:
 
 - `PublicationBound`
@@ -93,12 +210,105 @@ require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
 
-A digest-owned max-score maintenance freeze requires published cache hits or
-`503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
-forms are included even though they are normally live endpoint code. A warm
-`SongsCacheService` response may serve the prior publication; cold path reads
-and cold exact solo leaderboard reads, including leeway requests, return
-`503`. Outer-cache exact leaderboard hits remain available.
+The freeze-safe public API cache has two tiers:
+
+- L1 is a process-local accelerator keyed by publication, public-read safety
+  revision, and normalized request identity.
+- L2 is `publication_api_response_cache`, authoritative for covered frozen
+  reads and retained for the current and previous publications.
+
+Cache admission first requires exactly one authoritative `PublicationBound`
+endpoint classification from the canonical route catalog. Unclassified,
+operational, private, or conflicting metadata bypasses both cache tiers even
+when its path would pass request-shape checks. The path/query deny-list remains
+defense-in-depth, not the trust boundary. Startup route-catalog validation and
+middleware tests make future classification drift fail closed.
+
+L2 rows retain deterministic JSON bytes, ETag, and `cached_at`; the service
+derives the full SHA-256 and fixed JSON content type on lookup. A service
+restart recovers directly from L2. Same-publication maintenance swaps the
+complete L2 generation before unfreeze. Guarded path/max-score mutation
+explicitly invalidates L1 and durably rewrites the canonical songs row.
+Periodic catalog refresh instead updates the exact live provider catalog and
+invalidates process-local live state without replacing the publication-owned
+canonical row. It compares the exact provider snapshot hash, not only song
+count, so additions, removals, and same-count metadata changes all produce
+truthful lag telemetry while public songs remain stable.
+HTTP JSON serialization, precompute serialization, and alias projection share
+an explicit relaxed Unicode encoder. This keeps non-ASCII display-name bytes
+and therefore ETags identical between a direct endpoint and its cached alias.
+The `application/json` contract intentionally permits raw Unicode and raw
+HTML-sensitive characters such as `<`, `>`, `&`, `'`, and `+`; JSON controls
+remain escaped and non-BMP characters remain valid surrogate pairs. This is
+safe for HTTP JSON consumers and `Response.json()`/`res.json()` parsing.
+Any future boundary that embeds these bytes inside HTML or an inline
+`<script>` must apply context-appropriate HTML/script escaping rather than
+concatenating cached JSON directly.
+
+Freeze-critical coverage is intentionally bounded: `/api/songs`, page-1
+per-instrument/composite/generic-band rankings, overview bootstrap sizes,
+registered-player default profiles, top-10 song/instrument leaderboards, and
+existing leaderboard-all/song-band bootstrap rows. Request aliases resolve
+canonical precompute keys and project contained page windows without duplicating
+large JSON rows. Selected account/team overlays, arbitrary pages/filters,
+search/history/notification variants, paths, shop, operational, private, and
+WebSocket routes keep their established owners.
+
+During any required-cache freeze, covered routes perform L1/L2 reads only. A
+hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
+builds or writes. Cache hits retain each covered endpoint family's
+`Cache-Control`, content type, ETag, publication header, and exact response
+bytes. Unfrozen overview sizes `25` and `50` are the only lazy
+write-through variants. They use process single-flight, store only successful
+JSON responses whose measured build is below one second, and reject slow,
+oversized, failed, or transition-raced builds without poisoning L2.
+Every post-wait lookup passes the authoritative publication/source readiness
+gate before `TryServeHitAsync`; a waiter cannot serve an invalid row populated by
+another request.
+Metric, instrument, band-type, query-order, and numeric spellings normalize to
+one semantic lazy/canonical key; request spelling cannot expand the bounded
+variant set.
+
+The hot L1 path obtains current publication, durable freeze, and failed-
+candidate isolation in one authoritative PostgreSQL safety snapshot. The
+current-publication ID participates in the L1 key, so publication rotation
+cannot reuse an old entry, while a warm hit avoids redundant publication
+pointer and L2 lookups. Selected-profile activity performs its additional gate
+probe only when selection headers are actually present.
+
+Path PNG/JSON remains immutable-file owned. Missing artifacts, syntactically
+valid stale generation IDs retained by a pre-promotion songs cache, and
+uncovered cold routes remain fail-closed during max-score maintenance.
+
+`X-FST-Public-Cache` reports `hit`, `miss`, or `build`;
+`X-FST-Public-Cache-Tier` distinguishes L1 and L2 hits. Admin telemetry exposes
+route patterns, hashed cache-key IDs, publication/revision, outcome, wait/build
+duration, payload bytes, cached timestamp, and error type without raw account
+or team/profile identifiers, raw cache keys/revisions, or exception messages.
+Cache and revision identifiers are independent bounded hashes.
+
+The first bounded service-only production A/B of PR #55 head `5a227954`
+rejected the candidate before merge: page-window aliases semantically matched
+the direct endpoint, but alias projection escaped two non-ASCII display names,
+changing exact body SHA-256/ETag. The baseline service and 9,255-row current
+cache were restored. The explicit shared encoder above is the repository repair
+and required focused review plus another bounded service-only A/B; no scrape
+was needed for that retry.
+
+The repeat bounded service-only A/B accepted head `cf044631`. A shared JSON
+writer factory and strict UTF-8 validation passed exact byte/ETag cases for
+`Jöhn`, `Łukasz`, raw HTML-sensitive characters, all JSON controls, emoji/
+non-BMP pairs, and invalid surrogate UTF-8. One combined authoritative
+publication/freeze/failure snapshot reduced every protected warm p95 to
+`1.90-3.47 ms`; all 11 measured routes improved `55.76-82.97%` across 120
+interleaved samples with no sustained regression. Service-only promotion is
+accepted; worker publication-switch validation remains assigned to the next
+natural scrape.
+
+PR #55 merged as `2bc7e9f9`; the official service image
+`sha256:4fad543b...976564` is deployed and healthy on publication 1302. Web is
+unchanged. The worker definition uses the same official image but remains
+Created/offline.
 
 While the exclusive maintenance gate or its freeze is active, the public-read
 gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the
@@ -130,6 +340,22 @@ separate heartbeat/last-progress fields. It preserves the version-1 labels and
 summary fields for rolling worker and browser compatibility. The normalized
 PostgreSQL ledger is authoritative when a running attempt exists; the worker
 operation JSON remains the fallback summary.
+
+Its additive `catalog` object reports the configured refresh interval, exact
+live/published/working catalog identities, nullable live-versus-published
+change counts, and path-generation pending/review totals. The count comparison
+is memoized by catalog version/hash and is unknown when either exact baseline
+is absent. `songs_changed` broadcasts additions, removals, and metadata
+changes, but clients refresh service-info rather than treating the message as
+permission to expose unpublished songs.
+
+The phase plan also identifies subphase catalog version
+`fst.subphase-plan.v1`. `currentUpdate.subphaseProgress` is optional and
+separate from phase progress; it carries schema version 1, ID, epoch, sequence,
+exact/indeterminate/not-applicable kind, and exact counters only when the
+denominator is final. Parallel attempts resolve deterministically to the
+lowest phase ordinal. Worker heartbeat/activity fallback writes are
+instance-fenced so restart overlap cannot restore an older operation.
 
 Each phase-plan descriptor includes additive `reserved`. The accepted ordered
 v2 list/version remains unchanged; `true` identifies retired IDs retained only

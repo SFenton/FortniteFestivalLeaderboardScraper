@@ -254,37 +254,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         try
         {
-            using var cmd = conn.CreateCommand();
-            var projectionGenerationGuard = UsePublishedScopeSources
-                ? $"""
-                    AND (
-                        scope.row_count = 0
-                        OR EXISTS (
-                            SELECT 1
-                            FROM {SoloCurrentProjectionTable} projection
-                            WHERE projection.song_id = scope.song_id
-                              AND projection.instrument = scope.instrument
-                              AND projection.projection_generation = scope.projection_generation
-                        )
-                    )
-                    """
-                : string.Empty;
-            cmd.CommandText = $"""
-                                WITH {BuildProjectionSourceCtes(filterSong: true)}
-                                SELECT scope.row_count
-                                FROM {SoloCurrentProjectionScopeTable} scope
-                                JOIN selected_sources source
-                                  ON source.song_id = scope.song_id
-                                WHERE scope.song_id = @songId
-                                    AND scope.instrument = @instrument
-                                    AND scope.status = 'ready'
-                                    AND source.source_kind IN ('snapshot', 'empty')
-                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                                    {projectionGenerationGuard}
-                LIMIT 1
-                """;
-            cmd.Parameters.AddWithValue("songId", songId);
-            cmd.Parameters.AddWithValue("instrument", Instrument);
+            using var cmd =
+                CreateReadyCurrentProjectionRowCountCommand(
+                    conn,
+                    songId);
             var result = cmd.ExecuteScalar();
             return result is DBNull or null ? null : Convert.ToInt64(result);
         }
@@ -294,6 +267,75 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         }
     }
 
+    private async Task<long?>
+        TryGetReadyCurrentProjectionRowCountAsync(
+            NpgsqlConnection conn,
+            string songId,
+            CancellationToken ct)
+    {
+        if (MustBypassCurrentProjection)
+            return null;
+
+        try
+        {
+            await using var cmd =
+                CreateReadyCurrentProjectionRowCountCommand(
+                    conn,
+                    songId);
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return result is DBNull or null
+                ? null
+                : Convert.ToInt64(result);
+        }
+        catch (PostgresException ex)
+            when (ex.SqlState ==
+                  PostgresErrorCodes.UndefinedTable)
+        {
+            return null;
+        }
+    }
+
+    private NpgsqlCommand
+        CreateReadyCurrentProjectionRowCountCommand(
+            NpgsqlConnection conn,
+            string songId)
+    {
+        var cmd = conn.CreateCommand();
+        var projectionGenerationGuard = UsePublishedScopeSources
+            ? $"""
+                AND (
+                    scope.row_count = 0
+                    OR EXISTS (
+                        SELECT 1
+                        FROM {SoloCurrentProjectionTable} projection
+                        WHERE projection.song_id = scope.song_id
+                          AND projection.instrument = scope.instrument
+                          AND projection.projection_generation =
+                                scope.projection_generation
+                    )
+                )
+                """
+            : string.Empty;
+        cmd.CommandText = $"""
+            WITH {BuildProjectionSourceCtes(filterSong: true)}
+            SELECT scope.row_count
+            FROM {SoloCurrentProjectionScopeTable} scope
+            JOIN selected_sources source
+              ON source.song_id = scope.song_id
+            WHERE scope.song_id = @songId
+              AND scope.instrument = @instrument
+              AND scope.status = 'ready'
+              AND source.source_kind IN ('snapshot', 'empty')
+              AND scope.source_snapshot_id IS NOT DISTINCT FROM
+                    source.source_snapshot_id
+              {projectionGenerationGuard}
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        return cmd;
+    }
+
     private bool HasAnyReadyCurrentProjectionScope(NpgsqlConnection conn)
     {
         if (MustBypassCurrentProjection)
@@ -301,48 +343,82 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         try
         {
-            using var cmd = conn.CreateCommand();
-            var projectionGenerationGuard = UsePublishedScopeSources
-                ? $"""
-                    OR (
-                        scope.row_count > 0
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM {SoloCurrentProjectionTable} projection
-                            WHERE projection.song_id = scope.song_id
-                              AND projection.instrument = scope.instrument
-                              AND projection.projection_generation = scope.projection_generation
-                        )
-                    )
-                    """
-                : string.Empty;
-            cmd.CommandText = $"""
-                WITH {BuildProjectionSourceCtes(filterSong: false)}
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM selected_sources
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM selected_sources source
-                    LEFT JOIN {SoloCurrentProjectionScopeTable} scope
-                      ON scope.song_id = source.song_id
-                     AND scope.instrument = @instrument
-                    WHERE (
-                          scope.song_id IS NULL
-                          OR scope.status <> 'ready'
-                          OR scope.source_snapshot_id IS DISTINCT FROM source.source_snapshot_id
-                          {projectionGenerationGuard}
-                      )
-                )
-                """;
-            cmd.Parameters.AddWithValue("instrument", Instrument);
+            using var cmd =
+                CreateAnyReadyCurrentProjectionScopeCommand(conn);
             return Convert.ToBoolean(cmd.ExecuteScalar());
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
         {
             return false;
         }
+    }
+
+    private async Task<bool>
+        HasAnyReadyCurrentProjectionScopeAsync(
+            NpgsqlConnection conn,
+            CancellationToken ct)
+    {
+        if (MustBypassCurrentProjection)
+            return false;
+
+        try
+        {
+            await using var cmd =
+                CreateAnyReadyCurrentProjectionScopeCommand(conn);
+            return Convert.ToBoolean(
+                await cmd.ExecuteScalarAsync(ct));
+        }
+        catch (PostgresException ex)
+            when (ex.SqlState ==
+                  PostgresErrorCodes.UndefinedTable)
+        {
+            return false;
+        }
+    }
+
+    private NpgsqlCommand
+        CreateAnyReadyCurrentProjectionScopeCommand(
+            NpgsqlConnection conn)
+    {
+        var cmd = conn.CreateCommand();
+        var projectionGenerationGuard = UsePublishedScopeSources
+            ? $"""
+                OR (
+                    scope.row_count > 0
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM {SoloCurrentProjectionTable} projection
+                        WHERE projection.song_id = scope.song_id
+                          AND projection.instrument = scope.instrument
+                          AND projection.projection_generation =
+                                scope.projection_generation
+                    )
+                )
+                """
+            : string.Empty;
+        cmd.CommandText = $"""
+            WITH {BuildProjectionSourceCtes(filterSong: false)}
+            SELECT EXISTS (
+                SELECT 1
+                FROM selected_sources
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM selected_sources source
+                LEFT JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = source.song_id
+                 AND scope.instrument = @instrument
+                WHERE (
+                      scope.song_id IS NULL
+                      OR scope.status <> 'ready'
+                      OR scope.source_snapshot_id IS DISTINCT FROM
+                            source.source_snapshot_id
+                      {projectionGenerationGuard}
+                  )
+            )
+            """;
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        return cmd;
     }
 
     private bool AllRequestedScopesReady(NpgsqlConnection conn, IReadOnlyCollection<string> songIds)
@@ -1462,20 +1538,83 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerScoresForAccounts(
         IReadOnlyCollection<string> accountIds,
-        string? songId = null)
+        string? songId = null,
+        bool includeBlankAccountIds = false)
+        => GetCurrentStatePlayerScoresForAccountsAsync(
+                accountIds,
+                songId,
+                includeBlankAccountIds,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+    public async Task<Dictionary<string, List<PlayerScoreDto>>>
+        GetCurrentStatePlayerScoresForAccountsAsync(
+            IReadOnlyCollection<string> accountIds,
+            string? songId = null,
+            bool includeBlankAccountIds = false,
+            CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var normalizedAccountIds = accountIds
-            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Where(accountId =>
+                accountId is not null
+                && (includeBlankAccountIds
+                    || !string.IsNullOrWhiteSpace(
+                        accountId)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (normalizedAccountIds.Length == 0)
             return new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
 
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = BuildCurrentStatePlayerScoresSql(
-            hasSongIdFilter: songId is not null,
-            includeAccountId: true);
+        await using var conn = await _ds.OpenConnectionAsync(ct);
+        var useProjection = songId is null
+            ? await HasAnyReadyCurrentProjectionScopeAsync(
+                conn,
+                ct)
+            : (await TryGetReadyCurrentProjectionRowCountAsync(
+                conn,
+                songId,
+                ct)).HasValue;
+        await using var cmd = conn.CreateCommand();
+        var projectedSongFilter = songId is not null
+            ? "AND projection.song_id = @songId"
+            : string.Empty;
+        cmd.CommandText = useProjection
+            ? $"""
+                WITH {BuildProjectionSourceCtes(filterSong: false)}
+                SELECT projection.account_id,
+                       projection.song_id,
+                       projection.score,
+                       projection.accuracy,
+                       projection.is_full_combo,
+                       projection.stars,
+                       projection.season,
+                       projection.difficulty,
+                       projection.percentile,
+                       projection.end_time,
+                       projection.rank,
+                       projection.api_rank
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.projection_generation =
+                        projection.projection_generation
+                 AND scope.status = 'ready'
+                 AND scope.row_count > 0
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM
+                        source.source_snapshot_id
+                WHERE projection.account_id = ANY(@accountIds)
+                  AND projection.instrument = @instrument
+                  {projectedSongFilter}
+                ORDER BY projection.account_id, projection.song_id
+                """
+            : BuildCurrentStatePlayerScoresSql(
+                hasSongIdFilter: songId is not null,
+                includeAccountId: true);
         cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("accountIds", normalizedAccountIds);
         cmd.Parameters.AddWithValue("instrument", Instrument);
@@ -1483,8 +1622,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             cmd.Parameters.AddWithValue("songId", songId);
 
         var profiles = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
             var accountId = reader.GetString(0);
             if (!profiles.TryGetValue(accountId, out var scores))
@@ -2943,6 +3082,47 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             list.Add(ReadAccountRanking(r));
         return (list, total);
     }
+
+    public List<AccountRankingDto> GetAllAccountRankings()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT account_id,
+                   songs_played,
+                   total_charted_songs,
+                   coverage,
+                   raw_skill_rating,
+                   adjusted_skill_rating,
+                   adjusted_skill_rank,
+                   weighted_rating,
+                   weighted_rank,
+                   fc_rate,
+                   fc_rate_rank,
+                   total_score,
+                   total_score_rank,
+                   max_score_percent,
+                   max_score_percent_rank,
+                   avg_accuracy,
+                   full_combo_count,
+                   avg_stars,
+                   best_rank,
+                   avg_rank,
+                   computed_at,
+                   raw_max_score_percent,
+                   raw_weighted_rating
+            FROM account_rankings
+            WHERE instrument = @instrument
+            ORDER BY account_id
+            """;
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var rankings = new List<AccountRankingDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            rankings.Add(ReadAccountRanking(reader));
+        return rankings;
+    }
+
     public AccountRankingDto? GetAccountRanking(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at, raw_max_score_percent, raw_weighted_rating FROM account_rankings WHERE instrument = @instrument AND account_id = @accountId"; cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("accountId", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadAccountRanking(r) : null; }
 
     public (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore")

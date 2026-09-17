@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "toolId": "fst.snapshot-generation-live-q2-archive-fixture.v1",
+  "source": "committed Pro Cymbals 1314 Q2 recovery-bundle-v2 archive",
+  "safetyReview": {
+    "credentialLikeKeys": 0,
+    "connectionStrings": 0,
+    "emailAddresses": 0,
+    "privateEndpoints": 0,
+    "accountIdKeys": 0,
+    "decision": "safe-to-vendor-as-sha-pinned-deterministic-gzip-base64"
+  },
+  "catalog": {
+    "file": "catalog.json.gz.b64",
+    "rawBytes": 20996,
+    "rawSha256": "8a7794323b79324da1f5c6c407d2dfdfe8ddcc09532397f17880896cebf594bb",
+    "gzipSha256": "72eda3aed0600df7fc5575371db2892be1ab386bad3acd680831b0d82a4dd96a"
+  },
+  "toc": {
+    "file": "archive.toc.gz.b64",
+    "rawBytes": 1712,
+    "rawSha256": "ad77d4dc57e3aec36d6f12ef179c2bf58492232c869f7ea404798bace1506c7c",
+    "gzipSha256": "92811149d994f80a2bc51cec21179d2092b25b8117da273800703ebd12cddcc5"
+  },
+  "expected": {
+    "childRelation": "leaderboard_entries_snapshot_pro_cymbals_s1314",
+    "rootRelation": "leaderboard_entries_snapshot_pro_cymbals",
+    "topRelation": "leaderboard_entries_snapshot",
+    "primaryIndexName": "sgqi_1b44941dc5d5ea806dabc2187c3cffed_pk",
+    "scoreIndexName": "sgqi_1b44941dc5d5ea806dabc2187c3cffed_score",
+    "logicalIndexShapeSha256": "910c84aaa79f288cb00233c63a3b052654e2b2c5386be69a7296dd6c9d7d1a25",
+    "selectedTocEntries": 4,
+    "executedTocEntries": 2
+  }
+}

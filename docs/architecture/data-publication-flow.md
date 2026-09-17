@@ -1,16 +1,20 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: f2c36bdc
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
   - FSTService/ScraperWorker.cs
+  - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
@@ -20,18 +24,40 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/MetaDatabase.Publication.cs
+  - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/DatabaseInitializer.cs
+  - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/Persistence/PublicationPathArtifactSchema.cs
+  - FSTService/Persistence/MetaDatabase.PathPromotion.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/Api/PublicationReadContext.cs
+  - FSTService/Api/PublicationReadiness.cs
+  - FSTService/Api/PublicApiResponseCacheMiddleware.cs
+  - FSTService/Scraping/PathDataStore.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Persistence/SongCatalogSnapshot.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
+  - Publication-bound path artifact capture, binding, read-scope, staging, or
+    commit-time promotion changes.
 ---
 
 # Scrape and publication flow
@@ -39,24 +65,103 @@ update_triggers:
 The worker separates candidate work from public state. A scrape can persist
 diagnostic or replay data without becoming the published generation.
 
+Offline report generation is a separate host-owned operation, not another
+publication phase. The operator first establishes a terminal stopped-worker
+boundary; the [offline report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+then observes the current completed publication under bounded database fences.
+It does not replay notifications, allocate a scrape, or change freeze state.
+In particular, the existing allocation advisory lock must not be treated as a
+pre-freeze stop barrier.
+
+The deployment prerequisite is outside this publication flow: after the
+natural idle stop and external restart exclusion, run the exact retention-only
+schema initializer, require its version-2 combined zero-DML/table-identity
+proof with acknowledged commit and unchanged non-retention rows/schema/source/control,
+recreate the candidate service, and then guard-start the compatible worker
+for its genuine receipt. The dedicated mode does not run publication,
+notifications, catalog/path or startup services. The general initializer's
+path bootstrap no longer overwrites current-version binding provenance or
+timestamps; explicit path maintenance and older-manifest upgrade remain
+separate deliberate transitions. Already deployed additive retention schema
+is retained, not rolled back, and the prior binding mutation is not repaired.
+Bounded post-migration validation fails closed on invalid current/working
+bindings and future-version downgrade attempts, with explicit diagnostic
+codes. It never changes a binding merely to satisfy readiness; startup release
+readiness uses the same full identity/count/hash contract.
+The dedicated transaction takes schema then exclusive registration admission
+and checks a fresh-backend zero-DML baseline, pre-commit counts and exact
+non-retention table schema/name/OID/relfilenode identities. The DML allowlist
+is empty; only the six exact managed public retention relations are excluded
+from the identity inventory, not from the tuple assertion. Identity drift
+refuses and rolls back. Unconfirmed COMMIT acknowledgement instead returns
+`commit_acknowledgement_unknown` with `transactionCommitted=null`, never a
+rollback claim or permission to retry. Cumulative table counters are
+non-causal telemetry only, not evidence that the
+initializer or a particular ambient caller changed source data. Actual
+unexplained row/schema drift and resource/lock failures still reject.
+Previous invalid bindings warn without blocking normal startup. Ordinary
+current/working refusal is selected before runtime pools: PostgreSQL read-only
+connections, suppressed hosted writers/recovery/provider sync, rejected HTTP
+and selected-profile mutations, and persisted read/cache serving. The
+`degraded_read_only` state is sticky until a fresh guarded restart. HTTP 200
+read-serving health does not admit the next scrape or imply source readiness.
+
 ## Normal pass
 
 1. **Startup and recovery**
+   - Complete pre-pool schema/path admission; a degraded process constructs no
+     mutation hosted services and performs none of the recovery below.
    - Wait for startup initialization and load the song catalog.
    - Resume a publication that was durably prepared but deferred.
    - Complete required improvement-notification recovery before another scrape.
+   - A marker already completed for the exact published scrape remains terminal
+     while a later candidate is frozen only in explicit run-once resume mode
+     with a positive different scrape ID and exact resume phases; incomplete,
+     mismatched, or ordinary-worker recovery still waits for the freeze to
+     clear.
 2. **Authentication**
    - Acquire or refresh the Epic session before entering the scheduled loop.
 3. **Exact catalog selection**
    - A new pass requires a successful, fully parsed provider catalog capture.
    - An inexact/safety-merged capture aborts before scrape allocation.
    - Resume mode reloads the immutable catalog bound to the resumed scrape.
+   - The selected catalog is carried through `ScrapePassContext` into cleanup
+     precompute. Neither an ordinary pass nor resume may rebuild canonical
+     `/api/songs` from the service singleton after allocation.
+   - Allocation also captures the complete publication-bound path artifact
+     snapshot for the new working publication and emits a ready
+     `path_artifacts` binding. See
+     [Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+   - With `Scraper:EnableScrapePassPathGeneration` enabled, the pass then
+     stages pending-song path generations into that candidate snapshot, before
+     the publication read scope opens and before instrument support and scrape
+     requests are built. Staging never writes live `songs` rows.
 4. **Freeze public reads**
    - Persist the public-read freeze and freeze response-cache expiry.
    - Existing published cache hits remain usable; candidate state is not public.
 5. **Network and writer phases**
    - `ScrapeOrchestrator` performs enabled solo/band work and persists candidate
      results through disk-spool or bounded online writers.
+   - After the solo coverage manifest, any band manifest, and every writer gate
+     succeeds, one `scrape_log` update atomically records
+     `acquisition_completed_at`, songs scraped, entries, logical requests,
+     bytes, the Epic page-count signal, and the versioned SHA-256 fingerprint
+     plus count of the exact expected solo `(song_id, instrument)` set.
+     Band-only, empty-solo, reduced-solo, incomplete-manifest, and writer-failed
+     passes do not receive a resume-eligible checkpoint. This is the
+     authoritative acquisition/core checkpoint used by restart recovery;
+     post-processing starts only after it commits.
+   - Terminal completion compares a pre-existing checkpoint and exact solo
+     scope contract when one exists. It never creates the acquisition marker
+     or scope contract for legacy/uncheckpointed rows.
+   - Before a snapshot write, generation creation takes the shared
+     partition-DDL advisory lock. An active retention/restore hold blocks both
+     returning and creating the exact generation; committed DROP evidence also
+     blocks an absent/recreated generation unless it is the finalized logical
+     restore. The write path therefore fails closed through quarantine, DROP,
+     restore validation, and finalization. Optional hold/drop tables are read
+     through `to_regclass`-gated dynamic SQL for rolling startup safety.
+     Finalized restore identity uses the stable relation OID, not relfilenode.
    - Authentication failure, escaped CDN block, cancellation, or writer failure
      prevents normal derived publication work.
 6. **Post-processing**
@@ -71,6 +176,13 @@ diagnostic or replay data without becoming the published generation.
      critical failures retain the existing enforcement policy.
    - PostgreSQL finalization does not schedule retired wrapper checkpoint or
      rankings-cache-warm calls.
+   - Publication precompute stages canonical freeze-critical JSON: songs,
+     page-1 rankings, registered-player defaults, leaderboard bootstrap rows,
+     and existing derived cache families. Request aliases project contained
+     ranking windows from canonical rows instead of duplicating payloads.
+   - Canonical songs serialization uses the exact publication catalog passed
+     by the scrape context. An absent or supplied-empty candidate catalog
+     fails instead of silently staging an empty or newer live payload.
    - Dedicated registration workers and the run-once drain own durable
      registration backlog/history work; the retired deferred post-scrape sync
      is not a publication phase.
@@ -95,16 +207,122 @@ diagnostic or replay data without becoming the published generation.
      their classification.
 7. **Prepare publication**
    - Validate scrape and phase outcomes.
+   - Re-emit the `path_artifacts` binding from the candidate snapshot instead of
+     overwriting it with the legacy live binding. An incomplete snapshot leaves
+     the surface closed rather than falsely ready.
    - Build required published scope-source mappings and notification plans.
+   - Physical snapshot IDs in those mappings are retention pins only while
+     their generation is named as current, previous, or working. Publication
+     IDs resolve through `publication_generations.scrape_id`; immutable
+     report evidence preserves retired identity after older publication-owned
+     source maps leave the serving window.
    - Prepare the next publication generation outside the final commit.
+   - When caches are promoted, require the canonical songs payload count and
+     exact song-ID set to match the candidate catalog. When caches are
+     inherited, require the candidate and current exact catalog hashes to be
+     identical.
 8. **Commit publication**
    - Record commit intent, drain bounded readers, and atomically advance the
      publication pointer and generation-owned state.
+   - Immediately before pointer movement, recompute the candidate's
+     authoritative scope-source validation: generation/scrape identity,
+     positive expected count, exact row set, canonical SHA-256 key hash, and
+     ready binding must still agree. A mutation after preparation rolls back
+     commit rather than exposing an ignored or partial mapping.
+   - Staged path promotions are compare-and-swapped into live `songs` rows in
+     the same transaction, immediately before the pointer advances. The CAS
+     owns the live revision and current generation ID, not the provider
+     timestamp; a song whose provider timestamp changed mid-scrape stays
+     pending. An unexpected CAS mismatch is nonretryable, rolls the commit
+     back, and fails and isolates the candidate instead of deferring it.
    - Contention can defer a prepared publication for retry without exposing it.
+     A deferred or restarted commit reconstructs promotion inputs from
+     `publication_path_artifacts` alone.
+   - A deferred/restarted commit revalidates the prepared canonical songs
+     payload against the exact publication catalog before pointer movement.
 9. **Release and notify**
    - Unfreeze public reads and invalidate in-process caches.
+   - Retire the generation that just left current/previous/working only after
+     its servable cache/catalog/path/band surfaces are gone and its exact
+     publication-owned scope-source rows validate. The generation and every
+     binding become terminally retired while immutable cycles, scrape
+     provenance, writer failures, holds, and newer source references remain.
+     Startup cleanup can idempotently finish this transition after interruption.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+10. **Terminal report-only retention safe point**
+    - The worker queues keyed `(scrape_id, publication_id)` work for accepted
+      and startup-recovered publications; restart re-entry deduplicates the
+      current publication.
+    - Run-once observes after registration drain. At the continuous
+      pre-allocation boundary, one bounded aggregate registration query
+      distinguishes runnable work from terminal blockers. Runnable work wakes
+      the registration worker and gets up to 30 seconds of adaptive
+      `250 ms`-to-`2 s` polling without any background cancellation. If it is
+      still runnable, the FIFO remains intact and the scheduled scrape may
+      proceed; no cycle is recorded. Once the durable drain is complete, or a
+      terminal registration blocker exists, background work is paused and
+      quiesced exactly once for planning. Retryable planner results stay at the
+      head. Non-runnable missing or terminal-error registration state persists
+      as a blocked cycle instead of retrying forever, so the FIFO advances
+      without producing candidates.
+    - The planner rechecks exact publication, notification, registration,
+      freeze/commit-intent, max-score gate, broadcast evidence, terminal scrape
+      identities, and named-publication source binding/count/key-set
+      completeness before one bounded repeatable-read observation.
+    - Unnamed retained legacy generations and exact terminal unnamed failed
+      generations with no recovery owner or live artifact are persisted as
+      nonblocking, observation-hashed anomaly warnings without changing
+      candidates or cycle status. Failed-publication evidence includes exact
+      scrape identity, recovery references, artifact/source/writer-failure
+      counts, and canonical reasons. Orphaned source rows remain provenance;
+      unreplayed writer failures protect only their exact instrument child.
+      Unpointed building/ready/current state and genuinely recoverable,
+      nonterminal, or malformed failed state remain blockers.
+    - The observer persists immutable per-child evidence only. It is not part
+      of pre-publication cleanup and cannot create archive, detach, drop, or
+      delete work.
+    - Official scrape `1333` completed cleanly and produced accepted immutable
+      cycle `13` for then-current publication `157`; production then continued into
+      scrape `1334`. This satisfies the confirmation prerequisite but does not
+      live-accept or automate the separate DROP tier.
+    - Q1 operation `1b44941dc5d5ea806dabc2187c3cffed` later passed the
+      scrape-1335/publication-159-to-162 rotation and cycle-15/route gates. Its
+      first reattach failed closed when a new public child reused a leaf-index
+      name. The target remained exact and private with no committed residue at
+      that incident boundary.
+      Operation-scoped leaf-index normalization now prevents both quarantine-
+      and reattach-direction name collisions. Later live progression reached
+      an approved DROP function call, which failed before DDL on the empty
+      pre-semantic operation schema; no child was dropped in that attempt.
+      After the schema upgrade, operation
+      `333ba4b9fb69dbc098d127f0008ec709` committed. Recovery is now the
+      operator-only logical restore; the first restore-plan validation stopped
+      before mutation.
+      A separate immutable repair-tool authorization now binds the exact
+      committed DROP and final tool without changing publication flow or any
+      route/data/catalog gate.
+    - Metadata TTL shares the centralized service-maintenance lock, so TTL and
+      generation observation cannot race.
+
+See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+## Live catalog refresh versus publication
+
+The service polls Spark Tracks every five minutes by default and persists a
+successful exact provider snapshot into `live_song_catalog` plus live song
+metadata. Allocation and refresh share the publication advisory lock. This
+keeps catalog ingestion current without letting a refresh amend an already
+captured candidate or current publication.
+
+`publication_song_catalog` remains the immutable song source for canonical
+songs, path maxima, ranking denominators, and publication caches. Service-info
+reports aggregate live-versus-published additions, removals, and changed
+provider entries; `songs_changed` asks clients to refresh that operational
+telemetry. No unpublished song list or maximum preview is exposed. Missing
+exact baselines produce unknown lag, and full JSON comparison is memoized by
+catalog version/hash so health polling stays bounded.
 
 Matched control scrape `1299` and candidate scrape `1300` accepted the retired
 post-scrape path cleanup. Their manifest and published-source key sets were
@@ -126,6 +344,15 @@ nonblocking and reasoned in durable progress.
 - Publication lookup/read-gate failures fail closed.
 - Run-once exits only after its publication decision and any permitted
   registration drain.
+
+Scrape `1305` exercised the interrupted-candidate resume contract after a
+PostgreSQL backend OOM. Public reads stayed frozen on scrape `1304`; the guard
+required the exact stalled candidate, positive persisted metrics, and
+resume-only phases. The worker reloaded publication `94`'s immutable catalog,
+ran no network/writer phases, completed the solo-leaderboards chain, published
+scrape `1305`, unfroze reads, completed notification recovery and registration
+history drain, then exited `0`. Manual freeze clearing or direct candidate
+promotion is not equivalent to this fail-closed recovery path.
 
 ## Same-publication max-score maintenance
 
@@ -169,6 +396,10 @@ derived rows while retaining the same published scrape/publication ID.
    before any mutation continues. Any outlier-population drift therefore
    rejects apply/resume even though above-cutoff rows are not compatibility
    blockers.
+   A later resume keeps the mutation/path locks and durable owner but yields the
+   global publication lock between transactions, taking it transactionally
+   only at commit. Frozen cached reads therefore continue during long recovery
+   reads, derived work, or cache generation while MVCC hides uncommitted state.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
@@ -193,7 +424,13 @@ derived rows while retaining the same published scrape/publication ID.
    instruments when provider metadata omitted the real MIDI chart. Affected
    accounts' complete player-stat tier sets are atomically replaced, removing
    stale active-only instruments while preserving unrelated accounts;
-   registered-player leaderboard rivals follow.
+   blank affected account IDs are excluded only after proving that they have no
+   history, registration, or account-cache identity. Registered-player
+   leaderboard rivals then rebuild only the changed instruments. One
+   authoritative profile batch per changed instrument covers all registered
+   users and deduplicated ranking neighbors; the existing five methods,
+   directions, and top-200 C# sample semantics are retained, while unrelated
+   instrument rival rows/state are untouched.
 7. Routine notification dry-run candidates are accepted only for player ranks
    in changed instruments, target-song band rows, and their dependent band
    ranks. Parity uses routine delivery grouping: player ranks per
@@ -206,7 +443,9 @@ derived rows while retaining the same published scrape/publication ID.
    relevant state is aligned, visible delivery remains zero, and the
    publication's completed notification marker is not reopened.
 8. The strict published-source-plus-overlay read context remains active while
-   a complete current-publication API cache is built and validated in staging;
+   a complete current-publication API cache is built and validated in staging,
+   including canonical songs and per-song/per-instrument top-10 leaderboard
+   rows;
    active snapshots, worker projection rows, and legacy fallback are forbidden.
    Base, leeway, and rank-offset keys must exactly match the frozen
    publication scopes. Both staging tables must match, and every key, ETag,
@@ -223,7 +462,10 @@ derived rows while retaining the same published scrape/publication ID.
    canonical rollback file SHA/identity matching immutable database rows, zero
    visible delivery, the whole staged-cache hash, and semantic target-scope,
    affected-account, and overlay-only-account cache fingerprints.
-9. A resume from `caches_staged` or `validated` rechecks semantic cache
+9. A resume uses the durable phase as its exact branch selector. From
+   `notifications_quarantined` it skips path/derived/notification mutation and
+   rebuilds only cache staging before validation/finalization. From
+   `caches_staged` or `validated` it rechecks semantic cache
    evidence and both staging tables. Cache-build leases and staging writers
    cannot replace that evidence-owned generation. Cache swap, workflow
    completion, and freeze release then commit
@@ -232,23 +474,69 @@ derived rows while retaining the same published scrape/publication ID.
    exact immutable-entry comparison run before the swap. The transaction keeps
    `lock_timeout=5s`, uses the configured maintenance `statement_timeout` only
    around that final comparison, and restores `statement_timeout=120s` before
-   the bounded swap/checkpoint/verification/unfreeze mutations. Failure to
+   the bounded swap/checkpoint/verification/unfreeze mutations. Before the
+   cache swap the same transaction refreshes the current publication's
+   `publication_path_artifacts` rows from the restored or promoted `songs`
+   rows and recomputes the `path_artifacts` binding row count and SHA-256.
+   Failure to
    validate or restore the bounded timeout rolls back without releasing the
    freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
-   clearing the token. Queued holders cannot pass the advisory gate early, and
-   stale direct entry or population writers remain durably blocked throughout
-   the handoff.
+   clearing the token. A normal queued registration holder that acquires the
+   shared advisory lock during that short handoff checks the durable owner
+   backend identity, releases the shared lock, and retries until the live owner
+   clears the token. Bounded try-acquire still rejects immediately, and an
+   orphaned token whose owner backend is gone remains fail-closed. Stale direct
+   entry or population writers remain durably blocked throughout the handoff.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument
    support before lookup work, closing the interval before the monitor pass.
+10. Guarded rollback is a distinct one-shot lifecycle. Dry-run validates the
+    exact incomplete promoted-path state, freeze/publication, canonical rollback
+    file/database rows, promoted paths, worker/backends/locks, and artifact
+    identity without taking the mutation lease. Execution moves the durable run
+    into rollback-only phases so apply/resume cannot race it. Path restoration
+    and checkpoint commit atomically; affected rankings/stats/rivals,
+    notification quarantine, and complete publication caches are then rebuilt
+    from rollback maxima plus the unchanged publication source/population.
+    The rollback read snapshot validates both the accepted post-promotion
+    score-history selector and the exact restored-maximum selector, including
+    lower thresholds and a missing pre-apply maximum. Rollback notification
+    alignment includes an explicit `rollback` direction
+    in its audit digest, preventing reuse of an apply audit when candidate sets
+    are identical or empty. Its audit rows, state alignment, rollback audit
+    identity/counts, and durable notification checkpoint share one
+    transaction. Separate rollback cache-entry evidence preserves
+    apply evidence. The registration and path
+    advisory locks remain session-owned, but rollback yields the global
+    publication lock between transactions. Each atomic unit takes the
+    transaction-scoped exclusive publication lock only at commit, so cached
+    public reads do not queue behind long derived/cache work. Only exact final
+    validation and canonical rollback-file revalidation allow one transaction
+    to swap rollback caches, mark `rolled_back`, and release the
+    same-publication freeze. Interruption keeps the freeze and resumes from the
+    last rollback phase. `rollback_captured` is accepted only when current
+    paths prove promotion already committed; otherwise it remains ineligible.
+    The max-score freeze rejects normal cache builders, swaps, and non-owner
+    staging mutations for the entire rollback, preventing an intermediate
+    checkpoint from replacing the prior published cache. This fence does not
+    depend on `working_publication_id` remaining null, and scrape allocation
+    rejects the active max-score freeze/token before creating a generation.
 
-During this maintenance freeze, publication-bound path and song routes that
-have no safe published response cache return `503`; cacheable ranking/player/
-band routes serve the prior published cache or return `503`. Exact solo
-leaderboards follow this rule rather than falling through to current
-max-score/leeway reads. Player tracking, selected-profile registration
+During this maintenance freeze, `/api/songs` may serve its stable process
+cache, immutable current-generation path PNG/JSON files may be served when
+present, and outer-cache exact solo leaderboards may be served. When the songs
+cache was warmed before path promotion, its prior generation ID is temporary
+skew rather than an invalid client path: PNG and JSON requests carrying that
+valid stale ID return `503` with `Retry-After: 30` and never read the old
+immutable directory. Other cold dependent reads use the same `503` path before
+publication read-context or boundary-lease acquisition, so maintenance lock
+waits cannot surface as `500`. Ordinary publication transitions still acquire
+and hold their existing read leases and retain stale-ID `400`/missing-artifact
+`404` behavior. Cacheable ranking/player/band routes otherwise serve the prior
+published cache or return `503`; exact solo leaderboards never fall through to
+current max-score/leeway reads. Player tracking, selected-profile registration
 activity, manual `POST /api/backfill/{accountId}`, and band sync registration
 are paused across resume attempts. Database triggers reject
 registration/backfill scope writes, while registration-only workers and the
@@ -284,6 +572,24 @@ repeats that validation immediately before cache publication/unfreeze.
 Deletion, corruption, noncanonical bytes, SHA mismatch, or a snapshot from a
 different manifest/plan/run/publication/catalog/database rollback identity
 fails resumably and leaves public reads frozen.
+Once rollback begins, apply/resume is rejected. The rollback command validates
+the same canonical file/digest on every retry and never deletes promoted
+immutable generations, original apply evidence, or notification audit rows.
+If the final PostgreSQL commit succeeds but acknowledgement or the immediate
+state reload fails, the command reconciles durable `rolled_back` plus the
+released freeze, reacquires the exclusive mutation gate if necessary, clears a
+proven stale durable owner through normal lease disposal, verifies all owner
+fields are null, and only then emits a successful terminal report. A later
+terminal retry performs the same cleanup.
+Dry-run never performs terminal cleanup; an already-`rolled_back` dry-run is
+rejected without acquiring a lease. Apply/resume after rollback begins emits a
+non-resumable report using the actual rollback phase and freeze state.
+If terminal cleanup remains blocked, report v2 preserves the true
+`rolled_back`/unfrozen state with `cleanupPending=true` and requires an execute
+retry. The report target itself is reserved before any rollback mutation.
+Only an invocation that passed terminal validation and attempted completion or
+cleanup may reconcile an ambiguous commit as success; unrelated terminal
+preflight failures remain failures.
 
 ## Publication-aware API and browser
 
@@ -295,6 +601,33 @@ The browser bootstraps through `/api/publication`. When publication changes it
 clears React Query and song caches, reconnects the application WebSocket, and
 remounts the application against the new publication. Request pinning remains
 effective only when configured and every required surface reports ready.
+The service-role WebSocket boundary still records the exact source-validated
+publication when full request pinning is disabled. Final admission and each
+`subscribe_sync`/`unsubscribe_sync` rebind hold a short shared publication
+lease across pointer/source validation and the atomic registration move,
+releasing it before any socket I/O or lifetime. Publication-change snapshots
+serialize with the in-process move. Commit therefore either wins first and
+rejects the stale identity or runs after registration so the transition
+notification includes the socket. Null/stale sockets are closed
+rather than matching every future publication.
+
+When `Scraper:UsePublicationPathArtifacts` is enabled, the publication read
+middleware also opens a `PathDataStore` publication read scope for the exact
+request publication before downstream execution, so every publication-bound
+consumer resolves path state and CHOpt maxima from that generation's snapshot.
+See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
+
+Covered service reads first resolve an L1 entry bound to publication and the
+current safety revision, then the authoritative current/previous L2 row.
+During a required-cache freeze, misses never compute or write. Unfrozen bounded
+overview variants may single-flight, compute once, and write through only when
+the measured response is successful JSON below the one-second/2 MiB gates.
+The post-lease lookup and final cache-serving boundary repeat authoritative
+source readiness, preventing a concurrently discovered row from bypassing the
+same check that rejected the initial lookup.
+Same-publication maintenance changes the L2 surface hash/bytes before unfreeze;
+API monitors clear L1 on that safety transition.
 
 ## Selective execution
 

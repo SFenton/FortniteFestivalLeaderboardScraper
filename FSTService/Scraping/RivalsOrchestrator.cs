@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using FSTService.Api;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
 
@@ -16,6 +19,7 @@ public sealed class RivalsOrchestrator
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly ResponseCacheService _rivalsCache;
     private readonly ILogger<RivalsOrchestrator> _log;
+    private readonly ScraperOptions _options;
 
     public RivalsOrchestrator(
         RivalsCalculator calculator,
@@ -24,7 +28,8 @@ public sealed class RivalsOrchestrator
         ScrapeProgressTracker progress,
         UserSyncProgressTracker syncTracker,
         [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache,
-        ILogger<RivalsOrchestrator> log)
+        ILogger<RivalsOrchestrator> log,
+        IOptions<ScraperOptions>? options = null)
     {
         _calculator = calculator;
         _persistence = persistence;
@@ -33,6 +38,7 @@ public sealed class RivalsOrchestrator
         _syncTracker = syncTracker;
         _rivalsCache = rivalsCache;
         _log = log;
+        _options = options?.Value ?? new ScraperOptions();
     }
 
     /// <summary>
@@ -82,41 +88,88 @@ public sealed class RivalsOrchestrator
         if (toCompute.Count == 0)
             return;
 
+        var accounts = toCompute
+            .OrderBy(static accountId => accountId,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
-        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: toCompute.Count);
+        _progress.BeginPhaseProgress(
+            totalItems: 0,
+            totalAccounts: accounts.Length);
+        _progress.SetSubOperation("preloading_rivals_scores");
+        var preloadStopwatch = Stopwatch.StartNew();
+        var preparedByAccount =
+            await _calculator.PrepareCurrentScoresForAccountsAsync(
+                accounts,
+                ct);
+        preloadStopwatch.Stop();
+        var preparedScoreCount = preparedByAccount.Values.Sum(
+            static prepared => prepared.ScoreCount);
+        _log.LogInformation(
+            "Preloaded current rivals scores for {AccountCount:N0} account(s): {ScoreCount:N0} score row(s) in {ElapsedMs:N3} ms.",
+            accounts.Length,
+            preparedScoreCount,
+            preloadStopwatch.Elapsed.TotalMilliseconds);
+
+        var maxDegreeOfParallelism = Math.Clamp(
+            _options.RivalsMaxDegreeOfParallelism,
+            1,
+            accounts.Length);
         _progress.SetSubOperation("per_song_rivals");
         _log.LogInformation(
-            "Computing rivals for {Count} registered user(s). Pending={PendingAccounts}, Dirty={DirtyAccounts}.",
-            toCompute.Count,
+            "Computing rivals for {Count} registered user(s) with maxDegree={MaxDegree}. Pending={PendingAccounts}, Dirty={DirtyAccounts}.",
+            accounts.Length,
+            maxDegreeOfParallelism,
             pendingSet.Count,
             dirtyAccounts.Count);
 
-        var tasks = toCompute.Select(accountId => Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            var forceRecompute = pendingSet.Contains(accountId) ||
-                (dirtyInstrumentsByUser is not null && dirtyInstrumentsByUser.ContainsKey(accountId));
-            var outcome = ComputeForUser(accountId, forceRecompute);
-            _progress.ReportPhaseAccountComplete();
-            return outcome;
-        }, ct)).ToList();
-
-        var outcomes = await Task.WhenAll(tasks);
+        var outcomes = new ConcurrentBag<RivalsComputeOutcome>();
+        await Parallel.ForEachAsync(
+            accounts,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                CancellationToken = ct,
+            },
+            (accountId, innerCt) =>
+            {
+                innerCt.ThrowIfCancellationRequested();
+                var forceRecompute = pendingSet.Contains(accountId) ||
+                    (dirtyInstrumentsByUser is not null &&
+                     dirtyInstrumentsByUser.ContainsKey(accountId));
+                preparedByAccount.TryGetValue(
+                    accountId,
+                    out var preparedUserData);
+                outcomes.Add(
+                    ComputeForUser(
+                        accountId,
+                        forceRecompute,
+                        preparedUserData,
+                        innerCt));
+                _progress.ReportPhaseAccountComplete();
+                return ValueTask.CompletedTask;
+            });
+        var outcomeArray = outcomes.ToArray();
         _log.LogInformation(
             "Song-rivals outcome summary: skipped={SkippedAccounts}, recomputed={RecomputedAccounts}, outcomes={OutcomeCounts}.",
-            outcomes.Count(o => o.WasSkipped),
-            outcomes.Count(o => o.WasRecomputed),
-            FormatCountSummary(outcomes.GroupBy(o => o.OutcomeCode, StringComparer.OrdinalIgnoreCase)
+            outcomeArray.Count(o => o.WasSkipped),
+            outcomeArray.Count(o => o.WasRecomputed),
+            FormatCountSummary(outcomeArray.GroupBy(o => o.OutcomeCode, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase)));
     }
 
     /// <summary>
     /// Compute rivals for a single user (called from parallel Task.Run or directly after backfill).
     /// </summary>
-    public RivalsComputeOutcome ComputeForUser(string accountId, bool forceRecompute = false)
+    public RivalsComputeOutcome ComputeForUser(
+        string accountId,
+        bool forceRecompute = false,
+        RivalsPreparedUserData? preparedUserData = null,
+        CancellationToken ct = default)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
             // Ensure a rivals_status row exists — without this, StartRivals/CompleteRivals
             // (which are UPDATEs) silently affect 0 rows when called from BackfillOrchestrator.
             _persistence.Meta.EnsureRivalsStatus(accountId);
@@ -126,7 +179,11 @@ public sealed class RivalsOrchestrator
 
             if (!forceRecompute && dirtySongs.Count > 0)
             {
-                var decision = EvaluateDirtySongs(accountId, dirtySongs);
+                var decision = EvaluateDirtySongs(
+                    accountId,
+                    dirtySongs,
+                    preparedUserData?.ScoresByInstrument,
+                    ct);
                 outcomeCode = decision.OutcomeCode;
                 if (!decision.RequiresRecompute)
                 {
@@ -143,8 +200,8 @@ public sealed class RivalsOrchestrator
                 outcomeCode = RivalsComputeOutcomeCode.ForceRecomputeRequested;
             }
 
-            // Quick pre-scan: count valid instruments to compute total combos for progress tracking
-            var totalCombos = _calculator.CountValidCombos(accountId);
+            var totalCombos = preparedUserData?.TotalCombos
+                ?? _calculator.CountValidCombos(accountId);
             _persistence.Meta.StartRivals(accountId, totalCombos);
             _syncTracker.BeginRivals(accountId, totalCombos);
 
@@ -152,10 +209,19 @@ public sealed class RivalsOrchestrator
                 onProgress: combosCompleted =>
                 {
                     _syncTracker.ReportRivalsItem(accountId, combosCompleted, rivalsFound: 0);
-                });
+                },
+                preparedScoresByInstrument:
+                    preparedUserData?.ScoresByInstrument,
+                ct: ct);
 
+            ct.ThrowIfCancellationRequested();
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
-            var selectionState = _calculator.ComputeSelectionState(accountId);
+            var selectionState = _calculator.ComputeSelectionState(
+                accountId,
+                preparedScoresByInstrument:
+                    preparedUserData?.ScoresByInstrument,
+                ct: ct);
+            ct.ThrowIfCancellationRequested();
             _persistence.Meta.ReplaceRivalSelectionState(accountId, selectionState.Fingerprints, selectionState.InstrumentStates);
             _persistence.Meta.ClearAllDirtyRivalSongs(accountId);
             var completed = _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
@@ -192,7 +258,12 @@ public sealed class RivalsOrchestrator
         }
     }
 
-    private DirtySongDecision EvaluateDirtySongs(string accountId, IReadOnlyList<RivalDirtySongRow> dirtySongs)
+    private DirtySongDecision EvaluateDirtySongs(
+        string accountId,
+        IReadOnlyList<RivalDirtySongRow> dirtySongs,
+        IReadOnlyDictionary<string, IReadOnlyList<PlayerScoreDto>>?
+            preparedScoresByInstrument = null,
+        CancellationToken ct = default)
     {
         var dirtySongsByInstrument = dirtySongs
             .GroupBy(row => row.Instrument, StringComparer.OrdinalIgnoreCase)
@@ -203,7 +274,12 @@ public sealed class RivalsOrchestrator
                 StringComparer.OrdinalIgnoreCase);
 
         var dirtyInstruments = new HashSet<string>(dirtySongsByInstrument.Keys, StringComparer.OrdinalIgnoreCase);
-        var selectionState = _calculator.ComputeSelectionState(accountId, dirtyInstruments, dirtySongsByInstrument);
+        var selectionState = _calculator.ComputeSelectionState(
+            accountId,
+            dirtyInstruments,
+            dirtySongsByInstrument,
+            preparedScoresByInstrument,
+            ct);
         var currentStates = selectionState.InstrumentStates.ToDictionary(state => state.Instrument, StringComparer.OrdinalIgnoreCase);
         var currentFingerprintsByInstrument = selectionState.Fingerprints
             .GroupBy(row => row.Instrument, StringComparer.OrdinalIgnoreCase)

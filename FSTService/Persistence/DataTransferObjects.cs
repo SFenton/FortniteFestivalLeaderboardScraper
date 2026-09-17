@@ -111,6 +111,21 @@ public sealed class BackfillStatusInfo
     public string? DeferredReason { get; init; }
 }
 
+public sealed record RegistrationDrainStatusInfo(
+    int RunnableBackfills,
+    int RepairableHistory,
+    int MissingBackfills,
+    int TerminalBackfillErrors,
+    int InvalidBackfills,
+    int InvalidHistory)
+{
+    public bool HasTerminalBlocker =>
+        MissingBackfills > 0
+        || TerminalBackfillErrors > 0
+        || InvalidBackfills > 0
+        || InvalidHistory > 0;
+}
+
 /// <summary>
 /// User-facing song-level progress for a backfill whose stored counters are song/instrument pairs.
 /// </summary>
@@ -965,6 +980,7 @@ public sealed class WorkerOperationInfo
     public string OperationKey { get; init; } = "";
     public string OperationLabel { get; init; } = "";
     public string Status { get; init; } = "running";
+    public long? ScrapeId { get; init; }
     public string? Phase { get; init; }
     public string? SubOperation { get; init; }
     public string? Detail { get; init; }
@@ -995,6 +1011,31 @@ public sealed class WorkerOperationInfo
     public int? EtaSampleCount { get; init; }
     public DateTime? LastProgressAtUtc { get; init; }
     public DateTime? HeartbeatAtUtc { get; init; }
+    public SubphaseProgressInfo? SubphaseProgress { get; init; }
+    public PhaseAttemptProgressInfo? AttemptProgress { get; init; }
+}
+
+public sealed record PhaseAttemptProgressInfo
+{
+    public int SchemaVersion { get; init; } = 1;
+    public long AttemptedThisPass { get; init; }
+    public long RetryableUnavailableThisPass { get; init; }
+}
+
+public sealed record SubphaseProgressInfo
+{
+    public int SchemaVersion { get; init; } = 1;
+    public string? Id { get; init; }
+    public int Epoch { get; init; }
+    public long Sequence { get; init; }
+    public string Kind { get; init; } = "indeterminate";
+    public string? UnitsKind { get; init; }
+    public long? UnitsCompleted { get; init; }
+    public long? UnitsTotal { get; init; }
+    public bool UnitsTotalFinal { get; init; }
+    public double? Percent { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? LastProgressAtUtc { get; init; }
 }
 
 public sealed record ScrapePhaseAttemptStart(
@@ -1022,7 +1063,17 @@ public sealed record ScrapePhaseAttemptStart(
     DateTime LastProgressAtUtc,
     DateTime HeartbeatAtUtc,
     string? BuildId,
-    string? ConfigId);
+    string? ConfigId,
+    int CurrentSubphaseEpoch = 0,
+    long SubphaseSequence = 0,
+    string SubphaseProgressKind = "indeterminate",
+    string? SubphaseUnitsKind = null,
+    long? SubphaseUnitsCompleted = null,
+    long? SubphaseUnitsTotal = null,
+    bool SubphaseUnitsTotalFinal = false,
+    double? SubphasePercent = null,
+    DateTime? SubphaseStartedAtUtc = null,
+    DateTime? SubphaseLastProgressAtUtc = null);
 
 public sealed record ScrapePhaseAttemptProgress(
     long ScrapeId,
@@ -1042,7 +1093,18 @@ public sealed record ScrapePhaseAttemptProgress(
     string? EtaConfidence,
     int? EtaSampleCount,
     DateTime LastProgressAtUtc,
-    DateTime HeartbeatAtUtc);
+    DateTime HeartbeatAtUtc,
+    string WorkerInstanceId = "",
+    int CurrentSubphaseEpoch = 0,
+    long SubphaseSequence = 0,
+    string SubphaseProgressKind = "indeterminate",
+    string? SubphaseUnitsKind = null,
+    long? SubphaseUnitsCompleted = null,
+    long? SubphaseUnitsTotal = null,
+    bool SubphaseUnitsTotalFinal = false,
+    double? SubphasePercent = null,
+    DateTime? SubphaseStartedAtUtc = null,
+    DateTime? SubphaseLastProgressAtUtc = null);
 
 public sealed record ScrapePhaseAttemptCompletion(
     long ScrapeId,
@@ -1084,6 +1146,16 @@ public sealed class ScrapePhaseAttemptInfo
     public double? EtaUpperSeconds { get; init; }
     public string? EtaConfidence { get; init; }
     public int? EtaSampleCount { get; init; }
+    public int CurrentSubphaseEpoch { get; init; }
+    public long SubphaseSequence { get; init; }
+    public string SubphaseProgressKind { get; init; } = "indeterminate";
+    public string? SubphaseUnitsKind { get; init; }
+    public long? SubphaseUnitsCompleted { get; init; }
+    public long? SubphaseUnitsTotal { get; init; }
+    public bool SubphaseUnitsTotalFinal { get; init; }
+    public double? SubphasePercent { get; init; }
+    public DateTime? SubphaseStartedAtUtc { get; init; }
+    public DateTime? SubphaseLastProgressAtUtc { get; init; }
     public DateTime StartedAtUtc { get; init; }
     public DateTime LastProgressAtUtc { get; init; }
     public DateTime HeartbeatAtUtc { get; init; }
@@ -1122,6 +1194,27 @@ public sealed class ServiceRuntimeState
     public PublicReadFreezeState PublicReadFreeze { get; init; } = PublicReadFreezeState.NotFrozen;
     public WorkerStatusInfo? WorkerStatus { get; init; }
     public ScrapePhaseAttemptInfo? CurrentPhaseAttempt { get; init; }
+    public CatalogPublicationLagState CatalogLag { get; init; } = new();
+}
+
+public sealed class CatalogPublicationLagState
+{
+    public long? LiveCatalogVersion { get; init; }
+    public int? LiveSongCount { get; init; }
+    public DateTime? LiveCapturedAtUtc { get; init; }
+    public long? PublishedPublicationId { get; init; }
+    public long? PublishedCatalogVersion { get; init; }
+    public int? PublishedSongCount { get; init; }
+    public DateTime? PublishedCatalogCapturedAtUtc { get; init; }
+    public long? WorkingPublicationId { get; init; }
+    public long? WorkingCatalogVersion { get; init; }
+    public int? WorkingSongCount { get; init; }
+    public int? AddedAwaitingPublication { get; init; }
+    public int? ChangedAwaitingPublication { get; init; }
+    public int? RemovedAwaitingPublication { get; init; }
+    public int? AwaitingPublication { get; init; }
+    public int PathGenerationPending { get; init; }
+    public int PathGenerationReviewRequired { get; init; }
 }
 
 /// <summary>

@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified: 2026-08-16
+last_verified_commit: 937868e0
 sources:
   - docs/roadmap/data.md
   - docs/roadmap/post-scrape-processing.md

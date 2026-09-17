@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import React, { useId, useLayoutEffect, type ReactNode } from 'react';
 import { FADE_DURATION, Layout, MaxWidth } from '@festival/theme';
 import Page, { pageCss } from '../../../src/pages/Page';
+import quickLinksCss from '../../../src/components/page/PageQuickLinks.module.css';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../src/contexts/ScrollContainerContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { FabVisibilityProvider, useFabVisibility } from '../../../src/contexts/FabVisibilityContext';
@@ -211,8 +212,9 @@ describe('Page', () => {
     expect(pageRoot).not.toContainElement(rail);
     expect(scrollContainer).not.toContainElement(rail);
     expect(portal).toContainElement(rail);
-    expect(rail).toHaveStyle({ width: `${Layout.sidebarWidth}px` });
-    expect(nav).toHaveStyle({ overscrollBehavior: 'contain', paddingTop: '8px', paddingLeft: '8px', boxSizing: 'border-box', maxHeight: '620px' });
+    expect(rail).toHaveClass(quickLinksCss.rail!);
+    expect(nav).toHaveClass(quickLinksCss.navigation!);
+    expect(nav).toHaveStyle({ maxHeight: '620px' });
   });
 
   it('delays the wide desktop rail reveal as a single fade when configured', () => {

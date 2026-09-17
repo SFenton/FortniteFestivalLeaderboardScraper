@@ -229,7 +229,8 @@ public sealed class PublicationChangeMonitorServiceTests
             null!,
             null!,
             Options.Create(new ScraperOptions()),
-            NullLogger<StartupInitializer>.Instance);
+            NullLogger<StartupInitializer>.Instance,
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
         var readySignal = Assert.IsType<TaskCompletionSource>(
             typeof(StartupInitializer)
                 .GetField(

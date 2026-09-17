@@ -56,14 +56,18 @@ internal static class RetiredMaintenanceCommandGuard
             "max-score-maintenance-plan",
             "max-score-maintenance-apply",
             "max-score-maintenance-resume",
+            "max-score-maintenance-rollback",
+            "max-score-maintenance-rollback-dry-run",
             "max-score-maintenance-stage-request",
             "max-score-maintenance-song-id",
             "max-score-maintenance-manifest",
             "max-score-maintenance-manifest-output",
             "max-score-maintenance-report-output",
             "max-score-maintenance-rollback-output",
+            "max-score-maintenance-rollback-file",
             "expected-max-score-manifest-digest",
             "expected-max-score-plan-digest",
+            "expected-max-score-rollback-digest",
         };
 
     public static void ThrowIfPresent(IReadOnlyList<string> args)

@@ -24,6 +24,7 @@ body {
 
 html {
   color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -47,23 +48,13 @@ button {
   box-sizing: border-box;
   cursor: pointer;
   color-scheme: normal;
-}
-
-button,
-a,
-[role='button'],
-summary,
-label[for],
-input[type='button'],
-input[type='submit'],
-input[type='reset'] {
   touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
 }
 
 button:focus-visible,
 a:focus-visible,
 [role='button']:focus-visible,
+[role='link']:focus-visible,
 summary:focus-visible,
 label[for]:focus-visible,
 input[type='button']:focus-visible,

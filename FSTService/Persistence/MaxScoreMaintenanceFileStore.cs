@@ -136,6 +136,40 @@ internal static class MaxScoreMaintenanceFileStore
         }
     }
 
+    internal static async Task<MaxScoreMaintenanceRollbackReport>
+        LoadRollbackReportAsync(
+            string dataDirectory,
+            string requestedPath,
+            CancellationToken ct)
+    {
+        var path = ResolveExistingJsonInputPath(
+            dataDirectory,
+            requestedPath,
+            MaxScoreMaintenanceManifest.MaximumManifestBytes);
+        var payload = await File.ReadAllBytesAsync(path, ct);
+        try
+        {
+            return (JsonSerializer.Deserialize<
+                        MaxScoreMaintenanceRollbackReport>(
+                        payload,
+                        MaxScoreMaintenanceJson.Strict)
+                    ?? throw new ArgumentException(
+                        "Max-score maintenance rollback report cannot be JSON null.",
+                        nameof(requestedPath)))
+                .ValidateContract();
+        }
+        catch (Exception ex) when (
+            ex is JsonException
+                or ArgumentException
+                or InvalidOperationException)
+        {
+            throw new ArgumentException(
+                $"Max-score maintenance rollback report must be strict version {MaxScoreMaintenanceRollbackReport.CurrentReportVersion} JSON.",
+                nameof(requestedPath),
+                ex);
+        }
+    }
+
     internal static async Task<(
             string FullPath,
             string Sha256,
@@ -254,10 +288,7 @@ internal static class MaxScoreMaintenanceFileStore
             T report,
             CancellationToken ct)
     {
-        if (report is MaxScoreMaintenancePlanReport planReport)
-            planReport.ValidateContract();
-        else if (report is MaxScoreMaintenanceApplyReport applyReport)
-            applyReport.ValidateContract();
+        ValidateReportContract(report);
         return await WriteNewBytesAsync(
             dataDirectory,
             requestedPath,
@@ -265,6 +296,44 @@ internal static class MaxScoreMaintenanceFileStore
                 report,
                 MaxScoreMaintenanceJson.Report),
             ct);
+    }
+
+    internal static NewReportReservation ReserveNewReport(
+        string dataDirectory,
+        string requestedPath)
+    {
+        var fullPath = ResolveNewJsonOutputPath(
+            dataDirectory,
+            requestedPath);
+        var parent = Path.GetDirectoryName(fullPath)
+            ?? throw new ArgumentException(
+                "Max-score maintenance report output has no parent directory.",
+                nameof(requestedPath));
+        Directory.CreateDirectory(parent);
+        var (dataRoot, _) = ResolveUnderDataDirectory(
+            dataDirectory,
+            requestedPath);
+        EnsureNoSymbolicLinks(dataRoot, fullPath);
+        try
+        {
+            return new NewReportReservation(
+                fullPath,
+                new FileStream(
+                    fullPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    16 * 1024,
+                    FileOptions.Asynchronous
+                    | FileOptions.WriteThrough));
+        }
+        catch (IOException ex)
+        {
+            throw new ArgumentException(
+                "Max-score maintenance report output could not be reserved as a new file.",
+                nameof(requestedPath),
+                ex);
+        }
     }
 
     internal static string ResolveNewJsonOutputPath(
@@ -345,6 +414,75 @@ internal static class MaxScoreMaintenanceFileStore
             dataDirectory,
             requestedPath);
         return await WriteBytesAsync(fullPath, payload, ct);
+    }
+
+    private static void ValidateReportContract<T>(
+        T report)
+    {
+        if (report is MaxScoreMaintenancePlanReport planReport)
+            planReport.ValidateContract();
+        else if (report is MaxScoreMaintenanceApplyReport applyReport)
+            applyReport.ValidateContract();
+        else if (report is
+                 MaxScoreMaintenanceRollbackReport rollbackReport)
+            rollbackReport.ValidateContract();
+    }
+
+    internal sealed class NewReportReservation
+        : IAsyncDisposable
+    {
+        private FileStream? _stream;
+        private bool _written;
+
+        internal NewReportReservation(
+            string fullPath,
+            FileStream stream)
+        {
+            FullPath = fullPath;
+            _stream = stream;
+        }
+
+        internal string FullPath { get; }
+
+        internal async Task WriteAsync<T>(
+            T report,
+            CancellationToken ct)
+        {
+            ValidateReportContract(report);
+            var stream = _stream
+                ?? throw new InvalidOperationException(
+                    "The reserved max-score report has already been written or disposed.");
+            var payload = JsonSerializer.SerializeToUtf8Bytes(
+                report,
+                MaxScoreMaintenanceJson.Report);
+            stream.SetLength(0);
+            stream.Position = 0;
+            await stream.WriteAsync(payload, ct);
+            await stream.FlushAsync(ct);
+            stream.Flush(flushToDisk: true);
+            await stream.DisposeAsync();
+            _stream = null;
+            _written = true;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            var stream = Interlocked.Exchange(
+                ref _stream,
+                null);
+            if (stream is not null)
+                await stream.DisposeAsync();
+            if (!_written)
+            {
+                try
+                {
+                    File.Delete(FullPath);
+                }
+                catch
+                {
+                }
+            }
+        }
     }
 
     private static async Task<(string FullPath, string Sha256)>

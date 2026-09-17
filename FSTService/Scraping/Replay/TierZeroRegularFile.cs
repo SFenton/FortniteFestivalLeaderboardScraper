@@ -7,7 +7,8 @@ namespace FSTService.Scraping.Replay;
 
 internal sealed record TierZeroFileSnapshot(
     long Length,
-    string Identity);
+    string Identity,
+    string? DeviceIdentity = null);
 
 [ExcludeFromCodeCoverage(
     Justification = "Platform syscall shim; behavior is validated through package contract tests on supported runners.")]
@@ -131,7 +132,8 @@ internal static class TierZeroRegularFile
         var file = new FileInfo(path);
         return new TierZeroFileSnapshot(
             file.Length,
-            $"{file.Length}:{file.CreationTimeUtc.Ticks}:{file.LastWriteTimeUtc.Ticks}");
+            $"{file.Length}:{file.CreationTimeUtc.Ticks}:{file.LastWriteTimeUtc.Ticks}",
+            FindDrive(path).RootDirectory.FullName);
     }
 
     internal static async Task<byte[]> ReadAllBytesAsync(
@@ -440,7 +442,7 @@ internal static class TierZeroRegularFile
     internal static void DeleteDirectory(string path) =>
         DeleteEntry(path, removeDirectory: true);
 
-    private static OpenedRegularFile OpenRead(
+    internal static OpenedRegularFile OpenRead(
         string path,
         TierZeroFileSnapshot? expected)
     {
@@ -608,7 +610,8 @@ internal static class TierZeroRegularFile
                 LinuxStatxDeviceMinorOffset));
             return new TierZeroFileSnapshot(
                 length,
-                $"{deviceMajor}:{deviceMinor}:{inode}:{length}:{changeSeconds}:{changeNanos}:{modifiedSeconds}:{modifiedNanos}");
+                $"{deviceMajor}:{deviceMinor}:{inode}:{length}:{changeSeconds}:{changeNanos}:{modifiedSeconds}:{modifiedNanos}",
+                $"{deviceMajor}:{deviceMinor}");
         }
         finally
         {
@@ -669,7 +672,14 @@ internal static class TierZeroRegularFile
             changeTimeOffset + 8));
         return new TierZeroFileSnapshot(
             length,
-            $"{inode}:{length}:{changeSeconds}:{changeNanos}");
+            $"{inode}:{length}:{changeSeconds}:{changeNanos}",
+            OperatingSystem.IsMacOS()
+                ? unchecked((uint)Marshal.ReadInt32(
+                    buffer,
+                    0)).ToString()
+                : unchecked((ulong)Marshal.ReadInt64(
+                    buffer,
+                    0)).ToString());
     }
 
     private static void EnsureExpected(
@@ -944,7 +954,7 @@ internal static class TierZeroRegularFile
         }
     }
 
-    private sealed class OpenedRegularFile : IAsyncDisposable
+    internal sealed class OpenedRegularFile : IAsyncDisposable
     {
         private readonly string _path;
         private readonly SafeFileHandle _handle;

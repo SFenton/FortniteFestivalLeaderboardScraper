@@ -436,6 +436,89 @@ public class PublicReadGateTests
                     context.Request));
     }
 
+    [Theory]
+    [InlineData("/api/songs")]
+    [InlineData("/api/paths/song/Solo_Guitar/expert")]
+    [InlineData("/api/leaderboard/song/Solo_Guitar")]
+    public async Task PublicationReadContextMiddleware_MaxScoreMaintenanceDefersBeforeLease(
+        string path)
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('a', 64)));
+        metaDb.GetFailedCandidateReadIsolationState()
+            .Returns(PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                dataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = true,
+                }));
+        using var lockConnection =
+            dataSource.OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction =
+                lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema
+                    .AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+        var nextCalled = false;
+        var middleware =
+            new PublicationReadContextMiddleware(
+                context =>
+                {
+                    nextCalled = true;
+                    context.Response.StatusCode =
+                        StatusCodes.Status204NoContent;
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = path;
+        SetPublicationEndpoint(
+            context,
+            path);
+        context.RequestServices =
+            new ServiceCollection()
+                .AddLogging()
+                .BuildServiceProvider();
+
+        await middleware.InvokeAsync(
+                context,
+                publicationService,
+                gate,
+                Substitute.For<IPathDataStore>())
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
+        lockTransaction.Rollback();
+    }
+
     [Fact]
     public async Task PublicReadGateMiddleware_AllowsClassifiedRoutesDuringScrapeFreeze()
     {
@@ -545,16 +628,20 @@ public class PublicReadGateTests
     [Theory]
     [InlineData(
         "/api/paths/song/Solo_Guitar/expert",
-        "/api/paths/{songId}/{instrument}/{difficulty}")]
+        "/api/paths/{songId}/{instrument}/{difficulty}",
+        true)]
     [InlineData(
         "/api/leaderboard/song/Solo_Guitar",
-        "/api/leaderboard/{songId}/{instrument}")]
+        "/api/leaderboard/{songId}/{instrument}",
+        false)]
     [InlineData(
         "/api/rankings/Solo_Guitar",
-        "/api/rankings/{instrument}")]
-    public async Task PublicReadGateMiddleware_FailsClosedForMaxScoreMaintenanceRoutes(
+        "/api/rankings/{instrument}",
+        false)]
+    public async Task PublicReadGateMiddleware_RoutesMaxScoreMaintenanceReadsToCacheOrEndpointGate(
         string path,
-        string pattern)
+        string pattern,
+        bool endpointHandlesRead)
     {
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
@@ -572,11 +659,14 @@ public class PublicReadGateTests
             metaDb,
             NullLogger<PublicReadGateService>.Instance);
         var nextCalled = false;
-        var middleware = new PublicReadGateMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        });
+        var middleware = new PublicReadGateMiddleware(
+            nextContext =>
+            {
+                nextCalled = true;
+                nextContext.Response.StatusCode =
+                    StatusCodes.Status204NoContent;
+                return Task.CompletedTask;
+            });
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = path;
@@ -588,9 +678,11 @@ public class PublicReadGateTests
 
         await middleware.InvokeAsync(context, gate);
 
-        Assert.False(nextCalled);
+        Assert.Equal(endpointHandlesRead, nextCalled);
         Assert.Equal(
-            StatusCodes.Status503ServiceUnavailable,
+            endpointHandlesRead
+                ? StatusCodes.Status204NoContent
+                : StatusCodes.Status503ServiceUnavailable,
             context.Response.StatusCode);
         Assert.Equal(
             reason,
@@ -718,10 +810,10 @@ public class PublicReadGateTests
         });
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
-        context.Request.Path = "/api/player/account";
+        context.Request.Path = "/api/player/account/stats";
         SetPublicationEndpoint(
             context,
-            "/api/player/{accountId}",
+            "/api/player/{accountId}/stats",
             handlesFailedCandidateRead: true);
         context.RequestServices = new ServiceCollection()
             .AddLogging()
@@ -851,7 +943,7 @@ public class PublicReadGateTests
     [InlineData("/api/player/account/notifications", false)]
     [InlineData("/api/leaderboard-population", true)]
     [InlineData("/api/songs/member-score-filter", true)]
-    [InlineData("/api/songs", false)]
+    [InlineData("/api/songs", true)]
     [InlineData("/api/shop", false)]
     [InlineData("/api/paths/song/Solo_Guitar/Expert", false)]
     [InlineData("/api/status", false)]
@@ -1238,6 +1330,81 @@ public class PublicReadGateTests
             Arg.Any<string>());
         metaDb.Received(1)
             .TouchWebRegistrationActivity("account-1");
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_InvalidScopeBindingCannotBypassReadBoundary()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1278,
+                PublicReadFreezeState.PublicationCommitIntentReason));
+        var json = Encoding.UTF8.GetBytes("{}");
+        metaDb.GetCurrentCacheLookup(Arg.Any<string>())
+            .Returns(
+                new PublicationCacheLookup(
+                    true,
+                    new PublicationCachedResponse(
+                        19,
+                        1278,
+                        DateTime.UtcNow,
+                        json,
+                        ResponseCacheService.ComputeETag(json))));
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                19,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(
+                new PublicationSurfaceSourceEvidence(
+                    PublicationSurfaceNames.SoloScopeSources,
+                    Exists: false,
+                    PublicationId: 19,
+                    ScrapeId: 1278,
+                    RowCount: 0,
+                    ContentHash: new string('a', 64)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry(),
+            publicationService);
+
+        Assert.True(nextCalled);
+        Assert.False(
+            context.Response.Headers.ContainsKey(
+                "X-FST-Public-Cache"));
     }
 
     [Fact]
@@ -1703,7 +1870,8 @@ public class PublicReadGateTests
         await middleware.InvokeAsync(
             context,
             publicationService,
-            apiGate);
+            apiGate,
+            Substitute.For<IPathDataStore>());
 
         Assert.False(nextCalled);
         Assert.Equal(
@@ -1727,6 +1895,224 @@ public class PublicReadGateTests
         }
         _ = metaDb.ReconcileStalePublicationCommitIntent(
             TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task BoundaryReadLeaseReturns503ForIncompletePathSnapshot()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var scrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = metaDb.GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+
+        using (var connection = fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM publication_path_artifacts
+                WHERE publication_id = @publicationId
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            command.ExecuteNonQuery();
+        }
+
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var pathStore = new PathDataStore(
+            fixture.DataSource,
+            options: Options.Create(new ScraperOptions
+            {
+                UsePublicationPathArtifacts = true,
+            }));
+        var nextCalled = false;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                _context =>
+                {
+                    nextCalled = true;
+                    pathStore.GetAllMaxScores();
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/songs";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(context, "/api/songs");
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            gate,
+            pathStore);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "no-store",
+            context.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task BoundaryReadLeaseRejectsInvalidPublishedScopeSourceBinding()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 0,
+            totalRequests: 1,
+            totalBytes: 1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationService =
+            new PublicationReadContextService(
+                fixture.Db,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    UsePublishedScopeSources = true,
+                }));
+        var gate = new PublicReadGateService(
+            fixture.Db,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                _ =>
+                {
+                    nextCalled = true;
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            gate,
+            Substitute.For<IPathDataStore>());
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "no-store",
+            context.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task BoundaryWebSocketCapturesValidatedPublicationWhenPinningIsDisabled()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publishedAt = DateTime.UtcNow;
+        var pointers = new PublicationPointerState(
+                CurrentPublicationId: 42,
+                PreviousPublicationId: 41,
+                WorkingPublicationId: null,
+                PublishedScrapeId: 1278,
+                PublishedAtUtc: publishedAt);
+        metaDb.GetPublicationPointerState().Returns(
+            pointers);
+        metaDb.GetPublicationPointerState(
+                Arg.Any<int>())
+            .Returns(pointers);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                42,
+                PublicationSurfaceNames.SoloScopeSources,
+                Arg.Any<int>())
+            .Returns(new PublicationSurfaceSourceEvidence(
+                PublicationSurfaceNames.SoloScopeSources,
+                Exists: true,
+                PublicationId: 42,
+                ScrapeId: 1278,
+                RowCount: 1,
+                ContentHash: new string('a', 64)));
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = false,
+                    UsePublishedScopeSources = true,
+                }));
+        Assert.False(publicationService.PinningConfigured);
+        PublicationReadContext? captured = null;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                context =>
+                {
+                    captured =
+                        context.GetPublicationReadContext();
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/ws";
+        var webSocketFeature =
+            Substitute.For<IHttpWebSocketFeature>();
+        webSocketFeature.IsWebSocketRequest.Returns(true);
+        context.Features.Set(webSocketFeature);
+        SetPublicationEndpoint(
+            context,
+            "/api/ws",
+            ApiPublicationRouteCatalog.AnyMethod);
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            new PublicReadGateService(
+                metaDb,
+                NullLogger<PublicReadGateService>.Instance),
+            Substitute.For<IPathDataStore>());
+
+        Assert.Equal(
+            new PublicationReadContext(
+                42,
+                1278,
+                publishedAt),
+            captured);
+        Assert.Equal(
+            "42",
+            context.Response.Headers[
+                PublicationReadContextMiddleware
+                    .PublicationHeader]);
     }
 
     [Fact]
@@ -1946,10 +2332,10 @@ public class PublicReadGateTests
         }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
-        context.Request.Path = "/api/player/account";
+        context.Request.Path = "/api/player/account/stats";
         SetPublicationEndpoint(
             context,
-            "/api/player/{accountId}",
+            "/api/player/{accountId}/stats",
             handlesFailedCandidateRead: true);
         context.RequestServices = new ServiceCollection()
             .AddLogging()

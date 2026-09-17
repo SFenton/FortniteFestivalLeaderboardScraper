@@ -159,6 +159,116 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void Deep_scrape_progress_exposes_completed_jobs_and_final_total()
+    {
+        _tracker.BeginPass(2, 2, 0);
+        _tracker.SetSubOperation("deep_scraping");
+
+        _tracker.SetDeepScrapeProgress(3, 7);
+
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.NotNull(detail);
+        Assert.Equal(3, detail!.DeepJobsCompleted);
+        Assert.Equal(7, detail.DeepJobsTotal);
+    }
+
+    [Fact]
+    public void Band_fetch_epoch_advances_only_between_bounded_stages()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.SetBandFetchProgress(
+            "page0_discovery",
+            0,
+            8,
+            0,
+            0);
+        var discoveryEpoch = _tracker.GetProgressResponse()
+            .Current?.Detail?.BandFetchEpoch;
+        Assert.NotNull(discoveryEpoch);
+        _tracker.SetBandFetchProgress(
+            "page0_discovery",
+            4,
+            8,
+            2,
+            0);
+        Assert.Equal(
+            discoveryEpoch,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.BandFetchEpoch);
+
+        _tracker.SetBandFetchProgress(
+            "fetching_pages",
+            8,
+            40,
+            2,
+            0);
+        var pageFetchEpoch = _tracker.GetProgressResponse()
+            .Current?.Detail?.BandFetchEpoch;
+        Assert.Equal(discoveryEpoch.Value + 1, pageFetchEpoch);
+
+        _tracker.SetBandFetchProgress(
+            "complete",
+            40,
+            40,
+            2,
+            0);
+        Assert.Equal(
+            pageFetchEpoch,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.BandFetchEpoch);
+    }
+
+    [Fact]
+    public void Online_writer_drain_progress_exposes_final_page_and_entry_totals()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.SetOnlineWriterDrainProgress(
+            pagesCompleted: 3,
+            pagesTotal: 8,
+            entriesCompleted: 300,
+            entriesTotal: 800);
+
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.NotNull(detail);
+        Assert.Equal(3, detail!.OnlineWriterPagesCompleted);
+        Assert.Equal(8, detail.OnlineWriterPagesTotal);
+        Assert.Equal(300, detail.OnlineWriterEntriesCompleted);
+        Assert.Equal(800, detail.OnlineWriterEntriesTotal);
+    }
+
+    [Fact]
+    public void Index_progress_is_monotonic_within_a_stage_and_resets_between_stages()
+    {
+        _tracker.BeginPass(2, 2, 0);
+
+        _tracker.ReportIndexProgress(
+            "dropping_solo",
+            "index-3",
+            completed: 3,
+            total: 6);
+        _tracker.ReportIndexProgress(
+            "dropping_solo",
+            "index-2",
+            completed: 2,
+            total: 6);
+        Assert.Equal(
+            3,
+            _tracker.GetProgressResponse()
+                .Current?.Detail?.IndexesCompleted);
+
+        _tracker.ReportIndexProgress(
+            "creating_solo",
+            "index-1",
+            completed: 0,
+            total: 4);
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+        Assert.Equal(0, detail?.IndexesCompleted);
+        Assert.Equal(4, detail?.IndexesTotal);
+    }
+
+    [Fact]
     public void ReportSongComplete_IncrementsSongCounter()
     {
         _tracker.BeginPass(2, 2, 0);

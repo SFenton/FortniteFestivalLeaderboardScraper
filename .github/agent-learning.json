@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "project": "festival-score-tracker",
+  "enabled": true,
+  "retentionDays": 45,
+  "thresholds": {
+    "minimumSuccessfulWorkflows": 3,
+    "minimumDistinctSessions": 2,
+    "minimumStability": 0.8,
+    "maximumCandidatesPerWorkflow": 1,
+    "minimumOperationCount": 2,
+    "maximumSubgraphOperations": 6,
+    "maximumAnalysisEvents": 10000
+  },
+  "priorities": [
+    { "id": "route-publication-contract", "opportunity": "publication", "class": "deterministic-tool", "description": "Capture route and publication contract synchronization.", "validators": ["validate-publish-contract"], "destination": "tools" },
+    { "id": "provenance-manifest", "opportunity": "provenance", "class": "deterministic-tool", "description": "Build repository-local provenance manifests from approved metadata.", "validators": ["preflight-provenance"], "destination": "tools" },
+    { "id": "matched-benchmark-setup", "opportunity": "performance", "class": "reusable-skill", "description": "Prepare matched data, cache, concurrency and resource benchmark fixtures.", "validators": ["test-concurrency-contracts"], "destination": "skills" },
+    { "id": "docs-synchronization", "opportunity": "cross-contract", "class": "routing-policy", "description": "Route documented behavior changes to canonical documents and checks.", "validators": ["check-docs"], "destination": "fixtures" },
+    { "id": "database-object-inventory", "opportunity": "database", "class": "qualification-fixture", "description": "Package synthetic exact-object inventory fixtures without live database access.", "validators": ["test-database-contracts"], "destination": "fixtures" },
+    { "id": "release-destructive-evidence", "opportunity": "release-destruction", "class": "reusable-skill", "description": "Package release and destructive evidence without executing either path.", "validators": ["preflight-application-release"], "destination": "skills" }
+  ],
+  "destinations": {
+    "incubation": ".git/copilot-learning",
+    "tools": ".github/learned-tools",
+    "skills": ".github/skills",
+    "fixtures": ".github/evals/learning"
+  },
+  "eligiblePaths": ["FSTService", "FSTService.Tests", "FortniteFestivalWeb/src", "packages", "tools", "docs", ".github/evals", ".github/skills"],
+  "excludedPaths": ["FSTService/bin", "FSTService/obj", "FSTService.Tests/bin", "FSTService.Tests/obj", ".env"],
+  "riskClasses": ["public-truth-adjudication", "provenance-adjudication", "live-database", "restore-decision", "production", "release", "destructive", "credential", "security"],
+  "validators": [
+    { "id": "validate-publish-contract", "targets": ["route-publication-contract"] },
+    { "id": "preflight-provenance", "targets": ["provenance-manifest"] },
+    { "id": "test-concurrency-contracts", "targets": ["matched-benchmark-setup"] },
+    { "id": "check-docs", "targets": ["docs-synchronization"] },
+    { "id": "test-database-contracts", "targets": ["database-object-inventory"] },
+    { "id": "preflight-application-release", "targets": ["release-destructive-evidence"] }
+  ],
+  "knownTools": ["check-docs", "validate-publish-contract", "preflight-publication", "preflight-provenance", "preflight-application-release", "preflight-destructive-maintenance", "test-web-formatters", "test-service", "test-database-contracts", "test-concurrency-contracts", "test-publication-contracts", "test-provenance-contracts", "test-cross-contracts", "test-debugging-contracts", "build-web"],
+  "knownSkills": ["fst-budget-workflow", "database-management", "database-implementation", "postgres-database-expert", "autonomous-plan-executor"],
+  "automaticBuild": true,
+  "automaticPromotion": false,
+  "continuation": { "enabled": true },
+  "promotion": {
+    "allowedSideEffects": ["none", "workspace"],
+    "requireReplay": true,
+    "requireProjectValidation": true,
+    "requireMediumReview": true,
+    "requirePositiveValue": true,
+    "requireScopeCheck": true,
+    "requireRollback": true
+  }
+}

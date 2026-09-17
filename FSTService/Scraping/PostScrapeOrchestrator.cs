@@ -81,6 +81,7 @@ public sealed class PostScrapeOrchestrator
     private readonly DurablePhaseProgressSink? _phaseProgress;
     private readonly RegistrationMutationCoordinator
         _registrationMutations;
+    private readonly TimeProvider _timeProvider;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -119,7 +120,8 @@ public sealed class PostScrapeOrchestrator
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         WorkerStatusPublisher? workerStatus = null,
         ImprovementNotificationRecoveryService? improvementNotificationRecovery = null,
-        DurablePhaseProgressSink? phaseProgress = null)
+        DurablePhaseProgressSink? phaseProgress = null,
+        TimeProvider? timeProvider = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -157,6 +159,7 @@ public sealed class PostScrapeOrchestrator
         _workerStatus = workerStatus;
         _phaseProgress = phaseProgress;
         _registrationMutations = registrationMutations;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -275,16 +278,23 @@ public sealed class PostScrapeOrchestrator
                 registeredPlayerBandDiscoveryResult = await RunPhaseAsync(
                     ctx,
                     "RegisteredPlayerBandDiscovery",
-                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                    () => RunRegisteredLookupPhaseWithTimeoutAsync(
+                        "RegisteredPlayerBandDiscovery",
                         "registered-player band discovery",
-                        _options.Value.RegisteredPlayerBandDiscoveryTimeout
-                            ?? _options.Value.PostScrapeRefreshTimeout,
-                        phaseCt => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
+                        new RegisteredLookupGracePolicy(
+                            _options.Value.EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace,
+                            _options.Value.RegisteredPlayerBandDiscoveryTimeout
+                                ?? _options.Value.PostScrapeRefreshTimeout,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxDuration,
+                            _options.Value.RegisteredBandRemainingWorkGraceRecentProgressWindow,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxRemainingLookups),
+                        (passState, phaseCt) => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
                             bandAccessToken,
                             _tokenManager.AccountId!,
                             _pool,
+                            passState,
                             phaseCt),
                         ct),
                     RegisteredPlayerBandDiscoveryResult.Empty);
@@ -314,16 +324,23 @@ public sealed class PostScrapeOrchestrator
                 registeredBandProcessingResult = await RunPhaseAsync(
                     ctx,
                     "RegisteredBandTargetedProcessing",
-                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                    () => RunRegisteredLookupPhaseWithTimeoutAsync(
+                        "RegisteredBandTargetedProcessing",
                         "registered-band targeted processing",
-                        _options.Value.RegisteredBandTargetedProcessingTimeout
-                            ?? _options.Value.PostScrapeRefreshTimeout,
-                        phaseCt => registeredBandProcessingOrchestrator.RunAsync(
+                        new RegisteredLookupGracePolicy(
+                            _options.Value.EnableRegisteredBandTargetedProcessingRemainingWorkGrace,
+                            _options.Value.RegisteredBandTargetedProcessingTimeout
+                                ?? _options.Value.PostScrapeRefreshTimeout,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxDuration,
+                            _options.Value.RegisteredBandRemainingWorkGraceRecentProgressWindow,
+                            _options.Value.RegisteredBandRemainingWorkGraceMaxRemainingLookups),
+                        (passState, phaseCt) => registeredBandProcessingOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
                             bandAccessToken,
                             _tokenManager.AccountId!,
                             _pool,
+                            passState,
                             phaseCt),
                         ct),
                     RegisteredBandProcessingResult.Empty);
@@ -400,7 +417,6 @@ public sealed class PostScrapeOrchestrator
             // ── Solo player stats ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
             {
-                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
                 await RunPhaseAsync(ctx, "PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
             }
 
@@ -483,7 +499,10 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync(
                 ctx,
                 "Cleanup.PrecomputeAll",
-                () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct),
+                () => PrecomputeAllForCleanupAsync(
+                    ctx,
+                    ctx.EpicReportedOver100Pages,
+                    ct),
                 alwaysPropagateFailure: true);
         }
     }
@@ -564,6 +583,25 @@ public sealed class PostScrapeOrchestrator
 
         var publishedScrapeId = status.PublishedScrapeId.Value;
         var markerMatchesPublished = status.MarkerScrapeId == publishedScrapeId;
+        var scraperOptions = _options.Value;
+        var explicitResumeContext =
+            scraperOptions.RunOnce
+            && scraperOptions.ResumeScrapeId > 0
+            && scraperOptions.ResumeScrapeId != publishedScrapeId
+            && scraperOptions.ResolvedPhases ==
+                ScrapePhaseResolver.SoloLeaderboardsGroup;
+        if (markerMatchesPublished
+            && status.MarkerStatus == "completed"
+            && status.IsCompleteForPublishedScrape(
+                options.IncludePlayers,
+                options.IncludeBands,
+                options.IncludeSongEvents,
+                options.IncludeRankings)
+            && (!status.PublicReadsFrozen
+                || explicitResumeContext))
+        {
+            return;
+        }
         if (status.PublicReadsFrozen)
         {
             throw new InvalidOperationException(
@@ -885,12 +923,20 @@ public sealed class PostScrapeOrchestrator
     private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
         resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
 
-    private async Task PrecomputeAllForCleanupAsync(bool showLeaderboardEntryTotals, CancellationToken ct)
+    private async Task PrecomputeAllForCleanupAsync(
+        ScrapePassContext ctx,
+        bool showLeaderboardEntryTotals,
+        CancellationToken ct)
     {
         _progress.SetSubOperation("cleanup_api_precompute");
         try
         {
-            await _precomputer.PrecomputeAllAsync(showLeaderboardEntryTotals, ct, publishImmediately: false);
+            await _precomputer.PrecomputeAllAsync(
+                showLeaderboardEntryTotals,
+                ct,
+                publishImmediately: false,
+                publicationCatalogSongs:
+                    ctx.PublicationCatalogSongs);
         }
         finally
         {
@@ -1794,6 +1840,42 @@ public sealed class PostScrapeOrchestrator
             _phaseFaultInjector?.BeforePhase(phaseName);
             result = await phase();
         }
+        catch (PartialResultFailureException<T> ex)
+        {
+            result = ex.PartialResultValue;
+            sw.Stop();
+            var error = ex.InnerException?.Message ?? ex.Message;
+            CompleteDurablePhase(
+                phaseName,
+                "failed",
+                criticality == PostScrapePhaseCriticality.BestEffort
+                    ? error
+                    : null,
+                criticality == PostScrapePhaseCriticality.PublicationCritical
+                    ? error
+                    : null);
+            UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {error}");
+            RecordPhaseOutcome(
+                ctx,
+                phaseName,
+                criticality,
+                false,
+                startedAt,
+                sw.Elapsed,
+                error);
+            _log.LogWarning(
+                ex.InnerException ?? ex,
+                "PostScrape phase [{Phase}] failed ({Criticality}) after producing a partial result. Will retry next pass.",
+                phaseName,
+                criticality);
+            if (criticality == PostScrapePhaseCriticality.PublicationCritical
+                && (alwaysPropagateFailure
+                    || _persistence.EnforcePublicationCriticalPhases))
+            {
+                throw;
+            }
+            return result;
+        }
         catch (OperationCanceledException)
         {
             CompleteDurablePhase(phaseName, "cancelled");
@@ -1962,6 +2044,13 @@ public sealed class PostScrapeOrchestrator
         bool alwaysPropagateFailure = false) =>
         RunPhaseAsync(ctx, phaseName, phase, alwaysPropagateFailure);
 
+    internal Task<T> RunClassifiedResultPhaseForTestAsync<T>(
+        ScrapePassContext ctx,
+        string phaseName,
+        Func<Task<T>> phase,
+        T defaultValue = default!) =>
+        RunPhaseAsync(ctx, phaseName, phase, defaultValue);
+
     private void RecordPhaseOutcome(
         ScrapePassContext ctx,
         string phaseName,
@@ -2044,6 +2133,20 @@ public sealed class PostScrapeOrchestrator
         {
             return await operation(timeoutCts?.Token ?? ct);
         }
+        catch (PartialResultOperationCanceledException<T> ex)
+            when (timeoutCts?.IsCancellationRequested == true
+                  && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Post-scrape {OperationName} timed out after {Timeout}. Continuing with downstream phases using the partial result; work will retry next pass.",
+                operationName,
+                timeout);
+            throw new PartialResultFailureException<T>(
+                ex.PartialResult,
+                new TimeoutException(
+                    $"Post-scrape {operationName} timed out after {timeout}.",
+                    ex));
+        }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true && !ct.IsCancellationRequested)
         {
             _log.LogWarning(
@@ -2053,6 +2156,39 @@ public sealed class PostScrapeOrchestrator
             throw new TimeoutException(
                 $"Post-scrape {operationName} timed out after {timeout}.");
         }
+    }
+
+    internal Task<T> RunRegisteredLookupPhaseWithTimeoutAsync<T>(
+        string phase,
+        string operationName,
+        RegisteredLookupGracePolicy policy,
+        Func<RegisteredLookupPassState, CancellationToken, Task<T>> operation,
+        CancellationToken callerToken)
+    {
+        if (!policy.Enabled)
+        {
+            var state = new RegisteredLookupPassState(_timeProvider);
+            return RunWithPostScrapeNetworkTimeoutAsync(
+                operationName,
+                policy.BaseTimeout,
+                phaseToken => operation(state, phaseToken),
+                callerToken);
+        }
+
+        if (policy.BaseTimeout <= TimeSpan.Zero)
+        {
+            return operation(
+                new RegisteredLookupPassState(_timeProvider),
+                callerToken);
+        }
+
+        return new RegisteredLookupGraceController(_timeProvider, _log)
+            .RunAsync(
+                phase,
+                operationName,
+                policy,
+                operation,
+                callerToken);
     }
 
     /// <summary>
@@ -2532,37 +2668,69 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     internal async Task ComputeLeaderboardRivalsAsync(ScrapePassContext ctx, CancellationToken ct)
     {
-        if (ctx.RegisteredIds.Count == 0)
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
+        var accountIds =
+            MaxScoreMaintenanceAccountIdPolicy
+                .NormalizeSet(ctx.RegisteredIds);
+        if (accountIds.Length == 0)
             return;
 
-        var maxDegreeOfParallelism = Math.Max(
+        var instrumentCount =
+            _persistence.GetInstrumentKeys().Count;
+        var accountBatchSize = Math.Clamp(
+            _options.Value
+                .LeaderboardRivalsMaxDegreeOfParallelism,
             1,
-            _options.Value.LeaderboardRivalsMaxDegreeOfParallelism);
+            accountIds.Length);
+        var totalPairs =
+            accountIds.Length * instrumentCount;
         _log.LogInformation(
-            "Computing leaderboard rivals for {Count} registered user(s) with maxDegree={MaxDegree}.",
-            ctx.RegisteredIds.Count,
-            maxDegreeOfParallelism);
+            "Computing leaderboard rivals for {AccountCount:N0} registered user(s) across {InstrumentCount:N0} instrument(s) with accountBatchSize={AccountBatchSize:N0}.",
+            accountIds.Length,
+            instrumentCount,
+            accountBatchSize);
+        _progress.BeginPhaseProgress(
+            totalPairs,
+            totalAccounts: accountIds.Length);
+        _progress.SetSubOperation(
+            "leaderboard_rivals_account_instruments");
+        var completedInstrumentsByAccount =
+            accountIds.ToDictionary(
+                static accountId => accountId,
+                static _ => 0,
+                StringComparer.OrdinalIgnoreCase);
 
-        await Parallel.ForEachAsync(
-            ctx.RegisteredIds,
-            new ParallelOptions
-            {
-                CancellationToken = ct,
-                MaxDegreeOfParallelism = maxDegreeOfParallelism,
-            },
-            (accountId, _) =>
-            {
-                var result = _leaderboardRivalsCalculator.ComputeForUser(
-                    accountId,
-                    rankingsAuthoritative:
-                        ctx.RankingsComputedSuccessfully);
-                _log.LogDebug(
-                    "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
-                    accountId,
-                    result.RivalCount,
-                    result.SampleCount);
-                return ValueTask.CompletedTask;
-            });
+        var result = await Task.Run(
+            () =>
+                _leaderboardRivalsCalculator
+                    .ComputeForUsersBatched(
+                        accountIds,
+                        accountBatchSize,
+                        rankingsAuthoritative:
+                            ctx.RankingsComputedSuccessfully,
+                        onPairComplete:
+                            (accountId, _) =>
+                        {
+                            _progress
+                                .ReportPhaseItemComplete();
+                            completedInstrumentsByAccount[
+                                accountId]++;
+                            if (completedInstrumentsByAccount[
+                                    accountId]
+                                == instrumentCount)
+                            {
+                                _progress
+                                    .ReportPhaseAccountComplete();
+                            }
+                        },
+                        ct: ct),
+            ct);
+        _log.LogInformation(
+            "Computed scheduled leaderboard rivals: accounts={AccountCount:N0}, instruments={InstrumentCount:N0}, rivalRows={RivalCount:N0}, sampleRows={SampleCount:N0}.",
+            accountIds.Length,
+            instrumentCount,
+            result.RivalCount,
+            result.SampleCount);
     }
 
     internal Task RunLeaderboardRivalsPhaseAsync(
@@ -2667,19 +2835,31 @@ public sealed class PostScrapeOrchestrator
         ScrapePassContext ctx,
         CancellationToken ct)
     {
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
+        _progress.SetSubOperation("population_tiers");
         var changedIds = ctx.Aggregates.ChangedAccountIds;
         // Also include registered users (their stats should always be fresh)
         var accountIds = new HashSet<string>(changedIds, StringComparer.OrdinalIgnoreCase);
         foreach (var id in ctx.RegisteredIds)
             accountIds.Add(id);
+        var normalizedAccountIds =
+            MaxScoreMaintenanceAccountIdPolicy.NormalizeSet(accountIds);
 
         _log.LogInformation("Computing player stats tiers for {Count:N0} accounts ({Changed:N0} changed + {Registered:N0} registered).",
-            accountIds.Count, changedIds.Count, ctx.RegisteredIds.Count);
+            normalizedAccountIds.Length, changedIds.Count, ctx.RegisteredIds.Count);
+        _progress.BeginPhaseProgress(normalizedAccountIds.Length);
+        var reportedAccounts = 0;
         await PlayerStatsTierRebuilder.RebuildAsync(
             _persistence,
             _pathDataStore,
-            accountIds,
+            normalizedAccountIds,
             _log,
-            ct);
+            ct,
+            onProgress: (completed, _) =>
+            {
+                var delta = completed - reportedAccounts;
+                reportedAccounts = completed;
+                _progress.ReportPhaseItemsComplete(delta);
+            });
     }
 }

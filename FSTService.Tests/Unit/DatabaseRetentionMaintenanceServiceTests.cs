@@ -68,6 +68,32 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithGenerationLayout_DoesNotRunLegacyRewrite()
+    {
+        SeedSnapshotRetentionCandidate(useLegacyLayout: false);
+        var sut = CreateSut(new DatabaseMaintenanceOptions
+        {
+            SnapshotRetentionRewriteEnabled = true,
+            SnapshotRetentionReportOnlyWhenDisabled = true,
+            SnapshotRetentionMinimumEstimatedPurgeBytes = 0,
+            SnapshotRetentionMaxPartitionsPerRun = 1,
+            MetadataTtlCleanupEnabled = false,
+        });
+
+        var result = await sut.RunAsync(CancellationToken.None);
+
+        Assert.Empty(result.SnapshotRetention.Candidates);
+        Assert.Empty(result.SnapshotRetention.RewriteResults);
+        Assert.Equal(50, CountSnapshotRows("Solo_Guitar"));
+        Assert.Equal(30, CountSnapshotRows("Solo_Guitar", 100));
+        Assert.Equal(
+            30,
+            CountRows(
+                "leaderboard_entries_snapshot_solo_guitar_s100",
+                "TRUE"));
+    }
+
+    [Fact]
     public async Task RunAsync_WithMetadataTtlCleanup_PrunesOnlyUnpinnedMetadataRows()
     {
         SeedMetadataRetentionRows();
@@ -118,18 +144,1028 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
         Assert.False(result.MetadataCleanup.Enabled);
     }
 
+    [Fact]
+    public async Task MetadataTtlCannotLaunderPublicationOrWriterFailureProvenance()
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                status)
+            VALUES
+                (709, TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                 TIMESTAMPTZ '2024-01-01T01:00:00Z', 'completed'),
+                (710, TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                 TIMESTAMPTZ '2024-01-01T01:00:00Z', 'completed'),
+                (711, TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                 TIMESTAMPTZ '2024-01-01T01:00:00Z', 'completed'),
+                (712, TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                 TIMESTAMPTZ '2024-01-01T01:00:00Z', 'completed');
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                710,
+                'ttl-source',
+                'Solo_Guitar',
+                'alltime',
+                'snapshot',
+                709,
+                709,
+                1,
+                'content',
+                'coverage',
+                1,
+                1,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                created_at,
+                ready_at,
+                published_at)
+            VALUES (
+                9711,
+                711,
+                'retained',
+                now(),
+                now(),
+                now());
+
+            INSERT INTO scrape_writer_failures (
+                scrape_id,
+                writer_kind,
+                instrument,
+                song_id,
+                page_count,
+                row_count,
+                exception_type,
+                error_message,
+                occurred_at)
+            VALUES (
+                712,
+                'online',
+                'Solo_Guitar',
+                'ttl-failure',
+                1,
+                0,
+                'InjectedFailure',
+                'must survive TTL',
+                now());
+            """);
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                MetadataRetentionDays = 30,
+                MetadataCleanupBatchSize = 100,
+                MetadataCleanupMaxBatches = 2,
+                CompletedScrapeLogRowsToKeep = 0,
+            });
+
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 709"));
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 710"));
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 711"));
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 712"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "scrape_writer_failures",
+                "scrape_id = 712 AND replayed_at IS NULL"));
+
+        Execute(
+            """
+            UPDATE scrape_writer_failures
+            SET replayed_at = now()
+            WHERE scrape_id = 712;
+
+            DELETE FROM leaderboard_published_scope_source
+            WHERE published_scrape_id = 710;
+            """);
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            0,
+            CountRows("scrape_log", "id IN (709, 710, 712)"));
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 711"));
+        Assert.Equal(
+            0,
+            CountRows(
+                "scrape_writer_failures",
+                "scrape_id = 712"));
+    }
+
+    [Fact]
+    public async Task MetadataTtlRetiresOldUnnamedPublicationBeforeAgingScrape()
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                status)
+            VALUES
+                (
+                    720,
+                    TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-01T01:00:00Z',
+                    'completed'
+                ),
+                (
+                    721,
+                    now() - interval '2 days',
+                    now() - interval '2 days',
+                    'completed'
+                ),
+                (
+                    722,
+                    now() - interval '1 day',
+                    now() - interval '1 day',
+                    'completed'
+                );
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                previous_publication_id,
+                created_at,
+                ready_at,
+                published_at,
+                metadata)
+            VALUES
+                (
+                    9720,
+                    720,
+                    'retained',
+                    NULL,
+                    TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-01T00:30:00Z',
+                    TIMESTAMPTZ '2024-01-01T01:00:00Z',
+                    jsonb_build_object(
+                        'publicationPreparation',
+                        jsonb_build_object(
+                            'scrapeId', 720,
+                            'publicationId', 9720,
+                            'expectedPublishedScopeCount', 1))
+                ),
+                (
+                    9721,
+                    721,
+                    'retained',
+                    9720,
+                    now() - interval '2 days',
+                    now() - interval '2 days',
+                    now() - interval '2 days',
+                    '{}'::jsonb
+                ),
+                (
+                    9722,
+                    722,
+                    'current',
+                    9721,
+                    now() - interval '1 day',
+                    now() - interval '1 day',
+                    now() - interval '1 day',
+                    '{}'::jsonb
+                );
+
+            UPDATE scrape_publication_state
+            SET published_scrape_id = 722,
+                current_publication_id = 9722,
+                previous_publication_id = 9721,
+                working_publication_id = NULL,
+                public_reads_frozen = FALSE,
+                updated_at = now()
+            WHERE id = TRUE;
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                720,
+                'retired-empty',
+                'Solo_Guitar',
+                'alltime',
+                'empty',
+                NULL,
+                720,
+                0,
+                'empty-content',
+                'empty-coverage',
+                0,
+                0,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO publication_surface_bindings (
+                publication_id,
+                surface_name,
+                binding_kind,
+                binding_json,
+                row_count,
+                content_hash,
+                status,
+                built_at)
+            VALUES
+                (
+                    9720,
+                    'solo_scope_sources',
+                    'scrape_id',
+                    jsonb_build_object(
+                        'publicationId', 9720,
+                        'table',
+                            'leaderboard_published_scope_source',
+                        'publishedScrapeId', 720,
+                        'keyHashVersion', 1),
+                    1,
+                    'b56ea9c231bbd4958c4527e9fe5bb27c81575c7b8d61eb9ed8b733cccdffcfba',
+                    'ready',
+                    now()
+                ),
+                (
+                    9720,
+                    'item_shop',
+                    'legacy_live_unversioned',
+                    jsonb_build_object(
+                        'table', 'item_shop_tracks'),
+                    0,
+                    NULL,
+                    'building',
+                    now()
+                );
+            """);
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                MetadataRetentionDays = 30,
+                MetadataCleanupBatchSize = 100,
+                MetadataCleanupMaxBatches = 2,
+                CompletedScrapeLogRowsToKeep = 0,
+            });
+
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            0,
+            CountRows("scrape_log", "id = 720"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "publication_generations",
+                "publication_id = 9720 " +
+                "AND scrape_id IS NULL " +
+                "AND retired_scrape_id = 720 " +
+                "AND status = 'retired' " +
+                "AND retired_at IS NOT NULL"));
+        Assert.Equal(
+            0,
+            CountRows(
+                "leaderboard_published_scope_source",
+                "published_scrape_id = 720"));
+        Assert.Equal(
+            2,
+            CountRows(
+                "publication_generations",
+                "publication_id IN (9721, 9722) " +
+                "AND scrape_id IS NOT NULL"));
+    }
+
+    [Fact]
+    public async Task MetadataTtlProtectsNamedAndFailedPublicationLifecycle()
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                failed_at,
+                status)
+            VALUES
+                (
+                    730,
+                    TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-01T01:00:00Z',
+                    NULL,
+                    'completed'
+                ),
+                (
+                    731,
+                    TIMESTAMPTZ '2024-01-02T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-02T01:00:00Z',
+                    NULL,
+                    'completed'
+                ),
+                (
+                    732,
+                    TIMESTAMPTZ '2024-01-03T00:00:00Z',
+                    NULL,
+                    TIMESTAMPTZ '2024-01-03T01:00:00Z',
+                    'failed'
+                ),
+                (
+                    733,
+                    TIMESTAMPTZ '2024-01-04T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-04T01:00:00Z',
+                    NULL,
+                    'completed'
+                );
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                previous_publication_id,
+                created_at,
+                ready_at,
+                published_at,
+                failed_at,
+                failure_phase,
+                failure_message)
+            VALUES
+                (
+                    9730,
+                    730,
+                    'retained',
+                    NULL,
+                    now(),
+                    now(),
+                    now(),
+                    NULL,
+                    NULL,
+                    NULL
+                ),
+                (
+                    9731,
+                    731,
+                    'current',
+                    9730,
+                    now(),
+                    now(),
+                    now(),
+                    NULL,
+                    NULL,
+                    NULL
+                ),
+                (
+                    9732,
+                    732,
+                    'failed',
+                    NULL,
+                    now(),
+                    NULL,
+                    NULL,
+                    now(),
+                    'commit',
+                    'recovery evidence'
+                ),
+                (
+                    9733,
+                    733,
+                    'ready',
+                    9731,
+                    now(),
+                    now(),
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
+                );
+
+            UPDATE scrape_publication_state
+            SET published_scrape_id = 731,
+                current_publication_id = 9731,
+                previous_publication_id = 9730,
+                working_publication_id = 9733,
+                public_reads_frozen = TRUE,
+                public_reads_frozen_scrape_id = 733,
+                public_reads_frozen_reason =
+                    'publication_commit_deferred',
+                updated_at = now()
+            WHERE id = TRUE;
+            """);
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                MetadataRetentionDays = 30,
+                MetadataCleanupBatchSize = 100,
+                MetadataCleanupMaxBatches = 2,
+                CompletedScrapeLogRowsToKeep = 0,
+            });
+
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            4,
+            CountRows(
+                "scrape_log",
+                "id IN (730, 731, 732, 733)"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "publication_generations",
+                "publication_id = 9732 " +
+                "AND status = 'failed' " +
+                "AND failure_message = 'recovery evidence'"));
+    }
+
+    [Fact]
+    public async Task MetadataTtlDoesNotRetireMismatchedSourceBinding()
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                status)
+            VALUES (
+                740,
+                TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                TIMESTAMPTZ '2024-01-01T01:00:00Z',
+                'completed');
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                created_at,
+                ready_at,
+                published_at,
+                metadata)
+            VALUES (
+                9740,
+                740,
+                'retained',
+                now(),
+                now(),
+                now(),
+                jsonb_build_object(
+                    'publicationPreparation',
+                    jsonb_build_object(
+                        'scrapeId', 740,
+                        'publicationId', 9740,
+                        'expectedPublishedScopeCount', 2)));
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                740,
+                'partial-only',
+                'Solo_Guitar',
+                'alltime',
+                'empty',
+                NULL,
+                740,
+                0,
+                'content',
+                'coverage',
+                0,
+                0,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO publication_surface_bindings (
+                publication_id,
+                surface_name,
+                binding_kind,
+                binding_json,
+                row_count,
+                content_hash,
+                status,
+                built_at)
+            VALUES (
+                9740,
+                'solo_scope_sources',
+                'scrape_id',
+                jsonb_build_object(
+                    'publicationId', 9740,
+                    'table',
+                        'leaderboard_published_scope_source',
+                    'publishedScrapeId', 740,
+                    'keyHashVersion', 1),
+                2,
+                repeat('a', 64),
+                'ready',
+                now());
+            """);
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                MetadataRetentionDays = 30,
+                MetadataCleanupBatchSize = 100,
+                MetadataCleanupMaxBatches = 2,
+                CompletedScrapeLogRowsToKeep = 0,
+            });
+
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 740"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "publication_generations",
+                "publication_id = 9740 " +
+                "AND status = 'retained' " +
+                "AND retired_at IS NULL"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "leaderboard_published_scope_source",
+                "published_scrape_id = 740"));
+    }
+
+    [Fact]
+    public async Task MetadataTtlRetiresPublicationSurfaceButPreservesRetentionEvidence()
+    {
+        Execute(
+            """
+            INSERT INTO scrape_log (
+                id,
+                started_at,
+                completed_at,
+                status)
+            VALUES
+                (
+                    750,
+                    TIMESTAMPTZ '2024-01-01T00:00:00Z',
+                    TIMESTAMPTZ '2024-01-01T01:00:00Z',
+                    'completed'
+                ),
+                (
+                    751,
+                    now() - interval '1 day',
+                    now() - interval '1 day',
+                    'completed'
+                );
+
+            INSERT INTO publication_generations (
+                publication_id,
+                scrape_id,
+                status,
+                created_at,
+                ready_at,
+                published_at,
+                metadata)
+            VALUES (
+                9750,
+                750,
+                'retained',
+                now(),
+                now(),
+                now(),
+                jsonb_build_object(
+                    'publicationPreparation',
+                    jsonb_build_object(
+                        'scrapeId', 750,
+                        'publicationId', 9750,
+                        'expectedPublishedScopeCount', 1)));
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                750,
+                'evidence-empty',
+                'Solo_Guitar',
+                'alltime',
+                'empty',
+                NULL,
+                750,
+                0,
+                'content',
+                'coverage',
+                0,
+                0,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                751,
+                'dependent-snapshot',
+                'Solo_Guitar',
+                'alltime',
+                'snapshot',
+                750,
+                750,
+                1,
+                'dependent-content',
+                'dependent-coverage',
+                1,
+                1,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO scrape_writer_failures (
+                scrape_id,
+                writer_kind,
+                instrument,
+                song_id,
+                page_count,
+                row_count,
+                exception_type,
+                error_message,
+                occurred_at)
+            VALUES (
+                750,
+                'online',
+                'Solo_Guitar',
+                'retirement-evidence',
+                1,
+                0,
+                'InjectedFailure',
+                'surface retirement must preserve this blocker',
+                now());
+
+            INSERT INTO publication_surface_bindings (
+                publication_id,
+                surface_name,
+                binding_kind,
+                binding_json,
+                row_count,
+                content_hash,
+                status,
+                built_at)
+            VALUES (
+                9750,
+                'solo_scope_sources',
+                'scrape_id',
+                jsonb_build_object(
+                    'publicationId', 9750,
+                    'table',
+                        'leaderboard_published_scope_source',
+                    'publishedScrapeId', 750,
+                    'keyHashVersion', 1),
+                1,
+                'a0ae3a8a5c1b9f9c637516e86ed29a879fe5de2afbee4853c250093f0693c5dc',
+                'ready',
+                now());
+
+            INSERT INTO snapshot_generation_retention_deferrals (
+                trigger_scrape_id,
+                trigger_publication_id,
+                safe_point_kind,
+                safe_point_at,
+                report_only,
+                code,
+                detail,
+                retryable,
+                evidence)
+            VALUES (
+                750,
+                9750,
+                'terminal_worker_post_publication',
+                now(),
+                TRUE,
+                'retained_test_evidence',
+                'must preserve provenance',
+                FALSE,
+                '{}'::jsonb);
+            """);
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                MetadataRetentionDays = 30,
+                MetadataCleanupBatchSize = 100,
+                MetadataCleanupMaxBatches = 2,
+                CompletedScrapeLogRowsToKeep = 0,
+            });
+
+        await sut.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            1,
+            CountRows("scrape_log", "id = 750"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "publication_generations",
+                "publication_id = 9750 " +
+                "AND status = 'retired' " +
+                "AND scrape_id IS NULL " +
+                "AND retired_scrape_id = 750 " +
+                "AND retired_at IS NOT NULL"));
+        Assert.Equal(
+            0,
+            CountRows(
+                "leaderboard_published_scope_source",
+                "published_scrape_id = 750"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "leaderboard_published_scope_source",
+                "published_scrape_id = 751 " +
+                "AND source_scrape_id = 750"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "scrape_writer_failures",
+                "scrape_id = 750 " +
+                "AND replayed_at IS NULL"));
+        Assert.Equal(
+            1,
+            CountRows(
+                "snapshot_generation_retention_deferrals",
+                "trigger_publication_id = 9750"));
+    }
+
+    [Fact]
+    public async Task CentralMaintenanceLockSerializesTtlAndPlannerObservation()
+    {
+        await using var connection =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using var lease =
+            await new ServiceMaintenanceLock().TryAcquireAsync(
+                connection,
+                TimeSpan.Zero)
+            ?? throw new InvalidOperationException(
+                "Test could not acquire centralized maintenance lock.");
+        var sut = CreateSut(
+            new DatabaseMaintenanceOptions
+            {
+                SkipCleanupWhenPressureDetected = false,
+                SnapshotRetentionRewriteEnabled = false,
+                SnapshotRetentionReportOnlyWhenDisabled = false,
+                MetadataTtlCleanupEnabled = true,
+                ServiceMaintenanceLockWaitMilliseconds = 25,
+            });
+
+        var result = await sut.RunAsync(
+            CancellationToken.None);
+
+        Assert.True(result.Skipped);
+        Assert.Contains(
+            "advisory lock",
+            result.Reason,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MetadataTtlPredicateHasExplicitProvenanceGuards()
+    {
+        var predicate =
+            DatabaseRetentionMaintenanceService
+                .BuildScrapeLogRetentionPredicate("log");
+
+        Assert.Contains(
+            "source.published_scrape_id = log.id",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "source.source_scrape_id = log.id",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "publication_generations",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "failure.replayed_at IS NULL",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "snapshot_generation_retention_cycles",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "snapshot_generation_retention_observations",
+            predicate,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "snapshot_generation_retention_holds",
+            predicate,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DryRun_ProtectsOnlySourceMapsForNamedPublicationGenerations()
+    {
+        foreach (var scrapeId in new long[]
+                 {
+                     600, 698, 699, 700, 897, 898, 899, 900,
+                 })
+        {
+            ScrapeRunTestHelper.EnsureAllocated(
+                _fixture.DataSource,
+                scrapeId,
+                completed: true,
+                startedAtUtc: DateTime.UtcNow.AddDays(-10),
+                completedAtUtc: DateTime.UtcNow.AddDays(-9));
+        }
+
+        Execute("""
+            UPDATE publication_generations
+            SET status = CASE scrape_id
+                WHEN 900 THEN 'current'
+                WHEN 899 THEN 'retained'
+                WHEN 898 THEN 'building'
+                ELSE 'retained'
+            END
+            WHERE scrape_id IN (897, 898, 899, 900);
+
+            INSERT INTO scrape_publication_state (
+                id, published_scrape_id, public_reads_frozen,
+                current_publication_id, previous_publication_id,
+                working_publication_id, updated_at)
+            VALUES (
+                true, 900, false,
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 900),
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 899),
+                (SELECT publication_id
+                 FROM publication_generations WHERE scrape_id = 898),
+                now())
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id = EXCLUDED.published_scrape_id,
+                current_publication_id =
+                    EXCLUDED.current_publication_id,
+                previous_publication_id =
+                    EXCLUDED.previous_publication_id,
+                working_publication_id =
+                    EXCLUDED.working_publication_id,
+                updated_at = now();
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id, song_id, instrument, scope_kind,
+                source_kind, source_snapshot_id, source_scrape_id,
+                row_count, content_fingerprint, coverage_fingerprint,
+                reported_total_entries, reported_total_pages,
+                is_complete, created_at, validated_at)
+            VALUES
+                (900, 'current', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 700, 700, 1, 'current', 'current',
+                 1, 1, true, now(), now()),
+                (899, 'previous', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 699, 699, 1, 'previous', 'previous',
+                 1, 1, true, now(), now()),
+                (898, 'working', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 698, 698, 1, 'working', 'working',
+                 1, 1, true, now(), now()),
+                (897, 'stale', 'Solo_PeripheralBass', 'alltime',
+                 'snapshot', 600, 600, 1, 'stale', 'stale',
+                 1, 1, true, now(), now());
+            """);
+
+        var report = await new DatabaseMaintenanceDryRunReporter(
+                _fixture.DataSource)
+            .BuildReportAsync();
+
+        Assert.Equal(
+            [700, 699, 698],
+            report.Snapshots.PublishedSourceSnapshotIds);
+        Assert.DoesNotContain(
+            600,
+            report.Snapshots.PublishedSourceSnapshotIds);
+    }
+
     private DatabaseRetentionMaintenanceService CreateSut(DatabaseMaintenanceOptions options)
     {
         return new DatabaseRetentionMaintenanceService(
             _fixture.DataSource,
             new DatabaseMaintenanceDryRunReporter(_fixture.DataSource),
             _pressureMonitor,
+            new ServiceMaintenanceLock(),
             Options.Create(options),
             NullLogger<DatabaseRetentionMaintenanceService>.Instance);
     }
 
-    private void SeedSnapshotRetentionCandidate()
+    private void SeedSnapshotRetentionCandidate(bool useLegacyLayout = true)
     {
+        if (useLegacyLayout)
+        {
+            Execute("""
+                ALTER TABLE leaderboard_entries_snapshot
+                    DETACH PARTITION
+                        leaderboard_entries_snapshot_solo_guitar;
+                DROP TABLE
+                    leaderboard_entries_snapshot_solo_guitar CASCADE;
+                CREATE TABLE
+                    leaderboard_entries_snapshot_solo_guitar
+                    PARTITION OF leaderboard_entries_snapshot
+                    FOR VALUES IN ('Solo_Guitar');
+                """);
+        }
+        else
+        {
+            Execute("""
+                SELECT ensure_leaderboard_snapshot_generation_partition(
+                    'Solo_Guitar', ids.snapshot_id)
+                FROM unnest(ARRAY[100, 101, 102]::BIGINT[])
+                    AS ids(snapshot_id);
+                """);
+        }
+
         var now = DateTime.UtcNow;
         ScrapeRunTestHelper.EnsureAllocated(
             _fixture.DataSource,
@@ -219,6 +1255,18 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
             completed: false,
             startedAtUtc: new DateTime(
                 2024, 1, 4, 0, 0, 0, DateTimeKind.Utc));
+        Execute("""
+            UPDATE scrape_publication_state
+            SET current_publication_id = NULL,
+                previous_publication_id = NULL,
+                working_publication_id = NULL,
+                published_scrape_id = NULL,
+                updated_at = now()
+            WHERE id = TRUE;
+
+            DELETE FROM publication_generations
+            WHERE scrape_id IN (80, 81, 82, 83);
+            """);
         Execute("""
             CREATE TABLE IF NOT EXISTS band_rank_history_jobs (
                 job_id                 BIGSERIAL PRIMARY KEY,

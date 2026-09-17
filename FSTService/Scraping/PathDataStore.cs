@@ -1,5 +1,6 @@
 using FSTService.Persistence;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -8,11 +9,15 @@ namespace FSTService.Scraping;
 /// <summary>
 /// Path generation data store (<see cref="IPathDataStore"/> implementation).
 /// Reads/writes max scores and path generation state from the <c>songs</c> table.
+/// Effective reads are served from the publication-bound
+/// <c>publication_path_artifacts</c> snapshot when
+/// <c>Scraper:UsePublicationPathArtifacts</c> is enabled.
 /// </summary>
 public sealed class PathDataStore : IPathDataStore
 {
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<PathDataStore>? _log;
+    private readonly IOptions<ScraperOptions>? _options;
 
     // ── In-memory cache for max scores (rarely changes) ──
     private Dictionary<string, SongMaxScores>? _maxScoresCache;
@@ -21,13 +26,55 @@ public sealed class PathDataStore : IPathDataStore
     private readonly object _maxScoresCacheLock = new();
     private static readonly TimeSpan MaxScoresCacheTtl = TimeSpan.FromMinutes(5);
 
-    public PathDataStore(NpgsqlDataSource dataSource, ILogger<PathDataStore>? log = null)
+    // ── Publication-scoped caches (never mixed with the live cache) ──
+    private readonly object _publicationCacheLock = new();
+    private readonly Dictionary<
+        long,
+        (DateTime CachedAtUtc, Dictionary<string, SongMaxScores> Scores)>
+        _publicationMaxScoresCache = [];
+    private readonly Dictionary<
+        long,
+        (
+            DateTime CachedAtUtc,
+            Dictionary<string, PathGenerationState> States)>
+        _publicationStatesCache = [];
+    private const int MaxCachedPublications = 3;
+    private long? _currentPublicationId;
+    private DateTime _currentPublicationCachedAtUtc;
+    private static readonly TimeSpan CurrentPublicationTtl =
+        TimeSpan.FromSeconds(5);
+
+    public PathDataStore(
+        NpgsqlDataSource dataSource,
+        ILogger<PathDataStore>? log = null,
+        IOptions<ScraperOptions>? options = null)
     {
         _ds = dataSource;
         _log = log;
+        _options = options;
     }
 
+    private bool UsePublicationArtifacts =>
+        _options?.Value.UsePublicationPathArtifacts == true;
+
     public Dictionary<string, PathGenerationState> GetPathGenerationStates()
+    {
+        if (TryResolvePublicationScope(out var publicationId, out var explicitScope))
+        {
+            var scoped = GetPublicationPathGenerationStates(publicationId);
+            if (scoped is not null)
+                return scoped;
+            if (explicitScope)
+            {
+                throw new PublicationPathArtifactsUnavailableException(
+                    publicationId);
+            }
+        }
+
+        return GetLivePathGenerationStates();
+    }
+
+    public Dictionary<string, PathGenerationState> GetLivePathGenerationStates()
     {
         var result = new Dictionary<string, PathGenerationState>(StringComparer.OrdinalIgnoreCase);
         using var conn = _ds.OpenConnection();
@@ -50,6 +97,28 @@ public sealed class PathDataStore : IPathDataStore
 
     public PathGenerationState? GetPathGenerationState(string songId)
     {
+        if (TryResolvePublicationScope(out var publicationId, out var explicitScope))
+        {
+            var scoped = GetPublicationPathGenerationStates(publicationId);
+            if (scoped is not null)
+            {
+                return scoped.TryGetValue(songId, out var state)
+                    ? state
+                    : null;
+            }
+
+            if (explicitScope)
+            {
+                throw new PublicationPathArtifactsUnavailableException(
+                    publicationId);
+            }
+        }
+
+        return GetLivePathGenerationState(songId);
+    }
+
+    public PathGenerationState? GetLivePathGenerationState(string songId)
+    {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -61,6 +130,9 @@ public sealed class PathDataStore : IPathDataStore
         using var r = cmd.ExecuteReader();
         return r.Read() ? ReadPathGenerationState(r) : null;
     }
+
+    public IDisposable BeginPublicationRead(long publicationId)
+        => PathDataStorePublicationScope.Begin(publicationId);
 
     public HashSet<string> GetPendingPathGenerationSongIds()
     {
@@ -79,7 +151,196 @@ public sealed class PathDataStore : IPathDataStore
         return result;
     }
 
+    // ── Automatic staging deferral state ──
+    // A deferral never clears path_generation_pending. Pending remains the
+    // durable record that work is owed; these columns only decide whether an
+    // automatic attempt may run now.
+
+    private static readonly TimeSpan RetryBackoffBase = TimeSpan.FromHours(1);
+    private static readonly TimeSpan RetryBackoffCap = TimeSpan.FromHours(24);
+
+    internal static DateTime ComputeNextAttemptAtUtc(
+        DateTime nowUtc,
+        int attemptCount)
+    {
+        var exponent = Math.Clamp(attemptCount - 1, 0, 8);
+        var delayTicks = RetryBackoffBase.Ticks * (1L << exponent);
+        var delay = delayTicks >= RetryBackoffCap.Ticks || delayTicks <= 0
+            ? RetryBackoffCap
+            : TimeSpan.FromTicks(delayTicks);
+        return nowUtc + delay;
+    }
+
+    public IReadOnlyList<PathGenerationCandidate>
+        GetAutomaticPathGenerationCandidates(DateTime nowUtc)
+    {
+        var result = new List<PathGenerationCandidate>();
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, path_generation_attempt_count
+            FROM songs
+            WHERE path_generation_pending
+              AND (
+                  path_generation_deferral_identity
+                      IS DISTINCT FROM NULLIF(last_modified, '')
+                  OR (
+                      NOT path_generation_review_required
+                      AND (
+                          path_generation_next_attempt_at IS NULL
+                          OR path_generation_next_attempt_at <= @now
+                      )
+                  )
+              )
+            ORDER BY song_id
+            """;
+        cmd.Parameters.AddWithValue("now", nowUtc);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new PathGenerationCandidate(
+                reader.GetString(0),
+                reader.GetInt32(1)));
+        }
+
+        return result;
+    }
+
+    public async Task MarkPathGenerationReviewRequiredAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+    {
+        await using var conn = await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_review_required = TRUE,
+                path_generation_review_reason = @reason,
+                path_generation_review_at = @now,
+                path_generation_next_attempt_at = NULL,
+                path_generation_attempt_count =
+                    path_generation_attempt_count + 1,
+                path_generation_deferral_identity =
+                    NULLIF(@catalogIdentity, '')
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("reason", BoundDetail(reason));
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.Add(
+            "catalogIdentity",
+            NpgsqlDbType.Text).Value =
+            (object?)catalogIdentity ?? DBNull.Value;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SchedulePathGenerationRetryAsync(
+        string songId,
+        string reason,
+        string? catalogIdentity,
+        CancellationToken ct)
+    {
+        await using var conn = await _ds.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_attempt_count =
+                    path_generation_attempt_count + 1,
+                path_generation_review_required = FALSE,
+                path_generation_review_at = NULL,
+                path_generation_review_reason = @reason,
+                path_generation_next_attempt_at = @now + LEAST(
+                    make_interval(
+                        hours =>
+                            (1 << LEAST(
+                                GREATEST(
+                                    path_generation_attempt_count, 0),
+                                8))),
+                    INTERVAL '24 hours'),
+                path_generation_deferral_identity =
+                    NULLIF(@catalogIdentity, '')
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("reason", BoundDetail(reason));
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.Add(
+            "catalogIdentity",
+            NpgsqlDbType.Text).Value =
+            (object?)catalogIdentity ?? DBNull.Value;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public bool RearmPathGeneration(string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET path_generation_review_required = FALSE,
+                path_generation_review_reason = NULL,
+                path_generation_review_at = NULL,
+                path_generation_next_attempt_at = NULL,
+                path_generation_attempt_count = 0,
+                path_generation_deferral_identity = NULL
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    public PathGenerationDeferralState? GetPathGenerationDeferralState(
+        string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT path_generation_pending,
+                   path_generation_review_required,
+                   path_generation_review_reason,
+                   path_generation_review_at,
+                   path_generation_next_attempt_at,
+                   path_generation_attempt_count,
+                   path_generation_deferral_identity
+            FROM songs
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PathGenerationDeferralState(
+            songId,
+            reader.GetBoolean(0),
+            reader.GetBoolean(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetDateTime(3),
+            reader.IsDBNull(4) ? null : reader.GetDateTime(4),
+            reader.GetInt32(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6));
+    }
+
     public Dictionary<string, SongMaxScores> GetAllMaxScores()
+    {
+        if (TryResolvePublicationScope(out var publicationId, out var explicitScope))
+        {
+            var scoped = GetPublicationMaxScores(publicationId);
+            if (scoped is not null)
+                return scoped;
+            if (explicitScope)
+            {
+                throw new PublicationPathArtifactsUnavailableException(
+                    publicationId);
+            }
+        }
+
+        return GetLiveAllMaxScores();
+    }
+
+    public Dictionary<string, SongMaxScores> GetLiveAllMaxScores()
     {
         while (true)
         {
@@ -163,7 +424,248 @@ public sealed class PathDataStore : IPathDataStore
     }
 
     public void InvalidateCachedState()
-        => InvalidateMaxScoresCache();
+    {
+        InvalidateMaxScoresCache();
+        lock (_publicationCacheLock)
+        {
+            _publicationMaxScoresCache.Clear();
+            _publicationStatesCache.Clear();
+            _currentPublicationCachedAtUtc = default;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the publication whose snapshot should serve effective reads.
+    /// Returns false when live rows must be used.
+    /// </summary>
+    private bool TryResolvePublicationScope(
+        out long publicationId,
+        out bool explicitScope)
+    {
+        publicationId = 0;
+        explicitScope = false;
+        if (!UsePublicationArtifacts)
+            return false;
+
+        if (PathDataStorePublicationScope.CurrentPublicationId
+            is long scoped)
+        {
+            publicationId = scoped;
+            explicitScope = true;
+            return true;
+        }
+
+        if (TryGetCurrentPublicationId(out var current))
+        {
+            publicationId = current;
+            explicitScope = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryGetCurrentPublicationId(out long publicationId)
+    {
+        lock (_publicationCacheLock)
+        {
+            if (_currentPublicationCachedAtUtc != default
+                && DateTime.UtcNow - _currentPublicationCachedAtUtc
+                    < CurrentPublicationTtl)
+            {
+                publicationId = _currentPublicationId ?? 0;
+                return _currentPublicationId.HasValue;
+            }
+        }
+
+        long? resolved = null;
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT current_publication_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            var value = cmd.ExecuteScalar();
+            if (value is not null && value is not DBNull)
+                resolved = Convert.ToInt64(value);
+        }
+        catch (NpgsqlException ex)
+        {
+            _log?.LogWarning(
+                ex,
+                "Failed to resolve the current publication for path artifact reads.");
+            throw;
+        }
+
+        lock (_publicationCacheLock)
+        {
+            _currentPublicationId = resolved;
+            _currentPublicationCachedAtUtc = DateTime.UtcNow;
+        }
+
+        publicationId = resolved ?? 0;
+        return resolved.HasValue;
+    }
+
+    private Dictionary<string, SongMaxScores>? GetPublicationMaxScores(
+        long publicationId)
+    {
+        lock (_publicationCacheLock)
+        {
+            if (_publicationMaxScoresCache.TryGetValue(
+                    publicationId,
+                    out var cached)
+                && DateTime.UtcNow - cached.CachedAtUtc < MaxScoresCacheTtl)
+            {
+                return cached.Scores;
+            }
+        }
+
+        var states = GetPublicationPathGenerationStates(publicationId);
+        if (states is null)
+            return null;
+
+        var scores = new Dictionary<string, SongMaxScores>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var state in states.Values)
+        {
+            if (!HasAnyMaxScore(state.MaxScores))
+                continue;
+            scores[state.SongId] = state.MaxScores;
+        }
+
+        lock (_publicationCacheLock)
+        {
+            _publicationMaxScoresCache[publicationId] =
+                (DateTime.UtcNow, scores);
+            PruneStalePublicationCaches();
+        }
+
+        return scores;
+    }
+
+    private void PruneStalePublicationCaches()
+    {
+        while (_publicationStatesCache.Count > MaxCachedPublications)
+        {
+            var oldest = _publicationStatesCache
+                .OrderBy(static entry => entry.Value.CachedAtUtc)
+                .First()
+                .Key;
+            _publicationStatesCache.Remove(oldest);
+            _publicationMaxScoresCache.Remove(oldest);
+        }
+
+        while (_publicationMaxScoresCache.Count > MaxCachedPublications)
+        {
+            var oldest = _publicationMaxScoresCache
+                .OrderBy(static entry => entry.Value.CachedAtUtc)
+                .First()
+                .Key;
+            _publicationMaxScoresCache.Remove(oldest);
+        }
+    }
+
+    private static bool HasAnyMaxScore(SongMaxScores scores)
+        => scores.MaxLeadScore.HasValue
+           || scores.MaxBassScore.HasValue
+           || scores.MaxDrumsScore.HasValue
+           || scores.MaxVocalsScore.HasValue
+           || scores.MaxProLeadScore.HasValue
+           || scores.MaxProBassScore.HasValue
+           || scores.MaxProCymbalsScore.HasValue
+           || scores.MaxProDrumsScore.HasValue;
+
+    /// <summary>
+    /// Reads and caches the complete ready publication snapshot, or returns
+    /// null when the binding is absent, incomplete, or no longer matches its
+    /// canonical row count/hash.
+    /// </summary>
+    private Dictionary<string, PathGenerationState>?
+        GetPublicationPathGenerationStates(long publicationId)
+    {
+        lock (_publicationCacheLock)
+        {
+            if (_publicationStatesCache.TryGetValue(
+                    publicationId,
+                    out var cached)
+                && DateTime.UtcNow - cached.CachedAtUtc < MaxScoresCacheTtl)
+            {
+                return cached.States;
+            }
+        }
+
+        var result = new Dictionary<string, PathGenerationState>(
+            StringComparer.OrdinalIgnoreCase);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {PublicationPathArtifactSchema.ReadColumns}
+            FROM publication_path_artifacts artifact
+            WHERE artifact.publication_id = @publicationId
+              AND EXISTS (
+                  SELECT 1
+                  FROM publication_surface_bindings binding
+                  JOIN publication_song_catalog catalog
+                    ON catalog.publication_id = binding.publication_id
+                  JOIN publication_generations generation
+                    ON generation.publication_id =
+                        binding.publication_id
+                  WHERE binding.publication_id = @publicationId
+                    AND binding.surface_name = 'path_artifacts'
+                    AND binding.binding_kind =
+                        'generation_path_artifact_manifest'
+                    AND binding.status = 'ready'
+                    AND catalog.is_exact
+                    AND binding.row_count = catalog.song_count
+                    AND binding.row_count = (
+                        SELECT COUNT(*)
+                        FROM publication_path_artifacts counted
+                        WHERE counted.publication_id = @publicationId
+                    )
+                    AND binding.content_hash =
+                        publication_path_artifact_manifest_sha256(
+                            @publicationId)
+                    AND binding.binding_json ->> 'publicationId' =
+                        CAST(@publicationId AS text)
+                    AND binding.binding_json ->> 'scrapeId' =
+                        generation.scrape_id::text
+                    AND binding.binding_json ->> 'contractVersion' =
+                        CAST(@contractVersion AS text)
+                    AND binding.binding_json ->> 'manifestVersion' =
+                        CAST(@manifestVersion AS text)
+              )
+            ORDER BY artifact.song_id
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        cmd.Parameters.AddWithValue(
+            "contractVersion",
+            PublicationPathArtifactSchema.ContractVersion);
+        cmd.Parameters.AddWithValue(
+            "manifestVersion",
+            PublicationPathArtifactSchema.ManifestVersion);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var state = ReadPathGenerationState(reader);
+            result[state.SongId] = state;
+        }
+
+        if (result.Count == 0)
+            return null;
+
+        lock (_publicationCacheLock)
+        {
+            _publicationStatesCache[publicationId] =
+                (DateTime.UtcNow, result);
+            PruneStalePublicationCaches();
+        }
+
+        return result;
+    }
 
     // Test seeding only. Runtime promotions go through the CAS transaction below.
     internal void UpdateMaxScores(
@@ -287,7 +789,13 @@ public sealed class PathDataStore : IPathDataStore
                     path_artifact_generation_id = @generationId,
                     path_expected_instruments = @expectedInstruments,
                     path_generation_revision = path_generation_revision + 1,
-                    path_generation_pending = FALSE
+                    path_generation_pending = FALSE,
+                    path_generation_review_required = FALSE,
+                    path_generation_review_reason = NULL,
+                    path_generation_review_at = NULL,
+                    path_generation_next_attempt_at = NULL,
+                    path_generation_attempt_count = 0,
+                    path_generation_deferral_identity = NULL
                 WHERE song_id = @songId
                 """;
             update.Parameters.AddWithValue("songId", promotion.SongId);
@@ -546,7 +1054,13 @@ public sealed class PathDataStore : IPathDataStore
                     path_expected_instruments = @expectedInstruments,
                     path_generation_revision =
                         path_generation_revision + 1,
-                    path_generation_pending = FALSE
+                    path_generation_pending = FALSE,
+                    path_generation_review_required = FALSE,
+                    path_generation_review_reason = NULL,
+                    path_generation_review_at = NULL,
+                    path_generation_next_attempt_at = NULL,
+                    path_generation_attempt_count = 0,
+                    path_generation_deferral_identity = NULL
                 WHERE song_id = @songId
                   AND path_generation_revision = @expectedRevision
                 """;

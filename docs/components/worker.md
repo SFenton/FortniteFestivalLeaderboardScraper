@@ -1,23 +1,46 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-16
-last_verified_commit: 90e00726
+last_verified: 2026-09-14
+last_verified_commit: d15cbdf7
 sources:
+  - FSTService/Scraping/Capture/
+  - FSTService/Scraping/LeaderboardEntryIdentity.cs
+  - FSTService/Scraping/LeaderboardPaginationPlanner.cs
+  - FSTService/Scraping/Replay/CaptureEntryContracts.cs
+  - FSTService/Scraping/Replay/CapturePackageModels.cs
+  - FSTService/Scraping/Replay/CapturePackageContract.cs
+  - FSTService/Scraping/Replay/CapturePackageJsonLines.cs
+  - FSTService/Scraping/Replay/CapturePackageWriter.cs
+  - FSTService/Scraping/Replay/CapturePackageReader.cs
+  - FSTService.Tests/Unit/CaptureOnlyModeTests.cs
   - FSTService/ScraperWorker.cs
+  - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
+  - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
+  - FSTService/Scraping/ScrapePassPathIngestion.cs
+  - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
+  - FSTService/Api/NotificationService.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService.Tests/Unit/GlobalLeaderboardScraperTests.cs
+  - FSTService.Tests/Unit/LeaderboardStagingTests.cs
   - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/RivalsCalculator.cs
+  - FSTService/Scraping/RivalsOrchestrator.cs
+  - FSTService.Tests/Unit/LeaderboardRivalsCalculatorTests.cs
+  - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
+  - FSTService.Tests/Unit/DurablePhaseProgressSinkTests.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/LeaderboardRivalsCalculator.cs
+  - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -25,16 +48,31 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Persistence/SongCatalogSnapshot.cs
+  - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/Replay/
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Persistence/Maintenance/ServiceMaintenanceLock.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Offline.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionWorkerConfiguration.cs
+  - docs/database/SnapshotGenerationOfflineRetentionReport.md
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.Reads.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
+  - FSTService/Persistence/Maintenance/SnapshotGenerationDropSchema.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionPlannerTests.cs
+  - FSTService.Tests/Unit/SnapshotGenerationRetentionSafePointQueueTests.cs
+  - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - deploy/config/fstworker-role.env
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
+  - tools/postgres-pro-bass-snapshot-rewrite.py
 update_triggers:
   - Worker registration, phase selection, scrape sequencing, background coordination, recovery, or publication changes.
 ---
@@ -74,13 +112,22 @@ the worker. The guarded host startup path owns that transition. Run-once
 merges retain `restart: no`.
 
 The host then runs `tools/fst-worker-compose-guard.sh --recover-start`. That
-action validates the continuous baseline and exact effective arrays, refuses
-active/frozen work, requires the worker profile and restart policy, performs
-bounded effective-proxy recovery and qualification, and recreates only
-`fstworker` with `--no-deps`. The guard explicitly supplies `--profile worker`
-both when resolving merged config and when targeting the worker start. Success
-additionally requires a healthy worker container and a new fresh heartbeat
-through `/api/service-info`.
+action validates the continuous baseline and exact effective arrays, requires
+the worker profile and restart policy, and then chooses one of two safe boot
+paths under the same nonblocking worker-mutation lock. Idle and unfrozen state
+keeps the existing bounded effective-proxy recovery, runtime qualification, and
+continuous `fstworker` recreate with `--no-deps`. A stopped/absent worker plus
+an `updating` or `stalled` exact current scrape, frozen reads with
+`freezeReason=post-process`, a different published scrape, and a stale/offline
+prior worker heartbeat instead enters active-candidate recovery: the guard
+loads the candidate's durable PostgreSQL resume state, validates the exact
+acquisition checkpoint and canonical solo scope contract, runs the existing
+`scrape-resume` run-once profile, waits for publication and unfreeze
+convergence, and only then recreates the continuous worker. The guard
+explicitly supplies `--profile worker` both when resolving merged config and
+when targeting worker starts. Success additionally requires a healthy
+continuous worker container and a new fresh heartbeat through
+`/api/service-info`.
 
 The in-worker Gluetun recycler remains responsible for tunnel failures after
 startup; it is not the boot healer. Recovery failure keeps or returns the
@@ -90,7 +137,59 @@ directs the operator to the no-progress watchdog instead of risking a stranded
 candidate. PostgreSQL, API, and web roles are never restarted. Candidate
 profiles are run-once-only and are not continuous startup authorization.
 
+An interrupted candidate with complete manifests and zero writer/critical
+failures uses the guard data profile `scrape-resume`. The profile authorizes
+only `SoloRankings` run-once recovery, requires a positive
+`Scraper:ResumeScrapeId`, explicit full-worker hosting
+(`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
+publication correctness and snapshot-reuse gates, and
+`Scraper:RivalsMaxDegreeOfParallelism=2`. The four acquisition totals and Epic
+page-count signal are not operator inputs: the worker loads them from the
+exact scrape's atomic PostgreSQL acquisition
+checkpoint. It rejects normal scrape phases, a missing/partial/invalid
+checkpoint, a band-only or reduced-solo acquisition, a count/fingerprint
+mismatch in the requested scrape's complete all-time solo manifests, a
+manifest song outside the exact publication catalog, a different account cap,
+logical-version or stored-rank candidates, and retention rewriting. Band
+manifests are excluded from the resume-scope comparison. The worker then
+validates the scrape ID against durable state, reloads the candidate's immutable
+song catalog, skips network/writer phases, reruns the solo-leaderboards chain
+with the persisted metrics, and retains the existing freeze until publication
+or durable failure isolation. Normal terminal completion never manufactures a
+missing acquisition checkpoint; legacy completed rows therefore remain
+non-resumable.
+The in-worker `ValidateResumeScrape` admission now also rejects any reduced
+canonical solo query scope before post-processing starts: every
+`Scraper:Query*` flag backing
+`GlobalLeaderboardScraper.AllInstruments` must remain enabled so resume
+post-processing cannot silently diverge from the exact acquisition checkpoint.
+Before a full run-once guard check or recreate, the live preflight also
+requires the worker container stopped, `currentUpdate.status` equal to
+`updating` or `stalled`, the exact configured resume scrape ID, public reads
+still frozen, freeze reason exactly `post-process`, and a different currently
+published scrape ID. A gracefully stopped interrupted worker normally reports
+`stalled`; both states are resume-eligible only for the same exact candidate.
+`--recover-start` applies the same durable-candidate gate automatically during
+boot before it mutates proxies or worker state. Legacy rows without the atomic
+acquisition checkpoint, including scrape `1399`, are intentionally refused and
+remain frozen until an operator chooses another recovery path.
+
+Resume and ordinary scrape contexts both carry the immutable song catalog
+selected for their publication. Cleanup precompute must serialize canonical
+`/api/songs` from that explicit collection; it cannot fall back to the
+service's newer singleton live catalog. A supplied empty catalog fails before
+cache staging.
+
 ## Continuous loop
+
+After schema readiness, the full worker publishes its actual report-only
+configuration, service-assembly SHA-256, and canonical-cycle lookup protocol
+in an immutable instance-bound receipt. Publication is bounded to five
+seconds; failure logs a warning and leaves the separate offline reporter
+unauthorized, rather than granting it permission or indefinitely delaying
+startup. A disabled deployment publishes disabled configuration. API-only
+serving does not publish worker authority.
 
 After startup the worker:
 
@@ -99,10 +198,68 @@ After startup the worker:
 3. authenticates with Epic;
 4. runs a scrape pass;
 5. retries deferred publication/recovery;
-6. exits in run-once mode or sleeps for `ScrapeInterval`.
+6. queues keyed generation-retention safe points for new or startup-recovered
+   publications without replacing an earlier item;
+7. in run-once mode, drains registration work and the enabled report-only FIFO
+   before exit;
+8. in continuous mode, sleeps for `ScrapeInterval`, then reads one bounded
+   aggregate registration-drain snapshot before the next scrape allocation.
+   Runnable work wakes the registration worker and receives up to 30 seconds
+   of adaptive polling without background cancellation. A still-runnable drain
+   keeps the FIFO and yields to the scheduled scrape. Once durable registration
+   work is complete, background work is paused/quiesced once and the FIFO is
+   planned. Retryable planner results and unexpected invocation failures remain
+   queued until a terminal persisted cycle exists. Missing/error/unknown
+   non-runnable backfill state and malformed terminal notification state
+   persist a blocked cycle instead, allowing later queued publications to
+   advance while every child remains fail-closed.
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+An external maintenance owner must not infer a stop boundary from retention
+cycle persistence: continuous-mode draining immediately precedes the next
+pass, whose freeze occurs before its blocking allocation lock. The separate
+[offline report tool](../database/SnapshotGenerationOfflineRetentionReport.md)
+instead permits a previously verified idle stop followed by a genuine current
+observation. It starts no worker, performs no notifications, and leaves this
+worker's broadcast/quiescence admission unchanged. Its transaction is not a
+durable worker-start fence; the operator still owns stopped-container proof and
+restart exclusion.
+
+Worker and offline callers resolve one canonical cycle per scrape/publication,
+with kind retained only as provenance. At the external idle stop, first apply
+the dedicated `--initialize-snapshot-retention-schema-only` command and verify
+non-retention parity, then recreate the candidate service and guard-start the
+compatible worker. The command runs no hosted worker and cannot manufacture
+its receipt. Keep the already applied additive schema; the general initializer
+is not the retention deployment boundary. Deploy the canonical-aware worker before
+allowing offline reports. After an offline cycle exists, do not roll the
+mutation worker back to the old kind-scoped lookup: schema uniqueness prevents
+duplication but the old client cannot interpret the cross-kind conflict.
+
+At a new scrape boundary, obsolete staging rows and deep-scrape work are
+removed, but an older `running` scrape and its allocated publication generation
+are transitioned to durable `failed` provenance with
+`abandoned_staging_cleanup`; they are not deleted. Named/frozen publication
+state is excluded from this transition.
+
+The public service independently polls the Spark Tracks catalog on the
+boundary-aligned `Scraper:SongSyncInterval` (five minutes by default). It
+persists only successful exact provider snapshots and shares the publication
+advisory lock, so refresh defers rather than racing allocation or commit. This
+poller does not publish leaderboard data or generate paths. New/changed catalog
+entries become canonical only after a worker allocates a later publication and
+that pass completes its normal derived-state, cache, notification, and cleanup
+contract.
+
+The pre-scrape notification gate treats an exact published-scrape marker with
+all required notification surfaces already complete as terminal during a
+freeze only in explicit run-once resume mode: positive `ResumeScrapeId`, a
+different published scrape, and the exact `SoloRankings` resume phase set.
+Pending, failed, mismatched, or ordinary-worker notification recovery remains
+blocked while frozen. This lets a resume-eligible candidate continue without
+weakening candidate isolation.
 
 Registration-sync work also observes the durable max-score maintenance freeze.
 The worker reports a pause before invoking a writer, and each backfill/history
@@ -122,15 +279,46 @@ shared backend allows exclusive maintenance to claim its durable owner token.
 This covers registration-only hosting, including the interval before a
 publication monitor observes a same-publication release. Exclusive maintenance
 admission waits for active holders, blocks later holders, and remains
-fail-closed across cancellation/resume. Ordinary scrape freezes continue to
-use the existing background-work boundary rather than this max-score-only
-rejection.
+fail-closed across cancellation/resume. During normal exclusive-lease disposal,
+a queued shared holder may briefly acquire the advisory lock before the live
+owner clears its durable token; it releases and retries that owner-active
+handoff rather than surfacing a false maintenance rejection. A bounded
+try-acquire or orphaned durable token still fails immediately. Ordinary scrape
+freezes continue to use the existing background-work boundary rather than this
+max-score-only rejection.
 
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
+
+Scrape allocation additionally captures the publication-bound path artifact
+snapshot for the new working publication, and publication preparation re-emits
+that binding. With `Scraper:EnableScrapePassPathGeneration` enabled, the scrape
+pass then stages generations for pending catalog songs into that candidate
+snapshot, between allocation and the publication read scope, bounded by
+`Scraper:ScrapePassPathGenerationMaxSongs` and
+`Scraper:ScrapePassPathGenerationTimeout`. Staging never writes live `songs`
+rows: staged rows are promoted by a compare-and-swap inside the publication
+commit transaction. `deploy/config/fstworker-role.env` enables staging and the
+publication-bound read source for the worker role, so the deployed
+configuration always has exactly one generator. Because the worker keeps
+`SkipStartupSchemaInitialization=true` and never runs DDL, pre-pool startup
+verifies current/working path bindings before any mutation hosted service is
+constructed. Invalid/missing/unready bindings select sticky read-only serving:
+no scraper, heartbeat, durable progress bridge, registration/band-history
+worker, provider sync or publication recovery runs. Previous invalid bindings
+warn without blocking a valid current/working state. Require
+`startup.mutationReady=true` for worker admission; degraded HTTP 200 is only
+read availability and requires correction plus a fresh guarded restart.
+Staging is best-effort: subsystem failures are contained
+and logged, partial progress from a timed-out batch is kept, and blocked or
+repeatedly failing songs are durably deferred so they cannot monopolize later
+passes. The legacy API-owned
+`Scraper:EnableAutomaticPathGeneration=true` mode stays rejected at startup, and
+generation and maintenance code paths keep reading live `songs` rows. See
+[Publication path artifact snapshots](../database/PublicationPathArtifactSnapshots.md).
 
 Max-score correction is a separate CLI-only one-shot mode. It registers no
 hosted scraper/background services and requires the real `fstworker` offline.
@@ -157,6 +345,13 @@ plus frozen publication instruments. It recalculates
 target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
+Blank affected account IDs are excluded consistently after maintenance proves
+that they have no score-history, registration, or account-cache identity; this
+does not version or alter plan-digest v6 inputs. Leaderboard rivals rebuild
+only manifest-changed instruments. Each changed instrument uses one
+authoritative profile batch for registered users plus deduplicated ranking
+neighbors, retains all five methods/directions/top-200 semantics, and persists
+each user/instrument atomically without touching unrelated rival state.
 Before any post-freeze mutation and again on resume, maintenance reloads each
 mapped raw highest score, highest score eligible at or below
 `floor(newMaximum × 21 / 20)`, and above-cutoff row count, then reconstructs
@@ -173,9 +368,19 @@ above its cutoff, or any raw/eligible/count drift keeps the workflow frozen
 and resumable.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+The rollback action is the same strict one-shot boundary: it registers no
+hosted initializer, scraper, catalog refresh, registration, publication
+monitor, or Docker worker and performs no provider traffic. Dry-run performs exact read-only
+admission. Execution restores paths in one atomic checkpoint, then resumes
+complete rollback-derived/notification/cache phases until terminal
+`rolled_back`; apply/resume cannot continue after rollback starts. Every
+failure leaves the worker offline and public reads frozen.
 Every max-score database mutation and checkpoint commits through a bounded
 source-locked transaction on the live unpooled advisory-lock session; ordinary
-pooled connections are read-only for that workflow. The final cache swap,
+pooled connections are read-only for that workflow. Rollback keeps the
+registration/path locks and durable gate but yields the global publication
+lock between transactions, reacquiring it transactionally only at commit so
+cached API reads do not queue behind long reconciliation. The final cache swap,
 completed checkpoint, and unfreeze use one such transaction while the durable
 gate remains set. That transaction keeps a `5s` lock timeout, uses the
 configured maintenance statement timeout only for final immutable cache
@@ -253,6 +458,50 @@ publication regardless of the critical-failure rollout switch.
 PostgreSQL has no per-wrapper cache warm or manual checkpoint implementation.
 The worker no longer schedules those retired calls at startup, after network
 writes, or during finalization.
+
+Scheduled player-rivals work uses a shared score preload before account
+neighborhood scans. The worker loads all target accounts once per instrument,
+sequentially across instruments, and reuses those score lists for eligibility,
+combo totals, rival computation, and selection-state persistence. This removes
+the former per-account counting pass and its duplicate current-score reads.
+`Scraper:RivalsMaxDegreeOfParallelism` then bounds concurrent account
+neighborhood/fingerprint work; it defaults to `2` and is part of the durable
+phase configuration identity. Progress reports
+`preloading_rivals_scores` before `per_song_rivals`, then advances exact
+account completion against the final target-account denominator. Direct
+single-user and backfill recomputation remain on-demand and do not allocate a
+global preload.
+
+A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
+array predicate to the compatibility current-state query. Exact row/hash
+parity passed, but dense 50-, 379-, and 707-song cases regressed by
+`1.1%`, `3.8%`, and `1.4%`; PostgreSQL already pushed the final predicate into
+equivalent snapshot work.
+
+Scheduled leaderboard rivals instead process one instrument at a time and
+split registered users into bounded account batches. Each batch loads the
+instrument rankings plus deduplicated registered-user and neighbor profiles
+once, computes all five ranking methods in memory, and persists each
+user/instrument through the existing atomic replacement policy.
+`Scraper:LeaderboardRivalsMaxDegreeOfParallelism` retains its public name but
+now controls account batch size and defaults to `4`. Direct single-user
+computation and max-score maintenance retain their existing paths.
+
+The plan-v2 parent remains account-based for compatibility. The named
+`leaderboard_rivals_account_instruments` subphase exposes exact
+`account_instruments` progress; 11 users across nine instruments therefore
+advance through `0..99/99`.
+
+An isolated 7.1-million-row replay returned the same 2,840 rows and full-row
+hash while reducing four profile reads from `30.04s` to `7.79s` (`-74.1%`).
+Matched live scrapes `1317` and `1318` then reduced Leaderboard Rivals from
+`16,004.146s` to `508.248s` (`-96.824%`, `31.49x`) and completed exact
+`99/99` progress. Candidate temp I/O was `19.86GB`, reads were `7.66M`, and
+WAL was `621.8MB`, all below even the late-captured control lower bounds.
+Worker/PostgreSQL memory, PostgreSQL CPU, and host load also remained below
+control. Scrape `1318` published generation `124`, completed 48 player and 60
+band notification events, preserved all 46 users and nine instruments with
+zero rival-table invariant violations, unfroze reads, and exited cleanly.
 
 Matched production scrapes `1299` (control) and `1300` (candidate) accepted
 this cleanup. Both covered 702 songs, 8,424 complete scope manifests, and 6,318
@@ -367,17 +616,127 @@ The worker writes additive `scrape_phase_attempts` rows:
 - persistence failures log a warning and do not replace phase exceptions,
   cancellation, or publication decisions.
 
+Each active attempt also owns a separate subphase stream. Its ID, epoch,
+sequence, classification, units, counters, percentage, start time, and
+last-progress time are persisted on the same row. A subphase transition
+increments the epoch and resets exact progress; later observations advance the
+sequence. A bounded internal-stage transition may also advance the epoch while
+retaining the same friendly subphase ID, such as band page-zero discovery
+moving to remaining-page fetch. Persistence rejects a different worker
+instance or a non-increasing sequence.
+
+Exact subphase producers currently include leaderboard retrieval, band-page
+fetching, bounded online-writer drain, solo/band spool-page flushing,
+coordinated deep-scrape jobs, active solo/band index work, band extraction and
+membership rebuild, registered-player band discovery, registered-band
+processing, player rivals, player-stat account chunks, early snapshot
+activation, and leaderboard-rival account/instrument pairs. Empty band-index
+creation is `not_applicable`. Operations without a final denominator,
+including monolithic SQL, publication gates, retries, and retention work,
+remain explicitly indeterminate. Timeout/cancel transition states are also
+`not_applicable`; parent phase progress is never relabeled as subphase
+progress.
+
+`BandExtraction` intentionally has no exact parent percentage because song
+extraction and membership-summary rebuild use unrelated units. Its subphase
+epochs are exact `songs` and `batches` counters and reset at the stage
+transition. If a producer reports a shrinking final total, the durable sink
+preserves monotonic completion and raises the effective total to at least the
+completed count, so neither the parent nor a subphase can persist
+`completed > total`.
+
+Registered-player discovery and targeted registered-band processing use
+successful durable lookup checkpoints as their parent `lookups` units.
+Finite admitted work has an exact denominator capped by the configured
+per-pass limit; failed or unavailable lookups never advance completion.
+Discovery also publishes a schema-versioned per-pass attempt summary through
+the current-operation JSON. `attemptedThisPass` counts logical lookup intents
+started during the phase, while `retryableUnavailableThisPass` counts typed
+`invalid_leaderboard` outcomes that remain pending. These counters advance
+the progress timestamp and watchdog evidence without inflating durable
+completion. Attempted accounts/bands remain secondary counters. Discovery
+consumes the account-attempt budget even when a subject has no pending lookup,
+and both orchestrators always clear adaptive-limiter telemetry on success,
+failure, or cancellation.
+
+Each run also keeps an identifier-free in-process partition:
+planned admitted lookups (`P`), logical attempts started (`A`), the single
+in-flight attempt (`I`), durable completions (`C`), and attempts finished
+without the authoritative checkpoint (`F`). An attempt becomes durable only
+after `MarkRegisteredPlayerBandDiscoveryChecked` or
+`MarkRegisteredBandLookupChecked` succeeds. Transport retries remain inside
+one logical attempt. Unavailable, failed, cancelled, and metadata-failed
+attempts are non-durable and remain retryable under the existing subject-break
+and fairness rules.
+
+The remaining-work grace controller is registered-phase-only and independently
+disabled by default for discovery and targeted processing. At the base timeout
+it may grant once only when state is valid, `P > 0`, `C > 0`, `F == 0`,
+`0 <= P-C <= 3`, and the last durable checkpoint is no older than 90 seconds.
+Zero remaining is eligible so final metadata/unwind can finish. A grant has an
+immutable hard deadline of phase start plus base timeout plus at most 120
+seconds. Its idle deadline starts at grant plus 90 seconds and moves only when
+a new durable checkpoint completes, never beyond the hard deadline. A new
+non-durable finish revokes immediately. The operation is never reinvoked or
+detached; cancellation unwind is awaited and typed partial impacts continue to
+BandMaintenance.
+
+Attempt starts, retries, requests, account/band completion, heartbeat, and
+grace evaluation do not move either grace deadline or durable phase progress.
+They therefore do not synthesize
+`scrape_phase_attempts.last_progress_at`; the existing no-progress watchdog
+continues to use durable checkpoints. Structured evaluation, terminal, and
+phase-summary logs contain only aggregate state and timing fields.
+
+Identifier-free metrics record end-to-end logical lookup duration with only
+phase (`discovery`/`targeted`) and typed outcome tags
+(`success`, `notfound`, `invalidleaderboard`, `httpfailure`,
+`transportfailure`, or `cancelled`). The current abstraction does not expose a
+reliable per-logical-lookup network-attempt count, cumulative send time,
+proxy-wait time, persistence time, or caller-versus-phase cancellation split;
+those remain evidence gaps for PR B rather than inferred measurements.
+
+The exact Epic error
+`com.epicgames.events.invalid_leaderboard` is retryable unavailable state.
+Discovery refreshes an unchecked attempted row and rotates to the next fair
+account; targeted processing retains retryable error state and moves to the
+next band. Neither path permanently marks the intent absent. Result-bearing
+phase failures retain partial impacts for BandMaintenance while the phase
+ledger and durable attempt remain failed.
+
+Band extraction rebuilds membership summaries for successfully accumulated
+teams even when another song fails. The original extraction exception remains
+the phase failure; a secondary rebuild failure is logged and attached without
+replacing it. Discovery records impacted teams/scopes immediately after band
+entry persistence, before later registration/checkpoint metadata writes, while
+lookup completion still waits for every required durable write.
+
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
-overall/ETA metadata, heartbeat, and last-progress timestamps. Overall progress
-starts as `indeterminate`. ETA is omitted unless at least five successful
+overall/ETA metadata, optional per-pass attempt progress, heartbeat, and
+last-progress timestamps. The normalized phase-attempt row remains
+authoritative for durable completion; the optional attempt summary is carried
+in the instance-fenced worker JSON and is reset with a new phase attempt.
+Worker JSON also carries the attached scrape ID. The publisher rejects bridge
+views from another scrape and rejects older phase/attempt/timestamp/subphase
+sequences, so a delayed prior-scrape view cannot overwrite current progress.
+Scrape attachment updates every current operation directly, including
+descriptor-free parent operations such as `scrape.pass`.
+Overall progress starts as `indeterminate`. ETA is omitted unless at least five successful
 same-plan/same-config durations have the same final units kind and a workload
 total within 10%, then pass the `0.35` coefficient-of-variation gate. Emitted
 ranges are monotonic and carry model version, confidence, and sample count.
 The configuration fingerprint covers an allowlist of phase, network,
 persistence, publication, ranking, notification, and retention controls; it
-also distinguishes the default-off batched member-stat candidate. It never
-stores credentials or resolved provider endpoints.
+also distinguishes the player-rivals account limit and the default-off batched
+member-stat candidate. It never stores credentials or resolved provider
+endpoints.
+
+The fallback `service_worker_status` row is also instance-fenced. A newer
+worker start may claim the row; later heartbeats or activity from an older
+instance are ignored, and same-instance activity cannot move `updated_at`
+backward. This prevents stale worker JSON from overriding the normalized phase
+ledger during restart overlap.
 
 Matched control scrape `1295` and accepted candidate `1296` validated the
 contract under identical `800/32/4` network enforcement. Candidate wall time
@@ -394,7 +753,7 @@ rewrite those counters to 100 or interpret them as remaining publication work.
 Ready-publication deferral also creates distinct failed attempts followed by a
 successful retry, preserving the actual retry history.
 
-## Tier-0 replay evidence contract
+## Replay and capture evidence contracts
 
 The accepted PR-4 library adds versioned Tier-0 package, canonical JSON,
 hashing, sealing, resume-journal, path-safety, configuration-fingerprint, and
@@ -421,10 +780,46 @@ inside Tier-1 bounds. Output/comparison manifests bind the profile and still
 declare `productionComparableTiming=false`; isolated timing cannot support a
 production phase-wall claim.
 
-Future worker capture must remain a separately gated change with explicit FST
-drive capacity/retention ownership and must preserve PostgreSQL authority,
-historical correctness, Epic provenance, freeze/publication semantics, and
-rollback. See
+The `fst.capture-package.v2` library adds a canonical
+capture manifest, exact canonical catalog/support evidence, versioned
+canonical response DTOs in bounded response shards, streaming ordered request
+and scope descriptors, exact Tier-0 identity binding, and complete
+scope/count/hash validation. Request rows bind shard-member offsets, lengths,
+and hashes. Provider-success empties and exact event-not-found empties retain
+distinct origin/completion values; all-unsupported/zero-request packages are
+rejected. Its writer and
+reader reuse Tier-0 atomic writes, path confinement, regular-file identity
+checks, resume journal, checksums, root hash, and verifier. Final capture
+closed-set validation runs after Tier-0 state refresh under the same package
+lock as sealing, and content-addition guards are rechecked under that lock.
+The numeric storage-admission policy returns unchanged committed state when it
+rejects and labels counterfactual projections explicitly.
+
+The same image now exposes a separate manual `--capture-only` entry point. It
+is dispatched before `WebApplication`, hosted-service, Npgsql, schema,
+worker-status, publication/freeze/cache/notification, path-generation,
+cleanup, and ordinary-worker construction. It loads only the normal
+authentication and transport configuration needed to fetch an exact provider
+catalog and the configured full-scrape solo/band scope. Provider pages follow
+the shared production pagination planner and may complete concurrently, then
+are serialized in canonical order through the existing
+authentication-refresh, resilient HTTP, pacing, cooldown, proxy, and
+self-heal path. Capture parsing requires the complete typed provider envelope,
+models event-not-found separately from HTTP success, and projects parsed
+leaderboard models onto strict secret-screened DTO allowlists. The ordinary
+worker parser and persistence behavior are unchanged.
+
+The command performs no `StartScrapeRun`, publication allocation, freeze
+transition, staging/snapshot/population/fingerprint/band/history/projection or
+cache write, post-process, or client notification. It creates no production
+candidate and has no schedule or overlap behavior. Exact catalog acquisition,
+plan-complete page/scope descriptors, stable unique identities and dense
+provider ranks, final catalog stability, final package size, same-device
+future-write free-space reserve, and retained sealed-package count all fail
+closed before atomic sealing. A root-wide no-follow admission lock prevents
+concurrent captures from independently passing the final decision.
+Interrupted attempts remain unsealed, and no package is deleted automatically.
+Capture artifacts and transport scratch remain on the 4 TB FST drive. See
 [Replay evidence artifacts](../architecture/replay-artifacts.md).
 
 ## Publication safety
@@ -443,26 +838,189 @@ Role defaults intentionally differ:
   is generation-addressable.
 
 A digest-owned max-score maintenance freeze is stricter than a normal scrape
-freeze: affected publication-bound cache misses, including `/api/songs` and
-both path routes, return `503`. After derived validation a complete cache swap,
-workflow completion, and unfreeze commit together. Maintenance precompute uses
-only frozen-catalog publication scopes and their captured populations for song
-keys and completion denominators. The `caches_staged` checkpoint and every
+freeze: covered publication-bound cache misses, including `/api/songs`, return
+`503`; immutable path files keep their established endpoint ownership.
+After derived validation a complete cache swap, workflow completion, and
+unfreeze commit together. Maintenance precompute uses only frozen-catalog
+publication scopes and their captured populations for song keys and completion
+denominators.
+
+Precompute now stages the canonical `/api/songs` bytes from the same serializer
+as the endpoint and one top-10 per-song/per-instrument leaderboard payload from
+data already loaded for leaderboard-all. Existing overview, composite, generic
+band, registered-player, leaderboard-all, and song-band rows are reused by
+request aliases rather than duplicated. The extra eager surface is bounded by
+the publication catalog/scope set and adds no ranking/query pass.
+
+The `caches_staged` checkpoint and every
 later pre-complete state make both staging tables immutable to ordinary cache
 builders/writers; exact maintenance-owner access remains available for resume
 and final publication. Resume and the final
 source-locked transaction compare every staged key/ETag/JSON hash with durable
-entry evidence before swap. API processes invalidate
+entry evidence before swap. The compatibility and generation tables swap in
+one transaction: an injected generation insert failure preserves both old
+current tables and both complete staging copies for retry, while success
+empties staging. Disk staging disposal removes incomplete files/directories
+after producer failure. API processes invalidate
 response, path-maxima, and song caches and force a same-publication client
 refresh.
 
-## Service-level retention planning
+The bounded publication-1302 service-only trial exercised this same
+precompute/swap path without a scrape or worker. It staged 15,574 records,
+completed the core precompute in 167.94 seconds, used zero PostgreSQL temp
+bytes, and retained the previous generation. The trial was rolled back for an
+API byte-parity issue outside the transaction boundary; atomic staging/swap
+itself passed.
+
+The repaired repeat service-only precompute completed in 210.03 seconds with
+40/40 service and web API monitor ticks returning 200, zero waiting
+locks/long queries, zero PostgreSQL temp bytes, and a 296.66 MB peak
+free-space excursion. This accepts the current-publication service cache path;
+it does not validate a worker-driven publication switch.
+
+The held worker definition is updated to official merge image `2bc7e9f9` but
+remains Created/offline. Its first publication-switch validation is deferred
+to the next natural capacity-permitted scrape card.
+
+## Physical snapshot generation routing
+
+Snapshot reuse remains the first write-reduction gate: unchanged scopes retain
+their prior published physical source and write no duplicate snapshot rows.
+For changed scopes, `LeaderboardSpoolWriterFactory` ensures the exact
+instrument/snapshot generation child exists before inserting.
+
+The PostgreSQL helper is fixed to the nine supported instruments and validates
+the resulting `FOR VALUES IN (snapshot_id)` bound. Concurrent batch writers
+acquire one global generation-DDL advisory transaction lock in a separate SQL
+statement before invoking the helper. The separate statement gives a waiter a
+fresh `READ COMMITTED` catalog snapshot, while the global key serializes child
+table and inherited-index naming across instruments. Before an instrument is
+migrated, the helper detects its regular-table layout and returns without
+mutation, so the same worker image is compatible across the rolling migration.
+The helper checks active `retention_in_flight` and `restore_in_flight` holds
+before returning or creating a generation and again after the DDL lock. When
+the additive retention/drop schemas exist, all optional-table checks use
+dynamic SQL behind `to_regclass`, preserving rolling startup before either
+table exists. Committed DROP evidence prevents accidental hold release from
+recreating a physically retired generation. Either fence fails with SQLSTATE
+`55000`; a logically restored child becomes writable only after attestation
+and finalization release its hold. Finalized-restore admission matches the
+recorded OID, while relfilenode remains historical because supported physical
+rewrites can change it. Existing unfenced, correctly attached children remain
+idempotent.
+
+The first post-Solo Bass validation attempt, scrape `1308`, exposed the prior
+per-instrument lock boundary: concurrent first batches created generation
+children for different instruments, and PostgreSQL selected the same truncated
+inherited-index name, producing SQLSTATE `23505` in one 13-row Solo Bass batch.
+The writer retained that page as a replay artifact, failed the candidate,
+skipped post-scrape/publication work, unfroze reads on publication `98`, and
+exited normally. Scrape `1309` then proved the global lock: all six generation
+children were created, all `6,363` solo manifests and `2,121` band manifests
+completed, writer failures remained zero, and publication `101` committed.
+The failed `1308` candidate remains forensic evidence only.
+
+All nine instrument roots are now generation-partitioned. Scrape `1310`
+validated all nine writer paths: `8,484/8,484` manifests and
+`605,239/605,239` persisted page statuses completed, writer failures remained
+zero, every `1310` child matched its published-source row sum, and publication
+`103` committed. Player and band notification runs completed, the
+post-publication registration drain found no queued account, and the run-once
+worker exited `0`. The production worker hold remains a separate operational
+gate; the default-off report-only observer does not authorize unattended
+destructive retention.
+
+Fresh schemas also include an empty default child beneath every instrument.
+Direct test/diagnostic inserts remain possible, while normal scrape writes
+route to a named generation child. The operator-only DROP/restore tools remain
+outside the worker. No worker code invokes their database functions, and no
+automatic retirement is enabled. Quarantine/reattach now normalizes only the
+exact target's existing PK and score index OIDs to full-operation-ID names;
+logical restore constructs fixed restore-operation names from repository-owned
+DDL. Neither path changes unrelated public indexes or the worker's ordinary
+generation naming.
+
+The first recurring-retention slice now keeps all archive/proof/drop behavior
+out of the worker and the repository. After publication, unfreeze,
+notifications, scores-changed broadcast, registration drain, and background
+quiescence, `ScraperWorker` may run a bounded report-only observation when
+`DatabaseMaintenance:SnapshotGenerationRetentionReportOnlyEnabled=true`.
+Accepted and recovered publications enter a 128-item fail-closed FIFO keyed by
+scrape/publication. Duplicate restart re-entry is harmless, later publications
+cannot overwrite the head. Before requesting final background quiescence, the
+worker uses one five-second-command-timeout aggregate query to classify
+registration state. Runnable `pending`/`in_progress`/`deferred` backfill work
+and safely re-admittable missing/error history work signal the registration
+worker and receive an adaptive `250 ms`-to-`2 s`, 30-second drain window without
+safe-point cancellation. If work remains, the FIFO stays durable and the next
+scrape may proceed; no observation is recorded. Missing backfill state,
+backfill `error`, unknown registration state, and malformed terminal
+notification state bypass the wait and become immutable cycle blockers; the
+FIFO removes that terminal head and proceeds to later publications. The option
+is off by default.
+
+The observer takes the registration mutation lock, centralized
+service-maintenance lock, shared publication lock, and planner lock in that
+order. It then captures exact child topology and liveness in one bounded
+repeatable-read read-only transaction and compares the result with an
+independent SQL oracle. Named publication source bindings require exact
+preparation identity/count and canonical source-key hash agreement on both
+independent reads. Both catalog paths inventory every numeric child's exact
+root-index attachments, validity, readiness, cardinality, and unique/primary
+attributes. Topology and nonterminal scrape blockers remain effective even
+when a child is protected or a broken instrument has no numeric child.
+Unnamed retained legacy publications are recorded in a separate immutable,
+observation-hashed anomaly collection and do not block candidates or an
+otherwise observed cycle. Planner version 3 also records an exact terminal,
+unnamed failed publication as an anomaly when no named/resume/freeze/commit/
+max-score/notification owner, live surface binding, cache/staging/catalog/path
+row, scrape-staging work, or prepared/retained band relation remains.
+Orphaned publication source rows remain counted warning provenance, while an
+unreplayed writer failure still roots only its exact instrument/generation.
+All publication/scrape identities, artifact/source/writer counts, and recovery
+reasons remain in the observation hash. Unpointed building/ready/current
+publications and genuinely recoverable, nonterminal, or malformed failed
+publications remain fail-closed blockers. Existing planner-v1/v2 cycles remain
+immutable. The observer never mutates legacy publication/source rows to remove
+the warning, while newly produced generations keep the validated v1 retirement
+path.
+Disagreement is durable and produces zero candidates. The worker still has no
+job, executable state, archive, detach, rename, drop, truncate, or
+child-deletion path. The separately built operator tools do not alter this
+runtime boundary. The planner is deliberately absent from
+`PostScrapeOrchestrator.RunCleanupAsync`, which remains pre-publication and
+best effort.
+
+The five-cycle observation gate is accepted. Official scrape `1333` completed
+cleanly and immutable cycle `13` for publication `157` has exact planner/oracle
+sets, 111 candidates, 174 protected, zero blocked/global blockers, and
+194,754,322,432 candidate bytes. Production continued normally into scrape
+`1334`. No archive or DROP behavior exists in the worker. Destructive live use
+advanced outside the worker to an independently approved DROP attempt, but
+the database rejected it before DDL with `42703` because the empty
+initial-revision operation table lacked semantic columns. No child was
+dropped in that attempt. A later approved retry committed operation
+`333ba4b9fb69dbc098d127f0008ec709`; the worker still owns no DROP or restore
+execution path. Recovery is now the operator-only mandatory logical restore,
+whose first plan attempt failed before mutation on canonical-file validation.
+The corrective immutable tool authorization and tool-only repair package
+remain entirely outside the worker; no scheduling, authorization, restore, or
+automatic recovery command is added here.
+See
+[Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
+
+## Legacy service-level retention planning
 
 The service-level database maintenance worker may produce snapshot-retention
 plans while rewrite execution remains disabled. Planning uses bounded
 PostgreSQL catalog/statistics queries and does not scan snapshot partitions.
+This whole-instrument estimator is not the generation-child oracle and its
+rewrite option remains disabled.
 
-Plans retain active, projection-source, rollback, and policy-blocked IDs.
+Plans retain active, projection-source, rollback, publication-physical-source,
+and policy-blocked IDs. Publication physical sources are limited to the scrape
+IDs behind the current, previous, and working publication generations; stale
+source maps for unnamed generations do not remain protected forever.
 Missing protected-ID estimates, partial MCV coverage, unknown or negative
 `n_distinct` semantics, stale row estimates, or row/byte reconciliation gaps
 make the plan non-executable. In that state purge rows/bytes are withheld and
@@ -475,6 +1033,14 @@ partitions in `94 ms`, emitted zero executable plans, held publication
 `1293` unfrozen, and left the worker offline. Every partition was blocked by
 missing protected-ID MCV estimates and incomplete/stale statistics; no rewrite
 or metadata cleanup ran.
+
+The exact pro-bass pilot is not a worker phase and cannot overlap a scrape or
+post-processing pass. Its guards require the worker container held offline,
+durable worker status offline/idle/stopped, no running scrape or phase attempt,
+no working publication, unfrozen public reads, and zero worker backend or
+target lock. The generic service retention setting and global `500 GiB` gate
+remain unchanged. See the
+[pro-bass pilot runbook](../database/ProBassSnapshotRewritePilot.md).
 
 See [Scrape and publication flow](../architecture/data-publication-flow.md),
 [CLI reference](../reference/cli.md), and

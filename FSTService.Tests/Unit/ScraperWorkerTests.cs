@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -47,6 +48,50 @@ public class ScraperWorkerTests : IDisposable
             "SaveCachedPageEstimate",
             BindingFlags.NonPublic | BindingFlags.Static)!;
         method.Invoke(null, [opts, totalPages]);
+    }
+
+    private static ScraperOptions CreateValidResumeOptions() =>
+        new()
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
+            ResumeSongsScraped = -1,
+            ResumeTotalEntries = -1,
+            ResumeTotalRequests = -1,
+            ResumeTotalBytes = -1,
+            ResumeEpicReportedOver100Pages = true,
+        };
+
+    private static ScrapeResumeState CreateValidResumeState()
+    {
+        var startedAt = DateTime.UtcNow.AddHours(-12);
+        return new ScrapeResumeState(
+            1263,
+            startedAt,
+            "running",
+            1236,
+            8208,
+            8208,
+            0,
+            0,
+            [])
+        {
+            AcquisitionCompletedAtUtc = startedAt.AddHours(4),
+            SongsScraped = 684,
+            TotalEntries = 39_696_674,
+            TotalRequests = 398_376,
+            TotalBytes = 57_563_653_024,
+            EpicReportedOver100Pages = false,
+            PublicationSongCount = 700,
+            PublicationSongCatalogIsExact = true,
+            ExpectedSoloScopeCount = 6_300,
+            ExpectedSoloScopeFingerprintVersion =
+                SoloAcquisitionScopeFingerprint.Version,
+            ExpectedSoloScopeFingerprint = new string('a', 64),
+            ActualCompleteSoloScopeCount = 6_300,
+            ActualCompleteSoloScopeFingerprint = new string('a', 64),
+            ActualCompleteSoloScopeOwnedByCatalog = true,
+        };
     }
 
     // ─── GetEnabledInstruments ──────────────────────────────────
@@ -194,6 +239,7 @@ public class ScraperWorkerTests : IDisposable
         Assert.False(opts.SetupOnly);
         Assert.False(opts.RunOnce);
         Assert.Equal(0, opts.ResumeScrapeId);
+        Assert.Equal(2, opts.RivalsMaxDegreeOfParallelism);
         Assert.False(opts.ResolveOnly);
         Assert.Null(opts.TestSongQuery);
     }
@@ -201,25 +247,8 @@ public class ScraperWorkerTests : IDisposable
     [Fact]
     public void ValidateResumeScrape_AcceptsCompleteRunningCandidate()
     {
-        var options = new ScraperOptions
-        {
-            RunOnce = true,
-            ResumeScrapeId = 1263,
-            ResumeSongsScraped = 684,
-            ResumeTotalEntries = 39_696_674,
-            ResumeTotalRequests = 398_376,
-            ResumeTotalBytes = 57_563_653_024,
-        };
-        var state = new ScrapeResumeState(
-            1263,
-            DateTime.UtcNow.AddHours(-12),
-            "running",
-            1236,
-            8208,
-            8208,
-            0,
-            0,
-            []);
+        var options = CreateValidResumeOptions();
+        var state = CreateValidResumeState();
 
         ScraperWorker.ValidateResumeScrape(
             options,
@@ -231,6 +260,43 @@ public class ScraperWorkerTests : IDisposable
             state);
     }
 
+    [Theory]
+    [InlineData(nameof(ScraperOptions.QueryLead), "Solo_Guitar")]
+    [InlineData(nameof(ScraperOptions.QueryBass), "Solo_Bass")]
+    [InlineData(nameof(ScraperOptions.QueryVocals), "Solo_Vocals")]
+    [InlineData(nameof(ScraperOptions.QueryDrums), "Solo_Drums")]
+    [InlineData(nameof(ScraperOptions.QueryProLead), "Solo_PeripheralGuitar")]
+    [InlineData(nameof(ScraperOptions.QueryProBass), "Solo_PeripheralBass")]
+    [InlineData(nameof(ScraperOptions.QueryProVocals), "Solo_PeripheralVocals")]
+    [InlineData(nameof(ScraperOptions.QueryProCymbals), "Solo_PeripheralCymbals")]
+    [InlineData(nameof(ScraperOptions.QueryProDrums), "Solo_PeripheralDrums")]
+    public void ValidateResumeScrape_RejectsMissingCanonicalSoloScopeFlag(
+        string optionPropertyName,
+        string missingInstrument)
+    {
+        var options = CreateValidResumeOptions();
+        typeof(ScraperOptions)
+            .GetProperty(optionPropertyName)!
+            .SetValue(options, false);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.ValidateResumeScrape(
+                options,
+                ScrapePhase.SoloRankings
+                | ScrapePhase.SoloRivals
+                | ScrapePhase.SoloPlayerStats
+                | ScrapePhase.SoloPrecompute
+                | ScrapePhase.SoloFinalize,
+                CreateValidResumeState()));
+
+        Assert.Contains(
+            "requires every canonical solo query flag enabled",
+            error.Message);
+        Assert.Contains(
+            $"missing={missingInstrument}",
+            error.Message);
+    }
+
     [Fact]
     public void ValidateResumeScrape_RejectsIncompleteCandidate()
     {
@@ -238,10 +304,48 @@ public class ScraperWorkerTests : IDisposable
         {
             RunOnce = true,
             ResumeScrapeId = 1263,
-            ResumeSongsScraped = 684,
-            ResumeTotalEntries = 39_696_674,
-            ResumeTotalRequests = 398_376,
-            ResumeTotalBytes = 57_563_653_024,
+        };
+        var startedAt = DateTime.UtcNow.AddHours(-12);
+        var state = new ScrapeResumeState(
+            1263,
+            startedAt,
+            "running",
+            1236,
+            8208,
+            8207,
+            0,
+            0,
+            [])
+        {
+            AcquisitionCompletedAtUtc = startedAt.AddHours(4),
+            SongsScraped = 684,
+            TotalEntries = 39_696_674,
+            TotalRequests = 398_376,
+            TotalBytes = 57_563_653_024,
+            EpicReportedOver100Pages = false,
+            PublicationSongCount = 700,
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.ValidateResumeScrape(
+                options,
+                ScrapePhase.SoloRankings
+                | ScrapePhase.SoloRivals
+                | ScrapePhase.SoloPlayerStats
+                | ScrapePhase.SoloPrecompute
+                | ScrapePhase.SoloFinalize,
+                state));
+
+        Assert.Contains("manifests=8207/8208", error.Message);
+    }
+
+    [Fact]
+    public void ValidateResumeScrape_RejectsMissingAcquisitionMetrics()
+    {
+        var options = new ScraperOptions
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
         };
         var state = new ScrapeResumeState(
             1263,
@@ -249,7 +353,7 @@ public class ScraperWorkerTests : IDisposable
             "running",
             1236,
             8208,
-            8207,
+            8208,
             0,
             0,
             []);
@@ -264,7 +368,155 @@ public class ScraperWorkerTests : IDisposable
                 | ScrapePhase.SoloFinalize,
                 state));
 
-        Assert.Contains("manifests=8207/8208", error.Message);
+        Assert.Contains(
+            "acquisition checkpoint is missing",
+            error.Message);
+    }
+
+    [Fact]
+    public void ValidateResumeScrape_RejectsPartialOrInvalidAcquisitionMetrics()
+    {
+        var options = new ScraperOptions
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
+        };
+        var startedAt = DateTime.UtcNow.AddHours(-12);
+        var state = new ScrapeResumeState(
+            1263,
+            startedAt,
+            "running",
+            1236,
+            8208,
+            8208,
+            0,
+            0,
+            [])
+        {
+            AcquisitionCompletedAtUtc = startedAt.AddHours(4),
+            SongsScraped = 684,
+            TotalEntries = 39_696_674,
+            TotalRequests = null,
+            TotalBytes = 57_563_653_024,
+            EpicReportedOver100Pages = false,
+            PublicationSongCount = 700,
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.ValidateResumeScrape(
+                options,
+                ScrapePhase.SoloRankings
+                | ScrapePhase.SoloRivals
+                | ScrapePhase.SoloPlayerStats
+                | ScrapePhase.SoloPrecompute
+                | ScrapePhase.SoloFinalize,
+                state));
+
+        Assert.Contains(
+            "acquisition metrics are incomplete",
+            error.Message);
+    }
+
+    [Fact]
+    public void ValidateResumeScrape_RejectsNegativeAcquisitionMetrics()
+    {
+        var options = new ScraperOptions
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
+        };
+        var startedAt = DateTime.UtcNow.AddHours(-12);
+        var state = new ScrapeResumeState(
+            1263,
+            startedAt,
+            "running",
+            1236,
+            8208,
+            8208,
+            0,
+            0,
+            [])
+        {
+            AcquisitionCompletedAtUtc = startedAt.AddHours(4),
+            SongsScraped = -1,
+            TotalEntries = 39_696_674,
+            TotalRequests = 398_376,
+            TotalBytes = 57_563_653_024,
+            EpicReportedOver100Pages = false,
+            PublicationSongCount = 700,
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.ValidateResumeScrape(
+                options,
+                ScrapePhase.SoloRankings
+                | ScrapePhase.SoloRivals
+                | ScrapePhase.SoloPlayerStats
+                | ScrapePhase.SoloPrecompute
+                | ScrapePhase.SoloFinalize,
+                state));
+
+        Assert.Contains(
+            "negative value",
+            error.Message);
+    }
+
+    [Fact]
+    public void CreateResumeScrapeResult_UsesPersistedMetricsNotLegacyOptions()
+    {
+        var startedAt = DateTime.UtcNow.AddHours(-12);
+        var state = new ScrapeResumeState(
+            1263,
+            startedAt,
+            "running",
+            1236,
+            8208,
+            8208,
+            0,
+            0,
+            [])
+        {
+            AcquisitionCompletedAtUtc = startedAt.AddHours(4),
+            SongsScraped = 684,
+            TotalEntries = 39_696_674,
+            TotalRequests = 398_376,
+            TotalBytes = 57_563_653_024,
+            EpicReportedOver100Pages = true,
+            PublicationSongCount = 700,
+            PublicationSongCatalogIsExact = true,
+            ExpectedSoloScopeCount = 6_300,
+            ExpectedSoloScopeFingerprintVersion =
+                SoloAcquisitionScopeFingerprint.Version,
+            ExpectedSoloScopeFingerprint = new string('a', 64),
+            ActualCompleteSoloScopeCount = 6_300,
+            ActualCompleteSoloScopeFingerprint = new string('a', 64),
+            ActualCompleteSoloScopeOwnedByCatalog = true,
+        };
+        var context = new ScrapePassContext
+        {
+            ScrapeId = state.ScrapeId,
+            AccessToken = "token",
+            CallerAccountId = "account",
+            RegisteredIds = [],
+            Aggregates =
+                new Persistence.GlobalLeaderboardPersistence
+                    .PipelineAggregates(),
+            ScrapeRequests = [],
+            PublicationCatalogSongs = [],
+            DegreeOfParallelism = 1,
+            LeaderboardScrapeCompleted = true,
+        };
+
+        var result = ScraperWorker.CreateResumeScrapeResult(
+            state,
+            context,
+            startedAt.AddHours(12));
+
+        Assert.Equal(684, result.SongsScraped);
+        Assert.Equal(39_696_674, result.TotalEntries);
+        Assert.Equal(398_376, result.TotalRequests);
+        Assert.Equal(57_563_653_024, result.TotalBytes);
+        Assert.True(result.EpicReportedOver100Pages);
     }
 
     [Theory]
@@ -303,5 +555,122 @@ public class ScraperWorkerTests : IDisposable
             ScraperWorker.RehydratePhaseOutcome(outcome));
 
         Assert.Contains("unknown criticality 'unknown'", error.Message);
+    }
+
+    [Theory]
+    [InlineData(false, 9, true, true, true)]
+    [InlineData(true, 0, true, true, true)]
+    [InlineData(true, 9, false, true, true)]
+    [InlineData(true, 9, true, false, true)]
+    [InlineData(true, 9, true, true, false)]
+    public void AcquisitionCheckpoint_requires_solo_scope_and_all_gates(
+        bool doSoloScrape,
+        int expectedSoloScopeCount,
+        bool soloCoverageComplete,
+        bool bandManifestGatePassed,
+        bool writerGatePassed)
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedPairs = expectedSoloScopeCount == 0
+                ? []
+                : GlobalLeaderboardScraper.AllInstruments
+                    .Select(instrument => ("song-a", instrument))
+                    .ToArray();
+
+        Assert.False(
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                scrapeId: 42,
+                songsScraped: 1,
+                totalEntries: 10,
+                totalRequests: 2,
+                totalBytes: 100,
+                epicReportedOver100Pages: false,
+                expectedSoloLeaderboardPairs: expectedPairs,
+                publicationCatalogSongIds: ["song-a"],
+                doSoloScrape: doSoloScrape,
+                soloCoverageComplete: soloCoverageComplete,
+                bandManifestGatePassed: bandManifestGatePassed,
+                writerGatePassed: writerGatePassed));
+        metaDatabase.DidNotReceiveWithAnyArgs()
+            .RecordScrapeAcquisitionCheckpoint(
+                default,
+                default,
+                default,
+                default,
+                default,
+                default!,
+                default);
+    }
+
+    [Fact]
+    public void AcquisitionCheckpoint_rejects_reduced_instrument_set()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedPairs =
+            [("song-a", "Solo_Guitar")];
+
+        Assert.False(
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                scrapeId: 42,
+                songsScraped: 1,
+                totalEntries: 10,
+                totalRequests: 2,
+                totalBytes: 100,
+                epicReportedOver100Pages: true,
+                expectedSoloLeaderboardPairs: expectedPairs,
+                publicationCatalogSongIds: ["song-a"],
+                doSoloScrape: true,
+                soloCoverageComplete: true,
+                bandManifestGatePassed: true,
+                writerGatePassed: true));
+        metaDatabase.DidNotReceiveWithAnyArgs()
+            .RecordScrapeAcquisitionCheckpoint(
+                default,
+                default,
+                default,
+                default,
+                default,
+                default!,
+                default);
+    }
+
+    [Fact]
+    public void AcquisitionCheckpoint_is_allowed_for_complete_canonical_product()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedPairs =
+            GlobalLeaderboardScraper.AllInstruments
+                .Select(instrument => ("song-a", instrument))
+                .ToArray();
+
+        Assert.True(
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                scrapeId: 42,
+                songsScraped: 1,
+                totalEntries: 10,
+                totalRequests: 2,
+                totalBytes: 100,
+                epicReportedOver100Pages: true,
+                expectedSoloLeaderboardPairs: expectedPairs,
+                publicationCatalogSongIds: ["song-a"],
+                doSoloScrape: true,
+                soloCoverageComplete: true,
+                bandManifestGatePassed: true,
+                writerGatePassed: true));
+        metaDatabase.Received(1)
+            .RecordScrapeAcquisitionCheckpoint(
+                42,
+                1,
+                10,
+                2,
+                100,
+                expectedPairs,
+                true);
     }
 }

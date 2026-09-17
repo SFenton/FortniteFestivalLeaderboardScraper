@@ -87,6 +87,10 @@ internal sealed record DeferredPublicationResumeOutcome(
     bool Published,
     string? Detail);
 
+internal sealed record PendingSnapshotGenerationRetentionSafePoint(
+    long ScrapeId,
+    long PublicationId);
+
 /// <summary>
 /// Background worker that continuously scrapes Fortnite Festival leaderboard scores.
 ///
@@ -121,16 +125,21 @@ public sealed class ScraperWorker : BackgroundService
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly NotificationService _notifications;
     private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
+    private readonly ISnapshotGenerationRetentionPlanner?
+        _snapshotGenerationRetentionPlanner;
     private readonly WorkerStatusPublisher? _workerStatus;
     private readonly RegistrationMutationCoordinator
         _registrationMutations;
     private readonly IOptions<ScraperOptions> _options;
+    private readonly SnapshotGenerationRetentionSafePointQueue
+        _retentionSafePoints = new();
     private readonly PublicationCommitOptions
         _publicationCommitOptions;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
     private readonly System.Text.Json.JsonSerializerOptions _jsonOpts;
     private DateTime _serviceStartedAtUtc = DateTime.UtcNow;
+    private long? _lastCompletedScoresChangedBroadcastScrapeId;
     internal Func<long?, Task>?
         ScoresChangedNotificationTestHook { get; set; }
 
@@ -138,6 +147,27 @@ public sealed class ScraperWorker : BackgroundService
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DeferredPublicationRetryDelay =
         TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RetentionSafePointRetryDelay =
+        TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan
+        DefaultRetentionRegistrationDrainWaitBudget =
+            TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan
+        RetentionRegistrationDrainInitialPollDelay =
+            TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan
+        RetentionRegistrationDrainMaximumPollDelay =
+            TimeSpan.FromSeconds(2);
+
+    internal int PendingRetentionSafePointCount =>
+        _retentionSafePoints.Count;
+    internal IReadOnlyList<
+        PendingSnapshotGenerationRetentionSafePoint>
+        PendingRetentionSafePoints =>
+        _retentionSafePoints.Snapshot();
+    internal TimeSpan RetentionRegistrationDrainWaitBudget
+        { get; set; } =
+            DefaultRetentionRegistrationDrainWaitBudget;
 
     public ScraperWorker(
         TokenManager tokenManager,
@@ -167,6 +197,8 @@ public sealed class ScraperWorker : BackgroundService
         RegistrationMutationCoordinator
             registrationMutations,
         DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null,
+        ISnapshotGenerationRetentionPlanner?
+            snapshotGenerationRetentionPlanner = null,
         WorkerStatusPublisher? workerStatus = null,
         IOptions<PublicationCommitOptions>?
             publicationCommitOptions = null)
@@ -192,6 +224,8 @@ public sealed class ScraperWorker : BackgroundService
         _syncTracker = syncTracker;
         _notifications = notifications;
         _deferredRetentionMaintenance = deferredRetentionMaintenance;
+        _snapshotGenerationRetentionPlanner =
+            snapshotGenerationRetentionPlanner;
         _workerStatus = workerStatus;
         _registrationMutations = registrationMutations;
         _options = options;
@@ -242,6 +276,31 @@ public sealed class ScraperWorker : BackgroundService
 
         // Wait for DatabaseInitializer to finish (DBs + song catalog)
         await _dbInitializer.WaitForReadyAsync(stoppingToken);
+        if (_workerStatus is not null)
+        {
+            try
+            {
+                using var configurationDeadline =
+                    CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                configurationDeadline.CancelAfter(TimeSpan.FromSeconds(5));
+                var assemblyPath = typeof(ScraperWorker).Assembly.Location;
+                var code = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    await File.ReadAllBytesAsync(assemblyPath, configurationDeadline.Token))).ToLowerInvariant();
+                await _persistence.Meta.PublishRetentionWorkerConfigurationAsync(
+                    _workerStatus.InstanceId,
+                    _snapshotGenerationRetentionPlanner?.IsEnabled == true,
+                    code, configurationDeadline.Token);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _log.LogWarning(exception,
+                    "Offline retention reporting remains unauthorized because worker configuration publication failed.");
+            }
+        }
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 
@@ -265,6 +324,13 @@ public sealed class ScraperWorker : BackgroundService
         if (opts.ApiOnly)
         {
             _log.LogInformation("Running in --api-only mode. Scrape pipeline disabled.");
+            if (_retentionSafePoints.Count > 0)
+            {
+                await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(
+                    stoppingToken);
+                await DrainSnapshotGenerationRetentionSafePointQueueAsync(
+                    stoppingToken);
+            }
             try { await Task.Delay(Timeout.Infinite, stoppingToken); }
             catch (OperationCanceledException) { /* normal shutdown */ }
             return;
@@ -341,6 +407,18 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
+        EnqueueCurrentPublicationForRetentionObservation();
+        if (opts.RunOnce
+            && _retentionSafePoints.Count > 0
+            && !await DrainRegistrationWorkAfterRunOnceAsync(
+                opts,
+                stoppingToken))
+        {
+            _log.LogWarning(
+                "Startup retention safe-point observations remain queued because registration drain is incomplete.");
+            return;
+        }
+
         // Register next-rank-update provider so sync completion messages include
         // an estimated time for global rankings recalculation.
         DateTime? lastScrapeEndUtc = null;
@@ -353,13 +431,37 @@ public sealed class ScraperWorker : BackgroundService
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
-            var publishedBeforePass =
-                _persistence.Meta.GetPublishedScrapeRun()?.Id;
+            await DrainSnapshotGenerationRetentionSafePointQueueAsync(
+                stoppingToken);
+
+            var publicationBeforePass =
+                _persistence.Meta.GetPublicationPointerState();
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
             await ResumeDeferredPublicationBeforeGatesAsync(
                 stoppingToken);
             await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
             lastScrapeEndUtc = DateTime.UtcNow;
+            var publicationAfterPass =
+                _persistence.Meta.GetPublicationPointerState();
+            var publishedNewState =
+                publicationAfterPass.PublishedScrapeId.HasValue
+                && publicationAfterPass.CurrentPublicationId.HasValue
+                && (
+                    publicationAfterPass.PublishedScrapeId !=
+                        publicationBeforePass.PublishedScrapeId
+                    || publicationAfterPass.CurrentPublicationId !=
+                        publicationBeforePass.CurrentPublicationId);
+            if (publishedNewState
+                && _snapshotGenerationRetentionPlanner?.IsEnabled ==
+                    true)
+            {
+                EnqueueSnapshotGenerationRetentionSafePoint(
+                    new PendingSnapshotGenerationRetentionSafePoint(
+                        publicationAfterPass
+                            .PublishedScrapeId!.Value,
+                        publicationAfterPass
+                            .CurrentPublicationId!.Value));
+            }
 
             // Phase-selective flags only affect the first (launch) pass.
             // After it completes, revert to the full pipeline for subsequent cycles.
@@ -372,19 +474,24 @@ public sealed class ScraperWorker : BackgroundService
 
             if (opts.RunOnce)
             {
-                var publishedAfterPass =
-                    _persistence.Meta.GetPublishedScrapeRun()?.Id;
-                if (publishedAfterPass.HasValue
-                    && publishedAfterPass != publishedBeforePass)
+                var registrationDrainComplete =
+                    !publishedNewState;
+                if (publishedNewState)
                 {
-                    await DrainRegistrationWorkAfterRunOnceAsync(
-                        opts,
-                        stoppingToken);
+                    registrationDrainComplete =
+                        await DrainRegistrationWorkAfterRunOnceAsync(
+                            opts,
+                            stoppingToken);
                 }
                 else
                 {
                     _log.LogWarning(
                         "Skipping post-run registration drain because the run-once pass did not publish a new scrape.");
+                }
+                if (registrationDrainComplete)
+                {
+                    await DrainSnapshotGenerationRetentionSafePointQueueAsync(
+                        stoppingToken);
                 }
                 _log.LogInformation("--once: scrape + resolve pass complete. Exiting.");
                 break;
@@ -406,7 +513,7 @@ public sealed class ScraperWorker : BackgroundService
 
     }
 
-    private async Task DrainRegistrationWorkAfterRunOnceAsync(
+    private async Task<bool> DrainRegistrationWorkAfterRunOnceAsync(
         ScraperOptions opts,
         CancellationToken ct)
     {
@@ -435,19 +542,23 @@ public sealed class ScraperWorker : BackgroundService
                         claimedInBatch),
                     ct);
 
+            var registrationDrain =
+                await GetRegistrationDrainWaitSnapshotAsync(
+                    ct);
             var remainingBackfills =
-                _persistence.Meta.GetPendingBackfills()
-                    .Concat(_persistence.Meta.GetDeferredBackfills())
-                    .Select(static backfill => backfill.AccountId)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count();
-            var remainingHistory = _persistence.Meta
-                .GetRegisteredAccountIds()
-                .Count(accountId =>
-                    _persistence.Meta.GetBackfillStatus(accountId)?.Status
-                        == "complete"
-                    && _persistence.Meta.GetHistoryReconStatus(accountId)?.Status
-                        != "complete");
+                registrationDrain.RunnableBackfills;
+            var remainingHistory =
+                registrationDrain.RepairableHistory;
+            if (registrationDrain.HasTerminalBlocker)
+            {
+                _workerStatus?.CompleteOperation(
+                    "registration.post_run_once",
+                    detail:
+                        "terminal registration state will be persisted by the retention observer");
+                _log.LogWarning(
+                    "Post-publication registration drain found terminal non-runnable state; the report-only retention observer will persist a blocked cycle.");
+                return true;
+            }
             if (remainingBackfills > 0 || remainingHistory > 0)
             {
                 var detail =
@@ -461,7 +572,7 @@ public sealed class ScraperWorker : BackgroundService
                     "Post-publication registration drain remains incomplete: {Backfills} backfill and {History} history item(s).",
                     remainingBackfills,
                     remainingHistory);
-                return;
+                return false;
             }
 
             _workerStatus?.CompleteOperation(
@@ -469,6 +580,7 @@ public sealed class ScraperWorker : BackgroundService
                 detail: claimed > 0
                     ? $"claimed {claimed} backfill account(s)"
                     : "no queued backfill accounts");
+            return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -485,8 +597,298 @@ public sealed class ScraperWorker : BackgroundService
             _log.LogError(
                 ex,
                 "Post-publication registration work failed; durable queues remain for the next worker.");
+            return false;
         }
     }
+
+    private async Task<SnapshotGenerationRetentionPlanResult?>
+        TryRunSnapshotGenerationRetentionSafePointAsync(
+            PendingSnapshotGenerationRetentionSafePoint safePoint,
+            CancellationToken ct)
+    {
+        var planner = _snapshotGenerationRetentionPlanner;
+        if (planner?.IsEnabled != true)
+            return null;
+
+        _workerStatus?.BeginOperation(
+            "retention.snapshot_generation_report",
+            "Observing snapshot-generation retention safety",
+            phase: "PostPublication");
+        _backgroundWork.RequestPauseForScrape();
+        try
+        {
+            await _backgroundWork
+                .WaitForBackgroundQuiescenceAsync(ct);
+            var request =
+                new SnapshotGenerationRetentionPlanRequest(
+                    safePoint.ScrapeId,
+                    safePoint.PublicationId,
+                    DateTime.UtcNow,
+                    _lastCompletedScoresChangedBroadcastScrapeId,
+                    BackgroundWorkQuiesced: true);
+            var result = await planner.PlanAsync(
+                request,
+                ct);
+            if (result.Disposition ==
+                    SnapshotGenerationRetentionPlanDisposition
+                        .Deferred
+                && result.Reason.StartsWith(
+                    "scores_changed_broadcast_incomplete:",
+                    StringComparison.Ordinal)
+                && _lastCompletedScoresChangedBroadcastScrapeId !=
+                    safePoint.ScrapeId)
+            {
+                await NotifyScoresChangedAfterPublicationAsync(
+                    safePoint.ScrapeId);
+                result = await planner.PlanAsync(
+                    request with
+                    {
+                        SafePointAtUtc = DateTime.UtcNow,
+                        BroadcastCompletedScrapeId =
+                            safePoint.ScrapeId,
+                    },
+                    ct);
+            }
+            _workerStatus?.CompleteOperation(
+                "retention.snapshot_generation_report",
+                result.Disposition.ToString().ToLowerInvariant(),
+                result.Reason);
+            return result;
+        }
+        catch (OperationCanceledException)
+            when (ct.IsCancellationRequested)
+        {
+            _workerStatus?.CompleteOperation(
+                "retention.snapshot_generation_report",
+                "cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _workerStatus?.FailOperation(
+                "retention.snapshot_generation_report",
+                ex);
+            _log.LogError(
+                ex,
+                "Snapshot-generation retention safe-point observation failed after publication {PublicationId}; the accepted publication remains current.",
+                safePoint.PublicationId);
+            return new SnapshotGenerationRetentionPlanResult(
+                SnapshotGenerationRetentionPlanDisposition.Failed,
+                null,
+                "retention safe-point invocation failed",
+                null,
+                null,
+                0,
+                0,
+                0,
+                0,
+                OracleAgreement: false,
+                Retryable: true);
+        }
+        finally
+        {
+            _backgroundWork.ResumeAfterScrape();
+        }
+    }
+
+    private void EnqueueCurrentPublicationForRetentionObservation()
+    {
+        if (_snapshotGenerationRetentionPlanner?.IsEnabled !=
+            true)
+        {
+            return;
+        }
+
+        var publication =
+            _persistence.Meta.GetPublicationPointerState();
+        if (publication.PublishedScrapeId.HasValue
+            && publication.CurrentPublicationId.HasValue)
+        {
+            EnqueueSnapshotGenerationRetentionSafePoint(
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    publication.PublishedScrapeId.Value,
+                    publication.CurrentPublicationId.Value));
+        }
+    }
+
+    private void EnqueueSnapshotGenerationRetentionSafePoint(
+        PendingSnapshotGenerationRetentionSafePoint safePoint)
+    {
+        if (_snapshotGenerationRetentionPlanner?.IsEnabled !=
+            true)
+        {
+            return;
+        }
+
+        if (_retentionSafePoints.Enqueue(safePoint))
+        {
+            _log.LogInformation(
+                "Queued snapshot-generation retention safe point for scrape {ScrapeId}, publication {PublicationId}; pending={PendingCount}.",
+                safePoint.ScrapeId,
+                safePoint.PublicationId,
+                _retentionSafePoints.Count);
+        }
+    }
+
+    private async Task<bool>
+        TryProcessNextSnapshotGenerationRetentionSafePointAsync(
+            CancellationToken ct)
+    {
+        if (!_retentionSafePoints.TryPeek(
+                out var safePoint)
+            || safePoint is null)
+        {
+            return true;
+        }
+
+        var result =
+            await TryRunSnapshotGenerationRetentionSafePointAsync(
+                safePoint,
+                ct);
+        var terminalPersisted =
+            result?.CycleId.HasValue == true
+            && result.Retryable == false
+            && result.Disposition is
+                SnapshotGenerationRetentionPlanDisposition
+                    .Existing
+                or SnapshotGenerationRetentionPlanDisposition
+                    .Observed
+                or SnapshotGenerationRetentionPlanDisposition
+                    .Blocked
+                or SnapshotGenerationRetentionPlanDisposition
+                    .OracleMismatch
+                or SnapshotGenerationRetentionPlanDisposition
+                    .Failed;
+        if (!terminalPersisted)
+        {
+            _log.LogWarning(
+                "Retaining snapshot-generation safe point for scrape {ScrapeId}, publication {PublicationId}; no terminal persisted cycle was returned.",
+                safePoint.ScrapeId,
+                safePoint.PublicationId);
+            return false;
+        }
+
+        _retentionSafePoints.CompleteTerminal(safePoint);
+        return true;
+    }
+
+    private async Task
+        DrainSnapshotGenerationRetentionSafePointQueueAsync(
+            CancellationToken ct)
+    {
+        while (_retentionSafePoints.Count > 0)
+        {
+            bool registrationDrained;
+            try
+            {
+                registrationDrained =
+                    await WaitForRegistrationDrainBeforeRetentionAsync(
+                        ct);
+            }
+            catch (OperationCanceledException)
+                when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(
+                    ex,
+                    "Snapshot-generation safe-point registration-drain observation failed; queued work is retained and no background pause was requested.");
+                return;
+            }
+
+            if (!registrationDrained)
+            {
+                _log.LogWarning(
+                    "Retaining {PendingCount} snapshot-generation safe point(s) after the bounded registration-drain wait; background registration remains runnable and the next scrape may proceed.",
+                    _retentionSafePoints.Count);
+                return;
+            }
+
+            if (await TryProcessNextSnapshotGenerationRetentionSafePointAsync(
+                    ct))
+            {
+                continue;
+            }
+
+            await Task.Delay(
+                RetentionSafePointRetryDelay,
+                ct);
+        }
+    }
+
+    private async Task<bool>
+        WaitForRegistrationDrainBeforeRetentionAsync(
+            CancellationToken ct)
+    {
+        var startedAt =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        var delay =
+            RetentionRegistrationDrainInitialPollDelay;
+        RegistrationDrainWaitSnapshot? lastLogged = null;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var snapshot =
+                await GetRegistrationDrainWaitSnapshotAsync(
+                    ct);
+            if (snapshot.HasTerminalBlocker
+                || snapshot.RunnableBackfills == 0
+                && snapshot.RepairableHistory == 0)
+            {
+                return true;
+            }
+
+            if (snapshot != lastLogged)
+            {
+                _log.LogInformation(
+                    "Waiting without pausing background work for registration drain before snapshot-generation retention observation: backfills={Backfills}, history={History}.",
+                    snapshot.RunnableBackfills,
+                    snapshot.RepairableHistory);
+                lastLogged = snapshot;
+            }
+            _backgroundWork.RequestRegistrationDrain();
+
+            var elapsed =
+                System.Diagnostics.Stopwatch.GetElapsedTime(
+                    startedAt);
+            var remaining =
+                RetentionRegistrationDrainWaitBudget
+                - elapsed;
+            if (remaining <= TimeSpan.Zero)
+                return false;
+
+            await Task.Delay(
+                delay < remaining ? delay : remaining,
+                ct);
+            var nextDelayTicks = Math.Min(
+                delay.Ticks * 2,
+                RetentionRegistrationDrainMaximumPollDelay
+                    .Ticks);
+            delay = TimeSpan.FromTicks(
+                nextDelayTicks);
+        }
+    }
+
+    private async Task<RegistrationDrainWaitSnapshot>
+        GetRegistrationDrainWaitSnapshotAsync(
+            CancellationToken ct)
+    {
+        var state =
+            await _persistence.Meta
+                .GetRegistrationDrainStatusAsync(
+                    ct: ct);
+        return new RegistrationDrainWaitSnapshot(
+            state.RunnableBackfills,
+            state.RepairableHistory,
+            state.HasTerminalBlocker);
+    }
+
+    private sealed record RegistrationDrainWaitSnapshot(
+        int RunnableBackfills,
+        int RepairableHistory,
+        bool HasTerminalBlocker);
 
     private async Task EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(
         CancellationToken stoppingToken)
@@ -577,6 +979,7 @@ public sealed class ScraperWorker : BackgroundService
             throw new InvalidOperationException(
                 $"Scrape recovery requires exactly the solo leaderboard phases; resolved {ScrapePhaseResolver.Format(resolvedPhases)}.");
         }
+        ValidateResumeCanonicalSoloScope(options);
         if (state is null || state.ScrapeId != options.ResumeScrapeId)
             throw new InvalidOperationException($"Scrape {options.ResumeScrapeId} does not exist.");
         if (!state.CanResume)
@@ -585,15 +988,70 @@ public sealed class ScraperWorker : BackgroundService
                 $"Scrape {state.ScrapeId} cannot resume: status={state.Status}, " +
                 $"manifests={state.CompleteManifestCount}/{state.ManifestCount}, " +
                 $"writerFailures={state.WriterFailureCount}, criticalFailures={state.CriticalPhaseFailureCount}, " +
-                $"published={state.PublishedScrapeId?.ToString() ?? "none"}.");
+                $"published={state.PublishedScrapeId?.ToString() ?? "none"}, " +
+                $"acquisitionMetrics={state.AcquisitionMetricsValidationError ?? "valid"}.");
         }
-        if (options.ResumeSongsScraped <= 0
-            || options.ResumeTotalEntries <= 0
-            || options.ResumeTotalRequests <= 0
-            || options.ResumeTotalBytes <= 0)
+    }
+
+    private static void ValidateResumeCanonicalSoloScope(
+        ScraperOptions options)
+    {
+        var enabledInstruments = GetEnabledInstruments(options);
+        var canonicalInstruments =
+            GlobalLeaderboardScraper.AllInstruments;
+
+        if (enabledInstruments.Count == canonicalInstruments.Count
+            && enabledInstruments.SequenceEqual(canonicalInstruments))
         {
-            throw new InvalidOperationException("Scrape recovery requires persisted positive scrape metrics.");
+            return;
         }
+
+        var missingInstruments = canonicalInstruments
+            .Except(enabledInstruments)
+            .ToArray();
+        var unexpectedInstruments = enabledInstruments
+            .Except(canonicalInstruments)
+            .ToArray();
+
+        throw new InvalidOperationException(
+            "Scrape recovery requires every canonical solo query flag " +
+            "enabled so the post-processing scope exactly matches the " +
+            "acquisition checkpoint; missing="
+            + FormatInstrumentList(missingInstruments)
+            + ", unexpected="
+            + FormatInstrumentList(unexpectedInstruments)
+            + ".");
+    }
+
+    private static string FormatInstrumentList(
+        IReadOnlyCollection<string> instruments) =>
+        instruments.Count == 0
+            ? "none"
+            : string.Join(",", instruments);
+
+    internal static ScrapePassResult CreateResumeScrapeResult(
+        ScrapeResumeState state,
+        ScrapePassContext context,
+        DateTime nowUtc)
+    {
+        if (state.AcquisitionMetricsValidationError is { } error)
+        {
+            throw new InvalidOperationException(
+                $"Scrape {state.ScrapeId} cannot resume: {error}.");
+        }
+
+        return new ScrapePassResult
+        {
+            Context = context,
+            ScrapeId = state.ScrapeId,
+            SongsScraped = state.SongsScraped!.Value,
+            TotalEntries = state.TotalEntries!.Value,
+            TotalRequests = state.TotalRequests!.Value,
+            TotalBytes = state.TotalBytes!.Value,
+            EpicReportedOver100Pages =
+                state.EpicReportedOver100Pages!.Value,
+            ScrapeDuration = nowUtc - state.StartedAtUtc,
+        };
     }
 
     internal ScrapeCatalogSelection LoadResumeSongCatalog(
@@ -938,8 +1396,11 @@ public sealed class ScraperWorker : BackgroundService
                 ScrapeRequests = BuildCatalogScrapeRequests(
                     passService,
                     opts),
+                PublicationCatalogSongs =
+                    passService.Songs.ToArray(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
-                EpicReportedOver100Pages = resumeState is not null && opts.ResumeEpicReportedOver100Pages,
+                EpicReportedOver100Pages =
+                    resumeState?.EpicReportedOver100Pages ?? false,
                 LeaderboardScrapeCompleted = !anyScrapePhase,
             };
 
@@ -951,22 +1412,30 @@ public sealed class ScraperWorker : BackgroundService
                         RehydratePhaseOutcome(outcome));
                 }
 
-                result = new ScrapePassResult
-                {
-                    Context = ctx,
-                    ScrapeId = resumeState.ScrapeId,
-                    SongsScraped = opts.ResumeSongsScraped,
-                    TotalEntries = opts.ResumeTotalEntries,
-                    TotalRequests = opts.ResumeTotalRequests,
-                    TotalBytes = opts.ResumeTotalBytes,
-                    EpicReportedOver100Pages = opts.ResumeEpicReportedOver100Pages,
-                    ScrapeDuration = DateTime.UtcNow - resumeState.StartedAtUtc,
-                };
+                result = CreateResumeScrapeResult(
+                    resumeState,
+                    ctx,
+                    DateTime.UtcNow);
                 _log.LogWarning(
                     "Resuming scrape {ScrapeId} from durable network/writer state with phases {Phases}.",
                     resumeState.ScrapeId,
                     ScrapePhaseResolver.Format(resolvedPhases));
             }
+
+            long? pathPublicationId = null;
+            if (ctx.ScrapeId > 0)
+            {
+                pathPublicationId = _persistence.Meta
+                    .GetPublicationGenerationForScrape(ctx.ScrapeId)?
+                    .PublicationId
+                    ?? throw new InvalidOperationException(
+                        $"Scrape {ctx.ScrapeId} has no publication-bound path snapshot.");
+            }
+            using var pathPublicationScope =
+                pathPublicationId.HasValue
+                    ? _pathDataStore.BeginPublicationRead(
+                        pathPublicationId.Value)
+                    : null;
 
             var postScrapePhases = resolvedPhases;
             var skipPostScrapeForIncompleteScrape = anyScrapePhase && result is null;
@@ -1200,7 +1669,10 @@ public sealed class ScraperWorker : BackgroundService
                             result.TotalEntries,
                             result.TotalRequests,
                             result.TotalBytes,
-                            result.EpicReportedOver100Pages);
+                            result.EpicReportedOver100Pages,
+                            ScrapeOrchestrator
+                                .BuildExpectedSoloLeaderboardPairs(
+                                    result.Context.ScrapeRequests));
                         _workerStatus?.UpdateOperation(
                             "scrape.publication",
                             subOperation: "preparing_publication_candidate");
@@ -1460,7 +1932,12 @@ public sealed class ScraperWorker : BackgroundService
         {
             var outcome =
                 await TryResumeDeferredPublicationAsync(ct);
-            if (!outcome.Handled || outcome.Published)
+            if (outcome.Published)
+            {
+                EnqueueCurrentPublicationForRetentionObservation();
+                return;
+            }
+            if (!outcome.Handled)
                 return;
 
             _log.LogWarning(
@@ -1472,10 +1949,18 @@ public sealed class ScraperWorker : BackgroundService
         }
     }
 
-    private Task NotifyScoresChangedAfterPublicationAsync(
-        long? scrapeId) =>
-        ScoresChangedNotificationTestHook?.Invoke(scrapeId)
-        ?? _notifications.NotifyScoresChangedAsync(scrapeId);
+    private async Task NotifyScoresChangedAfterPublicationAsync(
+        long? scrapeId)
+    {
+        await (
+            ScoresChangedNotificationTestHook?.Invoke(scrapeId)
+            ?? _notifications.NotifyScoresChangedAsync(scrapeId));
+        if (scrapeId.HasValue)
+        {
+            _lastCompletedScoresChangedBroadcastScrapeId =
+                scrapeId.Value;
+        }
+    }
 
     private async Task<DeferredPublicationResumeOutcome>
         TryResumeDeferredPublicationAsync(CancellationToken ct)

@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 
 export const NO_PROGRESS_FAILURE_PHASE = "post_process_no_progress_abandoned";
 export const WATCHDOG_RECOVERY_EXIT_CODE = 42;
+export const WORKER_APPLICATION_NAMES = [
+  "fstworker-scraper",
+  "fst-path-generation-admission"
+];
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -15,10 +19,13 @@ export function evaluateNoProgressObservation(
   observation,
   {
     idleSeconds = 2700,
-    maxPhaseSeconds = 0
+    maxPhaseSeconds = 0,
+    recoverWorkerExit = false,
+    maxWorkerMemoryPercent = 0,
+    workerExitGraceSeconds = 120
   } = {}
 ) {
-  if (!observation.workerRunning) {
+  if (!observation.workerRunning && !recoverWorkerExit) {
     return { decision: "inactive", reason: "worker_container_not_running" };
   }
   if (observation.scrapeStatus !== "running") {
@@ -71,6 +78,77 @@ export function evaluateNoProgressObservation(
     ? Math.max(0, (nowMs - parseTimestamp(phaseStartedValue, "phase start")) / 1000)
     : 0;
   const activeWorkerQueries = Number(observation.activeWorkerQueries ?? 0);
+  const workerMemoryPercent = Number.isFinite(observation.workerMemoryPercent)
+    ? Number(observation.workerMemoryPercent)
+    : null;
+  const configuredMemoryPercent =
+    Number.isFinite(maxWorkerMemoryPercent) && maxWorkerMemoryPercent > 0
+      ? Number(maxWorkerMemoryPercent)
+      : null;
+  const resourceFields = {
+    workerMemoryPercent,
+    maxWorkerMemoryPercent: configuredMemoryPercent
+  };
+
+  if (!observation.workerRunning) {
+    const workerExitCode = Number(observation.workerExitCode ?? 0);
+    const workerFinishedAtMs = Date.parse(observation.workerFinishedAt ?? "");
+    const workerExitAgeSeconds = Number.isFinite(workerFinishedAtMs)
+      ? Math.max(0, (nowMs - workerFinishedAtMs) / 1000)
+      : null;
+    const configuredExitGraceSeconds =
+      Number.isFinite(workerExitGraceSeconds) && workerExitGraceSeconds > 0
+        ? Number(workerExitGraceSeconds)
+        : 0;
+    if (
+      !observation.workerOomKilled
+      && workerExitCode === 0
+      && workerExitAgeSeconds !== null
+      && workerExitAgeSeconds < configuredExitGraceSeconds
+    ) {
+      return {
+        decision: "healthy",
+        reason: "worker_exit_grace_period",
+        idleForSeconds,
+        phaseElapsedSeconds,
+        activeWorkerQueries,
+        workerExitCode,
+        workerExitAgeSeconds,
+        workerExitGraceSeconds: configuredExitGraceSeconds,
+        ...resourceFields
+      };
+    }
+    return {
+      decision: "timeout",
+      reason: observation.workerOomKilled
+        ? "worker_oom_killed"
+        : workerExitCode === 0
+          ? "worker_container_exited"
+          : "worker_process_failed",
+      idleForSeconds,
+      phaseElapsedSeconds,
+      activeWorkerQueries,
+      workerExitCode,
+      workerExitAgeSeconds,
+      workerExitGraceSeconds: configuredExitGraceSeconds,
+      ...resourceFields
+    };
+  }
+
+  if (
+    configuredMemoryPercent !== null
+    && workerMemoryPercent !== null
+    && workerMemoryPercent >= configuredMemoryPercent
+  ) {
+    return {
+      decision: "timeout",
+      reason: "worker_memory_threshold_exceeded",
+      idleForSeconds,
+      phaseElapsedSeconds,
+      activeWorkerQueries,
+      ...resourceFields
+    };
+  }
 
   if (activeWorkerQueries > 0) {
     return {
@@ -78,7 +156,8 @@ export function evaluateNoProgressObservation(
       reason: "worker_database_activity_present",
       idleForSeconds,
       phaseElapsedSeconds,
-      activeWorkerQueries
+      activeWorkerQueries,
+      ...resourceFields
     };
   }
 
@@ -88,7 +167,8 @@ export function evaluateNoProgressObservation(
       reason: "max_phase_duration_exceeded",
       idleForSeconds,
       phaseElapsedSeconds,
-      activeWorkerQueries
+      activeWorkerQueries,
+      ...resourceFields
     };
   }
 
@@ -98,7 +178,8 @@ export function evaluateNoProgressObservation(
       reason: "no_phase_progress",
       idleForSeconds,
       phaseElapsedSeconds,
-      activeWorkerQueries
+      activeWorkerQueries,
+      ...resourceFields
     };
   }
 
@@ -107,8 +188,21 @@ export function evaluateNoProgressObservation(
     reason: "phase_progress_within_threshold",
     idleForSeconds,
     phaseElapsedSeconds,
-    activeWorkerQueries
+    activeWorkerQueries,
+    ...resourceFields
   };
+}
+
+export function parseDockerPercentage(value) {
+  const match = /^\s*(\d+(?:\.\d+)?)%\s*$/.exec(String(value));
+  if (!match) {
+    throw new Error(`Invalid Docker percentage: ${value}`);
+  }
+  const percent = Number(match[1]);
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    throw new Error(`Docker percentage is outside 0-100: ${value}`);
+  }
+  return percent;
 }
 
 export function buildRecoverySql({
@@ -116,14 +210,15 @@ export function buildRecoverySql({
   publishedScrapeId,
   failureMessage,
   workerMessage,
-  workerApplicationName = "fstworker-scraper",
+  workerApplicationNames = WORKER_APPLICATION_NAMES,
   workerClientIp = ""
 }) {
   const normalizedScrapeId = requirePositiveInteger(scrapeId, "scrapeId");
   const normalizedPublishedId = requirePositiveInteger(publishedScrapeId, "publishedScrapeId");
-  const clientPredicate = workerClientIp
-    ? ` OR client_addr = ${quoteLiteral(validateIp(workerClientIp))}::inet`
-    : "";
+  const workerActivityPredicate = buildWorkerActivityPredicate({
+    workerApplicationNames,
+    workerClientIp
+  });
 
   return `BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -168,7 +263,7 @@ BEGIN
     WHERE datname = current_database()
       AND pid <> pg_backend_pid()
       AND state <> 'idle'
-      AND (application_name = ${quoteLiteral(workerApplicationName)}${clientPredicate});
+      AND ${workerActivityPredicate};
 
     IF published_id <> ${normalizedPublishedId} THEN
         RAISE EXCEPTION 'expected published scrape ${normalizedPublishedId}, found %', published_id;
@@ -367,6 +462,204 @@ function run(command, args, { cwd, input } = {}) {
   return result.stdout;
 }
 
+function tryRun(command, args, { cwd, input } = {}) {
+  const result = spawnSync(command, args, {
+    cwd,
+    input,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024
+  });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  return result.stdout;
+}
+
+function sleepMilliseconds(milliseconds) {
+  Atomics.wait(
+    new Int32Array(new SharedArrayBuffer(4)),
+    0,
+    0,
+    milliseconds
+  );
+}
+
+export function buildWorkerActivityPredicate({
+  workerApplicationNames = WORKER_APPLICATION_NAMES,
+  workerClientIp = ""
+}) {
+  if (
+    !Array.isArray(workerApplicationNames)
+    || workerApplicationNames.length === 0
+    || workerApplicationNames.some(name => !String(name).trim())
+  ) {
+    throw new Error("At least one worker application name is required.");
+  }
+  const applicationNames = workerApplicationNames
+    .map(name => quoteLiteral(String(name).trim()))
+    .join(", ");
+  const clientPredicate = workerClientIp
+    ? ` OR client_addr = ${quoteLiteral(validateIp(workerClientIp))}::inet`
+    : "";
+  return `(application_name IN (${applicationNames})${clientPredicate})`;
+}
+
+function countActiveWorkerQueries({
+  postgresContainer,
+  workerApplicationNames,
+  workerClientIp
+}) {
+  const predicate = buildWorkerActivityPredicate({
+    workerApplicationNames,
+    workerClientIp
+  });
+  const output = run(
+    "docker",
+    [
+      "exec",
+      "-i",
+      postgresContainer,
+      "psql",
+      "-X",
+      "-At",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "fst",
+      "-d",
+      "fstservice",
+      "-c",
+      `SELECT count(*) FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND pid <> pg_backend_pid()
+         AND state <> 'idle'
+         AND ${predicate}`
+    ]
+  ).trim();
+  const count = Number(output);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`Invalid active worker query count: ${output}`);
+  }
+  return count;
+}
+
+function waitForWorkerQueriesToDrain({
+  postgresContainer,
+  workerApplicationNames,
+  workerClientIp,
+  timeoutSeconds
+}) {
+  const deadline = Date.now() + (timeoutSeconds * 1000);
+  let activeQueries = countActiveWorkerQueries({
+    postgresContainer,
+    workerApplicationNames,
+    workerClientIp
+  });
+  while (activeQueries > 0 && Date.now() < deadline) {
+    sleepMilliseconds(1000);
+    activeQueries = countActiveWorkerQueries({
+      postgresContainer,
+      workerApplicationNames,
+      workerClientIp
+    });
+  }
+  return activeQueries;
+}
+
+function terminateWorkerQueries({
+  postgresContainer,
+  workerApplicationNames,
+  workerClientIp
+}) {
+  const predicate = buildWorkerActivityPredicate({
+    workerApplicationNames,
+    workerClientIp
+  });
+  const output = run(
+    "docker",
+    [
+      "exec",
+      "-i",
+      postgresContainer,
+      "psql",
+      "-X",
+      "-At",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "fst",
+      "-d",
+      "fstservice",
+      "-c",
+      `SELECT count(*) FILTER (WHERE terminated)
+       FROM (
+         SELECT pg_terminate_backend(pid) AS terminated
+         FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND pid <> pg_backend_pid()
+           AND ${predicate}
+       ) targets`
+    ]
+  ).trim();
+  const count = Number(output);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`Invalid terminated worker query count: ${output}`);
+  }
+  return count;
+}
+
+function drainStoppedWorkerQueries({
+  postgresContainer,
+  workerApplicationNames = WORKER_APPLICATION_NAMES,
+  workerClientIp,
+  queryDrainSeconds,
+  evidenceDir
+}) {
+  const activeBeforeDrain = countActiveWorkerQueries({
+    postgresContainer,
+    workerApplicationNames,
+    workerClientIp
+  });
+  const activeAfterGrace = waitForWorkerQueriesToDrain({
+    postgresContainer,
+    workerApplicationNames,
+    workerClientIp,
+    timeoutSeconds: queryDrainSeconds
+  });
+  let terminatedQueries = 0;
+  let activeAfterTermination = activeAfterGrace;
+  if (activeAfterGrace > 0) {
+    terminatedQueries = terminateWorkerQueries({
+      postgresContainer,
+      workerApplicationNames,
+      workerClientIp
+    });
+    activeAfterTermination = waitForWorkerQueriesToDrain({
+      postgresContainer,
+      workerApplicationNames,
+      workerClientIp,
+      timeoutSeconds: Math.max(5, Math.min(30, queryDrainSeconds || 15))
+    });
+  }
+  const result = {
+    activeBeforeDrain,
+    activeAfterGrace,
+    terminatedQueries,
+    activeAfterTermination,
+    queryDrainSeconds
+  };
+  writeFileSync(
+    path.join(evidenceDir, "worker-query-drain.json"),
+    `${JSON.stringify(result, null, 2)}\n`
+  );
+  if (activeAfterTermination !== 0) {
+    throw new Error(
+      `Worker query drain left ${activeAfterTermination} active backend(s).`
+    );
+  }
+  return result;
+}
+
 function supportsNormalizedPhaseProgress({ postgresContainer }) {
   const output = run(
     "docker",
@@ -394,13 +687,21 @@ function observe({
   composeDir,
   postgresContainer,
   workerContainer,
-  normalizedProgressAvailable
+  normalizedProgressAvailable,
+  sampleWorkerMemory
 }) {
-  const workerStatus = run(
+  const workerState = JSON.parse(run(
     "docker",
-    ["inspect", "-f", "{{.State.Status}}", workerContainer]
+    ["inspect", "-f", "{{json .State}}", workerContainer]
+  ).trim());
+  const workerStatus = workerState.Status;
+  const workerRestartPolicy = run(
+    "docker",
+    ["inspect", "-f", "{{.HostConfig.RestartPolicy.Name}}", workerContainer]
   ).trim();
   let workerClientIp = "";
+  let workerMemoryPercent = null;
+  let workerMemorySampleError = "";
   if (workerStatus === "running") {
     workerClientIp = run(
       "docker",
@@ -413,6 +714,21 @@ function observe({
     ).trim();
     if (workerClientIp) {
       validateIp(workerClientIp);
+    }
+    if (sampleWorkerMemory) {
+      const memorySample = tryRun(
+        "docker",
+        ["stats", "--no-stream", "--format", "{{.MemPerc}}", workerContainer]
+      );
+      if (memorySample === null) {
+        workerMemorySampleError = "docker_stats_failed";
+      } else {
+        try {
+          workerMemoryPercent = parseDockerPercentage(memorySample.trim());
+        } catch {
+          workerMemorySampleError = "docker_stats_invalid_percentage";
+        }
+      }
     }
   }
 
@@ -470,7 +786,13 @@ SELECT json_build_object(
     'observedAt', clock_timestamp(),
     'workerRunning', ${workerStatus === "running" ? "TRUE" : "FALSE"},
     'workerContainerStatus', ${quoteLiteral(workerStatus)},
+    'workerRestartPolicy', ${quoteLiteral(workerRestartPolicy)},
+    'workerOomKilled', ${workerState.OOMKilled ? "TRUE" : "FALSE"},
+    'workerExitCode', ${Number(workerState.ExitCode ?? 0)},
+    'workerFinishedAt', ${quoteLiteral(workerState.FinishedAt ?? "")},
     'workerClientIp', ${quoteLiteral(workerClientIp)},
+    'workerMemoryPercent', ${workerMemoryPercent ?? "NULL"},
+    'workerMemorySampleError', ${quoteLiteral(workerMemorySampleError)},
     'scrapeId', scrape.id,
     'scrapeStatus', scrape.status,
     'scrapeStartedAt', scrape.started_at,
@@ -607,7 +929,8 @@ function stopAndRecover({
   workerContainer,
   evidenceDir,
   stopTimeoutSeconds,
-  normalizedProgressAvailable
+  normalizedProgressAvailable,
+  queryDrainSeconds
 }) {
   const scrapeId = requirePositiveInteger(observation.scrapeId, "scrapeId");
   const publishedScrapeId = requirePositiveInteger(
@@ -634,6 +957,13 @@ function stopAndRecover({
     throw new Error("fstworker is still running after the watchdog stop.");
   }
 
+  const queryDrain = drainStoppedWorkerQueries({
+    postgresContainer,
+    workerClientIp: observation.workerClientIp ?? "",
+    queryDrainSeconds,
+    evidenceDir
+  });
+
   captureRollback({
     postgresContainer,
     evidenceDir,
@@ -642,14 +972,20 @@ function stopAndRecover({
   });
 
   const failureMessage =
-    `No-progress watchdog abandoned scrape ${scrapeId}: ${decision.reason}; `
-    + `idle=${Math.round(decision.idleForSeconds)}s, `
-    + `phaseElapsed=${Math.round(decision.phaseElapsedSeconds)}s. `
+    `Worker safety watchdog abandoned scrape ${scrapeId}: ${decision.reason}; `
+    + `idle=${Math.round(decision.idleForSeconds ?? 0)}s, `
+    + `phaseElapsed=${Math.round(decision.phaseElapsedSeconds ?? 0)}s`
+    + (
+      Number.isFinite(decision.workerMemoryPercent)
+        ? `, workerMemory=${decision.workerMemoryPercent.toFixed(2)}%`
+        : ""
+    )
+    + ". "
     + `The worker was stopped before recovery; no active worker query remained, `
     + `candidate published-source rows were zero, and published scrape `
     + `${publishedScrapeId} was preserved and unfrozen.`;
   const workerMessage =
-    `Worker stopped by no-progress watchdog; scrape ${scrapeId} failed and published `
+    `Worker stopped by worker safety watchdog; scrape ${scrapeId} failed and published `
     + `scrape ${publishedScrapeId} was preserved.`;
   const recoverySql = buildRecoverySql({
     scrapeId,
@@ -679,24 +1015,41 @@ function stopAndRecover({
     { input: recoverySql }
   );
   writeFileSync(path.join(evidenceDir, "recovery-output.txt"), recoveryOutput);
-  return { failureMessage, workerMessage, stoppedStatus };
+  return { failureMessage, workerMessage, stoppedStatus, queryDrain };
 }
 
-function renderReport({ evidenceDir, observation, decision, recovery }) {
+function renderReport({
+  evidenceDir,
+  observation,
+  decision,
+  recovery,
+  recoveryError
+}) {
   const reportPath = path.join(evidenceDir, "watchdog-report.md");
   const lines = [
-    "## Phase 0 - Worker No-Progress Recovery",
+    "## Phase 0 - Worker Safety Watchdog Recovery",
     "",
-    `- Scrape \`${observation.scrapeId}\` exceeded the configured progress gate.`,
+    `- Scrape \`${observation.scrapeId}\` exceeded a configured worker safety gate.`,
     `- Decision: \`${decision.decision}\` (\`${decision.reason}\`).`,
     `- Published scrape \`${observation.publishedScrapeId}\` remained authoritative.`,
     "",
     "### Outcome",
     "",
     `- Idle without a phase heartbeat: \`${Math.round(decision.idleForSeconds ?? 0)} seconds\`.`,
+    `- Worker memory at decision: \`${Number.isFinite(decision.workerMemoryPercent) ? `${decision.workerMemoryPercent.toFixed(2)}%` : "unavailable"}\`.`,
+    `- Worker exit state: \`code=${observation.workerExitCode ?? "unknown"}, oom=${observation.workerOomKilled ?? false}\`.`,
     `- Active worker database queries at decision: \`${observation.activeWorkerQueries ?? 0}\`.`,
     `- Candidate published-source rows: \`${observation.candidatePublishedScopeRows ?? 0}\`.`,
-    `- Recovery: ${recovery ? "worker stopped; scrape failed; prior publication unfrozen" : "dry-run only"}.`,
+    `- Recovery: ${
+      recovery
+        ? "worker stopped; scrape failed; prior publication unfrozen"
+        : recoveryError
+          ? "failed after the watchdog action; publication remains fail-closed"
+          : "dry-run only"
+    }.`,
+    ...(recoveryError
+      ? [`- Recovery error: \`${recoveryError}\`.`]
+      : []),
     "",
     "### Files/Artifacts",
     "",
@@ -704,11 +1057,13 @@ function renderReport({ evidenceDir, observation, decision, recovery }) {
     `- \`${evidenceDir}/decision.json\``,
     `- \`${evidenceDir}/recovery.sql\` when recovery ran`,
     `- \`${evidenceDir}/rollback-to-pre-watchdog-state.sql\` when recovery ran`,
+    `- \`${evidenceDir}/worker-query-drain.json\` when worker shutdown ran`,
+    `- \`${evidenceDir}/recovery-error.txt\` when recovery failed`,
     "",
     "### Validation",
     "",
     "- The recovery transaction guards the published pointer, zero candidate mappings, worker DB activity, locks, and affected row counts.",
-    "- An active worker query defers timeout instead of terminating a legitimately progressing long PostgreSQL operation.",
+    "- An active worker query defers ordinary progress timeouts; only an explicit emergency memory threshold may take precedence.",
     ""
   ];
   writeFileSync(reportPath, `${lines.join("\n")}\n`);
@@ -719,7 +1074,7 @@ function sendReport({ reportPath, evidenceDir, send, fallbackEnvFile }) {
   const args = [
     path.join(repositoryRoot, "tools", "agent-report-email.mjs"),
     "--subject",
-    "FST Autonomous Agent: Phase 0 - Worker No-Progress Recovery · Needs Attention",
+    "FST Autonomous Agent: Phase 0 - Worker Safety Recovery · Needs Attention",
     "--input-md",
     reportPath,
     "--outbox-dir",
@@ -760,6 +1115,12 @@ function parseTimestamp(value, name) {
   return parsed;
 }
 
+function sanitizeError(error) {
+  return String(error instanceof Error ? error.message : error)
+    .replaceAll(/\s+/g, " ")
+    .slice(0, 500);
+}
+
 function requirePositiveInteger(value, name) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number <= 0) {
@@ -798,6 +1159,9 @@ async function main() {
       "Usage: node tools/fst-worker-no-progress-watchdog.mjs "
       + "--evidence-dir <FST-drive-path> [--monitor] [--dry-run] "
       + "[--idle-seconds 2700] [--max-phase-seconds 0] [--poll-seconds 60] "
+      + "[--recover-worker-exit] [--worker-exit-grace-seconds 120] "
+      + "[--max-worker-memory-percent 0] "
+      + "[--worker-query-drain-seconds 60] "
       + "[--send-report] [--fallback-env-file <path>]"
     );
     return;
@@ -815,6 +1179,33 @@ async function main() {
   );
   const idleSeconds = Number(args.values["idle-seconds"] ?? 2700);
   const maxPhaseSeconds = Number(args.values["max-phase-seconds"] ?? 0);
+  const recoverWorkerExit = args.flags.has("recover-worker-exit");
+  const workerExitGraceSeconds = Number(
+    args.values["worker-exit-grace-seconds"] ?? 120
+  );
+  if (!Number.isFinite(workerExitGraceSeconds) || workerExitGraceSeconds < 0) {
+    throw new Error("--worker-exit-grace-seconds must be zero or greater.");
+  }
+  const maxWorkerMemoryPercent = Number(
+    args.values["max-worker-memory-percent"] ?? 0
+  );
+  if (
+    !Number.isFinite(maxWorkerMemoryPercent)
+    || maxWorkerMemoryPercent < 0
+    || maxWorkerMemoryPercent > 100
+  ) {
+    throw new Error("--max-worker-memory-percent must be between 0 and 100.");
+  }
+  const workerQueryDrainSeconds = Number(
+    args.values["worker-query-drain-seconds"] ?? 60
+  );
+  if (
+    !Number.isFinite(workerQueryDrainSeconds)
+    || workerQueryDrainSeconds < 0
+    || workerQueryDrainSeconds > 300
+  ) {
+    throw new Error("--worker-query-drain-seconds must be between 0 and 300.");
+  }
   const pollSeconds = Number(args.values["poll-seconds"] ?? 60);
   const stopTimeoutSeconds = Number(args.values["stop-timeout-seconds"] ?? 30);
   const normalizedProgressAvailable = supportsNormalizedPhaseProgress({
@@ -826,11 +1217,26 @@ async function main() {
       composeDir,
       postgresContainer,
       workerContainer,
-      normalizedProgressAvailable
+      normalizedProgressAvailable,
+      sampleWorkerMemory: maxWorkerMemoryPercent > 0
     });
+    const resourceRecoveryEnabled =
+      recoverWorkerExit || maxWorkerMemoryPercent > 0;
+    if (
+      resourceRecoveryEnabled
+      && !args.flags.has("dry-run")
+      && observation.workerRestartPolicy !== "no"
+    ) {
+      throw new Error(
+        "Worker exit and memory recovery require restart policy 'no'."
+      );
+    }
     const decision = evaluateNoProgressObservation(observation, {
       idleSeconds,
-      maxPhaseSeconds
+      maxPhaseSeconds,
+      recoverWorkerExit,
+      maxWorkerMemoryPercent,
+      workerExitGraceSeconds
     });
     writeFileSync(
       path.join(evidenceDir, "observation.json"),
@@ -843,23 +1249,35 @@ async function main() {
     console.log(JSON.stringify({ observation, decision }));
 
     if (decision.decision === "timeout") {
-      const recovery = args.flags.has("dry-run")
-        ? null
-        : stopAndRecover({
-          observation,
-          decision,
-          composeDir,
-          postgresContainer,
-          workerContainer,
-          evidenceDir,
-          stopTimeoutSeconds,
-          normalizedProgressAvailable
-        });
+      let recovery = null;
+      let recoveryError = null;
+      if (!args.flags.has("dry-run")) {
+        try {
+          recovery = stopAndRecover({
+            observation,
+            decision,
+            composeDir,
+            postgresContainer,
+            workerContainer,
+            evidenceDir,
+            stopTimeoutSeconds,
+            normalizedProgressAvailable,
+            queryDrainSeconds: workerQueryDrainSeconds
+          });
+        } catch (error) {
+          recoveryError = sanitizeError(error);
+          writeFileSync(
+            path.join(evidenceDir, "recovery-error.txt"),
+            `${recoveryError}\n`
+          );
+        }
+      }
       const reportPath = renderReport({
         evidenceDir,
         observation,
         decision,
-        recovery
+        recovery,
+        recoveryError
       });
       sendReport({
         reportPath,
@@ -867,6 +1285,11 @@ async function main() {
         send: args.flags.has("send-report"),
         fallbackEnvFile: args.values["fallback-env-file"]
       });
+      if (recoveryError) {
+        console.error(recoveryError);
+        process.exitCode = 1;
+        return;
+      }
       process.exitCode = recovery ? WATCHDOG_RECOVERY_EXIT_CODE : 2;
       return;
     }

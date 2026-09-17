@@ -251,7 +251,7 @@ export default function Page({
 
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const isWideDesktop = useIsWideDesktop();
+  const isWideDesktop = useIsWideDesktop() && !isMobileChrome;
   const { hasMobileFabSurface } = useFabVisibility();
   const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
 

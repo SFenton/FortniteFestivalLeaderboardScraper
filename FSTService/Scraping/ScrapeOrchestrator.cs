@@ -21,6 +21,7 @@ public sealed class ScrapeOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly IPathDataStore _pathDataStore;
+    private readonly ScrapePassPathIngestion? _pathIngestion;
     private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
@@ -38,7 +39,8 @@ public sealed class ScrapeOrchestrator
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<ScrapeOrchestrator> log,
-        WorkerStatusPublisher? workerStatus = null)
+        WorkerStatusPublisher? workerStatus = null,
+        ScrapePassPathIngestion? pathIngestion = null)
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
@@ -49,6 +51,7 @@ public sealed class ScrapeOrchestrator
         _options = options;
         _log = log;
         _workerStatus = workerStatus;
+        _pathIngestion = pathIngestion;
     }
 
     /// <summary>
@@ -72,7 +75,6 @@ public sealed class ScrapeOrchestrator
             : null;
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
-        _globalScraper.RefreshSongInstrumentSupport();
         _globalScraper.ResetCdnState();
 
         // Reset DOP to initial configured value so a CDN slash from a previous
@@ -90,6 +92,37 @@ public sealed class ScrapeOrchestrator
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun(catalogToken);
+        var publicationId = _persistence.Meta
+            .GetPublicationGenerationForScrape(scrapeId)?
+            .PublicationId
+            ?? throw new InvalidOperationException(
+                $"Scrape {scrapeId} has no working publication generation.");
+
+        // Publication-safe path ingestion runs against live state, before the
+        // publication read scope opens, and only mutates the candidate
+        // snapshot. Live songs are promoted at publication commit.
+        if (_pathIngestion?.IsEnabled == true)
+        {
+            if (ShouldRunScrapePassPathIngestion(resolvedPhases))
+            {
+                await _pathIngestion.IngestAsync(
+                    scrapeId,
+                    publicationId,
+                    catalogSongs,
+                    passCt);
+                _pathDataStore.InvalidateCachedState();
+            }
+            else
+            {
+                _log.LogWarning(
+                    "Scrape-pass path staging skipped for phase-selective pass {Phases}. Staged maxima require the full pipeline so rankings, statistics, and the canonical songs cache are rebuilt together.",
+                    ScrapePhaseResolver.Format(resolvedPhases));
+            }
+        }
+
+        using var pathPublicationScope =
+            _pathDataStore.BeginPublicationRead(publicationId);
+        _globalScraper.RefreshSongInstrumentSupport();
         _workerStatus?.AttachScrape(scrapeId);
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
         _persistence.CleanupAbandonedStaging(scrapeId);
@@ -137,6 +170,8 @@ public sealed class ScrapeOrchestrator
         var writerResults = new List<WriterDrainResult>();
         LeaderboardScopeCoverageResult? soloCoverageResult = null;
         Exception? soloCoverageFailure = null;
+        IReadOnlyList<(string SongId, string Instrument)>?
+            expectedSoloLeaderboardPairs = null;
         int totalRequests = 0;
         long totalBytes = 0;
 
@@ -325,13 +360,15 @@ public sealed class ScrapeOrchestrator
             if (useOnlineSoloWriter)
             {
                 _progress.SetSubOperation("draining_solo_writes");
-                writerResults.Add(await _persistence.DrainOnlineSoloWriterAsync());
+                writerResults.Add(
+                    await _persistence.DrainOnlineSoloWriterAsync(
+                        _progress));
             }
             else
             {
                 // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
                 _progress.SetSubOperation("dropping_solo_indexes");
-                _persistence.DropSoloIndexes();
+                _persistence.DropSoloIndexes(_progress);
                 try
                 {
                     _progress.SetSubOperation("flushing_solo");
@@ -340,7 +377,7 @@ public sealed class ScrapeOrchestrator
                 finally
                 {
                     _progress.SetSubOperation("creating_solo_indexes");
-                    _persistence.CreateSoloIndexes();
+                    _persistence.CreateSoloIndexes(_progress);
                 }
             }
 
@@ -378,12 +415,6 @@ public sealed class ScrapeOrchestrator
         // Save page estimate for next run
         var currentOp = _progress.GetProgressResponse().Current;
         SaveCachedPageEstimate(opts, currentOp?.Pages?.DiscoveredTotal ?? 0);
-
-        _log.LogInformation(
-            "Scrape run #{ScrapeId} core checkpoint reached. {Songs} songs with data, {Entries} entries, " +
-            "{Requests} HTTP requests, {Bytes} bytes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
-            scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes,
-            aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
 
         if (accessTokenProvider?.RefreshCount > 0)
         {
@@ -429,14 +460,15 @@ public sealed class ScrapeOrchestrator
                 || _persistence.EnforceScopeCompletenessManifests)
             && !writerResults.Any(static result => !result.IsSuccess))
         {
-            var expectedPairs = BuildExpectedSoloLeaderboardPairs(scrapeRequests);
+            expectedSoloLeaderboardPairs =
+                BuildExpectedSoloLeaderboardPairs(scrapeRequests);
             var coverageStopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 soloCoverageResult = _persistence.RecordLeaderboardScopeCoverage(
                     scrapeId,
                     allResults.Values.SelectMany(static results => results),
-                    expectedPairs);
+                    expectedSoloLeaderboardPairs);
                 coverageStopwatch.Stop();
                 _log.LogInformation(
                     "Recorded published-source coverage for scrape {ScrapeId}: expected={Expected:N0}, observed={Observed:N0}, persisted={Persisted:N0}, missing={Missing:N0}, incomplete={Incomplete:N0}, elapsed={Elapsed}.",
@@ -500,7 +532,7 @@ public sealed class ScrapeOrchestrator
                 if (shouldFlushBand)
                 {
                     _progress.SetSubOperation("dropping_band_indexes");
-                    _persistence.DropBandIndexes();
+                    _persistence.DropBandIndexes(_progress);
                     try
                     {
                         _progress.SetSubOperation("flushing_band");
@@ -514,7 +546,7 @@ public sealed class ScrapeOrchestrator
                     finally
                     {
                         _progress.SetSubOperation("creating_band_indexes");
-                        _persistence.CreateBandIndexes();
+                        _persistence.CreateBandIndexes(_progress);
                     }
 
                     _log.LogInformation("Band flush complete.");
@@ -620,6 +652,43 @@ public sealed class ScrapeOrchestrator
             throw exception;
         }
 
+        var expectedSoloScopeCount =
+            expectedSoloLeaderboardPairs?.Count ?? 0;
+        var acquisitionCheckpointRecorded =
+            RecordAcquisitionCheckpointIfEligible(
+                _persistence.Meta,
+                scrapeId,
+                aggregates.SongsWithData,
+                aggregates.TotalEntries,
+                totalRequests,
+                totalBytes,
+                epicReportedOver100Pages,
+                expectedSoloLeaderboardPairs,
+                catalogSongs
+                    .Select(static song => song.track.su)
+                    .ToArray(),
+                doSoloScrape,
+                soloCoverageResult?.IsComplete == true,
+                bandManifestResult is null || bandManifestResult.IsComplete,
+                failedWriterResults.Length == 0);
+        if (acquisitionCheckpointRecorded)
+        {
+            _log.LogInformation(
+                "Scrape run #{ScrapeId} durable core checkpoint committed. {Songs} songs with data, {Entries} entries, " +
+                "{Requests} logical requests, {Bytes} bytes, {SoloScopes} solo scopes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
+                scrapeId, aggregates.SongsWithData, aggregates.TotalEntries,
+                totalRequests, totalBytes,
+                expectedSoloScopeCount,
+                aggregates.TotalChanges,
+                sw.Elapsed.TotalSeconds);
+        }
+        else
+        {
+            _log.LogWarning(
+                "Scrape run #{ScrapeId} did not create a resume checkpoint because no complete solo acquisition contract was available.",
+                scrapeId);
+        }
+
         // Build the explicit output contract
         var ctx = new ScrapePassContext
         {
@@ -629,6 +698,7 @@ public sealed class ScrapeOrchestrator
             RegisteredIds = registeredIds,
             Aggregates = aggregates,
             ScrapeRequests = scrapeRequests,
+            PublicationCatalogSongs = catalogSongs,
             DegreeOfParallelism = opts.DegreeOfParallelism,
             EpicReportedOver100Pages = epicReportedOver100Pages,
             LeaderboardScrapeCompleted = true,
@@ -687,6 +757,10 @@ public sealed class ScrapeOrchestrator
         return instruments;
     }
 
+    internal static bool ShouldRunScrapePassPathIngestion(
+        ScrapePhase resolvedPhases) =>
+        resolvedPhases == ScrapePhase.All;
+
     internal static IReadOnlyList<(string SongId, string Instrument)> BuildExpectedSoloLeaderboardPairs(
         IEnumerable<GlobalLeaderboardScraper.SongScrapeRequest> requests)
     {
@@ -706,6 +780,73 @@ public sealed class ScrapeOrchestrator
         }
 
         return pairs.ToArray();
+    }
+
+    internal static bool RecordAcquisitionCheckpointIfEligible(
+        IMetaDatabase metaDatabase,
+        long scrapeId,
+        int songsScraped,
+        long totalEntries,
+        int totalRequests,
+        long totalBytes,
+        bool epicReportedOver100Pages,
+        IReadOnlyCollection<(string SongId, string Instrument)>?
+            expectedSoloLeaderboardPairs,
+        IReadOnlyCollection<string> publicationCatalogSongIds,
+        bool doSoloScrape,
+        bool soloCoverageComplete,
+        bool bandManifestGatePassed,
+        bool writerGatePassed)
+    {
+        if (!doSoloScrape
+            || expectedSoloLeaderboardPairs is not { Count: > 0 }
+            || !IsExactCanonicalSoloScope(
+                expectedSoloLeaderboardPairs,
+                publicationCatalogSongIds)
+            || !soloCoverageComplete
+            || !bandManifestGatePassed
+            || !writerGatePassed)
+        {
+            return false;
+        }
+
+        metaDatabase.RecordScrapeAcquisitionCheckpoint(
+            scrapeId,
+            songsScraped,
+            totalEntries,
+            totalRequests,
+            totalBytes,
+            expectedSoloLeaderboardPairs,
+            epicReportedOver100Pages);
+        return true;
+    }
+
+    private static bool IsExactCanonicalSoloScope(
+        IReadOnlyCollection<(string SongId, string Instrument)> actualPairs,
+        IReadOnlyCollection<string> publicationCatalogSongIds)
+    {
+        var catalogSongIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var songId in publicationCatalogSongIds)
+        {
+            if (string.IsNullOrWhiteSpace(songId))
+                return false;
+            catalogSongIds.Add(songId);
+        }
+
+        if (catalogSongIds.Count == 0
+            || actualPairs.Count
+                != (long)catalogSongIds.Count
+                * GlobalLeaderboardScraper.AllInstruments.Count)
+        {
+            return false;
+        }
+
+        var expectedPairs = new HashSet<(string SongId, string Instrument)>(
+            catalogSongIds.SelectMany(
+                static songId =>
+                    GlobalLeaderboardScraper.AllInstruments.Select(
+                        instrument => (songId, instrument))));
+        return expectedPairs.SetEquals(actualPairs);
     }
 
     private void ReportBandSpoolFlushProgress(SpoolWriter<BandLeaderboardEntry>.FlushProgress flushProgress)

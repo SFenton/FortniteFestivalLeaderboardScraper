@@ -242,6 +242,74 @@ public sealed class RolloutReadOnlyRequestGuardTests
         Assert.Same(violation, monitor.LastViolation);
     }
 
+    [Theory]
+    [InlineData(true, "startup_read_only")]
+    [InlineData(false, "startup_initializing")]
+    public async Task Startup_mutation_guard_is_not_a_rollout_violation(bool latched, string code)
+    {
+        var state = StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: latched);
+        var violations = new RolloutReadOnlyViolationMonitor();
+        var called = false;
+        var context = CreateContext(Substitute.For<IMetaDatabase>(), HttpMethods.Post, "/api/player/account/track");
+        context.Response.Body = new MemoryStream();
+        var guard = new RolloutReadOnlyRequestGuardMiddleware(_ =>
+        {
+            called = true;
+            return Task.CompletedTask;
+        }, Options.Create(new ScraperOptions()), violations, state);
+
+        await guard.InvokeAsync(context);
+
+        Assert.False(called);
+        Assert.Equal(503, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        Assert.Contains(code, await new StreamReader(context.Response.Body).ReadToEndAsync(), StringComparison.Ordinal);
+        Assert.False(violations.HasViolation);
+        Assert.Equal(0, violations.ViolationCount);
+    }
+
+    [Fact]
+    public async Task Degraded_get_write_rejection_does_not_poison_rollout_health()
+    {
+        var state = StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true);
+        state.MarkReady();
+        var violations = new RolloutReadOnlyViolationMonitor();
+        var context = CreateContext(Substitute.For<IMetaDatabase>(), HttpMethods.Get, "/api/player/account");
+        context.Response.Body = new MemoryStream();
+        var guard = new RolloutReadOnlyRequestGuardMiddleware(
+            _ => Task.FromException(new PostgresException("read-only", "ERROR", "ERROR", "25006")),
+            Options.Create(new ScraperOptions()), violations, state);
+
+        await guard.InvokeAsync(context);
+
+        Assert.Equal(503, context.Response.StatusCode);
+        Assert.False(violations.HasViolation);
+        Assert.Equal(0, violations.ViolationCount);
+    }
+
+    [Fact]
+    public async Task Degraded_public_get_and_selected_profile_do_not_resolve_mutation_services()
+    {
+        var state = StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true);
+        state.MarkReady();
+        await using var provider = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = provider };
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/version";
+        context.Request.Headers[SelectedProfileHeaders.LegacySelectedPlayerHeader] = "account";
+        context.Response.Body = new MemoryStream();
+        var activity = new SelectedProfileActivityMiddleware(
+            ctx => ctx.Response.WriteAsync("persisted-public-body"), Options.Create(new ScraperOptions()));
+        var guard = new RolloutReadOnlyRequestGuardMiddleware(activity.InvokeAsync,
+            Options.Create(new ScraperOptions()), new RolloutReadOnlyViolationMonitor(), state);
+
+        await guard.InvokeAsync(context);
+
+        Assert.Equal(200, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        Assert.Equal("persisted-public-body", await new StreamReader(context.Response.Body).ReadToEndAsync());
+    }
+
     private static DefaultHttpContext CreateContext(
         IMetaDatabase metaDatabase,
         string method,

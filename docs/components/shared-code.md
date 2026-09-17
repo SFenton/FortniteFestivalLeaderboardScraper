@@ -1,11 +1,12 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: 86379374
+last_verified: 2026-09-07
+last_verified_commit: 0b07fff0
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
+  - FortniteFestival.Core/Services/FestivalService.cs
   - packages/core/package.json
   - packages/core/src/index.ts
   - packages/core/src/api/serverTypes.ts
@@ -33,6 +34,12 @@ production persistence is PostgreSQL.
 Shared .NET responsibilities include domain models, Epic/catalog integration,
 instrument definitions, song/path logic, and compatibility code used outside
 the service host.
+
+`FestivalService.InitializePersistedStateOnlyAsync` performs no provider,
+image-directory or persistence writes. It marks initialization complete only
+after persisted loading succeeds, so a transient failure can be retried by
+sticky read-only service startup without silently retaining a partial load.
+Normal provider-enabled initialization retains its existing one-shot behavior.
 
 Tier-0/Tier-1 replay manifests and phase adapters intentionally remain
 service-local under `FSTService.Scraping.Replay`. They are same-image evidence
@@ -79,6 +86,30 @@ last-progress contract. Fields stay optional so an older service response
 remains consumable during rolling deployment. Phase descriptors include the
 optional mirrored `reserved` boolean; consumers treat only `reserved === true`
 as retired so older payloads remain active-compatible.
+
+Its optional `startup` object mirrors sticky degraded/read-only serving,
+separate read/mutation readiness, an exact reason and structured
+current/working diagnostics versus previous-binding warnings. It is independent
+of the existing rollout flags/violation fields. No client response reshaping
+or new public feature flag is required.
+`StartupPublicationReadOnlyStatus` names that publication-specific type.
+`ServiceReadinessResponse` mirrors readiness JSON's aggregate status, the
+same startup object and named check descriptions. A read-serving publication
+check can be `Healthy` while an unrelated check makes the aggregate
+`Degraded`/HTTP 503.
+
+The mirrored service-info contract also includes optional catalog publication
+lag telemetry. Live/published/working identities are nullable, and change
+counts are nullable when no exact comparison baseline exists. The additive
+`SongsChangedMessage` fields `removed`, `changed`, `publishedTotal`, and
+`awaitingPublication` remain optional for older service and external-client
+compatibility.
+
+The mirrored response also includes optional
+`ServiceInfoSubphaseProgress` and `phasePlan.subphaseCatalogVersion`.
+Subphase schema version 1 distinguishes exact, indeterminate, and
+not-applicable progress and carries reset epoch plus monotonic sequence fields.
+All additive members remain optional for mixed-version service/web rollout.
 
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.

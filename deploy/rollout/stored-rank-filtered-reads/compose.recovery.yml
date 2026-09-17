@@ -1,9 +1,12 @@
+# Schema-initializing recovery/preflight. Run this before either read-only
+# canary overlay after an image or publication-manifest release.
 services:
   fstservice:
     image: ${FST_STORED_RANK_SERVICE_IMAGE:?Set immutable service image tag@digest}
     environment:
       Scraper__RolloutReadOnlyStartup: "false"
       Scraper__RolloutPostgresReadOnly: "false"
+      Scraper__UsePublicationPathArtifacts: "true"
       Features__UseStoredSoloProjectionRanksForFilteredReads: "false"
   fstworker:
     environment:

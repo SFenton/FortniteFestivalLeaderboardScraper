@@ -22,6 +22,15 @@ public sealed record PhaseProgressObservation(
     long? UnitsTotal,
     bool? UnitsTotalFinal);
 
+public sealed record SubphaseProgressObservation(
+    string? SubphaseId,
+    string Kind,
+    string? UnitsKind = null,
+    long? UnitsCompleted = null,
+    long? UnitsTotal = null,
+    bool UnitsTotalFinal = false,
+    long? ResetSequence = null);
+
 public sealed record PhaseEtaEstimate(
     double LowerSeconds,
     double UpperSeconds,
@@ -51,7 +60,9 @@ public sealed record DurablePhaseProgressView(
     string? EtaConfidence,
     int? EtaSampleCount,
     DateTime StartedAtUtc,
-    DateTime LastProgressAtUtc);
+    DateTime LastProgressAtUtc,
+    SubphaseProgressInfo? SubphaseProgress = null,
+    PhaseAttemptProgressInfo? AttemptProgress = null);
 
 public static class PhaseEtaEstimator
 {
@@ -136,6 +147,11 @@ public sealed class DurablePhaseProgressSink
         "Scraper:SongConcurrency",
         "Scraper:LookupBatchSize",
         "Scraper:SongMachineDop",
+        "Scraper:EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace",
+        "Scraper:EnableRegisteredBandTargetedProcessingRemainingWorkGrace",
+        "Scraper:RegisteredBandRemainingWorkGraceMaxDuration",
+        "Scraper:RegisteredBandRemainingWorkGraceRecentProgressWindow",
+        "Scraper:RegisteredBandRemainingWorkGraceMaxRemainingLookups",
         "Scraper:LeaderboardWriteMode",
         "Scraper:BoundedChannelCapacity",
         "Scraper:OnlineWriteBatchPages",
@@ -144,6 +160,7 @@ public sealed class DurablePhaseProgressSink
         "Scraper:BandMembershipRebuildBatchSize",
         "Scraper:SoloProjectionCleanupMaxDegreeOfParallelism",
         "Scraper:RankHistorySnapshotMaxDegreeOfParallelism",
+        "Scraper:RivalsMaxDegreeOfParallelism",
         "Scraper:LeaderboardRivalsMaxDegreeOfParallelism",
         "Scraper:RefreshCurrentSeasonSessions",
         "Features:EnforcePublicationCriticalPhases",
@@ -276,7 +293,12 @@ public sealed class DurablePhaseProgressSink
                 LastProgressAtUtc: now,
                 HeartbeatAtUtc: now,
                 BuildId: _buildId,
-                ConfigId: _configId)),
+                ConfigId: _configId,
+                CurrentSubphaseEpoch: string.IsNullOrWhiteSpace(subphaseId) ? 0 : 1,
+                SubphaseSequence: 0,
+                SubphaseProgressKind: "indeterminate",
+                SubphaseStartedAtUtc: string.IsNullOrWhiteSpace(subphaseId) ? null : now,
+                SubphaseLastProgressAtUtc: string.IsNullOrWhiteSpace(subphaseId) ? null : now)),
             $"start phase {descriptor.Id}");
 
         var state = new ActiveAttempt(
@@ -284,6 +306,7 @@ public sealed class DurablePhaseProgressSink
             scrapeId,
             attempt,
             now,
+            workerInstanceId,
             subphaseId,
             descriptor.DefaultUnitsKind,
             samples);
@@ -306,7 +329,11 @@ public sealed class DurablePhaseProgressSink
                 UnitsKind: null,
                 UnitsCompleted: null,
                 UnitsTotal: null,
-                UnitsTotalFinal: null), force: true);
+                UnitsTotalFinal: null),
+                new SubphaseProgressObservation(
+                    subphaseId,
+                    "indeterminate"),
+                force: true);
     }
 
     public IReadOnlyList<DurablePhaseProgressView> ObserveTracker(
@@ -331,12 +358,21 @@ public sealed class DurablePhaseProgressSink
                         StringComparison.Ordinal));
                 if (state is null)
                     continue;
+                var branchSubphaseId = BranchSubphaseId(
+                    state.Descriptor);
                 var view = Observe(state, new PhaseProgressObservation(
-                    snapshot.SubOperation,
+                    branchSubphaseId,
                     state.Descriptor.DefaultUnitsKind,
                     branch.Completed,
                     branch.Total,
-                    branch.Total.HasValue));
+                    branch.Total.HasValue),
+                    new SubphaseProgressObservation(
+                        branchSubphaseId,
+                        branch.Total.HasValue ? "exact" : "indeterminate",
+                        state.Descriptor.DefaultUnitsKind,
+                        branch.Completed,
+                        branch.Total,
+                        branch.Total.HasValue));
                 if (view is not null)
                     writes.Add(view);
             }
@@ -352,13 +388,28 @@ public sealed class DurablePhaseProgressSink
             .FirstOrDefault();
         if (primary is not null)
         {
-            var view = Observe(primary, BuildObservation(snapshot, primary.Descriptor));
+            var view = Observe(
+                primary,
+                BuildObservation(snapshot, primary.Descriptor),
+                BuildSubphaseObservation(snapshot, primary.Descriptor),
+                attemptProgress: snapshot.AttemptProgress);
             if (view is not null)
                 writes.Add(view);
         }
 
         return writes;
     }
+
+    private static string? BranchSubphaseId(
+        PhaseProgressDescriptor descriptor) =>
+        descriptor.Id switch
+        {
+            "post.rank_recompute" =>
+                "enriching_parallel_rank_recompute",
+            "post.first_seen_season" =>
+                "enriching_parallel_tail",
+            _ => null,
+        };
 
     public DurablePhaseProgressView? CompletePhase(
         string phaseId,
@@ -468,7 +519,9 @@ public sealed class DurablePhaseProgressSink
     private DurablePhaseProgressView? Observe(
         ActiveAttempt state,
         PhaseProgressObservation observation,
-        bool force = false)
+        SubphaseProgressObservation? subphaseObservation = null,
+        bool force = false,
+        PhaseAttemptProgressInfo? attemptProgress = null)
     {
         var now = _clock.UtcNow;
         lock (_gate)
@@ -487,6 +540,13 @@ public sealed class DurablePhaseProgressSink
             var normalizedTotal = observation.UnitsTotal ?? state.UnitsTotal;
             var normalizedTotalFinal = observation.UnitsTotalFinal
                 ?? state.UnitsTotalFinal;
+            if (normalizedTotalFinal
+                && normalizedTotal.HasValue
+                && normalizedCompleted.HasValue
+                && normalizedCompleted.Value > normalizedTotal.Value)
+            {
+                normalizedTotal = normalizedCompleted.Value;
+            }
             double? exactPercent = normalizedTotalFinal
                 && normalizedTotal is > 0
                 && normalizedCompleted.HasValue
@@ -498,30 +558,202 @@ public sealed class DurablePhaseProgressSink
             if (state.PhasePercent.HasValue && exactPercent.HasValue)
                 exactPercent = Math.Max(state.PhasePercent.Value, exactPercent.Value);
 
-            var subphaseChanged = !string.Equals(
+            var normalizedAttemptedThisPass =
+                state.AttemptedThisPass;
+            var normalizedRetryableUnavailableThisPass =
+                state.RetryableUnavailableThisPass;
+            if (attemptProgress?.SchemaVersion == 1)
+            {
+                normalizedAttemptedThisPass = Math.Max(
+                    state.AttemptedThisPass ?? 0,
+                    Math.Max(0, attemptProgress.AttemptedThisPass));
+                normalizedRetryableUnavailableThisPass = Math.Min(
+                    normalizedAttemptedThisPass.Value,
+                    Math.Max(
+                        state.RetryableUnavailableThisPass ?? 0,
+                        Math.Max(
+                            0,
+                            attemptProgress
+                                .RetryableUnavailableThisPass)));
+            }
+            var attemptProgressMeaningful =
+                normalizedAttemptedThisPass
+                    != state.AttemptedThisPass
+                || normalizedRetryableUnavailableThisPass
+                    != state.RetryableUnavailableThisPass;
+
+            var subphaseIdChanged = !string.Equals(
                 state.SubphaseId,
                 observation.SubphaseId,
                 StringComparison.Ordinal);
-            var meaningful =
+            var resetSequenceChanged = !subphaseIdChanged
+                && subphaseObservation?.ResetSequence is not null
+                && state.SubphaseResetSequence is not null
+                && state.SubphaseResetSequence
+                    != subphaseObservation.ResetSequence;
+            if (!subphaseIdChanged
+                && state.SubphaseResetSequence is null
+                && subphaseObservation?.ResetSequence is not null)
+            {
+                state.SubphaseResetSequence =
+                    subphaseObservation.ResetSequence;
+            }
+            var subphaseChanged =
+                subphaseIdChanged || resetSequenceChanged;
+            var phaseMeaningful =
                 subphaseChanged
                 || !string.Equals(state.UnitsKind, normalizedUnitsKind, StringComparison.Ordinal)
                 || normalizedCompleted != state.UnitsCompleted
                 || normalizedTotal != state.UnitsTotal
                 || normalizedTotalFinal != state.UnitsTotalFinal
                 || exactPercent != state.PhasePercent;
+            var subphaseMeaningful = false;
+
+            if (subphaseChanged)
+            {
+                state.SubphaseId = observation.SubphaseId;
+                state.SubphaseResetSequence =
+                    subphaseObservation?.ResetSequence;
+                state.SubphaseEpoch++;
+                state.SubphaseSequence++;
+                state.SubphaseProgressKind = "indeterminate";
+                state.SubphaseUnitsKind = null;
+                state.SubphaseUnitsCompleted = null;
+                state.SubphaseUnitsTotal = null;
+                state.SubphaseUnitsTotalFinal = false;
+                state.SubphasePercent = null;
+                state.SubphaseStartedAtUtc = now;
+                state.SubphaseLastProgressAtUtc = now;
+                subphaseMeaningful = true;
+            }
+            if (subphaseObservation is not null)
+            {
+                var subphaseKind = NormalizeSubphaseKind(
+                    subphaseObservation.Kind);
+                var subphaseUnitsKind = subphaseKind == "exact"
+                    ? subphaseObservation.UnitsKind
+                    : null;
+                var subphaseUnitsTotal = subphaseKind == "exact"
+                    ? subphaseObservation.UnitsTotal
+                    : null;
+                var subphaseUnitsCompleted = subphaseKind == "exact"
+                    ? subphaseObservation.UnitsCompleted
+                    : null;
+                var subphaseUnitsTotalFinal = subphaseKind == "exact"
+                    && subphaseObservation.UnitsTotalFinal;
+                if (subphaseUnitsTotalFinal
+                    && subphaseUnitsTotal.HasValue
+                    && subphaseUnitsCompleted.HasValue
+                    && subphaseUnitsCompleted.Value
+                        > subphaseUnitsTotal.Value)
+                {
+                    subphaseUnitsTotal =
+                        subphaseUnitsCompleted.Value;
+                }
+
+                if (subphaseKind == "exact"
+                    && (!subphaseUnitsTotalFinal
+                        || subphaseUnitsTotal is not > 0
+                        || subphaseUnitsCompleted is null
+                        || subphaseUnitsCompleted < 0
+                        || subphaseUnitsCompleted > subphaseUnitsTotal))
+                {
+                    subphaseKind = "indeterminate";
+                    subphaseUnitsKind = null;
+                    subphaseUnitsCompleted = null;
+                    subphaseUnitsTotal = null;
+                    subphaseUnitsTotalFinal = false;
+                }
+
+                if (subphaseKind == "exact"
+                    && state.SubphaseProgressKind == "exact"
+                    && subphaseUnitsCompleted.HasValue)
+                {
+                    subphaseUnitsCompleted = Math.Max(
+                        state.SubphaseUnitsCompleted ?? 0,
+                        subphaseUnitsCompleted.Value);
+                    if (subphaseUnitsTotalFinal
+                        && subphaseUnitsTotal.HasValue
+                        && subphaseUnitsCompleted.Value
+                            > subphaseUnitsTotal.Value)
+                    {
+                        subphaseUnitsTotal =
+                            subphaseUnitsCompleted.Value;
+                    }
+                }
+
+                double? subphasePercent = subphaseKind == "exact"
+                    ? Math.Round(
+                        (double)subphaseUnitsCompleted!.Value
+                        / subphaseUnitsTotal!.Value
+                        * 100.0,
+                        1)
+                    : null;
+                if (subphaseKind == "exact"
+                    && state.SubphaseProgressKind == "exact"
+                    && state.SubphasePercent.HasValue)
+                {
+                    subphasePercent = Math.Max(
+                        state.SubphasePercent.Value,
+                        subphasePercent!.Value);
+                }
+
+                var observationMeaningful =
+                    !string.Equals(
+                        state.SubphaseProgressKind,
+                        subphaseKind,
+                        StringComparison.Ordinal)
+                    || !string.Equals(
+                        state.SubphaseUnitsKind,
+                        subphaseUnitsKind,
+                        StringComparison.Ordinal)
+                    || state.SubphaseUnitsCompleted != subphaseUnitsCompleted
+                    || state.SubphaseUnitsTotal != subphaseUnitsTotal
+                    || state.SubphaseUnitsTotalFinal != subphaseUnitsTotalFinal
+                    || state.SubphasePercent != subphasePercent;
+
+                if (observationMeaningful)
+                {
+                    state.SubphaseProgressKind = subphaseKind;
+                    state.SubphaseUnitsKind = subphaseUnitsKind;
+                    state.SubphaseUnitsCompleted = subphaseUnitsCompleted;
+                    state.SubphaseUnitsTotal = subphaseUnitsTotal;
+                    state.SubphaseUnitsTotalFinal =
+                        subphaseUnitsTotalFinal;
+                    state.SubphasePercent = subphasePercent;
+                    state.SubphaseStartedAtUtc ??= now;
+                    state.SubphaseLastProgressAtUtc = now;
+                }
+                subphaseMeaningful |= observationMeaningful;
+            }
+
+            var meaningful = phaseMeaningful
+                || subphaseMeaningful
+                || attemptProgressMeaningful;
             var pendingFlushDue = state.PendingProgressAtUtc.HasValue
                 && now - state.LastPersistedAtUtc >= ProgressWriteInterval;
             if (!meaningful && !pendingFlushDue)
                 return null;
 
-            if (meaningful)
+            if (phaseMeaningful)
             {
-                state.SubphaseId = observation.SubphaseId;
                 state.UnitsKind = normalizedUnitsKind;
                 state.UnitsCompleted = normalizedCompleted;
                 state.UnitsTotal = normalizedTotal;
                 state.UnitsTotalFinal = normalizedTotalFinal;
                 state.PhasePercent = exactPercent;
+            }
+            if (attemptProgressMeaningful)
+            {
+                state.AttemptedThisPass =
+                    normalizedAttemptedThisPass;
+                state.RetryableUnavailableThisPass =
+                    normalizedRetryableUnavailableThisPass;
+            }
+            if (meaningful)
+            {
+                if (!subphaseChanged)
+                    state.SubphaseSequence++;
                 state.PendingProgressAtUtc = now;
             }
 
@@ -576,7 +808,18 @@ public sealed class DurablePhaseProgressSink
             state.EtaConfidence,
             state.EtaSampleCount,
             state.LastProgressAtUtc,
-            heartbeatAtUtc);
+            heartbeatAtUtc,
+            state.WorkerInstanceId,
+            state.SubphaseEpoch,
+            state.SubphaseSequence,
+            state.SubphaseProgressKind,
+            state.SubphaseUnitsKind,
+            state.SubphaseUnitsCompleted,
+            state.SubphaseUnitsTotal,
+            state.SubphaseUnitsTotalFinal,
+            state.SubphasePercent,
+            state.SubphaseStartedAtUtc,
+            state.SubphaseLastProgressAtUtc);
 
     private IReadOnlyList<PhaseDurationSample> TryLoadSamples(string phaseId)
     {
@@ -635,6 +878,15 @@ public sealed class DurablePhaseProgressSink
         OperationSnapshot snapshot,
         PhaseProgressDescriptor descriptor)
     {
+        if (descriptor.Id == "post.band_extraction")
+        {
+            return new PhaseProgressObservation(
+                snapshot.SubOperation,
+                UnitsKind: null,
+                UnitsCompleted: null,
+                UnitsTotal: null,
+                UnitsTotalFinal: false);
+        }
         if (snapshot.Leaderboards is not null)
         {
             return new PhaseProgressObservation(
@@ -642,6 +894,18 @@ public sealed class DurablePhaseProgressSink
                 "leaderboards",
                 snapshot.Leaderboards.Completed,
                 snapshot.Leaderboards.Total,
+                UnitsTotalFinal: true);
+        }
+        if (descriptor.Id == "post.leaderboard_rivals"
+            && snapshot.SubOperation
+                == "leaderboard_rivals_account_instruments"
+            && snapshot.Accounts is not null)
+        {
+            return new PhaseProgressObservation(
+                snapshot.SubOperation,
+                "accounts",
+                snapshot.Accounts.Completed,
+                snapshot.Accounts.Total,
                 UnitsTotalFinal: true);
         }
         if (snapshot.WorkItems is not null)
@@ -689,6 +953,257 @@ public sealed class DurablePhaseProgressSink
             UnitsTotalFinal: false);
     }
 
+    private static SubphaseProgressObservation BuildSubphaseObservation(
+        OperationSnapshot snapshot,
+        PhaseProgressDescriptor descriptor)
+    {
+        var id = snapshot.SubOperation;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return descriptor.Id switch
+            {
+                "post.account_name_resolution" when snapshot.Batches is not null =>
+                    ExactSubphase(
+                        null,
+                        "batches",
+                        snapshot.Batches.Completed,
+                        snapshot.Batches.Total),
+                "post.legacy_band_scrape" when snapshot.WorkItems is not null =>
+                    ExactSubphase(
+                        null,
+                        descriptor.DefaultUnitsKind ?? "items",
+                        snapshot.WorkItems.Completed,
+                        snapshot.WorkItems.Total,
+                        snapshot.WorkItemsTotalFinal == true),
+                "post.leaderboard_rivals" when snapshot.WorkItems is not null =>
+                    ExactSubphase(
+                        null,
+                        "accounts",
+                        snapshot.WorkItems.Completed,
+                        snapshot.WorkItems.Total,
+                        snapshot.WorkItemsTotalFinal == true),
+                "post.player_stats_tiers" when snapshot.WorkItems is not null =>
+                    ExactSubphase(
+                        null,
+                        "accounts",
+                        snapshot.WorkItems.Completed,
+                        snapshot.WorkItems.Total,
+                        snapshot.WorkItemsTotalFinal == true),
+                _ => new SubphaseProgressObservation(
+                    null,
+                    "indeterminate"),
+            };
+        }
+
+        if (id is "cancelling_band_after_solo_failure"
+            or "skipping_band_after_timeout")
+        {
+            return new SubphaseProgressObservation(
+                id,
+                "not_applicable");
+        }
+
+        if (id
+                == "leaderboard_rivals_account_instruments"
+            && descriptor.Id
+                == "post.leaderboard_rivals"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                "account_instruments",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal
+                    == true);
+        }
+
+        if (id == "fetching_leaderboards"
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Leaderboards is not null)
+        {
+            return ExactSubphase(
+                id,
+                "leaderboards",
+                snapshot.Leaderboards.Completed,
+                snapshot.Leaderboards.Total);
+        }
+
+        if (id == "deep_scraping"
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.DeepJobsTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "deep_jobs",
+                snapshot.Detail.DeepJobsCompleted ?? 0,
+                snapshot.Detail.DeepJobsTotal.Value);
+        }
+
+        if (id == "awaiting_band"
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.BandPagesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "band_pages",
+                snapshot.Detail.BandPagesCompleted ?? 0,
+                snapshot.Detail.BandPagesTotal.Value) with
+            {
+                ResetSequence = snapshot.Detail.BandFetchEpoch,
+            };
+        }
+
+        if ((id is "flushing_solo" or "flushing_band")
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.FlushPagesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "pages",
+                snapshot.Detail.FlushPagesCompleted ?? 0,
+                snapshot.Detail.FlushPagesTotal.Value);
+        }
+
+        if (id == "draining_solo_writes"
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.OnlineWriterPagesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "pages",
+                snapshot.Detail.OnlineWriterPagesCompleted ?? 0,
+                snapshot.Detail.OnlineWriterPagesTotal.Value);
+        }
+
+        if ((id is "dropping_solo_indexes"
+                or "creating_solo_indexes"
+                or "dropping_band_indexes")
+            && descriptor.Id == "scrape.leaderboards"
+            && snapshot.Detail?.IndexesTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "indexes",
+                snapshot.Detail.IndexesCompleted ?? 0,
+                snapshot.Detail.IndexesTotal.Value);
+        }
+
+        if (id == "creating_band_indexes"
+            && descriptor.Id == "scrape.leaderboards")
+        {
+            return new SubphaseProgressObservation(
+                id,
+                "not_applicable");
+        }
+
+        if (id == "rank_history_snapshots"
+            && descriptor.Id == "post.compute_rankings"
+            && snapshot.Detail?.BandRankHistoryChunksTotal is > 0)
+        {
+            return ExactSubphase(
+                id,
+                "chunks",
+                snapshot.Detail.BandRankHistoryChunksCompleted ?? 0,
+                snapshot.Detail.BandRankHistoryChunksTotal.Value);
+        }
+
+        if (id is "processing_songs"
+            && descriptor.Id == "post.refresh_registered_users"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                descriptor.DefaultUnitsKind ?? "songs",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
+        if ((id is "extracting_band_context"
+                or "rebuilding_band_membership_summary")
+            && descriptor.Id == "post.band_extraction"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                id == "extracting_band_context"
+                    ? "songs"
+                    : "batches",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
+        if ((id is "registered_player_band_discovery"
+                or "registered_band_targeted_processing")
+            && (descriptor.Id is
+                "post.registered_player_band_discovery"
+                or "post.registered_band_targeted_processing")
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                descriptor.DefaultUnitsKind ?? "items",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
+        if (id == "per_song_rivals"
+            && descriptor.Id == "post.rivals"
+            && snapshot.Accounts is not null)
+        {
+            return ExactSubphase(
+                id,
+                "accounts",
+                snapshot.Accounts.Completed,
+                snapshot.Accounts.Total);
+        }
+
+        if (id == "population_tiers"
+            && descriptor.Id == "post.player_stats_tiers"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                "accounts",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
+        if (id == "activating_shadow_snapshots_early"
+            && descriptor.Id == "post.activate_shadow_snapshots_early"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                "steps",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
+        return new SubphaseProgressObservation(
+            id,
+            "indeterminate");
+    }
+
+    private static SubphaseProgressObservation ExactSubphase(
+        string? id,
+        string unitsKind,
+        long completed,
+        long total,
+        bool totalFinal = true) =>
+        new(
+            id,
+            totalFinal && total > 0 ? "exact" : "indeterminate",
+            totalFinal && total > 0 ? unitsKind : null,
+            totalFinal && total > 0 ? completed : null,
+            totalFinal && total > 0 ? total : null,
+            totalFinal && total > 0);
+
     private static DurablePhaseProgressView BuildView(ActiveAttempt state) =>
         new(
             state.ScrapeId,
@@ -712,7 +1227,30 @@ public sealed class DurablePhaseProgressSink
             state.EtaConfidence,
             state.EtaSampleCount,
             state.StartedAtUtc,
-            state.LastProgressAtUtc);
+            state.LastProgressAtUtc,
+            new SubphaseProgressInfo
+            {
+                Id = state.SubphaseId,
+                Epoch = state.SubphaseEpoch,
+                Sequence = state.SubphaseSequence,
+                Kind = state.SubphaseProgressKind,
+                UnitsKind = state.SubphaseUnitsKind,
+                UnitsCompleted = state.SubphaseUnitsCompleted,
+                UnitsTotal = state.SubphaseUnitsTotal,
+                UnitsTotalFinal = state.SubphaseUnitsTotalFinal,
+                Percent = state.SubphasePercent,
+                StartedAtUtc = state.SubphaseStartedAtUtc,
+                LastProgressAtUtc = state.SubphaseLastProgressAtUtc,
+            },
+            state.AttemptedThisPass.HasValue
+                ? new PhaseAttemptProgressInfo
+                {
+                    AttemptedThisPass =
+                        state.AttemptedThisPass.Value,
+                    RetryableUnavailableThisPass =
+                        state.RetryableUnavailableThisPass ?? 0,
+                }
+                : null);
 
     private static string NormalizeTerminalStatus(string status) =>
         status.ToLowerInvariant() switch
@@ -724,6 +1262,14 @@ public sealed class DurablePhaseProgressSink
             "skipped" => "skipped",
             "deferred" => "deferred",
             _ => "failed",
+        };
+
+    private static string NormalizeSubphaseKind(string kind) =>
+        kind.ToLowerInvariant() switch
+        {
+            "exact" => "exact",
+            "not_applicable" => "not_applicable",
+            _ => "indeterminate",
         };
 
     private static string ComputeConfigId(IConfiguration configuration)
@@ -741,6 +1287,7 @@ public sealed class DurablePhaseProgressSink
             long scrapeId,
             int? attempt,
             DateTime startedAtUtc,
+            string workerInstanceId,
             string? subphaseId,
             string? unitsKind,
             IReadOnlyList<PhaseDurationSample> durationSamples)
@@ -748,10 +1295,17 @@ public sealed class DurablePhaseProgressSink
             Descriptor = descriptor;
             ScrapeId = scrapeId;
             Attempt = attempt;
+            WorkerInstanceId = workerInstanceId;
             StartedAtUtc = startedAtUtc;
             LastProgressAtUtc = startedAtUtc;
             LastPersistedAtUtc = startedAtUtc;
             SubphaseId = subphaseId;
+            SubphaseEpoch = string.IsNullOrWhiteSpace(subphaseId) ? 0 : 1;
+            SubphaseProgressKind = "indeterminate";
+            SubphaseStartedAtUtc = string.IsNullOrWhiteSpace(subphaseId)
+                ? null
+                : startedAtUtc;
+            SubphaseLastProgressAtUtc = SubphaseStartedAtUtc;
             UnitsKind = unitsKind;
             DurationSamples = durationSamples;
         }
@@ -759,12 +1313,24 @@ public sealed class DurablePhaseProgressSink
         public PhaseProgressDescriptor Descriptor { get; }
         public long ScrapeId { get; }
         public int? Attempt { get; }
+        public string WorkerInstanceId { get; }
         public DateTime StartedAtUtc { get; }
         public DateTime LastProgressAtUtc { get; set; }
         public DateTime LastPersistedAtUtc { get; set; }
         public DateTime? PendingProgressAtUtc { get; set; }
         public string Status { get; set; } = "running";
         public string? SubphaseId { get; set; }
+        public int SubphaseEpoch { get; set; }
+        public long SubphaseSequence { get; set; }
+        public long? SubphaseResetSequence { get; set; }
+        public string SubphaseProgressKind { get; set; }
+        public string? SubphaseUnitsKind { get; set; }
+        public long? SubphaseUnitsCompleted { get; set; }
+        public long? SubphaseUnitsTotal { get; set; }
+        public bool SubphaseUnitsTotalFinal { get; set; }
+        public double? SubphasePercent { get; set; }
+        public DateTime? SubphaseStartedAtUtc { get; set; }
+        public DateTime? SubphaseLastProgressAtUtc { get; set; }
         public string? UnitsKind { get; set; }
         public long? UnitsCompleted { get; set; }
         public long? UnitsTotal { get; set; }
@@ -774,6 +1340,8 @@ public sealed class DurablePhaseProgressSink
         public double? EtaUpperSeconds { get; set; }
         public string? EtaConfidence { get; set; }
         public int? EtaSampleCount { get; set; }
+        public long? AttemptedThisPass { get; set; }
+        public long? RetryableUnavailableThisPass { get; set; }
         public IReadOnlyList<PhaseDurationSample> DurationSamples { get; }
     }
 }

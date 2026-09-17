@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, useRef, type CSSProperties } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoCompass, IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
@@ -8,16 +8,17 @@ import { useSettings } from '../../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import MarqueeText from '../../common/MarqueeText';
 import PressableButton from '../../common/PressableButton';
-import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { Routes } from '../../../routes';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import {
-  Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
+  Colors, Font, Weight, Gap, Radius, Border, Layout,
   Display, Align, Justify, Cursor, BoxSizing, CssValue, CssProp,
   flexColumn, flexRow, purpleGlass, btnDanger, transition, transitions, padding, border,
-  Overflow, LINK_TRANSITION_MS, PointerEvents,
+  Overflow, LINK_TRANSITION_MS,
 } from '@festival/theme';
 import { bandTypeLabel } from '../../../utils/bandTypes';
+import css from './PinnedSidebar.module.css';
+import { usePanelWheelHandoff } from '../../../hooks/ui/useWheelHandoff';
 
 interface PinnedSidebarProps {
   player: TrackedPlayer | null;
@@ -30,8 +31,11 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
   const { t } = useTranslation();
   const { settings } = useSettings();
   const { appManual } = useFeatureFlags();
-  const scrollRef = useScrollContainer();
   const s = useStyles();
+  const navigationRef = useRef<HTMLElement>(null);
+  const utilitiesRef = useRef<HTMLElement>(null);
+  usePanelWheelHandoff(navigationRef);
+  usePanelWheelHandoff(utilitiesRef);
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
   const showSuggestions = !!player || !!selectedBand;
   const statisticsPath = getStatisticsNavigationPath(player, selectedProfile ?? null);
@@ -39,8 +43,8 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
 
   return (
-    <aside style={s.sidebar} data-testid="pinned-sidebar" onWheel={(e) => { scrollRef.current?.scrollBy({ top: e.deltaY, left: e.deltaX }); }}>
-      <nav style={s.nav}>
+    <aside className={css.frame} data-testid="pinned-sidebar">
+      <nav ref={navigationRef} className={css.panel} aria-label={t('nav.mainNavigation')} data-testid="pinned-navigation">
         <NavLink to={Routes.songs} style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoMusicalNotes size={20} /></span>
           {t('nav.songs')}
@@ -77,7 +81,8 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
           </NavLink>
         )}
         {/* v8 ignore stop */}
-        <div style={s.spacer} />
+      </nav>
+      <nav ref={utilitiesRef} className={css.panel} aria-label={t('nav.profileSettings')} data-testid="pinned-utilities">
         {selectedBand ? (
           <SelectedBandPanel band={selectedBand} onDeselect={onDeselect} styles={s} />
         ) : player ? (
@@ -164,23 +169,12 @@ function useStyles() {
       '--frosted-card': '1',
     } as CSSProperties;
     return {
-      sidebar: {
-        width: Layout.sidebarWidth,
-        height: '100%',
-        flexShrink: 0,
-        ...flexColumn,
-        overflow: Overflow.hidden,
-        background: CssValue.transparent,
-        zIndex: ZIndex.base,
-        pointerEvents: PointerEvents.auto,
-      } as CSSProperties,
       nav: {
         ...flexColumn,
         flex: 1,
         padding: padding(Gap.md, 0, Gap.md, Gap.md),
         gap: Gap.xs,
       } as CSSProperties,
-      spacer: { flex: 1 } as CSSProperties,
       link,
       linkActive: {
         ...link,

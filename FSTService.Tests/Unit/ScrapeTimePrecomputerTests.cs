@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -205,6 +206,88 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             exception.Message);
         // Static data (firstseen) is always precomputed, even on empty DB
         Assert.True(_sut.Count >= 0);
+    }
+
+    [Fact]
+    public async Task Candidate_precompute_uses_the_supplied_publication_catalog()
+    {
+        var persistence = new FestivalPersistence(
+            _metaFixture.DataSource);
+        var publishedSong = CreateCatalogSong(
+            "published-song",
+            "Published Song");
+        var token = await persistence.SaveSongsVersionedAsync(
+            [publishedSong]);
+        var scrapeId = _metaDb.StartScrapeRun(token);
+        var publicationId = _metaDb
+            .GetPublicationGenerationForScrape(scrapeId)!
+            .PublicationId;
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong(
+                "live-song",
+                "Live Song"),
+        ]);
+        var pathStore = new PathDataStore(
+            _metaFixture.DataSource);
+        var precomputer = new ScrapeTimePrecomputer(
+            _persistence,
+            _metaDb,
+            pathStore,
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            NullLoggerFactory.Instance,
+            new JsonSerializerOptions(
+                JsonSerializerDefaults.Web),
+            new FeatureOptions());
+
+        await precomputer.PrecomputeAllAsync(
+            showLeaderboardEntryTotals: false,
+            CancellationToken.None,
+            publishImmediately: false,
+            publicationCatalogSongs: [publishedSong]);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT convert_from(json_data, 'UTF8')
+            FROM publication_api_response_cache_staging
+            WHERE publication_id = @publicationId
+              AND cache_key = @cacheKey
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        command.Parameters.AddWithValue(
+            "cacheKey",
+            PublicationApiCacheKeys.Songs);
+        var json = Assert.IsType<string>(
+            command.ExecuteScalar());
+        using var document = JsonDocument.Parse(json);
+        var songs = document.RootElement
+            .GetProperty("songs");
+        Assert.Equal(1, songs.GetArrayLength());
+        Assert.Equal(
+            "published-song",
+            songs[0].GetProperty("songId").GetString());
+    }
+
+    [Fact]
+    public async Task Candidate_precompute_rejects_an_empty_catalog()
+    {
+        var failure = await Assert.ThrowsAsync<
+            InvalidOperationException>(
+            () => _sut.PrecomputeAllAsync(
+                showLeaderboardEntryTotals: false,
+                CancellationToken.None,
+                publishImmediately: false,
+                publicationCatalogSongs: []));
+
+        Assert.Contains(
+            "empty publication catalog",
+            failure.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -591,6 +674,18 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
                     FROM publication_api_response_cache_staging
                     WHERE publication_id = @publicationId
                       AND cache_key = @cacheKey
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @songsCacheKey
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @instrumentCacheKey
                 )
             """;
         command.Parameters.AddWithValue("songId", songId);
@@ -603,6 +698,16 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         command.Parameters.AddWithValue(
             "cacheKey",
             $"lb:{songId}:10:");
+        command.Parameters.AddWithValue(
+            "songsCacheKey",
+            PublicationApiCacheKeys.Songs);
+        command.Parameters.AddWithValue(
+            "instrumentCacheKey",
+            PublicationApiCacheKeys.InstrumentLeaderboard(
+                songId,
+                instrument,
+                10,
+                leeway: null));
         using var reader = command.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal(100, reader.GetInt32(0));
@@ -617,6 +722,26 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal(
             100,
             guitar.GetProperty("totalEntries").GetInt32());
+        var songsJson =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(2));
+        Assert.Equal(
+            songId,
+            songsJson.RootElement
+                .GetProperty("songs")[0]
+                .GetProperty("songId")
+                .GetString());
+        var instrumentJson =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(3));
+        Assert.Equal(
+            instrument,
+            instrumentJson.RootElement
+                .GetProperty("instrument")
+                .GetString());
+        Assert.Equal(
+            100,
+            instrumentJson.RootElement
+                .GetProperty("totalEntries")
+                .GetInt32());
         Assert.Equal(
             200,
             _metaDb.GetLeaderboardPopulation(
@@ -962,6 +1087,37 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         }
         return ms;
     }
+
+    private static Song CreateCatalogSong(
+        string songId,
+        string title) =>
+        new()
+        {
+            _title = title,
+            lastModified = new DateTime(
+                2026,
+                8,
+                25,
+                12,
+                0,
+                0,
+                DateTimeKind.Utc),
+            track = new Track
+            {
+                su = songId,
+                tt = title,
+                an = "Artist",
+                ab = "Album",
+                au = $"https://example.test/{songId}.jpg",
+                mu = $"https://example.test/{songId}.dat",
+                sig = "4/4",
+                ge = ["rock"],
+                ry = 2026,
+                mt = 120,
+                dn = 200,
+                @in = new In { gr = 1 },
+            },
+        };
 
     private void EnsureSongRow(string songId)
     {

@@ -1,18 +1,21 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-13
-last_verified_commit: 9d11111e
+last_verified: 2026-09-03
+last_verified_commit: e4b892e3
 sources:
   - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
   - FSTService/Persistence/ImprovementNotificationService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Program.cs
+  - FSTService/ScraperOptions.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Scraping/RegisteredBandProcessing.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
 update_triggers:
-  - Notification recovery commands, markers, projection plans, max-score correction safety, gates, validation, or rollback change.
+  - Notification recovery commands, markers, projection plans, registered phase budgets, max-score correction safety, gates, validation, or rollback change.
 ---
 
 # Improvement Notification Recovery Runbook
@@ -200,13 +203,108 @@ first on the next pass.
 | `Scraper__RegisteredUserRefreshTimeout` | `00:00:00` (progress watchdog owns hangs) |
 | `Scraper__RegisteredPlayerBandDiscoveryTimeout` | `00:06:00` |
 | `Scraper__RegisteredBandTargetedProcessingTimeout` | `00:05:00` |
+| `Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace` | `false` |
+| `Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace` | `false` |
+| `Scraper__RegisteredBandRemainingWorkGraceMaxDuration` | `00:02:00` |
+| `Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow` | `00:01:30` |
+| `Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups` | `3` |
 | `Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass` | `80` |
+| `Scraper__RegisteredBandProcessingMaxBandsPerPass` | `10` |
 | `Scraper__RegisteredBandProcessingMaxLookupsPerPass` | `80` |
 
-The discovery timeout has one minute of headroom above the observed 80-lookup
-runtime. Scrape `1277` completed all 80 lookups in 291,752 ms, while scrape
-`1278` checkpointed 78 lookups before the former five-minute limit expired.
-The per-pass lookup cap and per-request cancellation remain the primary bounds.
+With tracked grace flags off, the hard limits remain six minutes for discovery
+and five minutes for targeted processing; they are failure boundaries, not
+promised headroom. If separately enabled after a matched canary, maximum
+network/await budgets are eight and seven minutes respectively. Grace is
+considered once at the base deadline only after recent durable progress, with
+no failed/non-durable logical attempt and at most three durable lookups
+remaining. Its hard deadline never moves; only another authoritative lookup
+checkpoint may move the 90-second idle deadline, and never past the hard
+deadline. Later
+production evidence falsified the earlier headroom claim: successful
+checkpoint gaps reached `72.707 s`, scrape `1375` targeted processing stopped
+at `77/80` after `300.009 s`, and scrape `1376` discovery stopped at `77/80`
+after `360.017 s`. The per-pass admitted-lookup cap and per-request
+cancellation remain the primary bounds.
+
+Primary progress is successful durable lookup checkpoints (`lookups`), not
+attempted accounts or bands. A finite pass denominator is the exact admitted
+pending lookup count capped by the option. Failed lookups do not advance it;
+attempted subjects remain secondary telemetry and consume their subject caps.
+The registered-band count cap applies to attempted bands, including a band
+whose first lookup fails. Failed bands remain retryable, but a run of invalid
+or unavailable Epic leaderboards cannot bypass the ten-band bound, starve the
+phase denominator at zero, and consume the entire wall-clock timeout. Pending
+bands sort ahead of persisted `error` bands, so a failing target set cannot
+starve untouched registered bands on later passes.
+
+For a candidate, hold provider, DOP, RPS, per-pass, publication, database, and
+worker settings constant. First enable targeted only; discovery is a separate
+one-variable A/B. Every grant must show valid `P/A/I/C/F`, `F=0`, one to three
+or zero durable remaining, recent progress within 90 seconds, exactly one
+grant, and the immutable base-plus-120-second hard deadline. A zero-grant run
+proves regression safety only, not efficacy. Require normal publication,
+notifications, unfreeze, public health, unchanged retryability/partial impacts,
+and no watchdog progress from attempts, retries, heartbeat, or grace logs.
+
+Rollback is phase-specific configuration:
+
+```text
+EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace=false
+EnableRegisteredBandTargetedProcessingRemainingWorkGrace=false
+```
+
+Apply rollback only through the canonical worker ownership/guard path at a safe
+terminal boundary; do not stop a healthy scrape solely to disable grace.
+Preserve base timeouts and all durable lookup rows. The next attempt must use a
+distinct disabled `config_id`; no schema or data rollback exists.
+
+### Accepted attempted-band canary
+
+Scrapes `1343` and `1344` each timed out
+`post.registered_band_targeted_processing` after `300 s` with `0/10` units.
+The first failed lookup returned zero successful checks, so the prior
+successful-check counter never consumed the ten-band pass budget.
+
+Candidate commit `f2a25ff0` and image
+`sha256:a4c4a334b0a28e06c342cb6543cb918de6c15604f3d17654459a34112242f6fc`
+were accepted by scrape `1345`:
+
+- the phase completed `10/10` units in `5.333779 s` with no warning or error;
+- the worker logged ten attempted bands, zero progressed lookups, and zero
+  persisted entries;
+- the exact first ten pending band hashes were the only rows resumed during
+  the phase, all became retryable `error`, and no eleventh row was touched;
+- the full 712-song scrape completed and published as publication `188` with
+  zero best-effort or writer failures;
+- notifications/projection completed, all `6,408` fingerprints and `8,544`
+  manifests were complete, and the 55-route published capture had no curl
+  failure or 5xx response;
+- report-only pruning cycle `25` matched its independent oracle with zero
+  blockers; automatic pruning remained disabled; and
+- restored Pro Cymbals snapshot `1314` remained at OID/relfilenode
+  `321906645` with `8,627` rows.
+
+The accepted evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/registered-band-targeted-resilience/candidate-1345/`.
+PR #76 merged as master commit `e4b892e3`. Official service/worker image
+`sha256:87ea296cec5cc4465c0e6e26934f338196ac7e2a9576c9fca617b039f259c2e4`
+passed 55-route same-publication parity against the accepted local service,
+then completed scrape `1346`:
+
+- the targeted phase completed `10/10` units in `6.319659 s`;
+- exactly the next ten pending rows became retryable `error`, with no eleventh
+  row touched;
+- the full scrape published as publication `190` with zero best-effort,
+  writer, fingerprint, manifest, or critical phase failure;
+- notifications/projection completed and the 55-route published capture had
+  no curl failure or 5xx response; and
+- report-only cycle `26` matched its independent oracle with zero blockers.
+
+The official evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/registered-band-targeted-resilience/official-1346/`.
+Attempted-band budgeting and pending-before-error ordering are now the deployed
+production baseline.
 
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.
@@ -236,6 +334,13 @@ the exact lookup ID so an ID change reopens that season. Legacy and batched
 history reconstruction likewise remain pending when any required window is
 missing or its lookup fails, and version/fingerprint changes invalidate prior
 completion.
+
+The exact Epic `com.epicgames.events.invalid_leaderboard` response is
+retryable unavailable state, not permanent absence. Discovery records an
+unchecked attempted row and stops that account for the pass; targeted
+processing leaves the intent unchecked and advances to the next band.
+Arbitrary sequences of unavailable intents are not consumed within one
+subject.
 
 The cyclical machine snapshots the active season/window fingerprint. Late
 attachments requesting a different fingerprint wait for a new cycle rather

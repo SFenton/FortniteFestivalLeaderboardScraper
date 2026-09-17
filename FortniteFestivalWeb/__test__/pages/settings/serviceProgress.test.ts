@@ -234,6 +234,103 @@ describe('service progress display reducer', () => {
     expect(next.display.overallPercent).toBe(45);
   });
 
+  it('keeps attempt progress monotonic and resets it for a new phase attempt', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 10,
+        retryableUnavailableThisPass: 10,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const lower = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 5,
+        retryableUnavailableThisPass: 5,
+      },
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+    const restarted = reduceServiceProgress(lower.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 2,
+      unitsCompleted: 1,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 1.25,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 1,
+        retryableUnavailableThisPass: 0,
+      },
+      lastProgressAt: '2026-08-13T17:04:00Z',
+    }));
+
+    expect(first.display.attemptProgress).toEqual({
+      attemptedThisPass: 10,
+      retryableUnavailableThisPass: 10,
+    });
+    expect(lower.display.attemptProgress).toEqual(
+      first.display.attemptProgress,
+    );
+    expect(restarted.display.attemptProgress).toEqual({
+      attemptedThisPass: 1,
+      retryableUnavailableThisPass: 0,
+    });
+  });
+
+  it('clears attempt progress when a v2 payload omits rejected counters', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: {
+        schemaVersion: 1,
+        attemptedThisPass: 10,
+        retryableUnavailableThisPass: 10,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const omitted = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'post.registered_player_band_discovery',
+      phaseOrdinal: 270,
+      phaseAttempt: 1,
+      unitsCompleted: 0,
+      unitsTotal: 80,
+      unitsTotalFinal: true,
+      phasePercent: 0,
+      attemptProgress: null,
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+
+    expect(first.display.attemptProgress).not.toBeNull();
+    expect(omitted.display.attemptProgress).toBeNull();
+  });
+
   it('suppresses incomplete or invalid ETA evidence', () => {
     expect(getTrustedEta(serviceInfo({
       etaLowerSeconds: 30,
@@ -265,6 +362,265 @@ describe('service progress display reducer', () => {
       etaConfidence: 'unsupported',
       etaSampleCount: 5,
     }))).toBeNull();
+  });
+
+  it('resets exact bar progress when the subphase epoch changes', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      unitsTotalFinal: true,
+      phasePercent: 90,
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 5,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 90,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 90,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const next = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      unitsTotalFinal: true,
+      phasePercent: 90,
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 2,
+        sequence: 1,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 5,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 5,
+      },
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+
+    expect(first.display.barProgress?.percent).toBe(90);
+    expect(next.display.barProgress?.percent).toBe(5);
+    expect(next.display.barProgress?.epoch).toBe(2);
+  });
+
+  it('resets exact bar progress when the subphase identity changes', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 5,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 90,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 90,
+      },
+    }));
+    const next = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'persisting_scores',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'persisting_scores',
+        epoch: 1,
+        sequence: 1,
+        kind: 'exact',
+        unitsKind: 'scores',
+        unitsCompleted: 5,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 5,
+      },
+    }));
+
+    expect(next.display.barProgress?.id).toBe('persisting_scores');
+    expect(next.display.barProgress?.percent).toBe(5);
+  });
+
+  it('resets exact bar progress for a new scrape with the same phase identity', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      scrapeId: 1296,
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 5,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 90,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 90,
+      },
+    }));
+    const next = reduceServiceProgress(first.memory, serviceInfo({
+      scrapeId: 1297,
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 1,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 5,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 5,
+      },
+    }));
+
+    expect(next.display.barProgress?.percent).toBe(5);
+  });
+
+  it('ignores a lower subphase sequence within the same identity', () => {
+    const first = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 5,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 50,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 50,
+      },
+      lastProgressAt: '2026-08-13T17:02:00Z',
+    }));
+    const stale = reduceServiceProgress(first.memory, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 4,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 80,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 80,
+      },
+      lastProgressAt: '2026-08-13T17:03:00Z',
+    }));
+
+    expect(stale.display.barProgress?.sequence).toBe(5);
+    expect(stale.display.barProgress?.percent).toBe(50);
+  });
+
+  it('does not reuse phase progress for a legacy subphase', () => {
+    const result = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'persisting_scores',
+      unitsCompleted: 100,
+      unitsTotal: 100,
+      unitsTotalFinal: true,
+      phasePercent: 100,
+    }));
+
+    expect(result.display.phasePercent).toBe(100);
+    expect(result.display.barProgress?.kind).toBe('indeterminate');
+    expect(result.display.barProgress?.percent).toBeNull();
+  });
+
+  it('maps not-applicable subphase progress to no bar', () => {
+    const result = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'skipping_band_after_timeout',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'skipping_band_after_timeout',
+        epoch: 3,
+        sequence: 7,
+        kind: 'not_applicable',
+        unitsTotalFinal: false,
+      },
+    }));
+
+    expect(result.display.barProgress?.kind).toBe('not_applicable');
+    expect(result.display.barProgress?.percent).toBeNull();
+  });
+
+  it('treats unknown subphase schemas and mismatched IDs as indeterminate', () => {
+    const unknownSchema = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'fetching_leaderboards',
+      subphaseProgress: {
+        schemaVersion: 2,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 1,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 50,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 50,
+      },
+    }));
+    const mismatchedId = reduceServiceProgress(null, serviceInfo({
+      operationId: 'scrape.update',
+      phaseId: 'scrape.leaderboards',
+      phaseAttempt: 1,
+      subphaseId: 'persisting_scores',
+      subphaseProgress: {
+        schemaVersion: 1,
+        id: 'fetching_leaderboards',
+        epoch: 1,
+        sequence: 1,
+        kind: 'exact',
+        unitsKind: 'leaderboards',
+        unitsCompleted: 100,
+        unitsTotal: 100,
+        unitsTotalFinal: true,
+        percent: 100,
+      },
+    }));
+
+    expect(unknownSchema.display.barProgress?.kind).toBe('indeterminate');
+    expect(unknownSchema.display.barProgress?.percent).toBeNull();
+    expect(mismatchedId.display.barProgress?.kind).toBe('indeterminate');
+    expect(mismatchedId.display.barProgress?.percent).toBeNull();
   });
 
   it('keeps the memory type serializable for hook state', () => {

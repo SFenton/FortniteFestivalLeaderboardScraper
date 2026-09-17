@@ -229,6 +229,16 @@ public sealed class RetiredMaintenanceCommandGuardTests
             MaxScoreMaintenanceCommand.SongIdFlag,
             "song-a",
         ]);
+        RetiredMaintenanceCommandGuard.ThrowIfPresent(
+        [
+            MaxScoreMaintenanceCommand.RollbackFlag,
+            MaxScoreMaintenanceCommand.RollbackFileFlag,
+            "rollback.json",
+            MaxScoreMaintenanceCommand
+                .ExpectedRollbackDigestFlag,
+            new string('a', 64),
+            MaxScoreMaintenanceCommand.RollbackDryRunFlag,
+        ]);
 
         var exception = Assert.Throws<ArgumentException>(() =>
             RetiredMaintenanceCommandGuard.ThrowIfPresent(

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>FstSnapshotGenerationQuarantine</AssemblyName>
+    <RootNamespace>FstSnapshotGenerationQuarantine</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="EvidenceValidator.cs" />
+    <Compile Remove="QuarantineModels.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\FSTService\FSTService.csproj" />
+    <ProjectReference Include="..\FstSnapshotGenerationEvidence\FstSnapshotGenerationEvidence.csproj" />
+  </ItemGroup>
+</Project>

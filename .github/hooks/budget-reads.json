@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node \"$HOME/.copilot/skills/budget-workflow/scripts/routing-enforcement.mjs\" prompt-start",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node \"$HOME/.copilot/skills/budget-workflow/scripts/routing-enforcement.mjs\" session-end",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

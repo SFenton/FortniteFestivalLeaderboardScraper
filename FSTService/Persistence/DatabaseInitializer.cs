@@ -46,47 +46,34 @@ public static class DatabaseInitializer
         );
         """;
 
-    public static async Task EnsureSchemaAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
+    public static async Task EnsureSchemaAsync(
+        NpgsqlDataSource dataSource,
+        CancellationToken ct = default,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        bool initializePublicationPathArtifacts = true)
     {
+        if (initializePublicationPathArtifacts)
+            await PublicationPathArtifactReleaseGate.ValidateExistingBeforeInitializationAsync(dataSource, ct);
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         foreach (var step in GetSchemaInitializationPlan())
         {
-            if (step.UseShortTransaction)
+            if (!initializePublicationPathArtifacts
+                && step.Name == "publication-path-artifacts")
+                continue;
+            if (step.UseConcurrentIndex)
             {
-                await using var tx = await conn.BeginTransactionAsync(ct);
-                await using (var timeout = conn.CreateCommand())
-                {
-                    timeout.Transaction = tx;
-                    timeout.CommandTimeout = NotificationSchemaCommandTimeoutSeconds;
-                    timeout.CommandText = """
-                        SELECT set_config('lock_timeout', @lockTimeout, true);
-                        SELECT set_config('statement_timeout', @statementTimeout, true);
-                        """;
-                    timeout.Parameters.AddWithValue(
-                        "lockTimeout",
-                        NotificationSchemaLockTimeout);
-                    timeout.Parameters.AddWithValue(
-                        "statementTimeout",
-                        NotificationSchemaStatementTimeout);
-                    await timeout.ExecuteNonQueryAsync(ct);
-                }
-
-                await using (var cmd = conn.CreateCommand())
-                {
-                    cmd.Transaction = tx;
-                    cmd.CommandTimeout = step.CommandTimeoutSeconds;
-                    cmd.CommandText = step.Sql;
-                    await cmd.ExecuteNonQueryAsync(ct);
-                }
-
-                await tx.CommitAsync(ct);
+                await ExecuteConcurrentIndexInitializationStepAsync(
+                    dataSource,
+                    step,
+                    ct);
                 continue;
             }
 
-            await using var unbounded = conn.CreateCommand();
-            unbounded.CommandTimeout = step.CommandTimeoutSeconds;
-            unbounded.CommandText = step.Sql;
-            await unbounded.ExecuteNonQueryAsync(ct);
+            await ExecuteSchemaInitializationStepAsync(
+                conn,
+                step,
+                ct,
+                reportWarning);
         }
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
@@ -97,6 +84,364 @@ public static class DatabaseInitializer
             SELECT setval('user_sessions_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM user_sessions), 0) + 1, (SELECT last_value + CASE WHEN is_called THEN 1 ELSE 0 END FROM user_sessions_id_seq)), false);
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
+    }
+
+    internal static async Task<SnapshotRetentionSchemaDmlProof> EnsureSnapshotGenerationRetentionSchemaAsync(
+        string normalizedConnectionString,
+        CancellationToken ct = default,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeDmlAssertionForTest = null,
+        Func<CancellationToken, Task>? afterServerCommitForTest = null,
+        Func<Task>? beforeConnectionDisposeForTest = null)
+    {
+        ArgumentNullException.ThrowIfNull(normalizedConnectionString);
+        var step = SnapshotGenerationRetentionInitializationStep;
+        SnapshotRetentionSchemaSqlBackstop.RequireDdlOnly(step.Sql);
+        SnapshotRetentionSchemaDmlProof? proof = null;
+        var commitAttempted = false;
+        var commitAcknowledged = false;
+        try
+        {
+            // PG17's xact view can include older unflushed backend counts; never reuse a session here.
+            // The host passes its original normalized configuration, never the data source's sanitized display string.
+            await using var connection = new PostgresUnpooledConnectionFactory(normalizedConnectionString).CreateConnection();
+            await connection.OpenAsync(ct);
+            IReadOnlyList<SnapshotRetentionSchemaTableIdentity>? identitiesBefore = null;
+            await ExecuteSchemaInitializationStepAsync(
+                connection, step, ct,
+                beforeExecute: async (session, transaction, token) =>
+                {
+                    await SnapshotRetentionSchemaDmlAssertion.AcquireAdmissionAsync(session, transaction, token);
+                    identitiesBefore = await SnapshotRetentionSchemaRelationIdentity.CaptureAsync(session, transaction, token);
+                },
+                beforeCommit: async (session, transaction, token) =>
+                {
+                    if (beforeDmlAssertionForTest is not null)
+                        await beforeDmlAssertionForTest(session, transaction, token);
+                    proof = await SnapshotRetentionSchemaDmlAssertion.AssertBeforeCommitAsync(session, transaction,
+                        identitiesBefore ?? throw new InvalidOperationException("Source identity baseline is absent."), token);
+                },
+                commitTransaction: async (transaction, token) =>
+                {
+                    if (proof is null)
+                        throw new InvalidOperationException("The combined proof is absent before commit.");
+                    commitAttempted = true;
+                    await transaction.CommitAsync(token);
+                    if (afterServerCommitForTest is not null)
+                        await afterServerCommitForTest(token);
+                    commitAcknowledged = true;
+                });
+            if (beforeConnectionDisposeForTest is not null)
+                await beforeConnectionDisposeForTest();
+            return proof ?? throw new InvalidOperationException("The dedicated schema transaction did not produce its combined proof.");
+        }
+        catch (Exception exception) when (commitAttempted && proof is not null)
+        {
+            throw new SnapshotRetentionSchemaCommitOutcomeException(
+                commitAcknowledged ? true : null, proof, exception);
+        }
+    }
+
+    internal static DatabaseSchemaInitializationStep SnapshotGenerationRetentionInitializationStep =>
+        new(
+            Name: "snapshot-generation-retention-report-only",
+            Sql: Maintenance.SnapshotGenerationRetentionSchema.Sql,
+            CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+            UseShortTransaction: true,
+            LockTimeout: NotificationSchemaLockTimeout,
+            StatementTimeout: NotificationSchemaStatementTimeout);
+
+    internal static async Task
+        EnsurePublicationGenerationRetirementSchemaAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        foreach (var step in GetSchemaInitializationPlan()
+                     .Where(static item =>
+                         item.Name is
+                             "publication-generation-retirement-columns"
+                             or
+                             "publication-generation-retirement-index"))
+        {
+            if (step.UseConcurrentIndex)
+            {
+                await ExecuteConcurrentIndexInitializationStepAsync(
+                    dataSource,
+                    step,
+                    ct);
+                continue;
+            }
+
+            await using var connection =
+                await dataSource.OpenConnectionAsync(ct);
+            await ExecuteSchemaInitializationStepAsync(
+                connection,
+                step,
+                ct);
+        }
+    }
+
+    internal static async Task
+        EnsurePublicationGenerationRetirementIndexAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        var step = GetSchemaInitializationPlan()
+            .Single(static item =>
+                item.Name ==
+                    "publication-generation-retirement-index");
+        await ExecuteConcurrentIndexInitializationStepAsync(
+            dataSource,
+            step,
+            ct);
+    }
+
+    internal static async Task
+        EnsurePublicationGenerationForeignKeysAsync(
+            NpgsqlDataSource dataSource,
+            CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        var step = GetSchemaInitializationPlan()
+            .Single(static item =>
+                item.Name ==
+                    "publication-generation-foreign-keys");
+        await using var connection =
+            await dataSource.OpenConnectionAsync(ct);
+        await ExecuteSchemaInitializationStepAsync(
+            connection,
+            step,
+            ct);
+    }
+
+    private static async Task ExecuteSchemaInitializationStepAsync(
+        NpgsqlConnection connection,
+        DatabaseSchemaInitializationStep step,
+        CancellationToken ct,
+        Action<PublicationPathArtifactInitializationFailure>? reportWarning = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeExecute = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? beforeCommit = null,
+        Func<NpgsqlTransaction, CancellationToken, Task>? commitTransaction = null)
+    {
+        if (!step.UseShortTransaction && (beforeExecute is not null || beforeCommit is not null || commitTransaction is not null))
+            throw new InvalidOperationException("Schema transaction hooks require a bounded transaction.");
+        if (step.UseShortTransaction)
+        {
+            await using var transaction =
+                await connection.BeginTransactionAsync(ct);
+            await using (var timeout = connection.CreateCommand())
+            {
+                timeout.Transaction = transaction;
+                timeout.CommandTimeout =
+                    NotificationSchemaCommandTimeoutSeconds;
+                timeout.CommandText = """
+                    SELECT pg_catalog.set_config(
+                        'lock_timeout',
+                        @lockTimeout,
+                        true);
+                    SELECT pg_catalog.set_config(
+                        'statement_timeout',
+                        @statementTimeout,
+                        true);
+                    """;
+                timeout.Parameters.AddWithValue(
+                    "lockTimeout",
+                    step.LockTimeout
+                    ?? NotificationSchemaLockTimeout);
+                timeout.Parameters.AddWithValue(
+                    "statementTimeout",
+                    step.StatementTimeout
+                    ?? NotificationSchemaStatementTimeout);
+                await timeout.ExecuteNonQueryAsync(ct);
+            }
+
+            if (beforeExecute is not null)
+                await beforeExecute(connection, transaction, ct);
+
+            await using (var command =
+                         connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                command.CommandText = step.Sql;
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            if (step.Name == "publication-path-artifacts")
+            {
+                var warnings = await PublicationPathArtifactReleaseGate.ValidateInitializedActiveBindingsAsync(
+                    connection, transaction, ct);
+                foreach (var warning in warnings)
+                {
+                    if (reportWarning is not null)
+                        reportWarning(warning);
+                    else
+                        Console.Error.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            severity = "warning",
+                            code = "previous_path_binding_invalid",
+                            publicationId = warning.PublicationId,
+                            reason = warning.Code,
+                        }));
+                }
+            }
+
+            if (beforeCommit is not null)
+                await beforeCommit(connection, transaction, ct);
+            if (commitTransaction is not null)
+                await commitTransaction(transaction, ct);
+            else
+                await transaction.CommitAsync(ct);
+            return;
+        }
+
+        await using var unbounded =
+            connection.CreateCommand();
+        unbounded.CommandTimeout = step.CommandTimeoutSeconds;
+        unbounded.CommandText = step.Sql;
+        await unbounded.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task
+        ExecuteConcurrentIndexInitializationStepAsync(
+            NpgsqlDataSource dataSource,
+            DatabaseSchemaInitializationStep step,
+            CancellationToken ct)
+    {
+        if (!step.UseConcurrentIndex
+            || string.IsNullOrWhiteSpace(
+                step.ValidationSql)
+            || string.IsNullOrWhiteSpace(
+                step.CleanupSql))
+        {
+            throw new InvalidOperationException(
+                $"Concurrent index initialization step {step.Name} is incomplete.");
+        }
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync(ct);
+        await using (var timeout = connection.CreateCommand())
+        {
+            timeout.CommandTimeout =
+                step.CommandTimeoutSeconds;
+            timeout.CommandText = """
+                SELECT set_config(
+                    'lock_timeout',
+                    @lockTimeout,
+                    false);
+                SELECT set_config(
+                    'statement_timeout',
+                    @statementTimeout,
+                    false);
+                """;
+            timeout.Parameters.AddWithValue(
+                "lockTimeout",
+                step.LockTimeout
+                ?? NotificationSchemaLockTimeout);
+            timeout.Parameters.AddWithValue(
+                "statementTimeout",
+                step.StatementTimeout
+                ?? NotificationSchemaStatementTimeout);
+            await timeout.ExecuteNonQueryAsync(ct);
+        }
+
+        var advisoryLockHeld = false;
+        try
+        {
+            await using (var advisoryLock =
+                         connection.CreateCommand())
+            {
+                advisoryLock.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                advisoryLock.CommandText =
+                    "SELECT pg_advisory_lock(@lockKey)";
+                advisoryLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationRetirementSchemaMigration
+                        .AdvisoryLockKey);
+                await advisoryLock.ExecuteNonQueryAsync(ct);
+                advisoryLockHeld = true;
+            }
+
+            if (await IsConcurrentIndexValidAsync(
+                    connection,
+                    step,
+                    ct))
+            {
+                return;
+            }
+
+            await using (var cleanup =
+                         connection.CreateCommand())
+            {
+                cleanup.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                cleanup.CommandText =
+                    step.CleanupSql;
+                await cleanup.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var create =
+                         connection.CreateCommand())
+            {
+                create.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                create.CommandText = step.Sql;
+                await create.ExecuteNonQueryAsync(ct);
+            }
+
+            if (!await IsConcurrentIndexValidAsync(
+                    connection,
+                    step,
+                    ct))
+            {
+                throw new InvalidOperationException(
+                    $"Concurrent index initialization step {step.Name} did not produce its exact valid index.");
+            }
+        }
+        finally
+        {
+            if (advisoryLockHeld)
+            {
+                await using var advisoryUnlock =
+                    connection.CreateCommand();
+                advisoryUnlock.CommandTimeout =
+                    step.CommandTimeoutSeconds;
+                advisoryUnlock.CommandText =
+                    "SELECT pg_advisory_unlock(@lockKey)";
+                advisoryUnlock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationRetirementSchemaMigration
+                        .AdvisoryLockKey);
+                var unlocked =
+                    (bool)(await advisoryUnlock
+                        .ExecuteScalarAsync(
+                            CancellationToken.None))!;
+                if (!unlocked)
+                {
+                    throw new InvalidOperationException(
+                        $"Concurrent index initialization step {step.Name} lost its advisory lock.");
+                }
+            }
+        }
+    }
+
+    private static async Task<bool>
+        IsConcurrentIndexValidAsync(
+            NpgsqlConnection connection,
+            DatabaseSchemaInitializationStep step,
+            CancellationToken ct)
+    {
+        await using var validation =
+            connection.CreateCommand();
+        validation.CommandTimeout =
+            step.CommandTimeoutSeconds;
+        validation.CommandText =
+            step.ValidationSql!;
+        return (bool)(await validation
+            .ExecuteScalarAsync(ct))!;
     }
 
     internal static IReadOnlyList<DatabaseSchemaInitializationStep>
@@ -130,6 +475,100 @@ public static class DatabaseInitializer
                 UseShortTransaction: false,
                 LockTimeout: null,
                 StatementTimeout: null),
+            new(
+                Name: "scrape-acquisition-checkpoint",
+                Sql: ScrapeAcquisitionCheckpointSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "publication-generation-retirement-columns",
+                Sql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .ColumnsSql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "publication-generation-foreign-keys",
+                Sql:
+                    PublicationGenerationForeignKeyMigration
+                        .Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "publication-generation-retirement-index",
+                Sql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .CreateIndexSql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: false,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout,
+                UseConcurrentIndex: true,
+                ValidationSql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .IndexValidationSql,
+                CleanupSql:
+                    PublicationGenerationRetirementSchemaMigration
+                        .DropIndexSql),
+            new(
+                Name: "publication-path-artifacts",
+                Sql: PublicationPathArtifactSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout: NotificationSchemaStatementTimeout),
+            SnapshotGenerationRetentionInitializationStep,
+            new(
+                Name:
+                    "snapshot-generation-retirement-control-plane",
+                Sql: Maintenance
+                    .SnapshotGenerationRetirementSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "snapshot-generation-quarantine",
+                Sql: Maintenance
+                    .SnapshotGenerationQuarantineSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
+            new(
+                Name:
+                    "snapshot-generation-drop",
+                Sql: Maintenance
+                    .SnapshotGenerationDropSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
             new(
                 Name: "max-score-maintenance",
                 Sql: MaxScoreMaintenanceSchema.Sql,
@@ -211,6 +650,22 @@ public static class DatabaseInitializer
             ADD COLUMN IF NOT EXISTS path_generation_revision BIGINT NOT NULL DEFAULT 0;
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS path_generation_pending BOOLEAN NOT NULL DEFAULT FALSE;
+
+        -- Publication-safe scrape-pass staging deferral state. These columns
+        -- never clear path_generation_pending: a deferred song stays pending
+        -- and auditable, it is only excluded from automatic selection.
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_required BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_reason TEXT;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_review_at TIMESTAMPTZ;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_next_attempt_at TIMESTAMPTZ;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_deferral_identity TEXT;
 
         CREATE OR REPLACE FUNCTION reject_incoherent_legacy_path_write()
         RETURNS trigger
@@ -376,11 +831,9 @@ public static class DatabaseInitializer
             ON leaderboard_entries (account_id, song_id, instrument);
         CREATE INDEX IF NOT EXISTS ix_le_song_source
             ON leaderboard_entries (song_id, instrument, source);
-        -- ix_le_song_rank removed 2026-04-23 (Phase 2): idx_scan=0 across all
-        -- 9 partitions for the life of the database. Per-song rank ordering is
-        -- provided instead by the (song_id, instrument, score DESC) index
-        -- (ix_le_song_score), which supports the actual access pattern.
-        -- Saves ~3.9 GB.
+        -- ix_le_song_rank is intentionally absent from bootstrap DDL. Its
+        -- remaining live parent/leaf family is owned only by the guarded
+        -- retirement package after a dated zero-use observation.
 
         CREATE TABLE IF NOT EXISTS instrument_scrape_state (
             instrument         TEXT        PRIMARY KEY,
@@ -420,15 +873,426 @@ public static class DatabaseInitializer
             PRIMARY KEY (snapshot_id, song_id, instrument, account_id)
         ) PARTITION BY LIST (instrument);
 
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_guitar    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Guitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_bass      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Bass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_drums     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Drums');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_vocals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Vocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_guitar     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralGuitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_bass       PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralBass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_vocals     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralVocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_cymbals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralCymbals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_drums      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralDrums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_guitar    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Guitar')            PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_bass      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Bass')              PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_drums     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Drums')             PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_vocals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Vocals')            PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_guitar     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralGuitar')  PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_bass       PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralBass')    PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_vocals     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralVocals')  PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_cymbals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralCymbals') PARTITION BY LIST (snapshot_id);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_drums      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralDrums')   PARTITION BY LIST (snapshot_id);
+
+        DO $snapshot_defaults$
+        DECLARE
+            partition_name TEXT;
+        BEGIN
+            FOREACH partition_name IN ARRAY ARRAY[
+                'leaderboard_entries_snapshot_solo_guitar',
+                'leaderboard_entries_snapshot_solo_bass',
+                'leaderboard_entries_snapshot_solo_drums',
+                'leaderboard_entries_snapshot_solo_vocals',
+                'leaderboard_entries_snapshot_pro_guitar',
+                'leaderboard_entries_snapshot_pro_bass',
+                'leaderboard_entries_snapshot_pro_vocals',
+                'leaderboard_entries_snapshot_pro_cymbals',
+                'leaderboard_entries_snapshot_pro_drums'
+            ]
+            LOOP
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_class relation
+                    JOIN pg_namespace namespace
+                      ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = 'public'
+                      AND relation.relname = partition_name
+                      AND relation.relkind = 'p'
+                ) THEN
+                    EXECUTE format(
+                        'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.%I DEFAULT',
+                        partition_name || '_default',
+                        partition_name);
+                END IF;
+            END LOOP;
+        END
+        $snapshot_defaults$;
+
+        CREATE OR REPLACE FUNCTION ensure_leaderboard_snapshot_generation_partition(
+            p_instrument TEXT,
+            p_snapshot_id BIGINT)
+        RETURNS TEXT
+        LANGUAGE plpgsql
+        AS $snapshot_generation$
+        DECLARE
+            instrument_partition TEXT;
+            generation_partition TEXT;
+            observed_bound TEXT;
+            observed_oid BIGINT;
+            active_hold_exists BOOLEAN := FALSE;
+            committed_drop_exists BOOLEAN := FALSE;
+        BEGIN
+            IF p_snapshot_id <= 0 THEN
+                RAISE EXCEPTION 'snapshot generation ID must be positive';
+            END IF;
+
+            instrument_partition := CASE p_instrument
+                WHEN 'Solo_Guitar' THEN 'leaderboard_entries_snapshot_solo_guitar'
+                WHEN 'Solo_Bass' THEN 'leaderboard_entries_snapshot_solo_bass'
+                WHEN 'Solo_Drums' THEN 'leaderboard_entries_snapshot_solo_drums'
+                WHEN 'Solo_Vocals' THEN 'leaderboard_entries_snapshot_solo_vocals'
+                WHEN 'Solo_PeripheralGuitar' THEN 'leaderboard_entries_snapshot_pro_guitar'
+                WHEN 'Solo_PeripheralBass' THEN 'leaderboard_entries_snapshot_pro_bass'
+                WHEN 'Solo_PeripheralVocals' THEN 'leaderboard_entries_snapshot_pro_vocals'
+                WHEN 'Solo_PeripheralCymbals' THEN 'leaderboard_entries_snapshot_pro_cymbals'
+                WHEN 'Solo_PeripheralDrums' THEN 'leaderboard_entries_snapshot_pro_drums'
+                ELSE NULL
+            END;
+
+            IF instrument_partition IS NULL THEN
+                RAISE EXCEPTION 'unsupported snapshot instrument: %', p_instrument;
+            END IF;
+
+            -- Existing production partitions remain regular tables until the
+            -- guarded migration converts them. The write path stays compatible
+            -- before and after that cutover.
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_class relation
+                JOIN pg_namespace namespace
+                  ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND relation.relname = instrument_partition
+                  AND relation.relkind = 'p'
+            ) THEN
+                RETURN instrument_partition;
+            END IF;
+
+            generation_partition :=
+                instrument_partition || '_s' || p_snapshot_id::TEXT;
+
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            SELECT
+                pg_get_expr(
+                    relation.relpartbound,
+                    relation.oid,
+                    TRUE),
+                relation.oid::BIGINT
+            INTO
+                observed_bound,
+                observed_oid
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS NOT NULL THEN
+                IF to_regclass(
+                        'public.snapshot_generation_drop_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_finalizations')
+                        IS NOT NULL
+                THEN
+                    EXECUTE
+                        'WITH latest_drop AS (
+                            SELECT drop_row.drop_operation_id
+                            FROM public.snapshot_generation_drop_operations
+                                drop_row
+                            WHERE drop_row.instrument = $1
+                              AND drop_row.snapshot_id = $2
+                            ORDER BY
+                                drop_row.dropped_at DESC,
+                                drop_row.drop_operation_id DESC
+                            LIMIT 1)
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM latest_drop)
+                           AND NOT EXISTS (
+                            SELECT 1
+                            FROM latest_drop
+                            JOIN public.snapshot_generation_restore_operations
+                                restore_row
+                              ON restore_row.drop_operation_id =
+                                    latest_drop.drop_operation_id
+                            JOIN public.snapshot_generation_restore_finalizations
+                                finalization
+                              ON finalization.restore_operation_id =
+                                    restore_row.restore_operation_id
+                            WHERE restore_row.restored_child_oid = $3)'
+                    INTO committed_drop_exists
+                    USING
+                        p_instrument,
+                        p_snapshot_id,
+                        observed_oid;
+                    IF committed_drop_exists THEN
+                        RAISE EXCEPTION
+                            'snapshot generation %/% does not match a finalized logical restore',
+                            p_instrument,
+                            p_snapshot_id
+                            USING ERRCODE = '55000';
+                    END IF;
+                END IF;
+                IF observed_bound IS DISTINCT FROM
+                        format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                    RAISE EXCEPTION
+                        'snapshot generation partition % has unexpected bound %',
+                        generation_partition,
+                        observed_bound;
+                END IF;
+                RETURN generation_partition;
+            END IF;
+
+            IF to_regclass('public.' || generation_partition) IS NOT NULL THEN
+                RAISE EXCEPTION
+                    'snapshot generation relation % exists outside expected parent',
+                    generation_partition;
+            END IF;
+
+            IF to_regclass(
+                    'public.snapshot_generation_drop_operations')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_drop_operations
+                        WHERE instrument = $1
+                          AND snapshot_id = $2)'
+                INTO committed_drop_exists
+                USING p_instrument, p_snapshot_id;
+                IF committed_drop_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has a committed DROP tombstone',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            -- PostgreSQL chooses inherited index names in the shared schema.
+            -- Serialize generation DDL across instruments so concurrent first
+            -- batches cannot select the same truncated index name.
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended(
+                    'fst.snapshot-generation-partition-ddl',
+                    0));
+
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            SELECT
+                pg_get_expr(
+                    relation.relpartbound,
+                    relation.oid,
+                    TRUE),
+                relation.oid::BIGINT
+            INTO
+                observed_bound,
+                observed_oid
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS NOT NULL THEN
+                IF to_regclass(
+                        'public.snapshot_generation_drop_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_operations')
+                        IS NOT NULL
+                   AND to_regclass(
+                        'public.snapshot_generation_restore_finalizations')
+                        IS NOT NULL
+                THEN
+                    EXECUTE
+                        'WITH latest_drop AS (
+                            SELECT drop_row.drop_operation_id
+                            FROM public.snapshot_generation_drop_operations
+                                drop_row
+                            WHERE drop_row.instrument = $1
+                              AND drop_row.snapshot_id = $2
+                            ORDER BY
+                                drop_row.dropped_at DESC,
+                                drop_row.drop_operation_id DESC
+                            LIMIT 1)
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM latest_drop)
+                           AND NOT EXISTS (
+                            SELECT 1
+                            FROM latest_drop
+                            JOIN public.snapshot_generation_restore_operations
+                                restore_row
+                              ON restore_row.drop_operation_id =
+                                    latest_drop.drop_operation_id
+                            JOIN public.snapshot_generation_restore_finalizations
+                                finalization
+                              ON finalization.restore_operation_id =
+                                    restore_row.restore_operation_id
+                            WHERE restore_row.restored_child_oid = $3)'
+                    INTO committed_drop_exists
+                    USING
+                        p_instrument,
+                        p_snapshot_id,
+                        observed_oid;
+                    IF committed_drop_exists THEN
+                        RAISE EXCEPTION
+                            'snapshot generation %/% does not match a finalized logical restore',
+                            p_instrument,
+                            p_snapshot_id
+                            USING ERRCODE = '55000';
+                    END IF;
+                END IF;
+                IF observed_bound IS DISTINCT FROM
+                        format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                    RAISE EXCEPTION
+                        'snapshot generation partition % has unexpected bound %',
+                        generation_partition,
+                        observed_bound;
+                END IF;
+                RETURN generation_partition;
+            END IF;
+
+            IF to_regclass('public.' || generation_partition) IS NOT NULL THEN
+                RAISE EXCEPTION
+                    'snapshot generation relation % exists outside expected parent',
+                    generation_partition;
+            END IF;
+
+            IF to_regclass(
+                    'public.snapshot_generation_retention_holds')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_retention_holds
+                        WHERE instrument = $1
+                          AND snapshot_id = $2
+                          AND hold_kind IN (
+                                ''retention_in_flight'',
+                                ''restore_in_flight'')
+                          AND released_at IS NULL)'
+                INTO active_hold_exists
+                USING p_instrument, p_snapshot_id;
+                IF active_hold_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has an active retention or restore hold',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+            IF to_regclass(
+                    'public.snapshot_generation_drop_operations')
+                    IS NOT NULL
+            THEN
+                EXECUTE
+                    'SELECT EXISTS (
+                        SELECT 1
+                        FROM public.snapshot_generation_drop_operations
+                        WHERE instrument = $1
+                          AND snapshot_id = $2)'
+                INTO committed_drop_exists
+                USING p_instrument, p_snapshot_id;
+                IF committed_drop_exists THEN
+                    RAISE EXCEPTION
+                        'snapshot generation %/% has a committed DROP tombstone',
+                        p_instrument,
+                        p_snapshot_id
+                        USING ERRCODE = '55000';
+                END IF;
+            END IF;
+
+            EXECUTE format(
+                'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.%I FOR VALUES IN (%s)',
+                generation_partition,
+                instrument_partition,
+                p_snapshot_id);
+
+            SELECT pg_get_expr(relation.relpartbound, relation.oid, TRUE)
+            INTO observed_bound
+            FROM pg_class relation
+            JOIN pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            JOIN pg_inherits inheritance
+              ON inheritance.inhrelid = relation.oid
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = generation_partition
+              AND inheritance.inhparent =
+                    to_regclass('public.' || instrument_partition);
+
+            IF observed_bound IS DISTINCT FROM
+                    format('FOR VALUES IN (%L)', p_snapshot_id) THEN
+                RAISE EXCEPTION
+                    'snapshot generation partition % has unexpected bound %',
+                    generation_partition,
+                    observed_bound;
+            END IF;
+
+            RETURN generation_partition;
+        END
+        $snapshot_generation$;
 
         CREATE INDEX IF NOT EXISTS ix_les_snapshot_song_score
             ON leaderboard_entries_snapshot (snapshot_id, song_id, instrument, score DESC);
@@ -937,6 +1801,16 @@ public static class DatabaseInitializer
             eta_upper_seconds     DOUBLE PRECISION,
             eta_confidence        TEXT,
             eta_sample_count      INTEGER,
+            current_subphase_epoch INTEGER         NOT NULL DEFAULT 0,
+            subphase_sequence      BIGINT          NOT NULL DEFAULT 0,
+            subphase_progress_kind TEXT            NOT NULL DEFAULT 'indeterminate',
+            subphase_units_kind    TEXT,
+            subphase_units_completed BIGINT,
+            subphase_units_total   BIGINT,
+            subphase_units_total_final BOOLEAN     NOT NULL DEFAULT FALSE,
+            subphase_percent       DOUBLE PRECISION,
+            subphase_started_at    TIMESTAMPTZ,
+            subphase_last_progress_at TIMESTAMPTZ,
             started_at            TIMESTAMPTZ      NOT NULL,
             last_progress_at      TIMESTAMPTZ      NOT NULL,
             heartbeat_at          TIMESTAMPTZ      NOT NULL,
@@ -972,6 +1846,33 @@ public static class DatabaseInitializer
                 OR eta_upper_seconds IS NULL
                 OR eta_upper_seconds >= eta_lower_seconds),
             CHECK (eta_sample_count IS NULL OR eta_sample_count >= 0),
+            CHECK (current_subphase_epoch >= 0),
+            CHECK (subphase_sequence >= 0),
+            CHECK (subphase_progress_kind IN (
+                'exact', 'indeterminate', 'not_applicable')),
+            CHECK (
+                subphase_units_completed IS NULL
+                OR subphase_units_completed >= 0),
+            CHECK (
+                subphase_units_total IS NULL
+                OR subphase_units_total >= 0),
+            CHECK (
+                NOT subphase_units_total_final
+                OR subphase_units_total IS NOT NULL),
+            CHECK (
+                NOT subphase_units_total_final
+                OR subphase_units_completed IS NULL
+                OR subphase_units_completed <= subphase_units_total),
+            CHECK (
+                subphase_percent IS NULL
+                OR (
+                    subphase_progress_kind = 'exact'
+                    AND subphase_units_total_final
+                    AND subphase_percent >= 0
+                    AND subphase_percent <= 100)),
+            CHECK (
+                subphase_progress_kind <> 'exact'
+                OR subphase_units_total_final),
             CHECK (last_progress_at >= started_at),
             CHECK (heartbeat_at >= started_at),
             CHECK (completed_at IS NULL OR completed_at >= started_at),
@@ -979,6 +1880,72 @@ public static class DatabaseInitializer
                 (status = 'running' AND completed_at IS NULL)
                 OR (status <> 'running' AND completed_at IS NOT NULL))
         );
+
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS current_subphase_epoch INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_sequence BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_progress_kind TEXT NOT NULL DEFAULT 'indeterminate';
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_kind TEXT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_completed BIGINT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_total BIGINT;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_units_total_final BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_percent DOUBLE PRECISION;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_started_at TIMESTAMPTZ;
+        ALTER TABLE scrape_phase_attempts
+            ADD COLUMN IF NOT EXISTS subphase_last_progress_at TIMESTAMPTZ;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_scrape_phase_attempts_subphase_progress'
+                  AND conrelid = 'scrape_phase_attempts'::regclass
+            ) THEN
+                ALTER TABLE scrape_phase_attempts
+                    ADD CONSTRAINT ck_scrape_phase_attempts_subphase_progress
+                    CHECK (
+                        current_subphase_epoch >= 0
+                        AND subphase_sequence >= 0
+                        AND subphase_progress_kind IN (
+                            'exact', 'indeterminate', 'not_applicable')
+                        AND (
+                            subphase_units_completed IS NULL
+                            OR subphase_units_completed >= 0)
+                        AND (
+                            subphase_units_total IS NULL
+                            OR subphase_units_total >= 0)
+                        AND (
+                            NOT subphase_units_total_final
+                            OR subphase_units_total IS NOT NULL)
+                        AND (
+                            NOT subphase_units_total_final
+                            OR subphase_units_completed IS NULL
+                            OR subphase_units_completed <= subphase_units_total)
+                        AND (
+                            subphase_percent IS NULL
+                            OR (
+                                subphase_progress_kind = 'exact'
+                                AND subphase_units_total_final
+                                AND subphase_percent >= 0
+                                AND subphase_percent <= 100))
+                        AND (
+                            subphase_progress_kind <> 'exact'
+                            OR subphase_units_total_final))
+                    NOT VALID;
+            END IF;
+        END $$;
+
+        ALTER TABLE scrape_phase_attempts
+            VALIDATE CONSTRAINT ck_scrape_phase_attempts_subphase_progress;
 
         CREATE INDEX IF NOT EXISTS ix_scrape_phase_attempts_watchdog
             ON scrape_phase_attempts
@@ -2808,4 +3775,7 @@ internal sealed record DatabaseSchemaInitializationStep(
     int CommandTimeoutSeconds,
     bool UseShortTransaction,
     string? LockTimeout,
-    string? StatementTimeout);
+    string? StatementTimeout,
+    bool UseConcurrentIndex = false,
+    string? ValidationSql = null,
+    string? CleanupSql = null);

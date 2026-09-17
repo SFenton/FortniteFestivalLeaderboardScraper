@@ -10,13 +10,13 @@ Use this skill when researching database platforms, evaluating storage/query alt
 
 This is an umbrella skill. Load only the relevant advisor skill(s) and reference file(s) for the task instead of putting every database checklist into context.
 
-Like `ml-implementation-review`, this skill is seeded by permissively licensed OSS skills/agents and then adapted to this repository. Read `references/oss-feeders.md` and `references/attribution.md` when adding, changing, or justifying feeder-derived database guidance.
+This skill is seeded by permissively licensed OSS skills/agents and then adapted to this repository. Read `references/oss-feeders.md` and `references/attribution.md` when adding, changing, or justifying feeder-derived database guidance.
 
 ## Repository rules override general database guidance
 
 1. Protect live FST service/API freshness before heavy database work. Check Docker service health, Postgres long queries/locks, CPU, memory, disk, and scrape/publication timing before broad probes, backfills, exports, index builds, VACUUM rewrites, or scrape/replay scans.
 2. Use read-only probes first. Do not mutate schema, data, runtime config, indexes, retention state, or Docker services until the current state and risk are understood.
-3. Treat destructive or locking work as parity-gated maintenance. Data deletion, table rewrites, `VACUUM FULL`, non-concurrent large index builds, retention pruning, export/import cutovers, and platform migrations are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path, with rollback/restore, resource risk, live-safety window, and post-action validation recorded.
+3. Treat destructive or locking work as parity-gated, explicitly authorized maintenance. Matching live-scrape A/B evidence is necessary but never authorizes deletion, rewrites, pruning, cutovers, or migrations. Require fresh exact-object operator authorization through the destructive-maintenance machine with rollback/restore, resource risk, live-safety window, and post-action validation.
 4. Preserve historical leaderboard correctness semantics. Scrape, publication, ranking, and notification behavior must only use data valid for the published or in-progress scrape being evaluated.
 5. Keep all FST database/storage/reclaim work on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 6. Codify Epic/API feeds, entitlements, rates, quotas, request pacing, storage, retention, and cleanup before adding or widening data-source automation or platform-managed ingestion.

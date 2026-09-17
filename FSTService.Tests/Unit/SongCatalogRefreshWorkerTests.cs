@@ -3,6 +3,7 @@ using System.Text;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
+using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,6 @@ public sealed class SongCatalogRefreshWorkerTests
         var logger = new TestLogger<SongCatalogRefreshWorker>();
         var worker = new SongCatalogRefreshWorker(
             service,
-            null!,
             null!,
             null!,
             null!,
@@ -74,6 +74,102 @@ public sealed class SongCatalogRefreshWorkerTests
         Assert.Equal(1, persistence.SaveAttempts);
         Assert.Empty(service.Songs);
     }
+
+    [Fact]
+    public void Exact_catalog_revision_detects_metadata_changes_without_count_change()
+    {
+        var changed = new SongCatalogSyncResult(
+            providerRequestSucceeded: true,
+            isExact: true,
+            safetyMergeApplied: false,
+            providerSongCount: 700,
+            catalogSongCount: 700,
+            droppedProviderObjectCount: 0,
+            failureReason: null!,
+            persistenceToken:
+                new SongCatalogPersistenceToken(
+                    12,
+                    2,
+                    "new-hash",
+                    700));
+        var unchanged = new SongCatalogSyncResult(
+            providerRequestSucceeded: true,
+            isExact: true,
+            safetyMergeApplied: false,
+            providerSongCount: 700,
+            catalogSongCount: 700,
+            droppedProviderObjectCount: 0,
+            failureReason: null!,
+            persistenceToken:
+                new SongCatalogPersistenceToken(
+                    11,
+                    2,
+                    "old-hash",
+                    700));
+        var inexact = new SongCatalogSyncResult(
+            providerRequestSucceeded: true,
+            isExact: false,
+            safetyMergeApplied: true,
+            providerSongCount: 650,
+            catalogSongCount: 700,
+            droppedProviderObjectCount: 1,
+            failureReason: "partial",
+            persistenceToken: null!);
+
+        Assert.True(
+            SongCatalogRefreshWorker
+                .HasExactCatalogChanged(
+                    "old-hash",
+                    changed));
+        Assert.False(
+            SongCatalogRefreshWorker
+                .HasExactCatalogChanged(
+                    "old-hash",
+                    unchanged));
+        Assert.False(
+            SongCatalogRefreshWorker
+                .HasExactCatalogChanged(
+                    "old-hash",
+                    inexact));
+    }
+
+    [Fact]
+    public void Catalog_change_set_counts_added_removed_and_changed_ids()
+    {
+        var before = SongCatalogSnapshotBuilder.Create(
+        [
+            CreateSong("song-a", "Alpha"),
+            CreateSong("song-b", "Beta"),
+        ]);
+        var after = SongCatalogSnapshotBuilder.Create(
+        [
+            CreateSong("song-a", "Alpha changed"),
+            CreateSong("song-c", "Gamma"),
+        ]);
+
+        var changes =
+            SongCatalogSnapshotBuilder.ComputeChangeSet(
+                before.CatalogJson,
+                after.CatalogJson);
+
+        Assert.Equal(1, changes.Added);
+        Assert.Equal(1, changes.Removed);
+        Assert.Equal(1, changes.Changed);
+    }
+
+    private static Song CreateSong(
+        string songId,
+        string title) =>
+        new()
+        {
+            _title = title,
+            track = new Track
+            {
+                su = songId,
+                tt = title,
+                an = "Artist",
+            },
+        };
 
     private static HttpClient CreateProviderClient() =>
         new(new ProviderHandler())

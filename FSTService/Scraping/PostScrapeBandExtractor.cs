@@ -129,46 +129,9 @@ public sealed class PostScrapeBandExtractor
             Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
         var impactedTeamsByBandType = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
         var impactedCurrentProjectionScopes = new ConcurrentDictionary<BandCurrentProjectionScopeKey, byte>();
+        Exception? firstFailure = null;
 
-        await Parallel.ForEachAsync(songIds,
-            new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
-            async (songId, innerCt) =>
-            {
-                try
-                {
-                    var (bands, members, lookups, impactedTeams, impactedScopes) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
-                    Interlocked.Add(ref totalBandRows, bands);
-                    Interlocked.Add(ref totalMemberStats, members);
-                    Interlocked.Add(ref totalMemberLookups, lookups);
-                    foreach (var (bandType, teamKey) in impactedTeams)
-                    {
-                        var teams = impactedTeamsByBandType.GetOrAdd(
-                            bandType,
-                            static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
-                        teams.TryAdd(teamKey, 0);
-                    }
-                    foreach (var scope in impactedScopes)
-                        impactedCurrentProjectionScopes.TryAdd(scope, 0);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex, "Band extraction failed for song {SongId}. Will retry next pass.", songId);
-                }
-                finally
-                {
-                    _progress?.ReportPhaseItemComplete();
-                }
-            });
-
-        RebuildImpactedMembershipSummaries(persistence, impactedTeamsByBandType, ct);
-
-        sw.Stop();
-        _log.LogInformation(
-            "Post-scrape band extraction complete in {Elapsed}. " +
-            "Band entries: {BandRows:N0}, member stats: {MemberStats:N0}, member lookups: {MemberLookups:N0}.",
-            sw.Elapsed, totalBandRows, totalMemberStats, totalMemberLookups);
-
-        return new BandExtractionResult(
+        BandExtractionResult BuildResult() => new(
             totalBandRows,
             totalMemberStats,
             totalMemberLookups,
@@ -176,7 +139,94 @@ public sealed class PostScrapeBandExtractor
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.Keys.ToArray(),
                 StringComparer.OrdinalIgnoreCase),
-            BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes.Keys));
+            BandCurrentProjectionScopeTracker.OrderedDistinct(
+                impactedCurrentProjectionScopes.Keys));
+
+        try
+        {
+            await Parallel.ForEachAsync(songIds,
+                new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
+                async (songId, innerCt) =>
+                {
+                    try
+                    {
+                        var (bands, members, lookups, impactedTeams, impactedScopes) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
+                        Interlocked.Add(ref totalBandRows, bands);
+                        Interlocked.Add(ref totalMemberStats, members);
+                        Interlocked.Add(ref totalMemberLookups, lookups);
+                        foreach (var (bandType, teamKey) in impactedTeams)
+                        {
+                            var teams = impactedTeamsByBandType.GetOrAdd(
+                                bandType,
+                                static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+                            teams.TryAdd(teamKey, 0);
+                        }
+                        foreach (var scope in impactedScopes)
+                            impactedCurrentProjectionScopes.TryAdd(scope, 0);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Interlocked.CompareExchange(
+                            ref firstFailure,
+                            ex,
+                            comparand: null);
+                        _log.LogWarning(ex, "Band extraction failed for song {SongId}. Will retry next pass.", songId);
+                    }
+                    finally
+                    {
+                        _progress?.ReportPhaseItemComplete();
+                    }
+                });
+
+            try
+            {
+                RebuildImpactedMembershipSummaries(
+                    persistence,
+                    impactedTeamsByBandType,
+                    ct);
+            }
+            catch (Exception rebuildFailure)
+                when (firstFailure is not null
+                      && rebuildFailure is not OperationCanceledException)
+            {
+                firstFailure.Data["BandMembershipRebuildFailure"] =
+                    rebuildFailure;
+                _log.LogError(
+                    rebuildFailure,
+                    "Band membership-summary rebuild also failed after song extraction had already failed. Preserving the original extraction failure.");
+            }
+
+            if (firstFailure is not null)
+            {
+                throw new PartialResultFailureException<BandExtractionResult>(
+                    BuildResult(),
+                    firstFailure);
+            }
+        }
+        catch (PartialResultFailureException<BandExtractionResult>)
+        {
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new PartialResultOperationCanceledException<BandExtractionResult>(
+                BuildResult(),
+                ex);
+        }
+        catch (Exception ex)
+        {
+            throw new PartialResultFailureException<BandExtractionResult>(
+                BuildResult(),
+                ex);
+        }
+
+        sw.Stop();
+        _log.LogInformation(
+            "Post-scrape band extraction complete in {Elapsed}. " +
+            "Band entries: {BandRows:N0}, member stats: {MemberStats:N0}, member lookups: {MemberLookups:N0}.",
+            sw.Elapsed, totalBandRows, totalMemberStats, totalMemberLookups);
+
+        return BuildResult();
     }
 
     private async Task<(int Bands, int Members, int Lookups, List<(string BandType, string TeamKey)> ImpactedTeams, List<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes)> ExtractSongBandDataAsync(

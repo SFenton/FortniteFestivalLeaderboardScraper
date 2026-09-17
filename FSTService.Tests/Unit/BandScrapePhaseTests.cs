@@ -68,6 +68,63 @@ public sealed class BandScrapePhaseTests
         Assert.True(BandScrapePhase.IsWithinChOptValidCutoff(entryWithoutMembers, maxScores, validCutoffMultiplier: 0.95));
     }
 
+    [Fact]
+    public void ProductionBandPaginationKeepsConfiguredAndValidTargetSemantics()
+    {
+        Assert.False(
+            LeaderboardPaginationPlanner
+                .ShouldFetchBandPage(
+                    nextPage: 400,
+                    providerReportedTotalPages: 500,
+                    configuredMaximumPages: 400,
+                    validEntryCount: 0,
+                    validEntryTarget: 0));
+        Assert.True(
+            LeaderboardPaginationPlanner
+                .ShouldFetchBandPage(
+                    nextPage: 400,
+                    providerReportedTotalPages: 500,
+                    configuredMaximumPages: 400,
+                    validEntryCount: 9_999,
+                    validEntryTarget: 10_000));
+        Assert.False(
+            LeaderboardPaginationPlanner
+                .ShouldFetchBandPage(
+                    nextPage: 400,
+                    providerReportedTotalPages: 500,
+                    configuredMaximumPages: 400,
+                    validEntryCount: 10_000,
+                    validEntryTarget: 10_000));
+    }
+
+    [Fact]
+    public void ProductionBandIdentityIncludesTeamAndInstrumentCombo()
+    {
+        var first = MakeEntry(
+            instrumentId: 0,
+            score: 100);
+        var duplicate = MakeEntry(
+            instrumentId: 0,
+            score: 200);
+        var differentCombo = MakeEntry(
+            instrumentId: 1,
+            score: 300);
+
+        Assert.Equal(
+            2,
+            new[]
+                {
+                    first,
+                    duplicate,
+                    differentCombo,
+                }
+                .GroupBy(
+                    LeaderboardEntryIdentity.Band,
+                    LeaderboardEntryIdentity
+                        .BandComparer)
+                .Count());
+    }
+
     private static BandLeaderboardEntry MakeEntry(int instrumentId, int score) => new()
     {
         TeamKey = "acct-a:acct-b",

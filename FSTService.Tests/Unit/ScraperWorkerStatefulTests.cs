@@ -3,6 +3,7 @@ using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -1041,6 +1042,905 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var status = notifications.GetPublicationStatus();
         Assert.Equal("completed", status.MarkerStatus);
         Assert.Equal(scrapeId, status.MarkerScrapeId);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_DisabledPlannerIsNotInvoked()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(false);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        var result = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunSnapshotGenerationRetentionSafePointAsync",
+            new PendingSnapshotGenerationRetentionSafePoint(
+                1308,
+                9000),
+            CancellationToken.None);
+
+        Assert.Null(result);
+        _ = planner.DidNotReceiveWithAnyArgs()
+            .PlanAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_PassesTerminalWorkerEvidence()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition.Observed,
+                    1,
+                    "observed",
+                    new string('a', 64),
+                    new string('b', 64),
+                    1,
+                    0,
+                    0,
+                    1,
+                    OracleAgreement: true,
+                    Retryable: false));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        await InvokePrivateAsync(
+            worker,
+            "NotifyScoresChangedAfterPublicationAsync",
+            (long?)1308);
+
+        var result = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunSnapshotGenerationRetentionSafePointAsync",
+            new PendingSnapshotGenerationRetentionSafePoint(
+                1308,
+                9000),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        await planner.Received(1).PlanAsync(
+            Arg.Is<SnapshotGenerationRetentionPlanRequest>(
+                request =>
+                    request.TriggerScrapeId == 1308
+                    && request.TriggerPublicationId == 9000
+                    && request.BroadcastCompletedScrapeId ==
+                        1308
+                    && request.BackgroundWorkQuiesced
+                    && request.SafePointKind ==
+                        SnapshotGenerationRetentionContract
+                            .TerminalWorkerSafePoint),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_PropagatesCancellation()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromCanceled<
+                SnapshotGenerationRetentionPlanResult>(
+                call.ArgAt<CancellationToken>(1)));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        using var cancellation =
+            new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => InvokePrivateAsync<
+                SnapshotGenerationRetentionPlanResult?>(
+                worker,
+                "TryRunSnapshotGenerationRetentionSafePointAsync",
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9000),
+                cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RetentionSafePoint_UnexpectedFailureRemainsRetryable()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<SnapshotGenerationRetentionPlanResult>>(
+                _ => throw new InvalidOperationException(
+                    "injected invocation failure"));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+
+        var result = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunSnapshotGenerationRetentionSafePointAsync",
+            new PendingSnapshotGenerationRetentionSafePoint(
+                1308,
+                9000),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.True(result!.Retryable);
+        Assert.Null(result.CycleId);
+    }
+
+    [Fact]
+    public async Task RetentionSafePointRetriesMissingBroadcastBeforePersisting()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var requests =
+            new List<
+                SnapshotGenerationRetentionPlanRequest>();
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.ArgAt<
+                    SnapshotGenerationRetentionPlanRequest>(0);
+                requests.Add(request);
+                return Task.FromResult(
+                    requests.Count == 1
+                        ? new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Deferred,
+                            null,
+                            "scores_changed_broadcast_incomplete: retry",
+                            null,
+                            null,
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: false,
+                            Retryable: true)
+                        : new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Observed,
+                            1,
+                            "observed",
+                            new string('a', 64),
+                            new string('b', 64),
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: true,
+                            Retryable: false));
+            });
+        var broadcastCount = 0;
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ =>
+            {
+                broadcastCount++;
+                return Task.CompletedTask;
+            };
+
+        var result = await InvokePrivateAsync<
+            SnapshotGenerationRetentionPlanResult?>(
+            worker,
+            "TryRunSnapshotGenerationRetentionSafePointAsync",
+            new PendingSnapshotGenerationRetentionSafePoint(
+                1308,
+                9008),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(
+            SnapshotGenerationRetentionPlanDisposition.Observed,
+            result!.Disposition);
+        Assert.Equal(1, broadcastCount);
+        Assert.Equal(2, requests.Count);
+        Assert.Null(
+            requests[0].BroadcastCompletedScrapeId);
+        Assert.Equal(
+            1308,
+            requests[1].BroadcastCompletedScrapeId);
+    }
+
+    [Fact]
+    public async Task RetentionSafePointQueuePreservesRetryBeforeLaterPublication()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var requests =
+            new List<
+                SnapshotGenerationRetentionPlanRequest>();
+        var attempt = 0;
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.ArgAt<
+                    SnapshotGenerationRetentionPlanRequest>(0);
+                requests.Add(request);
+                attempt++;
+                return Task.FromResult(
+                    attempt == 1
+                        ? new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Deferred,
+                            null,
+                            "retry",
+                            null,
+                            null,
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: false,
+                            Retryable: true)
+                        : new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Observed,
+                            attempt,
+                            "observed",
+                            new string('a', 64),
+                            new string('b', 64),
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: true,
+                            Retryable: false));
+            });
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1309,
+                    9009),
+            ]);
+
+        var firstCompleted = await InvokePrivateAsync<bool>(
+            worker,
+            "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+        var retryCompleted = await InvokePrivateAsync<bool>(
+            worker,
+            "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+        var laterCompleted = await InvokePrivateAsync<bool>(
+            worker,
+            "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+
+        Assert.False(firstCompleted);
+        Assert.True(retryCompleted);
+        Assert.True(laterCompleted);
+        Assert.Equal(0, worker.PendingRetentionSafePointCount);
+        Assert.Equal(
+            [1308, 1308, 1309],
+            requests.Select(static request =>
+                request.TriggerScrapeId));
+    }
+
+    [Fact]
+    public async Task TerminalBlockedSafePointAdvancesToLaterPublication()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var requests =
+            new List<
+                SnapshotGenerationRetentionPlanRequest>();
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.ArgAt<
+                    SnapshotGenerationRetentionPlanRequest>(0);
+                requests.Add(request);
+                return Task.FromResult(
+                    new SnapshotGenerationRetentionPlanResult(
+                        request.TriggerScrapeId == 1308
+                            ? SnapshotGenerationRetentionPlanDisposition
+                                .Blocked
+                            : SnapshotGenerationRetentionPlanDisposition
+                                .Observed,
+                        request.TriggerScrapeId,
+                        request.TriggerScrapeId == 1308
+                            ? "registration_backfill_terminal_error"
+                            : "observed",
+                        new string('a', 64),
+                        new string('b', 64),
+                        0,
+                        0,
+                        request.TriggerScrapeId == 1308 ? 1 : 0,
+                        0,
+                        OracleAgreement: true,
+                        Retryable: false));
+            });
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1309,
+                    9009),
+            ]);
+
+        var blockedCompleted =
+            await InvokePrivateAsync<bool>(
+                worker,
+                "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+                CancellationToken.None);
+        var laterCompleted =
+            await InvokePrivateAsync<bool>(
+                worker,
+                "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+                CancellationToken.None);
+
+        Assert.True(blockedCompleted);
+        Assert.True(laterCompleted);
+        Assert.Equal(0, worker.PendingRetentionSafePointCount);
+        Assert.Equal(
+            [1308, 1309],
+            requests.Select(static request =>
+                request.TriggerScrapeId));
+    }
+
+    [Fact]
+    public async Task RetentionSafePointAllowsSlowRegistrationBackfillToReachDurableBoundary()
+    {
+        const string accountId = "acctSlow";
+        _metaDb.RegisterUser("devSlow", accountId);
+        _metaDb.EnqueueBackfill(accountId, 9);
+        _metaDb.StartBackfill(accountId);
+        var coordinator =
+            new BackgroundWorkCoordinator();
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var requests =
+            new List<
+                SnapshotGenerationRetentionPlanRequest>();
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.ArgAt<
+                    SnapshotGenerationRetentionPlanRequest>(0);
+                requests.Add(request);
+                var registrationIncomplete =
+                    _metaDb.GetPendingBackfills().Count > 0
+                    || _metaDb.GetDeferredBackfills().Count > 0
+                    || _metaDb.GetHistoryReconStatus(
+                            accountId)?.Status
+                        != "complete";
+                return Task.FromResult(
+                    registrationIncomplete
+                        ? new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Deferred,
+                            null,
+                            "registration_drain_incomplete",
+                            null,
+                            null,
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: false,
+                            Retryable: true)
+                        : new SnapshotGenerationRetentionPlanResult(
+                            SnapshotGenerationRetentionPlanDisposition
+                                .Observed,
+                            request.TriggerScrapeId,
+                            "observed",
+                            new string('a', 64),
+                            new string('b', 64),
+                            0,
+                            0,
+                            0,
+                            0,
+                            OracleAgreement: true,
+                            Retryable: false));
+            });
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner,
+            backgroundWorkCoordinator: coordinator);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1309,
+                    9009),
+            ]);
+
+        using var shutdown =
+            new CancellationTokenSource(
+                TimeSpan.FromSeconds(12));
+        var operationStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var durableCompletion =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var coordinatorCancellations = 0;
+        var registrationWorker = Task.Run(
+            async () =>
+            {
+                while (!shutdown.IsCancellationRequested
+                       && !durableCompletion.Task.IsCompleted)
+                {
+                    if (!coordinator.TryBeginBackgroundOperation(
+                            out var operation))
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromMilliseconds(10),
+                            shutdown.Token);
+                        continue;
+                    }
+
+                    using (operation)
+                    using (var linked =
+                           CancellationTokenSource
+                               .CreateLinkedTokenSource(
+                                   shutdown.Token,
+                                   coordinator
+                                       .BackgroundToken))
+                    {
+                        operationStarted.TrySetResult();
+                        try
+                        {
+                            await Task.Delay(
+                                TimeSpan.FromMilliseconds(
+                                    5_500),
+                                linked.Token);
+                            _metaDb.CompleteBackfill(accountId);
+                            _metaDb.EnqueueHistoryRecon(
+                                accountId,
+                                1);
+                            _metaDb.StartHistoryRecon(accountId);
+                            _metaDb.CompleteHistoryRecon(accountId);
+                            durableCompletion.TrySetResult();
+                        }
+                        catch (OperationCanceledException)
+                            when (
+                                !shutdown.IsCancellationRequested
+                                && coordinator.ScrapeRunning)
+                        {
+                            Interlocked.Increment(
+                                ref coordinatorCancellations);
+                        }
+                    }
+                }
+            },
+            shutdown.Token);
+        await operationStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(2));
+
+        await InvokePrivateAsync(
+                worker,
+                "DrainSnapshotGenerationRetentionSafePointQueueAsync",
+                shutdown.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(durableCompletion.Task.IsCompleted);
+        Assert.Equal(0, coordinatorCancellations);
+        Assert.Equal(0, worker.PendingRetentionSafePointCount);
+        Assert.Equal(
+            [1308, 1309],
+            requests.Select(static request =>
+                request.TriggerScrapeId));
+
+        shutdown.Cancel();
+        try
+        {
+            await registrationWorker;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task RetentionSafePointRegistrationDrainWaitHonorsShutdownWithoutPausingBackground()
+    {
+        const string accountId = "acctShutdown";
+        _metaDb.RegisterUser("devShutdown", accountId);
+        _metaDb.EnqueueBackfill(accountId, 9);
+        _metaDb.StartBackfill(accountId);
+        var coordinator =
+            new BackgroundWorkCoordinator();
+        Assert.True(
+            coordinator.TryBeginBackgroundOperation(
+                out var operation));
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner,
+            backgroundWorkCoordinator: coordinator);
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+        using var shutdown =
+            new CancellationTokenSource();
+
+        var drainTask = InvokePrivateAsync(
+            worker,
+            "DrainSnapshotGenerationRetentionSafePointQueueAsync",
+            shutdown.Token);
+        await Task.Delay(
+            TimeSpan.FromMilliseconds(100));
+
+        Assert.False(coordinator.ScrapeRunning);
+        Assert.False(
+            coordinator.BackgroundToken
+                .IsCancellationRequested);
+        shutdown.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await drainTask);
+        Assert.Equal(1, worker.PendingRetentionSafePointCount);
+        _ = planner.DidNotReceiveWithAnyArgs()
+            .PlanAsync(default!, default);
+        operation!.Dispose();
+    }
+
+    [Fact]
+    public async Task RetentionSafePointRegistrationDrainBudgetPreservesQueueAndScrapeContinuity()
+    {
+        const string accountId = "acctBudget";
+        _metaDb.RegisterUser("devBudget", accountId);
+        _metaDb.EnqueueBackfill(accountId, 9);
+        var coordinator =
+            new BackgroundWorkCoordinator();
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner,
+            backgroundWorkCoordinator: coordinator);
+        worker.RetentionRegistrationDrainWaitBudget =
+            TimeSpan.FromMilliseconds(100);
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+
+        await InvokePrivateAsync(
+            worker,
+            "DrainSnapshotGenerationRetentionSafePointQueueAsync",
+            CancellationToken.None);
+
+        Assert.Equal(1, worker.PendingRetentionSafePointCount);
+        Assert.False(coordinator.ScrapeRunning);
+        Assert.False(
+            coordinator.BackgroundToken
+                .IsCancellationRequested);
+        _ = planner.DidNotReceiveWithAnyArgs()
+            .PlanAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RetentionSafePointTerminalRegistrationBlockerBypassesRunnableDrainWait()
+    {
+        _metaDb.RegisterUser(
+            "devTerminal",
+            "acctTerminal");
+        _metaDb.FailBackfill(
+            "acctTerminal",
+            "operator repair required");
+        _metaDb.EnqueueBackfill("acctRunnable", 9);
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition
+                        .Blocked,
+                    42,
+                    "registration_backfill_terminal_error",
+                    new string('a', 64),
+                    new string('b', 64),
+                    0,
+                    0,
+                    1,
+                    0,
+                    OracleAgreement: true,
+                    Retryable: false));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.RetentionRegistrationDrainWaitBudget =
+            TimeSpan.FromSeconds(5);
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+        var stopwatch =
+            System.Diagnostics.Stopwatch.StartNew();
+
+        await InvokePrivateAsync(
+            worker,
+            "DrainSnapshotGenerationRetentionSafePointQueueAsync",
+            CancellationToken.None);
+
+        stopwatch.Stop();
+        Assert.True(
+            stopwatch.Elapsed <
+            TimeSpan.FromSeconds(2),
+            $"Terminal blocker waited for unrelated runnable registration work: {stopwatch.Elapsed}.");
+        Assert.Equal(0, worker.PendingRetentionSafePointCount);
+        await planner.Received(1).PlanAsync(
+            Arg.Any<
+                SnapshotGenerationRetentionPlanRequest>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RetentionSafePointQueueKeepsUnexpectedFailure()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<SnapshotGenerationRetentionPlanResult>>(
+                _ => throw new InvalidOperationException(
+                    "injected invocation failure"));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(
+            worker,
+            [
+                new PendingSnapshotGenerationRetentionSafePoint(
+                    1308,
+                    9008),
+            ]);
+
+        var completed = await InvokePrivateAsync<bool>(
+            worker,
+            "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+
+        Assert.False(completed);
+        Assert.Equal(1, worker.PendingRetentionSafePointCount);
+        Assert.Equal(
+            1308,
+            Assert.Single(worker.PendingRetentionSafePoints)
+                .ScrapeId);
+    }
+
+    [Fact]
+    public async Task RecoveredStartupPublicationIsQueued()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+
+        await InvokePrivateAsync(
+            worker,
+            "ResumeDeferredPublicationBeforeGatesAsync",
+            CancellationToken.None);
+
+        var queued = Assert.Single(
+            worker.PendingRetentionSafePoints);
+        Assert.Equal(deferredScrapeId, queued.ScrapeId);
+        Assert.Equal(
+            preparation.PublicationId,
+            queued.PublicationId);
+    }
+
+    [Fact]
+    public async Task RestartReentryDequeuesExistingCycleIdempotently()
+    {
+        var planner =
+            Substitute.For<
+                ISnapshotGenerationRetentionPlanner>();
+        planner.IsEnabled.Returns(true);
+        planner.PlanAsync(
+                Arg.Any<
+                    SnapshotGenerationRetentionPlanRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new SnapshotGenerationRetentionPlanResult(
+                    SnapshotGenerationRetentionPlanDisposition
+                        .Existing,
+                    42,
+                    "existing",
+                    new string('a', 64),
+                    new string('b', 64),
+                    0,
+                    0,
+                    0,
+                    0,
+                    OracleAgreement: true,
+                    Retryable: false));
+        var worker = CreateWorker(
+            snapshotGenerationRetentionPlanner: planner);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+        var enqueue = typeof(ScraperWorker).GetMethod(
+            "EnqueueSnapshotGenerationRetentionSafePoint",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var safePoint =
+            new PendingSnapshotGenerationRetentionSafePoint(
+                1308,
+                9008);
+        enqueue.Invoke(worker, [safePoint]);
+        enqueue.Invoke(worker, [safePoint]);
+
+        var completed = await InvokePrivateAsync<bool>(
+            worker,
+            "TryProcessNextSnapshotGenerationRetentionSafePointAsync",
+            CancellationToken.None);
+
+        Assert.True(completed);
+        Assert.Equal(0, worker.PendingRetentionSafePointCount);
+        await planner.Received(1).PlanAsync(
+            Arg.Is<SnapshotGenerationRetentionPlanRequest>(
+                request =>
+                    request.TriggerScrapeId == 1308
+                    && request.TriggerPublicationId == 9008),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public void RetentionPlannerIsOwnedByWorkerNotCleanupOrchestrator()
+    {
+        Assert.Contains(
+            typeof(ScraperWorker).GetConstructors()
+                .Single()
+                .GetParameters(),
+            parameter =>
+                parameter.ParameterType ==
+                    typeof(
+                        ISnapshotGenerationRetentionPlanner));
+        Assert.DoesNotContain(
+            typeof(PostScrapeOrchestrator)
+                .GetConstructors()
+                .SelectMany(static constructor =>
+                    constructor.GetParameters()),
+            parameter =>
+                parameter.ParameterType ==
+                    typeof(
+                        ISnapshotGenerationRetentionPlanner));
     }
 
     // ═══════════════════════════════════════════════════════════════
