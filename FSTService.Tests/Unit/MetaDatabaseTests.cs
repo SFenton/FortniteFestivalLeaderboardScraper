@@ -253,6 +253,114 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void AcquisitionCheckpoint_failure_delegates_real_database_terminalization()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var publishedPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        var candidatePublicationId =
+            Db.GetPublicationGenerationForScrape(candidateScrapeId)!
+                .PublicationId;
+        IReadOnlyCollection<(string SongId, string Instrument)> expectedPairs =
+            GlobalLeaderboardScraper.AllInstruments
+                .Select(instrument => ("song-a", instrument))
+                .ToArray();
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        metaDatabase
+            .When(database =>
+                database.RecordScrapeAcquisitionCheckpoint(
+                    candidateScrapeId,
+                    1,
+                    10,
+                    2,
+                    100,
+                    expectedPairs,
+                    true))
+            .Do(_ => throw new InvalidOperationException(
+                "checkpoint persistence failed"));
+        metaDatabase
+            .When(database =>
+                database.FailScrapeRun(
+                    candidateScrapeId,
+                    ScrapeOrchestrator.AcquisitionCheckpointFailurePhase,
+                    "checkpoint persistence failed"))
+            .Do(_ => Db.FailScrapeRun(
+                candidateScrapeId,
+                ScrapeOrchestrator.AcquisitionCheckpointFailurePhase,
+                "checkpoint persistence failed"));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                candidateScrapeId,
+                1,
+                10,
+                2,
+                100,
+                true,
+                expectedPairs,
+                ["song-a"],
+                true,
+                true,
+                true,
+                true));
+
+        Assert.Equal("checkpoint persistence failed", error.Message);
+        metaDatabase.Received(1).FailScrapeRun(
+            candidateScrapeId,
+            ScrapeOrchestrator.AcquisitionCheckpointFailurePhase,
+            "checkpoint persistence failed");
+
+        var scrape = Db.GetScrapeResumeState(candidateScrapeId)!;
+        Assert.Equal("failed", scrape.Status);
+        Assert.Null(scrape.AcquisitionCompletedAtUtc);
+        Assert.Null(scrape.SongsScraped);
+        Assert.Null(scrape.TotalEntries);
+        Assert.Null(scrape.TotalRequests);
+        Assert.Null(scrape.TotalBytes);
+        Assert.False(scrape.EpicReportedOver100Pages);
+        Assert.Null(scrape.ExpectedSoloScopeCount);
+        Assert.Null(scrape.ExpectedSoloScopeFingerprintVersion);
+        Assert.Null(scrape.ExpectedSoloScopeFingerprint);
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT failure_phase, failure_message
+                FROM scrape_log
+                WHERE id = @scrapeId
+                """;
+            command.Parameters.AddWithValue("scrapeId", candidateScrapeId);
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal("acquisition_checkpoint", reader.GetString(0));
+            Assert.Equal("checkpoint persistence failed", reader.GetString(1));
+        }
+
+        var candidatePublication =
+            Db.GetPublicationGeneration(candidatePublicationId)!;
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            candidatePublication.Status);
+        Assert.Equal(
+            "acquisition_checkpoint",
+            candidatePublication.FailurePhase);
+        Assert.Equal(
+            "checkpoint persistence failed",
+            candidatePublication.FailureMessage);
+        var pointers = Db.GetPublicationPointerState();
+        Assert.Equal(publishedPublicationId, pointers.CurrentPublicationId);
+        Assert.Null(pointers.WorkingPublicationId);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
     public async Task Publication_cache_inheritance_rejects_catalog_drift()
     {
         var persistence = new FestivalPersistence(DataSource);

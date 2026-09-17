@@ -69,6 +69,7 @@ Options:
                              snapshot-reuse
                              leaderboard-rivals-batch
                              legacy-reader-migration
+                             acquisition-checkpoint-terminalization
                              scrape-resume
                            Every run-once config requires a data profile.
   --expected-worker-image I
@@ -172,7 +173,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|scrape-resume)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -195,6 +196,13 @@ if [[ "$DATA_PROFILE" == "scrape-resume" \
     && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
 then
     printf 'ERROR: data profile scrape-resume requires --check-runonce or --recreate-runonce\n' >&2
+    exit 64
+fi
+
+if [[ "$DATA_PROFILE" == "acquisition-checkpoint-terminalization" \
+    && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
+then
+    printf 'ERROR: data profile acquisition-checkpoint-terminalization requires --check-runonce or --recreate-runonce\n' >&2
     exit 64
 fi
 
@@ -802,6 +810,16 @@ def exact_value(name, expected_value):
             f"ERROR: data profile {data_profile} requires "
             f"{name}={expected_value}, found {display_actual}")
 
+def optional_exact_value(name, expected_value):
+    if name not in environment:
+        actual_worker_image = str(worker.get("image") or "").strip()
+        if expected_worker_image and actual_worker_image == expected_worker_image:
+            return
+        raise SystemExit(
+            f"ERROR: data profile {data_profile} requires "
+            f"{name}={expected_value}, found <empty>")
+    exact_value(name, expected_value)
+
 def indexed(prefix):
     values = []
     for key, value in environment.items():
@@ -968,7 +986,10 @@ if data_profile == "registered-refresh-repair":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile registered-refresh-repair requires {name}=false")
-if data_profile == "catalog-path-notification-source-cut":
+if data_profile in {
+    "catalog-path-notification-source-cut",
+    "acquisition-checkpoint-terminalization",
+}:
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__EnableAutomaticPathGeneration", "false")
@@ -986,7 +1007,7 @@ if data_profile == "catalog-path-notification-source-cut":
     ):
         if not boolean(name):
             raise SystemExit(
-                "ERROR: data profile catalog-path-notification-source-cut "
+                f"ERROR: data profile {data_profile} "
                 f"requires {name}=true")
     for name in (
         "Features__UseStoredSoloProjectionRanksForFilteredReads",
@@ -994,7 +1015,47 @@ if data_profile == "catalog-path-notification-source-cut":
     ):
         if boolean(name):
             raise SystemExit(
-                "ERROR: data profile catalog-path-notification-source-cut "
+                f"ERROR: data profile {data_profile} "
+                f"requires {name}=false")
+if data_profile == "acquisition-checkpoint-terminalization":
+    exact_value("Features__UseSnapshotOverlayWorkerReaders", "false")
+    exact_value("ImprovementNotifications__Scope", "registered")
+    exact_value("ImprovementNotifications__RefreshSoloProjection", "true")
+    exact_value(
+        "ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes",
+        "false")
+    exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:06:00")
+    exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
+    optional_exact_value(
+        "Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace",
+        "false")
+    optional_exact_value(
+        "Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace",
+        "false")
+    optional_exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxDuration",
+        "00:02:00")
+    optional_exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow",
+        "00:01:30")
+    optional_exact_value(
+        "Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups",
+        "3")
+    for name in (
+        "Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass",
+        "Scraper__RegisteredBandProcessingMaxLookupsPerPass",
+    ):
+        if nonnegative_integer(name) != 80:
+            raise SystemExit(
+                "ERROR: data profile acquisition-checkpoint-terminalization "
+                f"requires {name}=80")
+    for name in (
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                "ERROR: data profile acquisition-checkpoint-terminalization "
                 f"requires {name}=false")
 if data_profile == "snapshot-reuse":
     exact_value("Scraper__EnabledPhases", "All")

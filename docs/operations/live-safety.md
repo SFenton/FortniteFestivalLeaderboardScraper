@@ -535,6 +535,16 @@ account concurrency of two and learned CDN ceiling of `360`, and preserves
 publication-safe path staging, snapshot reuse, notifications, and
 publication-critical manifests.
 
+The `acquisition-checkpoint-terminalization` profile is the corresponding
+code-only data lane for a normal all-phases scrape. It does not enable snapshot
+reuse, overlay readers, automatic path generation, or any other data
+optimization; it preserves scope fingerprints, publication-critical manifests,
+published scope sources, notifications, and registered-work settings. The
+guard requires run-once validation and an exact expected worker image, while
+the promotion handoff additionally binds the image ID, revision, and resolved
+worker configuration hash. Treat those exact identities as the rollback switch
+and proof that the paired candidate is the one being admitted.
+
 Size the production unit timeout above the total deadline plus cleanup margin.
 The shared lock defaults to `.fst-worker-compose-guard.lock` under the resolved
 Compose directory. Every unit and operator must use that same resolved

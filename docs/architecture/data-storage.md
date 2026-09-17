@@ -159,6 +159,16 @@ candidate-owned noncurrent working publication. It preserves the published
 scrape, releases the failed working publication, and writes no synthetic
 metrics. A present checkpoint rejects this path in favor of guarded resume.
 
+If the eligible checkpoint write throws, `ScrapeOrchestrator` immediately
+calls the existing durable failed-candidate isolation with failure phase
+`acquisition_checkpoint` before propagating the original exception. Exact
+metrics remain null rather than being reconstructed from partial staging, the
+working publication is released, and ordinary lifecycle cleanup can unfreeze
+the preserved published scrape. Operator recovery remains necessary only when
+the process is lost before that durable isolation commits. If isolation itself
+fails, the worker records both errors, marks durable isolation unconfirmed,
+and retains the public-read freeze for guarded recovery.
+
 Rollback is code-only: disable scrape resume, or return to an older binary and
 restore that binary's legacy operator-supplied `Scraper:Resume*` values before
 attempting recovery. The nullable checkpoint columns and check constraints may

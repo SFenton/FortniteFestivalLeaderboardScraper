@@ -9,6 +9,19 @@ using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
 
+internal sealed class ScrapeAcquisitionCheckpointIsolationException(
+    long scrapeId,
+    Exception checkpointException,
+    Exception isolationException)
+    : Exception(
+        $"Scrape {scrapeId} acquisition checkpoint failed and durable candidate isolation also failed.",
+        new AggregateException(
+            checkpointException,
+            isolationException))
+{
+    public long ScrapeId { get; } = scrapeId;
+}
+
 /// <summary>
 /// Orchestrates the core global leaderboard scrape pass (phases 2–8).
 /// Owns scrape-specific concerns: building requests, pipelined scraping,
@@ -17,6 +30,9 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class ScrapeOrchestrator
 {
+    internal const string AcquisitionCheckpointFailurePhase =
+        "acquisition_checkpoint";
+
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly BandLeaderboardPersistence _bandPersistence;
@@ -810,14 +826,36 @@ public sealed class ScrapeOrchestrator
             return false;
         }
 
-        metaDatabase.RecordScrapeAcquisitionCheckpoint(
-            scrapeId,
-            songsScraped,
-            totalEntries,
-            totalRequests,
-            totalBytes,
-            expectedSoloLeaderboardPairs,
-            epicReportedOver100Pages);
+        try
+        {
+            metaDatabase.RecordScrapeAcquisitionCheckpoint(
+                scrapeId,
+                songsScraped,
+                totalEntries,
+                totalRequests,
+                totalBytes,
+                expectedSoloLeaderboardPairs,
+                epicReportedOver100Pages);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                metaDatabase.FailScrapeRun(
+                    scrapeId,
+                    AcquisitionCheckpointFailurePhase,
+                    ex.Message);
+            }
+            catch (Exception isolationException)
+            {
+                throw new
+                    ScrapeAcquisitionCheckpointIsolationException(
+                        scrapeId,
+                        ex,
+                        isolationException);
+            }
+            throw;
+        }
         return true;
     }
 

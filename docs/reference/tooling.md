@@ -11,6 +11,8 @@ sources:
   - FSTService/Api/PublicApiCacheTelemetry.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
+  - tools/fst-worker-dual-lane-runonce.sh
+  - tools/fst-worker-dual-lane-runonce.test.mjs
   - tools/fst-worker-no-progress-watchdog.mjs
   - tools/postgres-tier1-replay-drill.sh
   - tools/postgres-tier1-replay-drill.test.mjs
@@ -960,6 +962,24 @@ an unrelated candidate. The dual-lane wrapper assigns the supplied
 expected image to the final run-once overlay before the guard resolves Compose;
 the option is therefore both the selected image and the fail-closed assertion.
 
+The `acquisition-checkpoint-terminalization` data profile is the code-only
+terminalization candidate for a normal all-phases scrape. Pair it with the
+selected network candidate (for example, `candidate-800-32-4`) through
+`tools/fst-worker-dual-lane-runonce.sh`. It keeps the accepted acquisition and
+publication baseline: current scope fingerprints and published scope sources
+remain enabled, snapshot reuse and overlay readers remain disabled, automatic
+path generation remains disabled, and the existing notification and registered
+work settings are unchanged. The guard accepts this profile only for
+`--check-runonce` or `--recreate-runonce`, requires `--expected-worker-image`,
+and rejects drift in those baseline invariants. There is no feature flag for
+this candidate; the exact worker image reference, image ID, revision, and
+resolved configuration hash remain the rollback switch and identity proof.
+The five remaining-work-grace settings use the worker code defaults when they
+are absent from the resolved Compose environment, but only after the resolved
+worker image exactly matches `--expected-worker-image`; an explicitly supplied
+value must still equal that default. The two max-lookups-per-pass settings
+remain required and exact because production Compose maps them.
+
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains inactive (`idle` or terminal `failed`) and public reads
 remain unfrozen. Otherwise it leaves the worker running and directs the operator to
@@ -1036,6 +1056,7 @@ The action's host-side controls are documented in
 bash -n tools/fst-worker-compose-guard.sh
 bash -n tools/fst-worker-dual-lane-runonce.sh
 node --test tools/fst-worker-compose-guard.test.mjs
+node --test tools/fst-worker-dual-lane-runonce.test.mjs
 node --test tools/fst-worker-no-progress-watchdog.test.mjs
 ```
 

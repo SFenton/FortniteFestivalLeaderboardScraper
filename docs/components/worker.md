@@ -197,6 +197,15 @@ requires that scrape to remain `running`. A terminal failure update therefore
 either waits for and interrupts an already-starting attempt, or commits first
 and makes later attempt creation fail.
 
+During ordinary acquisition, an eligible checkpoint persistence exception
+first invokes durable failed-candidate isolation with failure phase
+`acquisition_checkpoint`, then rethrows the original exception so the worker
+records the failed acquisition operation and skips post-processing. Lifecycle
+cleanup unfreezes reads only after the candidate and its working publication
+have been durably failed. If that isolation also throws, the worker preserves
+both errors, enters the isolation-pending state, and retains the public-read
+freeze instead of exposing the failed candidate.
+
 Resume and ordinary scrape contexts both carry the immutable song catalog
 selected for their publication. Cleanup precompute must serialize canonical
 `/api/songs` from that explicit collection; it cannot fall back to the

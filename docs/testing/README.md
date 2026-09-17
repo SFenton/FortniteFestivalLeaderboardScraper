@@ -116,6 +116,7 @@ sources:
   - tools/check-docs.mjs
   - tools/check-coverage-ignores.test.mjs
   - tools/fst-worker-compose-guard.test.mjs
+  - tools/fst-worker-dual-lane-runonce.test.mjs
 update_triggers:
   - Test runners, scripts, projects, coverage gates, CI, or documentation checks change.
 ---
@@ -134,6 +135,10 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+Database initializer readiness tests use a one-minute cancellation bound:
+initializer exceptions still propagate, while the larger bound prevents
+coverage instrumentation and concurrent per-test PostgreSQL setup from turning
+runner scheduling latency into a false `TaskCanceledException`.
 
 Focused registered-band correctness and progress validation:
 
@@ -157,6 +162,7 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter 'FullyQualifiedName~MetaDatabaseTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~ScraperWorkerTests|FullyQualifiedName~ScraperWorkerStatefulTests'
 
 node --test tools/fst-worker-compose-guard.test.mjs
+node --test tools/fst-worker-dual-lane-runonce.test.mjs
 ```
 
 This proves idempotent bounded schema initialization, atomic persistence of all

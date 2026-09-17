@@ -781,6 +781,45 @@ function buildPublicationCacheRunonceConfig({
   return config;
 }
 
+function buildAcquisitionCheckpointTerminalizationRunonceConfig({
+  workerImage = "example.invalid/fstworker:test"
+} = {}) {
+  const config = buildComposeConfig({ runOnce: true, workerImage });
+  Object.assign(config.services.fstworker.environment, {
+    Scraper__EnabledPhases: "All",
+    Scraper__RegisteredUserRefreshTimeout: "00:00:00",
+    Scraper__EnableAutomaticPathGeneration: "false",
+    Features__EnforcePublicationCriticalPhases: "true",
+    Features__EnforceScopeCompletenessManifests: "true",
+    Features__RequireSuccessfulScrapeWriters: "true",
+    Features__UseLeaderboardScopeFingerprints: "true",
+    Features__WritePublishedScopeSources: "true",
+    Features__UseSnapshotOverlayWorkerReaders: "false",
+    Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
+    Features__SkipUnchangedPhysicalLeaderboardSnapshots: "false",
+    Features__WriteLogicalLeaderboardVersions: "false",
+    DatabaseMaintenance__SnapshotRetentionRewriteEnabled: "false",
+    ImprovementNotifications__Enabled: "true",
+    ImprovementNotifications__Scope: "registered",
+    ImprovementNotifications__IncludePlayers: "true",
+    ImprovementNotifications__IncludeBands: "true",
+    ImprovementNotifications__IncludeSongEvents: "true",
+    ImprovementNotifications__IncludeRankings: "true",
+    ImprovementNotifications__RefreshSoloProjection: "true",
+    ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes: "false",
+    Scraper__RegisteredPlayerBandDiscoveryTimeout: "00:06:00",
+    Scraper__RegisteredBandTargetedProcessingTimeout: "00:05:00",
+    Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace: "false",
+    Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace: "false",
+    Scraper__RegisteredBandRemainingWorkGraceMaxDuration: "00:02:00",
+    Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow: "00:01:30",
+    Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups: "3",
+    Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass: "80",
+    Scraper__RegisteredBandProcessingMaxLookupsPerPass: "80"
+  });
+  return config;
+}
+
 function buildLeaderboardRivalsBatchRunonceConfig({
   accountBatchSize = "4",
   rivalsMaxDegreeOfParallelism = "2",
@@ -2357,6 +2396,155 @@ describe("fstworker Compose startup recovery", () => {
         result.stderr,
         /requires Features__UseLeaderboardScopeFingerprints=true/
       );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts acquisition-checkpoint terminalization with the baseline all-phases contract", async () => {
+    const harness = await createHarness({
+      config: buildAcquisitionCheckpointTerminalizationRunonceConfig()
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stdout,
+        /data_profile=acquisition-checkpoint-terminalization/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts acquisition-checkpoint terminalization when grace settings are absent and the exact image supplies code defaults", async () => {
+    const config = buildAcquisitionCheckpointTerminalizationRunonceConfig({
+      workerImage: "fstservice:checkpoint-terminalization-42bf8d9f"
+    });
+    const environment = config.services.fstworker.environment;
+    for (const name of [
+      "Scraper__EnableRegisteredPlayerBandDiscoveryRemainingWorkGrace",
+      "Scraper__EnableRegisteredBandTargetedProcessingRemainingWorkGrace",
+      "Scraper__RegisteredBandRemainingWorkGraceMaxDuration",
+      "Scraper__RegisteredBandRemainingWorkGraceRecentProgressWindow",
+      "Scraper__RegisteredBandRemainingWorkGraceMaxRemainingLookups"
+    ]) {
+      delete environment[name];
+    }
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization",
+        "--expected-worker-image",
+        "fstservice:checkpoint-terminalization-42bf8d9f"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects acquisition-checkpoint terminalization when an explicit grace setting drifts", async () => {
+    const config = buildAcquisitionCheckpointTerminalizationRunonceConfig({
+      workerImage: "fstservice:checkpoint-terminalization-42bf8d9f"
+    });
+    config.services.fstworker.environment.Scraper__RegisteredBandRemainingWorkGraceMaxDuration =
+      "00:01:00";
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization",
+        "--expected-worker-image",
+        "fstservice:checkpoint-terminalization-42bf8d9f"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires Scraper__RegisteredBandRemainingWorkGraceMaxDuration=00:02:00, found 00:01:00/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects acquisition-checkpoint terminalization when snapshot overlay readers are enabled", async () => {
+    const config = buildAcquisitionCheckpointTerminalizationRunonceConfig();
+    config.services.fstworker.environment.Features__UseSnapshotOverlayWorkerReaders =
+      "true";
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires Features__UseSnapshotOverlayWorkerReaders=false/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps acquisition-checkpoint terminalization run-once and image assertions fail-closed", async () => {
+    const harness = await createHarness({
+      config: buildAcquisitionCheckpointTerminalizationRunonceConfig()
+    });
+    try {
+      const continuousResult = await harness.run([
+        "--check",
+        "--config-only",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(continuousResult.code, 64);
+      assert.match(
+        continuousResult.stderr,
+        /requires --check-runonce or --recreate-runonce/
+      );
+
+      const missingImageResult = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "acquisition-checkpoint-terminalization"
+      ]);
+      assert.equal(missingImageResult.code, 64);
+      assert.match(
+        missingImageResult.stderr,
+        /--expected-worker-image is required with --data-profile/
+      );
+      assert.deepEqual(await harness.events(), []);
     } finally {
       await harness.cleanup();
     }
