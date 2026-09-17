@@ -164,6 +164,14 @@ read-serving health does not admit the next scrape or imply source readiness.
      Finalized restore identity uses the stable relation OID, not relfilenode.
    - Authentication failure, escaped CDN block, cancellation, or writer failure
      prevents normal derived publication work.
+   - If acquisition fails before the atomic checkpoint commits, no metrics or
+     scope contract are reconstructed. Once the worker is offline and reads
+     are unfrozen, the fenced failure-isolation command accepts only a durable
+     failed `scrape.leaderboards` attempt with no checkpoint, no running
+     attempt/current worker operation, and exact candidate ownership of the
+     noncurrent working publication. It fails and releases that candidate
+     while preserving the published scrape. A present checkpoint must use
+     guarded resume instead.
 6. **Post-processing**
    - `PostScrapeOrchestrator` owns enrichment, registered-user refresh,
      projections, rankings, rivals, statistics, precomputation, and cleanup.

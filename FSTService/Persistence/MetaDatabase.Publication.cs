@@ -10,6 +10,15 @@ namespace FSTService.Persistence;
 
 public sealed partial class MetaDatabase
 {
+    internal const string ActiveScrapeFailureIsolationFreezeReason =
+        "post-process";
+    private static readonly string[]
+        ActiveScrapeFailureIsolationWorkerApplicationNames =
+        [
+            "fstworker-scraper",
+            "fst-path-generation-admission",
+            "FST Scraper Worker",
+        ];
     private static readonly Regex PublicationBandArtifactNamePattern =
         new(
             @"^(?<family>btr|btrs)_(?<kind>pubprep|retained)_(?<publicationId>[0-9]+)_(?<bandType>band_duets|band_trios|band_quad)$",
@@ -24,6 +33,19 @@ public sealed partial class MetaDatabase
         PublicationCommitTestHook { get; set; }
     internal Action? DeferredTransitionTestHook { get; set; }
     internal Action? IsolationPendingTransitionTestHook { get; set; }
+    internal Action?
+        ActiveScrapeFailureIsolationBeforeFenceTestHook
+    { get; set; }
+    internal Func<ActiveScrapeFailureIsolationReadiness,
+        ActiveScrapeFailureIsolationReadiness>?
+        ActiveScrapeFailureIsolationFenceReadinessTestHook
+    { get; set; }
+    internal Action?
+        ActiveScrapeFailureIsolationBeforeRuntimeConvergenceTestHook
+    { get; set; }
+    internal Action?
+        ActiveScrapeFailureIsolationArtifactCleanupTestHook
+    { get; set; }
 
     public void PublishScrapeRun(
         long scrapeId,
@@ -497,6 +519,469 @@ public sealed partial class MetaDatabase
             RankingsInputCutoffUtc =
                 rankingsInputCutoffUtc,
         };
+    }
+
+    public ActiveScrapeFailureIsolationReadiness
+        GetActiveScrapeFailureIsolationReadiness(
+            long scrapeId,
+            long expectedPublishedScrapeId)
+    {
+        ValidateActiveScrapeFailureIsolationArguments(
+            scrapeId,
+            expectedPublishedScrapeId);
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        return ReadActiveScrapeFailureIsolationReadiness(
+            conn,
+            tx: null,
+            scrapeId,
+            expectedPublishedScrapeId);
+    }
+
+    public ActiveScrapeFailureIsolationExecutionResult
+        ExecuteActiveScrapeFailureIsolation(
+            long scrapeId,
+            long expectedPublishedScrapeId,
+            string failurePhase,
+            string failureMessage)
+    {
+        ValidateActiveScrapeFailureIsolationArguments(
+            scrapeId,
+            expectedPublishedScrapeId);
+        if (string.IsNullOrWhiteSpace(failureMessage))
+        {
+            throw new ArgumentException(
+                "Failure message is required.",
+                nameof(failureMessage));
+        }
+
+        if (failurePhase != NoProgressReadIsolationFailurePhase
+            && failurePhase != FailedCandidateReadIsolationFailurePhase
+            && failurePhase != AcquisitionFailureIsolationFailurePhase)
+        {
+            throw new ArgumentException(
+                $"Unsupported active-scrape isolation failure phase '{failurePhase}'.",
+                nameof(failurePhase));
+        }
+
+        var normalizedFailureMessage = failureMessage.Trim();
+        var before = GetActiveScrapeFailureIsolationReadiness(
+            scrapeId,
+            expectedPublishedScrapeId);
+        if (!before.CanExecute)
+        {
+            return new ActiveScrapeFailureIsolationExecutionResult(
+                Succeeded: false,
+                FailurePhase: failurePhase,
+                FailureMessage: normalizedFailureMessage,
+                Before: before,
+                MutationReadiness: null,
+                After: null,
+                Error: before.BlockingReason);
+        }
+
+        ActiveScrapeFailureIsolationBeforeFenceTestHook?.Invoke();
+        var commitIntent = new PublicationCommitIntentHandle(
+            scrapeId,
+            Guid.NewGuid().ToString("N"),
+            DateTime.UtcNow);
+        ActiveScrapeFailureIsolationReadiness? mutationReadiness =
+            null;
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var tx = conn.BeginTransaction();
+        ApplyPublicationCommitTimeouts(conn, tx);
+        if (!TryAcquirePublicationAdvisoryLock(
+                conn,
+                tx,
+                shared: false))
+        {
+            TryRollback(tx);
+            return new ActiveScrapeFailureIsolationExecutionResult(
+                Succeeded: false,
+                FailurePhase: failurePhase,
+                FailureMessage: normalizedFailureMessage,
+                Before: before,
+                MutationReadiness: null,
+                After: null,
+                Error:
+                    "Active-scrape failure isolation could not acquire the exclusive publication mutation fence.");
+        }
+
+        mutationReadiness = ReadActiveScrapeFailureIsolationReadiness(
+            conn,
+            tx,
+            scrapeId,
+            expectedPublishedScrapeId);
+        if (ActiveScrapeFailureIsolationFenceReadinessTestHook
+                is not null)
+        {
+            mutationReadiness =
+                ActiveScrapeFailureIsolationFenceReadinessTestHook(
+                    mutationReadiness);
+        }
+
+        if (!mutationReadiness.CanExecute)
+        {
+            TryRollback(tx);
+            return new ActiveScrapeFailureIsolationExecutionResult(
+                Succeeded: false,
+                FailurePhase: failurePhase,
+                FailureMessage: normalizedFailureMessage,
+                Before: before,
+                MutationReadiness: mutationReadiness,
+                After: null,
+                Error: mutationReadiness.BlockingReason);
+        }
+        if (!ActiveScrapeFailureIsolationPhaseMatchesState(
+                mutationReadiness,
+                failurePhase))
+        {
+            TryRollback(tx);
+            return new ActiveScrapeFailureIsolationExecutionResult(
+                Succeeded: false,
+                FailurePhase: failurePhase,
+                FailureMessage: normalizedFailureMessage,
+                Before: before,
+                MutationReadiness: mutationReadiness,
+                After: null,
+                Error:
+                    $"Failure phase {failurePhase} does not match the fenced active-scrape isolation state.");
+        }
+
+        var publicationMutationRequired =
+            mutationReadiness.PublicationMutationRequired;
+        var acquisitionFailureMutationRequired =
+            mutationReadiness
+                .AcquisitionFailureMutationRequired;
+        if (publicationMutationRequired)
+        {
+            ActivatePublicationCommitIntentForIsolation(
+                conn,
+                tx,
+                commitIntent,
+                mutationReadiness);
+        }
+        if (publicationMutationRequired
+            || acquisitionFailureMutationRequired)
+        {
+            FailureIsolationTestHook?.Invoke();
+            RecordFailedScrapeState(
+                conn,
+                tx,
+                scrapeId,
+                failurePhase,
+                normalizedFailureMessage);
+        }
+        ActiveScrapeFailureIsolationBeforeRuntimeConvergenceTestHook
+            ?.Invoke();
+        if (!ReconcileActiveScrapeRuntimeState(
+                conn,
+                tx,
+                mutationReadiness,
+                commitIntent.StartedAtUtc,
+                normalizedFailureMessage))
+        {
+            TryRollback(tx);
+            return new ActiveScrapeFailureIsolationExecutionResult(
+                Succeeded: false,
+                FailurePhase: failurePhase,
+                FailureMessage: normalizedFailureMessage,
+                Before: before,
+                MutationReadiness: mutationReadiness,
+                After: null,
+                Error:
+                    "The persisted scraper worker identity or running phase-attempt ownership changed before runtime convergence.");
+        }
+        if (publicationMutationRequired)
+        {
+            ClearPublicationCommitIntentAfterIsolation(
+                conn,
+                tx,
+                commitIntent);
+        }
+        tx.Commit();
+
+        if (publicationMutationRequired
+            || acquisitionFailureMutationRequired)
+        {
+            ActiveScrapeFailureIsolationArtifactCleanupTestHook
+                ?.Invoke();
+            try
+            {
+                CleanupFailedPublicationArtifacts(scrapeId);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Active-scrape failure isolation for scrape {ScrapeId} durably failed the candidate, but artifact cleanup did not complete.",
+                    scrapeId);
+            }
+
+            _ = SweepPublicationBandTableOrphans();
+        }
+        var after = GetActiveScrapeFailureIsolationReadiness(
+            scrapeId,
+            expectedPublishedScrapeId);
+        var succeeded =
+            ActiveScrapeFailureIsolationReachedTerminalState(
+                after,
+                mutationReadiness.CandidatePublicationId);
+        var error = succeeded
+            ? null
+            : "Active-scrape failure isolation did not prove the preserved published identity, the failed candidate terminal state, and zero worker/lock/maintenance blockers.";
+
+        return new ActiveScrapeFailureIsolationExecutionResult(
+            Succeeded: succeeded,
+            FailurePhase: failurePhase,
+            FailureMessage: normalizedFailureMessage,
+            Before: before,
+            MutationReadiness: mutationReadiness,
+            After: after,
+            Error: error);
+    }
+
+    private ActiveScrapeFailureIsolationReadiness
+        ReadActiveScrapeFailureIsolationReadiness(
+            NpgsqlConnection conn,
+            NpgsqlTransaction? tx,
+            long scrapeId,
+            long expectedPublishedScrapeId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            WITH singleton AS (
+                SELECT 1 AS id
+            ),
+            publication AS (
+                SELECT
+                    published_scrape_id,
+                    COALESCE(public_reads_frozen, FALSE) AS public_reads_frozen,
+                    public_reads_frozen_scrape_id,
+                    public_reads_frozen_reason,
+                    working_publication_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ),
+            candidate AS (
+                SELECT
+                    status,
+                    acquisition_completed_at,
+                    failure_phase
+                FROM scrape_log
+                WHERE id = @scrapeId
+            ),
+            generation AS (
+                SELECT publication_id, status
+                FROM publication_generations
+                WHERE scrape_id = @scrapeId
+                ORDER BY publication_id DESC
+                LIMIT 1
+            ),
+            worker_queries AS (
+                SELECT COUNT(*)::INTEGER AS total
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND state <> 'idle'
+                  AND application_name = ANY(@workerApplicationNames)
+            ),
+            waiting_locks AS (
+                SELECT COUNT(*)::INTEGER AS total
+                FROM pg_locks lock
+                JOIN pg_stat_activity activity
+                  ON activity.pid = lock.pid
+                WHERE activity.datname = current_database()
+                  AND lock.pid <> pg_backend_pid()
+                  AND NOT lock.granted
+            ),
+            advisory_locks AS (
+                SELECT COUNT(*)::INTEGER AS total
+                FROM pg_locks lock
+                JOIN pg_stat_activity activity
+                  ON activity.pid = lock.pid
+                WHERE activity.datname = current_database()
+                  AND lock.pid <> pg_backend_pid()
+                  AND lock.locktype = 'advisory'
+            ),
+            maintenance AS (
+                SELECT
+                    EXISTS (
+                        SELECT 1
+                        FROM pg_stat_progress_vacuum
+                        WHERE datname = current_database())
+                    OR EXISTS (
+                        SELECT 1
+                        FROM pg_stat_progress_create_index
+                        WHERE datname = current_database())
+                    OR EXISTS (
+                        SELECT 1
+                        FROM pg_stat_progress_cluster
+                        WHERE datname = current_database())
+                    OR EXISTS (
+                        SELECT 1
+                        FROM pg_stat_progress_analyze
+                        WHERE datname = current_database())
+                    AS active
+            ),
+            worker_state AS (
+                SELECT
+                    status,
+                    instance_id,
+                    updated_at,
+                    current_operation_json IS NOT NULL
+                        AS current_operation_present
+                FROM service_worker_status
+                WHERE worker_key = @workerKey
+            ),
+            phase_attempts AS (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE status = 'running')::INTEGER
+                        AS total,
+                    COUNT(*) FILTER (
+                        WHERE status = 'running'
+                          AND worker_instance_id IS DISTINCT FROM (
+                              SELECT instance_id
+                              FROM worker_state))::INTEGER
+                        AS foreign_total,
+                    COUNT(*) FILTER (
+                        WHERE phase_id =
+                                'scrape.leaderboards'
+                          AND status = 'failed')::INTEGER
+                        AS failed_acquisition_total
+                FROM scrape_phase_attempts
+                WHERE scrape_id = @scrapeId
+            )
+            SELECT
+                publication.published_scrape_id,
+                candidate.status,
+                COALESCE(publication.public_reads_frozen, FALSE),
+                publication.public_reads_frozen_scrape_id,
+                publication.public_reads_frozen_reason,
+                publication.working_publication_id,
+                generation.publication_id,
+                generation.status,
+                (
+                    SELECT COUNT(*)::INTEGER
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                ),
+                worker_queries.total,
+                waiting_locks.total,
+                advisory_locks.total,
+                maintenance.active,
+                phase_attempts.total,
+                phase_attempts.foreign_total,
+                worker_state.status,
+                worker_state.instance_id,
+                worker_state.updated_at,
+                COALESCE(
+                    worker_state.current_operation_present,
+                    FALSE),
+                phase_attempts.failed_acquisition_total,
+                COALESCE(
+                    candidate.acquisition_completed_at
+                        IS NOT NULL,
+                    FALSE),
+                candidate.failure_phase
+            FROM singleton
+            LEFT JOIN publication ON TRUE
+            LEFT JOIN candidate ON TRUE
+            LEFT JOIN generation ON TRUE
+            CROSS JOIN worker_queries
+            CROSS JOIN waiting_locks
+            CROSS JOIN advisory_locks
+            CROSS JOIN maintenance
+            CROSS JOIN phase_attempts
+            LEFT JOIN worker_state ON TRUE
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue(
+            "workerApplicationNames",
+            NpgsqlDbType.Array | NpgsqlDbType.Text,
+            ActiveScrapeFailureIsolationWorkerApplicationNames);
+        cmd.Parameters.AddWithValue(
+            "workerKey",
+            WorkerStatusPublisher.ScraperWorkerKey);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException(
+                "Active-scrape failure isolation requires publication state.");
+        }
+
+        static long? ReadNullableInt64(
+            NpgsqlDataReader reader,
+            int ordinal)
+            => reader.IsDBNull(ordinal)
+                ? null
+                : Convert.ToInt64(reader.GetValue(ordinal));
+
+        return new ActiveScrapeFailureIsolationReadiness(
+            scrapeId,
+            expectedPublishedScrapeId,
+            ReadNullableInt64(reader, 0),
+            reader.IsDBNull(1)
+                ? null
+                : reader.GetString(1),
+            reader.GetBoolean(2),
+            ReadNullableInt64(reader, 3),
+            reader.IsDBNull(4)
+                ? null
+                : reader.GetString(4),
+            ReadNullableInt64(reader, 5),
+            ReadNullableInt64(reader, 6),
+            reader.IsDBNull(7)
+                ? null
+                : reader.GetString(7),
+            reader.GetInt32(8),
+            reader.GetInt32(9),
+            reader.GetInt32(10),
+            reader.GetInt32(11),
+            reader.GetBoolean(12),
+            reader.GetInt32(13),
+            reader.GetInt32(14),
+            reader.IsDBNull(15)
+                ? null
+                : reader.GetString(15),
+            reader.IsDBNull(16)
+                ? null
+                : reader.GetString(16),
+            GetNullableUtc(reader, 17),
+            reader.GetBoolean(18),
+            reader.GetInt32(19),
+            reader.GetBoolean(20),
+            reader.IsDBNull(21)
+                ? null
+                : reader.GetString(21));
+    }
+
+    private static bool
+        ActiveScrapeFailureIsolationPhaseMatchesState(
+            ActiveScrapeFailureIsolationReadiness readiness,
+            string failurePhase)
+    {
+        if (readiness.AcquisitionFailureMutationRequired)
+        {
+            return failurePhase
+                == AcquisitionFailureIsolationFailurePhase;
+        }
+        if (readiness.PublicationMutationRequired)
+        {
+            return failurePhase
+                    == NoProgressReadIsolationFailurePhase
+                || failurePhase
+                    == FailedCandidateReadIsolationFailurePhase;
+        }
+
+        return readiness.PublicationIsolationComplete
+            && string.Equals(
+                readiness.CandidateFailurePhase,
+                failurePhase,
+                StringComparison.Ordinal);
     }
 
     public PublicationPreparationResult?
@@ -1435,37 +1920,12 @@ public sealed partial class MetaDatabase
         PublicationCommitIntentHandle commitIntent)
     {
         using var conn = _ds.OpenConnection();
-        using var command = conn.CreateCommand();
-        command.CommandText = """
-            UPDATE scrape_publication_state
-            SET public_reads_frozen = FALSE,
-                public_reads_frozen_at = NULL,
-                public_reads_frozen_scrape_id = NULL,
-                public_reads_frozen_reason = NULL,
-                publication_commit_intent_started_at = NULL,
-                publication_commit_intent_heartbeat_at = NULL,
-                publication_commit_intent_owner = NULL,
-                updated_at = now()
-            WHERE id = TRUE
-              AND public_reads_frozen_reason =
-                    @commitIntentReason
-              AND public_reads_frozen_scrape_id = @scrapeId
-              AND publication_commit_intent_owner = @owner
-            """;
-        command.Parameters.AddWithValue(
-            "commitIntentReason",
-            PublicReadFreezeState.PublicationCommitIntentReason);
-        command.Parameters.AddWithValue(
-            "scrapeId",
-            checked((int)commitIntent.ScrapeId));
-        command.Parameters.AddWithValue(
-            "owner",
-            commitIntent.OwnerToken);
-        if (command.ExecuteNonQuery() != 1)
-        {
-            throw new InvalidOperationException(
-                $"Publication commit intent {commitIntent.OwnerToken} for scrape {commitIntent.ScrapeId} could not clear after durable isolation.");
-        }
+        using var tx = conn.BeginTransaction();
+        ClearPublicationCommitIntentAfterIsolation(
+            conn,
+            tx,
+            commitIntent);
+        tx.Commit();
     }
 
     public void RestorePublicationCommitIntent(
@@ -1599,6 +2059,298 @@ public sealed partial class MetaDatabase
                 "Publication commit intent for scrape {ScrapeId} could not be restored immediately; stale-intent reconciliation remains armed.",
                 commitIntent.ScrapeId);
         }
+    }
+
+    private static void ValidateActiveScrapeFailureIsolationArguments(
+        long scrapeId,
+        long expectedPublishedScrapeId)
+    {
+        if (scrapeId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scrapeId),
+                "Scrape id must be positive.");
+        }
+
+        if (expectedPublishedScrapeId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(expectedPublishedScrapeId),
+                "Published scrape id must be positive.");
+        }
+    }
+
+    private static bool ActiveScrapeFailureIsolationReachedTerminalState(
+        ActiveScrapeFailureIsolationReadiness readiness,
+        long? expectedCandidatePublicationId)
+        => readiness.PublishedScrapeId
+                == readiness.ExpectedPublishedScrapeId
+            && string.Equals(
+                readiness.CandidateStatus,
+                "failed",
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                readiness.CandidatePublicationStatus,
+                "failed",
+                StringComparison.OrdinalIgnoreCase)
+            && !readiness.PublicReadsFrozen
+            && readiness.WorkingPublicationId is null
+            && readiness.CandidatePublishedScopeRowCount == 0
+            && readiness.ActiveWorkerQueryCount == 0
+            && readiness.WaitingLockCount == 0
+            && readiness.AdvisoryLockCount == 0
+            && !readiness.MaintenanceActivityPresent
+            && readiness.RunningPhaseAttemptCount == 0
+            && readiness.ForeignRunningPhaseAttemptCount == 0
+            && string.Equals(
+                readiness.WorkerStatus,
+                "offline",
+                StringComparison.OrdinalIgnoreCase)
+            && !readiness.WorkerCurrentOperationPresent
+            && readiness.CandidatePublicationId
+                == expectedCandidatePublicationId;
+
+    private static void ActivatePublicationCommitIntentForIsolation(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        PublicationCommitIntentHandle commitIntent,
+        ActiveScrapeFailureIsolationReadiness readiness)
+    {
+        if (!readiness.WorkingPublicationId.HasValue
+            || !readiness.CandidatePublicationId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Active-scrape failure isolation requires a working publication owned by the candidate.");
+        }
+
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = TRUE,
+                public_reads_frozen_at = COALESCE(
+                    public_reads_frozen_at,
+                    @now),
+                public_reads_frozen_scrape_id = @scrapeId,
+                public_reads_frozen_reason =
+                    @commitIntentReason,
+                publication_commit_intent_started_at = @now,
+                publication_commit_intent_heartbeat_at = @now,
+                publication_commit_intent_owner = @owner,
+                updated_at = @now
+            WHERE id = TRUE
+              AND published_scrape_id = @publishedScrapeId
+              AND public_reads_frozen
+              AND public_reads_frozen_scrape_id =
+                    @publishedScrapeId
+              AND public_reads_frozen_reason = @freezeReason
+              AND working_publication_id =
+                    @workingPublicationId
+              AND EXISTS (
+                  SELECT 1
+                  FROM publication_generations generation
+                  WHERE generation.scrape_id = @scrapeId
+                    AND generation.publication_id =
+                        @candidatePublicationId
+              )
+            """;
+        command.Parameters.AddWithValue(
+            "now",
+            DateTime.UtcNow);
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            checked((int)commitIntent.ScrapeId));
+        command.Parameters.AddWithValue(
+            "publishedScrapeId",
+            checked((int)readiness.ExpectedPublishedScrapeId));
+        command.Parameters.AddWithValue(
+            "freezeReason",
+            ActiveScrapeFailureIsolationFreezeReason);
+        command.Parameters.AddWithValue(
+            "commitIntentReason",
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        command.Parameters.AddWithValue(
+            "owner",
+            commitIntent.OwnerToken);
+        command.Parameters.AddWithValue(
+            "workingPublicationId",
+            readiness.WorkingPublicationId.Value);
+        command.Parameters.AddWithValue(
+            "candidatePublicationId",
+            readiness.CandidatePublicationId.Value);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Active-scrape failure isolation for scrape {commitIntent.ScrapeId} lost the preserved published-baseline freeze or candidate working-publication identity before mutation.");
+        }
+    }
+
+    private static void ClearPublicationCommitIntentAfterIsolation(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        PublicationCommitIntentHandle commitIntent)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = FALSE,
+                public_reads_frozen_at = NULL,
+                public_reads_frozen_scrape_id = NULL,
+                public_reads_frozen_reason = NULL,
+                publication_commit_intent_started_at = NULL,
+                publication_commit_intent_heartbeat_at = NULL,
+                publication_commit_intent_owner = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+              AND public_reads_frozen_reason =
+                    @commitIntentReason
+              AND public_reads_frozen_scrape_id = @scrapeId
+              AND publication_commit_intent_owner = @owner
+            """;
+        command.Parameters.AddWithValue(
+            "commitIntentReason",
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            checked((int)commitIntent.ScrapeId));
+        command.Parameters.AddWithValue(
+            "owner",
+            commitIntent.OwnerToken);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Publication commit intent {commitIntent.OwnerToken} for scrape {commitIntent.ScrapeId} could not clear after durable isolation.");
+        }
+    }
+
+    private static bool ReconcileActiveScrapeRuntimeState(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        ActiveScrapeFailureIsolationReadiness readiness,
+        DateTime reconciledAtUtc,
+        string failureMessage)
+    {
+        using var worker = conn.CreateCommand();
+        worker.Transaction = tx;
+        worker.CommandText = """
+            UPDATE service_worker_status
+            SET status = 'offline',
+                last_status_change_at = @now,
+                message = @workerMessage,
+                last_operation_json = CASE
+                    WHEN current_operation_json IS NULL
+                        THEN last_operation_json
+                    ELSE current_operation_json
+                        || jsonb_build_object(
+                            'Status',
+                            'failed',
+                            'Detail',
+                            @reason,
+                            'UpdatedAtUtc',
+                            @endedAt,
+                            'EndedAtUtc',
+                            @endedAt,
+                            'ElapsedSeconds',
+                            CASE
+                                WHEN NULLIF(
+                                    current_operation_json
+                                        ->> 'StartedAtUtc',
+                                    '') IS NULL
+                                    THEN current_operation_json
+                                        -> 'ElapsedSeconds'
+                                ELSE to_jsonb(
+                                    EXTRACT(
+                                        EPOCH FROM (
+                                            @now
+                                            - NULLIF(
+                                                current_operation_json
+                                                    ->> 'StartedAtUtc',
+                                                '')::timestamptz)))
+                            END)
+                END,
+                current_operation_json = NULL,
+                updated_at = @now
+            WHERE worker_key = @workerKey
+              AND instance_id = @workerInstanceId
+              AND updated_at = @workerUpdatedAt
+            """;
+        worker.Parameters.AddWithValue(
+            "now",
+            reconciledAtUtc);
+        worker.Parameters.AddWithValue(
+            "workerMessage",
+            $"Worker stopped by active-scrape failure isolation for scrape {readiness.ScrapeId}.");
+        worker.Parameters.AddWithValue(
+            "reason",
+            failureMessage);
+        worker.Parameters.AddWithValue(
+            "endedAt",
+            reconciledAtUtc.ToString(
+                "O",
+                System.Globalization.CultureInfo.InvariantCulture));
+        worker.Parameters.AddWithValue(
+            "workerKey",
+            WorkerStatusPublisher.ScraperWorkerKey);
+        worker.Parameters.AddWithValue(
+            "workerInstanceId",
+            readiness.WorkerInstanceId!);
+        worker.Parameters.AddWithValue(
+            "workerUpdatedAt",
+            readiness.WorkerUpdatedAtUtc!.Value);
+        if (worker.ExecuteNonQuery() != 1)
+            return false;
+
+        using (var attempts = conn.CreateCommand())
+        {
+            attempts.Transaction = tx;
+            attempts.CommandText = """
+                UPDATE scrape_phase_attempts
+                SET status = 'interrupted',
+                    last_progress_at = GREATEST(
+                        last_progress_at,
+                        @now),
+                    heartbeat_at = GREATEST(
+                        heartbeat_at,
+                        @now),
+                    completed_at = @now,
+                    warning_message = COALESCE(
+                        warning_message,
+                        @reason)
+                WHERE scrape_id = @scrapeId
+                  AND status = 'running'
+                  AND worker_instance_id =
+                        @workerInstanceId
+                """;
+            attempts.Parameters.AddWithValue(
+                "now",
+                reconciledAtUtc);
+            attempts.Parameters.AddWithValue(
+                "reason",
+                failureMessage);
+            attempts.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)readiness.ScrapeId));
+            attempts.Parameters.AddWithValue(
+                "workerInstanceId",
+                readiness.WorkerInstanceId!);
+            attempts.ExecuteNonQuery();
+        }
+
+        using var remainingAttempts =
+            conn.CreateCommand();
+        remainingAttempts.Transaction = tx;
+        remainingAttempts.CommandText = """
+            SELECT COUNT(*)::INTEGER
+            FROM scrape_phase_attempts
+            WHERE scrape_id = @scrapeId
+              AND status = 'running'
+            """;
+        remainingAttempts.Parameters.AddWithValue(
+            "scrapeId",
+            checked((int)readiness.ScrapeId));
+        return Convert.ToInt32(
+            remainingAttempts.ExecuteScalar()) == 0;
     }
 
     private void ClearAlreadyPublishedCommitIntent(long scrapeId)

@@ -30,6 +30,62 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void StartScrapePhaseAttempt_rejects_failed_scrape()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE scrape_log
+                SET status = 'failed',
+                    failed_at = now(),
+                    failure_phase = 'test',
+                    failure_message = 'test'
+                WHERE id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)scrapeId));
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        var now = DateTime.UtcNow;
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Db.StartScrapePhaseAttempt(
+                new ScrapePhaseAttemptStart(
+                    scrapeId,
+                    "post.compute_rankings",
+                    "scrape.update",
+                    310,
+                    PhaseProgressCatalog.PlanVersion,
+                    "late-worker",
+                    "band_rankings",
+                    "running",
+                    "instruments",
+                    0,
+                    25,
+                    true,
+                    0,
+                    "indeterminate",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    now,
+                    now,
+                    now,
+                    "build-test",
+                    "config-test")));
+
+        Assert.Contains(
+            "status failed",
+            error.Message);
+    }
+
+    [Fact]
     public void StartScrapeRun_allocates_working_publication_generation()
     {
         var scrapeId = Db.StartScrapeRun();
@@ -4697,6 +4753,787 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void ActiveScrapeFailureIsolationReadiness_accepts_exact_frozen_candidate()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+
+        var readiness =
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId);
+
+        Assert.True(readiness.CanExecute);
+        Assert.True(readiness.PublicationMutationRequired);
+        Assert.False(readiness.PublicationIsolationComplete);
+        Assert.Null(readiness.BlockingReason);
+        Assert.Equal("running", readiness.CandidateStatus);
+        Assert.True(readiness.PublicReadsFrozen);
+        Assert.Equal(
+            state.PublishedScrapeId,
+            readiness.FrozenScrapeId);
+        Assert.Equal(
+            MetaDatabase.ActiveScrapeFailureIsolationFreezeReason,
+            readiness.FreezeReason);
+        Assert.Equal(
+            state.CandidatePublicationId,
+            readiness.WorkingPublicationId);
+        Assert.Equal(
+            state.CandidatePublicationId,
+            readiness.CandidatePublicationId);
+        Assert.Equal(1, readiness.RunningPhaseAttemptCount);
+        Assert.Equal(0, readiness.ForeignRunningPhaseAttemptCount);
+        Assert.Equal("running", readiness.WorkerStatus);
+        Assert.Equal(
+            $"failure-isolation-{state.CandidateScrapeId}",
+            readiness.WorkerInstanceId);
+        Assert.NotNull(readiness.WorkerUpdatedAtUtc);
+        Assert.True(readiness.WorkerCurrentOperationPresent);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_fails_candidate_and_unfreezes_reads()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+
+        var result =
+            Db.ExecuteActiveScrapeFailureIsolation(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId,
+                MetaDatabase
+                    .NoProgressReadIsolationFailurePhase,
+                "watchdog timeout");
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.MutationReadiness);
+        Assert.NotNull(result.After);
+        Assert.True(result.MutationReadiness!.CanExecute);
+        Assert.False(result.After!.PublicReadsFrozen);
+        Assert.Null(result.After.WorkingPublicationId);
+        Assert.Equal("failed", result.After.CandidateStatus);
+        Assert.Equal(0, result.After.ActiveWorkerQueryCount);
+        Assert.Equal(0, result.After.WaitingLockCount);
+        Assert.Equal(0, result.After.AdvisoryLockCount);
+        Assert.False(result.After.MaintenanceActivityPresent);
+        Assert.Equal(0, result.After.RunningPhaseAttemptCount);
+        Assert.Equal(
+            0,
+            result.After.ForeignRunningPhaseAttemptCount);
+        Assert.Equal("offline", result.After.WorkerStatus);
+        Assert.False(result.After.WorkerCurrentOperationPresent);
+        Assert.False(result.After.PublicationMutationRequired);
+        Assert.True(result.After.PublicationIsolationComplete);
+        Assert.Equal(
+            state.PublishedScrapeId,
+            Db.GetPublicationPointerState().PublishedScrapeId);
+        Assert.Null(
+            Db.GetPublicationPointerState().WorkingPublicationId);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            PublicationGenerationStatus.Current,
+            Db.GetPublicationGenerationForScrape(
+                state.PublishedScrapeId)!.Status);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            Db.GetPublicationGeneration(
+                state.CandidatePublicationId)!.Status);
+        var runtime =
+            Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.Equal("failed", runtime.LatestScrape?.Status);
+        Assert.Null(runtime.CurrentPhaseAttempt);
+        Assert.Equal("offline", runtime.WorkerStatus?.Status);
+        Assert.Null(runtime.WorkerStatus?.CurrentOperation);
+        Assert.Equal(
+            "failed",
+            runtime.WorkerStatus?.LastOperation?.Status);
+        Assert.Equal(
+            state.CandidateScrapeId,
+            runtime.LatestScrape?.Id);
+        Assert.Equal(
+            "failed",
+            runtime.LatestScrape?.Status);
+        Assert.Equal(
+            MetaDatabase.NoProgressReadIsolationFailurePhase,
+            runtime.LatestScrape?.FailurePhase);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_fails_uncheckpointed_acquisition_failure()
+    {
+        var state = CreateAcquisitionFailureCandidate();
+        var artifactCleanupInvoked = false;
+        Db.ActiveScrapeFailureIsolationArtifactCleanupTestHook =
+            () => artifactCleanupInvoked = true;
+
+        try
+        {
+            var readiness =
+                Db.GetActiveScrapeFailureIsolationReadiness(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId);
+
+            Assert.True(readiness.CanExecute);
+            Assert.True(
+                readiness.AcquisitionFailureMutationRequired);
+            Assert.False(readiness.PublicationMutationRequired);
+            Assert.False(readiness.PublicationIsolationComplete);
+            Assert.False(readiness.PublicReadsFrozen);
+            Assert.Equal(
+                state.CandidatePublicationId,
+                readiness.WorkingPublicationId);
+            Assert.Equal(0, readiness.RunningPhaseAttemptCount);
+            Assert.Equal(
+                1,
+                readiness.FailedAcquisitionPhaseAttemptCount);
+            Assert.False(readiness.AcquisitionCheckpointPresent);
+            Assert.Equal("offline", readiness.WorkerStatus);
+            Assert.False(
+                readiness.WorkerCurrentOperationPresent);
+
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .AcquisitionFailureIsolationFailurePhase,
+                    "acquisition checkpoint persistence failed");
+
+            Assert.True(result.Succeeded);
+            Assert.True(artifactCleanupInvoked);
+            Assert.NotNull(result.After);
+            Assert.Equal(
+                "failed",
+                result.After!.CandidateStatus);
+            Assert.True(
+                result.After.PublicationIsolationComplete);
+            Assert.False(
+                result.After.AcquisitionFailureMutationRequired);
+            Assert.Null(result.After.WorkingPublicationId);
+            Assert.False(result.After.PublicReadsFrozen);
+            Assert.Equal(
+                state.PublishedScrapeId,
+                Db.GetPublicationPointerState()
+                    .PublishedScrapeId);
+            Assert.Equal(
+                PublicationGenerationStatus.Failed,
+                Db.GetPublicationGeneration(
+                    state.CandidatePublicationId)!.Status);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationArtifactCleanupTestHook =
+                null;
+        }
+    }
+
+    [Fact]
+    public void ActiveScrapeFailureIsolationReadiness_rejects_acquisition_failure_with_checkpoint()
+    {
+        var state = CreateAcquisitionFailureCandidate();
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE scrape_log
+                SET acquisition_completed_at = NOW(),
+                    songs_scraped = 1,
+                    total_entries = 10,
+                    total_requests = 1,
+                    total_bytes = 100,
+                    epic_reported_over_100_pages = FALSE,
+                    expected_solo_scope_count = 1,
+                    expected_solo_scope_fingerprint_version = 1,
+                    expected_solo_scope_fingerprint =
+                        REPEAT('0', 64)
+                WHERE id = @scrapeId
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                state.CandidateScrapeId);
+            command.ExecuteNonQuery();
+        }
+
+        var readiness =
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId);
+
+        Assert.False(readiness.CanExecute);
+        Assert.False(
+            readiness.AcquisitionFailureMutationRequired);
+        Assert.True(readiness.AcquisitionCheckpointPresent);
+        Assert.Equal(
+            "an acquisition checkpoint is present; guarded resume must be used",
+            readiness.BlockingReason);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_mismatched_acquisition_failure_phase()
+    {
+        var state = CreateAcquisitionFailureCandidate();
+
+        var result =
+            Db.ExecuteActiveScrapeFailureIsolation(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId,
+                MetaDatabase
+                    .NoProgressReadIsolationFailurePhase,
+                "mismatched failure phase");
+
+        Assert.False(result.Succeeded);
+        Assert.NotNull(result.MutationReadiness);
+        Assert.Null(result.After);
+        Assert.Contains(
+            "does not match",
+            result.Error);
+        Assert.Equal(
+            "running",
+            Db.GetServiceRuntimeState(
+                    WorkerStatusPublisher.ScraperWorkerKey)
+                .LatestScrape?.Status);
+        Assert.Equal(
+            state.CandidatePublicationId,
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Building,
+            Db.GetPublicationGeneration(
+                state.CandidatePublicationId)!.Status);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_finishes_partial_runtime_convergence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        TerminalizePublicationWithoutRuntimeConvergence(
+            state.CandidateScrapeId);
+        var artifactCleanupInvoked = false;
+        Db.ActiveScrapeFailureIsolationArtifactCleanupTestHook =
+            () => artifactCleanupInvoked = true;
+
+        try
+        {
+            var readiness =
+                Db.GetActiveScrapeFailureIsolationReadiness(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId);
+
+            Assert.True(readiness.CanExecute);
+            Assert.False(readiness.PublicationMutationRequired);
+            Assert.True(readiness.PublicationIsolationComplete);
+            Assert.Equal(1, readiness.RunningPhaseAttemptCount);
+            Assert.Equal(0, readiness.ForeignRunningPhaseAttemptCount);
+            Assert.Equal("running", readiness.WorkerStatus);
+            Assert.True(readiness.WorkerCurrentOperationPresent);
+
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.True(result.Succeeded);
+            Assert.NotNull(result.MutationReadiness);
+            Assert.True(
+                result.MutationReadiness!
+                    .PublicationIsolationComplete);
+            Assert.NotNull(result.After);
+            Assert.Equal(
+                0,
+                result.After!.RunningPhaseAttemptCount);
+            Assert.Equal(
+                0,
+                result.After.ForeignRunningPhaseAttemptCount);
+            Assert.Equal("offline", result.After.WorkerStatus);
+            Assert.False(
+                result.After.WorkerCurrentOperationPresent);
+            Assert.True(result.After.PublicationIsolationComplete);
+            Assert.False(artifactCleanupInvoked);
+
+            var runtime =
+                Db.GetServiceRuntimeState(
+                    WorkerStatusPublisher.ScraperWorkerKey);
+            Assert.Equal("failed", runtime.LatestScrape?.Status);
+            Assert.Null(runtime.CurrentPhaseAttempt);
+            Assert.Equal("offline", runtime.WorkerStatus?.Status);
+            Assert.Null(runtime.WorkerStatus?.CurrentOperation);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationArtifactCleanupTestHook =
+                null;
+        }
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_newer_worker_instance_before_runtime_convergence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        Db.ActiveScrapeFailureIsolationBeforeRuntimeConvergenceTestHook =
+            () =>
+            {
+                var now =
+                    DateTime.UtcNow.AddMinutes(1);
+                Db.UpsertWorkerHeartbeat(
+                    WorkerStatusPublisher.ScraperWorkerKey,
+                    "running",
+                    "scraper",
+                    "replacement-worker",
+                    now,
+                    now,
+                    "Replacement worker",
+                    new WorkerOperationInfo
+                    {
+                        OperationKey =
+                            "scrape.start",
+                        OperationLabel =
+                            "Starting replacement scrape worker",
+                        Status = "running",
+                        StartedAtUtc = now,
+                        UpdatedAtUtc = now,
+                    });
+            };
+
+        try
+        {
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(result.MutationReadiness);
+            Assert.Null(result.After);
+            Assert.Contains(
+                "worker identity",
+                result.Error);
+            Assert.Equal(
+                "running",
+                Db.GetScrapeResumeState(
+                    state.CandidateScrapeId)?.Status);
+            Assert.True(
+                Db.GetPublicReadFreezeState().IsFrozen);
+            var worker =
+                Db.GetWorkerStatus(
+                    WorkerStatusPublisher.ScraperWorkerKey);
+            Assert.Equal(
+                "replacement-worker",
+                worker?.InstanceId);
+            Assert.NotNull(worker?.CurrentOperation);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationBeforeRuntimeConvergenceTestHook =
+                null;
+        }
+    }
+
+    [Fact]
+    public void ActiveScrapeFailureIsolationReadiness_rejects_candidate_owned_post_process_freeze()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        Db.SetPublicReadFreeze(
+            true,
+            state.CandidateScrapeId,
+            MetaDatabase.ActiveScrapeFailureIsolationFreezeReason);
+
+        var readiness =
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId);
+
+        Assert.False(readiness.CanExecute);
+        Assert.Equal(
+            state.CandidateScrapeId,
+            readiness.FrozenScrapeId);
+        Assert.Contains(
+            $"expected frozen published scrape {state.PublishedScrapeId}",
+            readiness.BlockingReason);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_is_noop_when_published_identity_mismatches()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+
+        var result =
+            Db.ExecuteActiveScrapeFailureIsolation(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId + 1,
+                MetaDatabase
+                    .NoProgressReadIsolationFailurePhase,
+                "watchdog timeout");
+
+        Assert.False(result.Succeeded);
+        Assert.Null(result.MutationReadiness);
+        Assert.Null(result.After);
+        Assert.Contains(
+            $"expected published scrape {state.PublishedScrapeId + 1}",
+            result.Error);
+        Assert.Equal(
+            "running",
+            Db.GetScrapeResumeState(
+                state.CandidateScrapeId)?.Status);
+        Assert.True(
+            Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            state.CandidatePublicationId,
+            Db.GetPublicationPointerState().WorkingPublicationId);
+    }
+
+    [Fact]
+    public async Task ExecuteActiveScrapeFailureIsolation_rejects_worker_query_race_under_mutation_fence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        Assert.True(
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId).CanExecute);
+
+        NpgsqlConnection? workerConnection = null;
+        Task? sleepTask = null;
+        Db.ActiveScrapeFailureIsolationBeforeFenceTestHook = () =>
+        {
+            workerConnection =
+                DataSource.OpenConnection();
+            using (var setApplication =
+                   workerConnection.CreateCommand())
+            {
+                setApplication.CommandText = """
+                    SELECT set_config(
+                        'application_name',
+                        'fstworker-scraper',
+                        false)
+                    """;
+                setApplication.ExecuteNonQuery();
+            }
+
+            var sleepCommand =
+                workerConnection.CreateCommand();
+            sleepCommand.CommandText = "SELECT pg_sleep(2)";
+            sleepTask = sleepCommand.ExecuteNonQueryAsync();
+            var deadline = DateTime.UtcNow.AddSeconds(1);
+            do
+            {
+                if (Db.GetActiveScrapeFailureIsolationReadiness(
+                        state.CandidateScrapeId,
+                        state.PublishedScrapeId)
+                    .ActiveWorkerQueryCount > 0)
+                {
+                    return;
+                }
+
+                Thread.Sleep(25);
+            }
+            while (DateTime.UtcNow < deadline);
+
+            throw new InvalidOperationException(
+                "Test worker query did not become visible.");
+        };
+
+        ActiveScrapeFailureIsolationExecutionResult result;
+        try
+        {
+            result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationBeforeFenceTestHook =
+                null;
+            if (sleepTask is not null)
+                await sleepTask;
+            if (workerConnection is not null)
+                await workerConnection.DisposeAsync();
+        }
+
+        Assert.False(result.Succeeded);
+        Assert.NotNull(result.MutationReadiness);
+        Assert.Null(result.After);
+        Assert.True(
+            result.MutationReadiness!.ActiveWorkerQueryCount > 0);
+        Assert.Contains(
+            "active database",
+            result.Error);
+        Assert.Equal(
+            "running",
+            Db.GetScrapeResumeState(
+                state.CandidateScrapeId)?.Status);
+        Assert.True(
+            Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_advisory_lock_race_under_mutation_fence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        Assert.True(
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId).CanExecute);
+
+        NpgsqlConnection? blockerConnection = null;
+        NpgsqlTransaction? blockerTransaction = null;
+        Db.ActiveScrapeFailureIsolationBeforeFenceTestHook = () =>
+        {
+            blockerConnection =
+                DataSource.OpenConnection();
+            blockerTransaction =
+                blockerConnection.BeginTransaction();
+            using var lockCommand =
+                blockerConnection.CreateCommand();
+            lockCommand.Transaction = blockerTransaction;
+            lockCommand.CommandText =
+                "SELECT pg_advisory_xact_lock(987654321)";
+            lockCommand.ExecuteNonQuery();
+        };
+
+        try
+        {
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(result.MutationReadiness);
+            Assert.Null(result.After);
+            Assert.True(
+                result.MutationReadiness!
+                    .AdvisoryLockCount > 0);
+            Assert.Contains(
+                "advisory database lock",
+                result.Error);
+            Assert.Equal(
+                "running",
+                Db.GetScrapeResumeState(
+                    state.CandidateScrapeId)?.Status);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationBeforeFenceTestHook =
+                null;
+            blockerTransaction?.Rollback();
+            blockerConnection?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_maintenance_race_under_mutation_fence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        var initialReadiness =
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId);
+        Assert.True(initialReadiness.CanExecute);
+
+        Db.ActiveScrapeFailureIsolationFenceReadinessTestHook =
+            readiness => readiness with
+            {
+                MaintenanceActivityPresent = true,
+            };
+        try
+        {
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(result.MutationReadiness);
+            Assert.Null(result.After);
+            Assert.True(
+                result.MutationReadiness!
+                    .MaintenanceActivityPresent);
+            Assert.Contains(
+                "maintenance",
+                result.Error);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationFenceReadinessTestHook =
+                null;
+        }
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_identity_race_under_mutation_fence()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        Assert.True(
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId).CanExecute);
+
+        Db.ActiveScrapeFailureIsolationBeforeFenceTestHook = () =>
+        {
+            using var conn = DataSource.OpenConnection();
+            using var command = conn.CreateCommand();
+            command.CommandText = """
+                UPDATE scrape_publication_state
+                SET published_scrape_id = @publishedScrapeId,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                checked((int)(state.PublishedScrapeId + 1)));
+            command.ExecuteNonQuery();
+        };
+
+        try
+        {
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(result.MutationReadiness);
+            Assert.Null(result.After);
+            Assert.Contains(
+                $"expected published scrape {state.PublishedScrapeId}",
+                result.Error);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationBeforeFenceTestHook =
+                null;
+        }
+    }
+
+    [Fact]
+    public void ExecuteActiveScrapeFailureIsolation_does_not_take_degraded_shared_lock_fallback()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        var initialReadiness =
+            Db.GetActiveScrapeFailureIsolationReadiness(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId);
+        Assert.True(initialReadiness.CanExecute);
+
+        NpgsqlConnection? blockerConnection = null;
+        NpgsqlTransaction? blockerTransaction = null;
+        Db.ActiveScrapeFailureIsolationBeforeFenceTestHook = () =>
+        {
+            blockerConnection =
+                DataSource.OpenConnection();
+            blockerTransaction =
+                blockerConnection.BeginTransaction();
+            using var holdSharedLock =
+                blockerConnection.CreateCommand();
+            holdSharedLock.Transaction = blockerTransaction;
+            holdSharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            holdSharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            holdSharedLock.ExecuteNonQuery();
+        };
+
+        try
+        {
+            var result =
+                Db.ExecuteActiveScrapeFailureIsolation(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId,
+                    MetaDatabase
+                        .NoProgressReadIsolationFailurePhase,
+                    "watchdog timeout");
+
+            Assert.False(result.Succeeded);
+            Assert.Null(result.MutationReadiness);
+            Assert.Null(result.After);
+            Assert.Contains(
+                "exclusive publication mutation fence",
+                result.Error);
+            Assert.Equal(
+                "running",
+                Db.GetScrapeResumeState(
+                    state.CandidateScrapeId)?.Status);
+            Assert.True(
+                Db.GetPublicReadFreezeState().IsFrozen);
+            Assert.Equal(
+                state.CandidatePublicationId,
+                Db.GetPublicationPointerState().WorkingPublicationId);
+        }
+        finally
+        {
+            Db.ActiveScrapeFailureIsolationBeforeFenceTestHook =
+                null;
+            blockerTransaction?.Rollback();
+            blockerConnection?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ActiveScrapeFailureIsolationReadiness_rejects_worker_owned_queries()
+    {
+        var state = CreatePostProcessFrozenCandidate();
+        await using var workerConnection =
+            await DataSource.OpenConnectionAsync();
+        await using (var setApplication = workerConnection.CreateCommand())
+        {
+            setApplication.CommandText = """
+                SELECT set_config(
+                    'application_name',
+                    'fstworker-scraper',
+                    false)
+                """;
+            await setApplication.ExecuteNonQueryAsync();
+        }
+
+        await using var sleepCommand =
+            workerConnection.CreateCommand();
+        sleepCommand.CommandText = "SELECT pg_sleep(2)";
+        var sleepTask = sleepCommand.ExecuteNonQueryAsync();
+
+        ActiveScrapeFailureIsolationReadiness? readiness = null;
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        do
+        {
+            readiness =
+                Db.GetActiveScrapeFailureIsolationReadiness(
+                    state.CandidateScrapeId,
+                    state.PublishedScrapeId);
+            if (readiness.ActiveWorkerQueryCount > 0)
+                break;
+
+            await Task.Delay(50);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        await sleepTask;
+
+        Assert.NotNull(readiness);
+        Assert.False(readiness!.CanExecute);
+        Assert.True(readiness.ActiveWorkerQueryCount > 0);
+        Assert.Contains(
+            "active database",
+            readiness.BlockingReason);
+    }
+
+    [Fact]
     public void PublishScrapeRun_rejects_missing_scope_mapping_and_retains_previous_publication()
     {
         var oldId = Db.StartScrapeRun();
@@ -8581,6 +9418,234 @@ public sealed class MetaDatabaseTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM scrape_log";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    private (long PublishedScrapeId, long CandidateScrapeId, long CandidatePublicationId)
+        CreatePostProcessFrozenCandidate()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        var candidatePublicationId =
+            Db.GetPublicationGenerationForScrape(
+                candidateScrapeId)!.PublicationId;
+        Db.SetPublicReadFreeze(
+            true,
+            reason:
+                MetaDatabase
+                    .ActiveScrapeFailureIsolationFreezeReason);
+        SeedActiveScrapeRuntime(
+            candidateScrapeId);
+
+        return (
+            publishedScrapeId,
+            candidateScrapeId,
+            candidatePublicationId);
+    }
+
+    private (long PublishedScrapeId, long CandidateScrapeId, long CandidatePublicationId)
+        CreateAcquisitionFailureCandidate()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        var candidatePublicationId =
+            Db.GetPublicationGenerationForScrape(
+                candidateScrapeId)!.PublicationId;
+        var now = DateTime.UtcNow;
+        var workerInstanceId =
+            $"failure-isolation-{candidateScrapeId}";
+        Db.StartScrapePhaseAttempt(
+            new ScrapePhaseAttemptStart(
+                candidateScrapeId,
+                "scrape.leaderboards",
+                "scrape.update",
+                10,
+                PhaseProgressCatalog.PlanVersion,
+                workerInstanceId,
+                null,
+                "running",
+                "scopes",
+                0,
+                1,
+                true,
+                0,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now.AddMinutes(-5),
+                now.AddMinutes(-1),
+                now.AddMinutes(-1),
+                "build-test",
+                "config-test"));
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE scrape_phase_attempts
+                SET status = 'failed',
+                    completed_at = @now,
+                    error_message =
+                        'acquisition checkpoint persistence failed'
+                WHERE scrape_id = @scrapeId
+                  AND phase_id = 'scrape.leaderboards'
+                  AND status = 'running'
+                """;
+            command.Parameters.AddWithValue("now", now);
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                candidateScrapeId);
+            command.ExecuteNonQuery();
+        }
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "offline",
+            "scraper",
+            workerInstanceId,
+            now.AddMinutes(-10),
+            now,
+            "Worker service stopped",
+            currentOperation: null);
+
+        return (
+            publishedScrapeId,
+            candidateScrapeId,
+            candidatePublicationId);
+    }
+
+    private void SeedActiveScrapeRuntime(
+        long scrapeId)
+    {
+        var now = DateTime.UtcNow;
+        var workerInstanceId =
+            $"failure-isolation-{scrapeId}";
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            workerInstanceId,
+            now.AddMinutes(-10),
+            now.AddMinutes(-1),
+            "Worker ready",
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey =
+                    "rankings.band.Band_Quad",
+                OperationLabel =
+                    "Computing Band Quads Rankings",
+                Status = "running",
+                Phase = "ComputingRankings",
+                SubOperation = "band_rankings",
+                Detail = "Band_Quad",
+                StartedAtUtc =
+                    now.AddMinutes(-5),
+                UpdatedAtUtc =
+                    now.AddMinutes(-1),
+            });
+        Db.StartScrapePhaseAttempt(
+            new ScrapePhaseAttemptStart(
+                scrapeId,
+                "post.compute_rankings",
+                "scrape.update",
+                310,
+                PhaseProgressCatalog.PlanVersion,
+                workerInstanceId,
+                "band_rankings",
+                "running",
+                "instruments",
+                24,
+                25,
+                true,
+                96,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now.AddMinutes(-5),
+                now.AddMinutes(-1),
+                now.AddMinutes(-1),
+                "build-test",
+                "config-test"));
+    }
+
+    private void TerminalizePublicationWithoutRuntimeConvergence(
+        long scrapeId)
+    {
+        using var connection = DataSource.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE scrape_log
+            SET status = 'failed',
+                failed_at = @now,
+                failure_phase = @phase,
+                failure_message = @message
+            WHERE id = @scrapeId;
+
+            UPDATE publication_generations
+            SET status = 'failed',
+                failed_at = @now,
+                failure_phase = @phase,
+                failure_message = @message
+            WHERE scrape_id = @scrapeId
+              AND status NOT IN (
+                  'current',
+                  'retained',
+                  'retired');
+
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = FALSE,
+                public_reads_frozen_at = NULL,
+                public_reads_frozen_scrape_id = NULL,
+                public_reads_frozen_reason = NULL,
+                working_publication_id = NULL,
+                publication_commit_intent_started_at = NULL,
+                publication_commit_intent_heartbeat_at = NULL,
+                publication_commit_intent_owner = NULL,
+                updated_at = @now
+            WHERE id = TRUE;
+            """;
+        command.Parameters.AddWithValue(
+            "now",
+            DateTime.UtcNow);
+        command.Parameters.AddWithValue(
+            "phase",
+            MetaDatabase.NoProgressReadIsolationFailurePhase);
+        command.Parameters.AddWithValue(
+            "message",
+            "watchdog timeout");
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            checked((int)scrapeId));
+        command.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     private void ClearPublicReadFreezeForTest()

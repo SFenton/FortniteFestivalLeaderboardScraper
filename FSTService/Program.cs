@@ -46,7 +46,20 @@ CaptureEnvironmentFile.LoadCurrentDirectory();
 
 RetiredMaintenanceCommandGuard.ThrowIfPresent(args);
 
+var activeScrapeFailureIsolationRequested = args.Any(
+    argument => argument.Equals(
+        ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
+        StringComparison.OrdinalIgnoreCase));
+
 var builder = WebApplication.CreateBuilder(args);
+if (activeScrapeFailureIsolationRequested)
+{
+    builder.Services.Configure<
+        Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(
+        options =>
+            options.LogToStandardErrorThreshold =
+                Microsoft.Extensions.Logging.LogLevel.Trace);
+}
 builder.Services.AddSingleton<ServiceInstanceIdentity>();
 
 // ─── ThreadPool tuning ──────────────────────────────────────
@@ -61,7 +74,11 @@ builder.Services.AddSingleton<ServiceInstanceIdentity>();
     int target = Math.Max(200, Math.Max(prevWorker, scraperDop));
     ThreadPool.SetMinThreads(target, target);
     ThreadPool.GetMinThreads(out int newWorker, out int newIo);
-    Console.WriteLine($"ThreadPool.SetMinThreads({target}, {target}) — was ({prevWorker}, {prevIo})");
+    var output = activeScrapeFailureIsolationRequested
+        ? Console.Error
+        : Console.Out;
+    output.WriteLine(
+        $"ThreadPool.SetMinThreads({target}, {target}) — was ({prevWorker}, {prevIo})");
 }
 
 // ─── JSON options ───────────────────────────────────────────
@@ -103,6 +120,10 @@ var maxScoreMaintenanceCommand =
     MaxScoreMaintenanceCommand.Parse(
         args,
         publishedScrapeIdArgument);
+var activeScrapeFailureIsolationCommand =
+    ActiveScrapeFailureIsolationCommand.Parse(
+        args,
+        publishedScrapeIdArgument);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -130,6 +151,7 @@ if (rolloutReadOnlyStartupRequested
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -140,6 +162,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -150,6 +173,7 @@ if (soloFamilyRankingBackfillCommand is not null
     && (improvementNotificationRecoveryRequested
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -159,6 +183,7 @@ if (soloFamilyRankingBackfillCommand is not null
 if (leaderboardRivalsRecomputeCommand is not null
     && (improvementNotificationRecoveryRequested
         || maxScoreMaintenanceCommand is not null
+        || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -167,6 +192,7 @@ if (leaderboardRivalsRecomputeCommand is not null
 }
 if (maxScoreMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
+        || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -174,7 +200,8 @@ if (maxScoreMaintenanceCommand is not null
 }
 publishedScrapeIdArgument.RejectIfOrphaned(
     improvementNotificationRecoveryRequested
-    || maxScoreMaintenanceCommand is not null);
+    || maxScoreMaintenanceCommand is not null
+    || activeScrapeFailureIsolationCommand is not null);
 var improvementNotificationRecoveryPublishedScrapeId =
     improvementNotificationRecoveryRequested
         ? publishedScrapeIdArgument.RequireValue(
@@ -186,6 +213,7 @@ var apiOnlyRequested = improvementNotificationRecoveryRequested
     || soloFamilyRankingBackfillCommand is not null
     || leaderboardRivalsRecomputeCommand is not null
     || maxScoreMaintenanceCommand is not null
+    || activeScrapeFailureIsolationCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
@@ -211,7 +239,8 @@ var strictOneShotWithoutHostedServices =
     HostedWorkerModeResolver.RequiresNoHostedServices(
         soloFamilyRankingBackfillCommand is not null,
         leaderboardRivalsRecomputeCommand is not null,
-        maxScoreMaintenanceCommand is not null);
+        maxScoreMaintenanceCommand is not null,
+        activeScrapeFailureIsolationCommand is not null);
 
 builder.Services.AddSingleton<
     IValidateOptions<ScraperOptions>,
@@ -935,6 +964,11 @@ else if (maxScoreMaintenanceCommand is not null)
     app.Logger.LogInformation(
         "Max-score maintenance one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
 }
+else if (activeScrapeFailureIsolationCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Active-scrape failure isolation one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
 else if (rolloutReadOnlyStartupRequested)
 {
     app.Logger.LogWarning(
@@ -1173,6 +1207,36 @@ if (maxScoreMaintenanceCommand is not null)
             DryRun: false,
             Succeeded: false,
         })
+    {
+        Environment.ExitCode = 2;
+    }
+    return;
+}
+
+if (activeScrapeFailureIsolationCommand is not null)
+{
+    var metaDb = app.Services.GetRequiredService<IMetaDatabase>();
+    object report = activeScrapeFailureIsolationCommand.Execute
+        ? metaDb.ExecuteActiveScrapeFailureIsolation(
+            activeScrapeFailureIsolationCommand.ScrapeId,
+            activeScrapeFailureIsolationCommand
+                .ExpectedPublishedScrapeId,
+            activeScrapeFailureIsolationCommand.FailurePhase!,
+            activeScrapeFailureIsolationCommand.FailureMessage!)
+        : metaDb.GetActiveScrapeFailureIsolationReadiness(
+            activeScrapeFailureIsolationCommand.ScrapeId,
+            activeScrapeFailureIsolationCommand
+                .ExpectedPublishedScrapeId);
+    Console.WriteLine(
+        System.Text.Json.JsonSerializer.Serialize(report));
+    if (report is ActiveScrapeFailureIsolationReadiness
+            {
+                CanExecute: false,
+            }
+        or ActiveScrapeFailureIsolationExecutionResult
+            {
+                Succeeded: false,
+            })
     {
         Environment.ExitCode = 2;
     }

@@ -483,7 +483,8 @@ Run-once guard actions require a named data profile. `scrape-resume` is the
 only profile that permits `Scraper:EnabledPhases=SoloRankings`; it also
 requires a positive `Scraper:ResumeScrapeId`, explicit full-worker hosting
 (`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
-`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, all nine
+canonical `Scraper:Query*` solo flags enabled, the
 publication correctness and snapshot-reuse gates, and
 `Scraper:RivalsMaxDegreeOfParallelism=2`. This profile is for an existing
 resume-eligible candidate only and does not authorize a new network scrape.
@@ -496,8 +497,9 @@ keys remain bindable so older worker images and environment files can coexist
 during a rolling deployment. Worker database validation also requires the
 checkpoint's versioned solo-scope count/fingerprint to match the requested
 scrape's complete all-time manifests for all nine canonical solo instruments;
-band manifests are not considered, and in-worker resume admission rejects any
-reduced canonical `Scraper:Query*` solo scope before post-processing begins.
+band manifests are not considered, and both the guard and the in-worker resume
+admission reject any reduced canonical `Scraper:Query*` solo scope before
+post-processing begins.
 Terminal completion does not create a missing checkpoint for legacy rows.
 With runtime probes enabled, the guard also requires a stopped worker, an
 `updating` or `stalled` service state for the exact configured resume scrape,

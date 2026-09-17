@@ -93,14 +93,16 @@ public class HostedWorkerModeResolverTests
     }
 
     [Theory]
-    [InlineData(false, false, false, false)]
-    [InlineData(true, false, false, true)]
-    [InlineData(false, true, false, true)]
-    [InlineData(false, false, true, true)]
+    [InlineData(false, false, false, false, false)]
+    [InlineData(true, false, false, false, true)]
+    [InlineData(false, true, false, false, true)]
+    [InlineData(false, false, true, false, true)]
+    [InlineData(false, false, false, true, true)]
     public void RequiresNoHostedServices_IsolatesStrictOneShotCommands(
         bool soloFamily,
         bool leaderboardRivals,
         bool maxScoreMaintenance,
+        bool activeScrapeFailureIsolation,
         bool expected)
     {
         Assert.Equal(
@@ -108,6 +110,7 @@ public class HostedWorkerModeResolverTests
             HostedWorkerModeResolver.RequiresNoHostedServices(
                 soloFamily,
                 leaderboardRivals,
-                maxScoreMaintenance));
+                maxScoreMaintenance,
+                activeScrapeFailureIsolation));
     }
 }

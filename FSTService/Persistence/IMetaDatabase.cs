@@ -85,6 +85,16 @@ public interface IMetaDatabase : IDisposable
         ReconcileAbandonedWorkingPublication(
             TimeSpan readyGrace,
             TimeSpan workerHeartbeatFreshness);
+    ActiveScrapeFailureIsolationReadiness
+        GetActiveScrapeFailureIsolationReadiness(
+            long scrapeId,
+            long expectedPublishedScrapeId);
+    ActiveScrapeFailureIsolationExecutionResult
+        ExecuteActiveScrapeFailureIsolation(
+            long scrapeId,
+            long expectedPublishedScrapeId,
+            string failurePhase,
+            string failureMessage);
     PublicationBandOrphanSweepResult
         SweepPublicationBandTableOrphans();
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);

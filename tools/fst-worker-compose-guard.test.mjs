@@ -567,6 +567,18 @@ if (args[0] === "exec") {
   if (
     (container === "fst-postgres" || container === "postgres")
     && commandArgs[0] === "psql"
+    && joined.includes("fst_boot_acquisition_checkpoint_schema")
+  ) {
+    process.stdout.write(
+      scenario.acquisitionCheckpointSchemaReady === false
+        ? "missing"
+        : "ready"
+    );
+    process.exit(0);
+  }
+  if (
+    (container === "fst-postgres" || container === "postgres")
+    && commandArgs[0] === "psql"
     && joined.includes("fst_boot_active_recovery_state")
   ) {
     const state = activeRecoveryDatabaseState();
@@ -815,6 +827,15 @@ function buildScrapeResumeRunonceConfig({
     Scraper__ApiOnly: "false",
     Scraper__DisableScraperWorker: "false",
     Scraper__EnabledPhases: "SoloRankings",
+    Scraper__QueryLead: "true",
+    Scraper__QueryDrums: "true",
+    Scraper__QueryVocals: "true",
+    Scraper__QueryBass: "true",
+    Scraper__QueryProLead: "true",
+    Scraper__QueryProBass: "true",
+    Scraper__QueryProVocals: "true",
+    Scraper__QueryProCymbals: "true",
+    Scraper__QueryProDrums: "true",
     Scraper__RegistrationSyncWorkerOnly: "false",
     Scraper__RegisteredUserRefreshTimeout: "00:00:00",
     Scraper__ResumeScrapeId: resumeScrapeId,
@@ -1398,6 +1419,24 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
+  it("starts the continuous worker from a terminal failed and unfrozen state", async () => {
+    const harness = await createHarness({
+      scenario: {
+        currentUpdateStatus: "failed",
+        postStartCurrentUpdateStatus: "failed",
+        publicReadsFrozen: false
+      }
+    });
+    try {
+      const result = await harness.run();
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(result.stdout, /update=failed reads=unfrozen/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("requires healthy PostgreSQL and ready fstservice without restarting them", async () => {
     const cases = [
       { postgresState: "running|unhealthy" },
@@ -1414,6 +1453,25 @@ describe("fstworker Compose startup recovery", () => {
       } finally {
         await harness.cleanup();
       }
+    }
+  });
+
+  it("refuses worker recovery when the acquisition checkpoint schema is missing", async () => {
+    const harness = await createHarness({
+      scenario: {
+        acquisitionCheckpointSchemaReady: false
+      }
+    });
+    try {
+      const result = await harness.run();
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires the acquisition checkpoint release schema/
+      );
+    } finally {
+      await harness.cleanup();
     }
   });
 
@@ -2490,6 +2548,68 @@ describe("fstworker Compose startup recovery", () => {
         assert.notEqual(result.code, 0, testCase.name);
         assert.deepEqual(await activeHarness.events(), [], testCase.name);
         assert.match(result.stderr, testCase.expected, testCase.name);
+      } finally {
+        await activeHarness.cleanup();
+      }
+    }
+  });
+
+  it("rejects scrape-resume when any canonical solo query flag is disabled", async () => {
+    const cases = [
+      { key: "Scraper__QueryLead", instrument: "Lead" },
+      { key: "Scraper__QueryDrums", instrument: "Drums" },
+      { key: "Scraper__QueryVocals", instrument: "Vocals" },
+      { key: "Scraper__QueryBass", instrument: "Bass" },
+      { key: "Scraper__QueryProLead", instrument: "ProLead" },
+      { key: "Scraper__QueryProBass", instrument: "ProBass" },
+      { key: "Scraper__QueryProVocals", instrument: "ProVocals" },
+      { key: "Scraper__QueryProCymbals", instrument: "ProCymbals" },
+      { key: "Scraper__QueryProDrums", instrument: "ProDrums" }
+    ];
+
+    for (const testCase of cases) {
+      const runonceConfig = buildScrapeResumeRunonceConfig({
+        workerImage: immutableWorkerImage
+      });
+      runonceConfig.services.fstworker.environment[testCase.key] = "false";
+
+      const genericHarness = await createHarness({
+        config: runonceConfig
+      });
+      try {
+        const result = await genericHarness.run([
+          "--recreate-runonce",
+          "--data-profile",
+          "scrape-resume",
+          "--expected-worker-image",
+          immutableWorkerImage
+        ]);
+        assert.notEqual(result.code, 0, testCase.instrument);
+        assert.deepEqual(await genericHarness.events(), [], testCase.instrument);
+        assert.match(
+          result.stderr,
+          new RegExp(`${testCase.key}=true`),
+          testCase.instrument
+        );
+      } finally {
+        await genericHarness.cleanup();
+      }
+
+      const activeHarness = await createActiveRecoveryHarness({
+        config: buildComposeConfig({
+          workerImage: immutableWorkerImage
+        }),
+        runonceConfig
+      });
+      try {
+        const result = await activeHarness.run(["--recover-start"]);
+        assert.notEqual(result.code, 0, testCase.instrument);
+        assert.deepEqual(await activeHarness.events(), [], testCase.instrument);
+        assert.match(
+          result.stderr,
+          new RegExp(`${testCase.key}=true`),
+          testCase.instrument
+        );
       } finally {
         await activeHarness.cleanup();
       }

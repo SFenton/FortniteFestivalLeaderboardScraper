@@ -77,7 +77,7 @@ public sealed record PublishedScrapeIdArgument(
         if (IsPresent && !hasOwningCommand)
         {
             throw new ArgumentException(
-                $"{Flag} is only valid with notification recovery or max-score maintenance.");
+                $"{Flag} is only valid with notification recovery, max-score maintenance, or active-scrape failure isolation.");
         }
     }
 }

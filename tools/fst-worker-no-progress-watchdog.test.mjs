@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   buildWorkerActivityPredicate,
-  buildRecoverySql,
+  buildFailureIsolationCommand,
+  CAPACITY_FAILURE_PHASE,
   evaluateNoProgressObservation,
   NO_PROGRESS_FAILURE_PHASE,
+  parseFailureIsolationReadinessResult,
   parseDockerPercentage,
+  selectFailureIsolationPhase,
+  verifyFailureIsolationReadiness,
   WORKER_APPLICATION_NAMES
 } from "./fst-worker-no-progress-watchdog.mjs";
 
@@ -319,34 +326,366 @@ describe("FST worker no-progress watchdog", () => {
     assert.equal(decision.reason, "no_phase_progress");
   });
 
-  it("builds guarded recovery that preserves and unfreezes the prior publication", () => {
-    const sql = buildRecoverySql({
+  it("builds the guarded service command that isolates only the active candidate", () => {
+    const command = buildFailureIsolationCommand({
+      serviceContainer: "fstservice",
       scrapeId: 1266,
       publishedScrapeId: 1236,
+      failurePhase: NO_PROGRESS_FAILURE_PHASE,
       failureMessage: "watchdog timeout",
-      workerMessage: "worker stopped"
     });
 
-    assert.match(sql, new RegExp(NO_PROGRESS_FAILURE_PHASE));
-    assert.match(sql, /published_id <> 1236/);
-    assert.match(sql, /candidate_status NOT IN \('running', 'failed'\)/);
-    assert.match(sql, /published_scrape_id = 1266/);
-    assert.match(sql, /candidate_mappings <> 0/);
-    assert.match(sql, /active_worker_queries <> 0/);
-    assert.match(
-      sql,
-      /application_name IN \('fstworker-scraper', 'fst-path-generation-admission'\)/
+    assert.deepEqual(command, [
+      "exec",
+      "-i",
+      "fstservice",
+      "dotnet",
+      "FSTService.dll",
+      "--active-scrape-failure-isolation",
+      "--active-scrape-failure-isolation-execute",
+      "--active-scrape-id",
+      "1266",
+      "--published-scrape-id",
+      "1236",
+      "--active-scrape-failure-phase",
+      NO_PROGRESS_FAILURE_PHASE,
+      "--active-scrape-failure-message",
+      "watchdog timeout"
+    ]);
+  });
+
+  it("builds the service-owned readiness command before any worker stop", () => {
+    const command = buildFailureIsolationCommand({
+      serviceContainer: "fstservice",
+      scrapeId: 1266,
+      publishedScrapeId: 1236,
+      execute: false
+    });
+
+    assert.deepEqual(command, [
+      "exec",
+      "-i",
+      "fstservice",
+      "dotnet",
+      "FSTService.dll",
+      "--active-scrape-failure-isolation",
+      "--active-scrape-failure-isolation-check",
+      "--active-scrape-id",
+      "1266",
+      "--published-scrape-id",
+      "1236"
+    ]);
+  });
+
+  it("rejects readiness payloads that refuse recovery", () => {
+    assert.throws(
+      () => parseFailureIsolationReadinessResult(
+        JSON.stringify({
+          CanExecute: false,
+          BlockingReason: "worker still owns 1 active database query",
+          ScrapeId: 1266,
+          ExpectedPublishedScrapeId: 1236,
+          PublishedScrapeId: 1236,
+          CandidateStatus: "running",
+          PublicReadsFrozen: true,
+          FrozenScrapeId: 1236,
+          FreezeReason: "post-process",
+          WorkingPublicationId: 301,
+          CandidatePublicationId: 301,
+          CandidatePublicationStatus: "building",
+          CandidatePublishedScopeRowCount: 0,
+          ActiveWorkerQueryCount: 1,
+          WaitingLockCount: 0,
+          AdvisoryLockCount: 0,
+          MaintenanceActivityPresent: false,
+          RunningPhaseAttemptCount: 1,
+          ForeignRunningPhaseAttemptCount: 0,
+          WorkerStatus: "running",
+          WorkerInstanceId: "worker-1266",
+          WorkerUpdatedAtUtc: "2026-09-16T03:39:30Z",
+          WorkerCurrentOperationPresent: true,
+          FailedAcquisitionPhaseAttemptCount: 0,
+          AcquisitionCheckpointPresent: false,
+          PublicationMutationRequired: true,
+          PublicationIsolationComplete: false,
+          AcquisitionFailureMutationRequired: false
+        }),
+        {
+          scrapeId: 1266,
+          publishedScrapeId: 1236
+        }
+      ),
+      /readiness refused recovery/
     );
-    assert.match(sql, /pg_stat_progress_create_index/);
-    assert.match(sql, /public_reads_frozen = FALSE/);
-    assert.match(sql, /UPDATE publication_generations/);
-    assert.match(sql, /UPDATE scrape_phase_attempts/);
-    assert.match(sql, /status = 'interrupted'/);
-    assert.doesNotMatch(sql, /last_progress_at\s*=/);
-    assert.match(sql, /working_publication_id = NULL/);
-    assert.match(sql, /DELETE FROM publication_api_response_cache_staging/);
-    assert.match(sql, /status = 'offline'/);
-    assert.match(sql, /candidate_published_scope_rows/);
-    assert.match(sql, /COMMIT;/);
+  });
+
+  it("rejects malformed readiness payloads", () => {
+    assert.throws(
+      () => parseFailureIsolationReadinessResult(
+        "not-json",
+        {
+          scrapeId: 1266,
+          publishedScrapeId: 1236
+        }
+      ),
+      /malformed JSON/
+    );
+  });
+
+  it("accepts the canonical published-baseline post-process freeze identity", () => {
+    const readiness = parseFailureIsolationReadinessResult(
+      JSON.stringify({
+        CanExecute: true,
+        BlockingReason: null,
+        ScrapeId: 1266,
+        ExpectedPublishedScrapeId: 1236,
+        PublishedScrapeId: 1236,
+        CandidateStatus: "running",
+        PublicReadsFrozen: true,
+        FrozenScrapeId: 1236,
+        FreezeReason: "post-process",
+        WorkingPublicationId: 301,
+        CandidatePublicationId: 301,
+        CandidatePublicationStatus: "building",
+        CandidatePublishedScopeRowCount: 0,
+        ActiveWorkerQueryCount: 0,
+        WaitingLockCount: 0,
+        AdvisoryLockCount: 0,
+        MaintenanceActivityPresent: false,
+        RunningPhaseAttemptCount: 1,
+        ForeignRunningPhaseAttemptCount: 0,
+        WorkerStatus: "running",
+        WorkerInstanceId: "worker-1266",
+        WorkerUpdatedAtUtc: "2026-09-16T03:39:30Z",
+        WorkerCurrentOperationPresent: true,
+        FailedAcquisitionPhaseAttemptCount: 0,
+        AcquisitionCheckpointPresent: false,
+        PublicationMutationRequired: true,
+        PublicationIsolationComplete: false,
+        AcquisitionFailureMutationRequired: false
+      }),
+      {
+        scrapeId: 1266,
+        publishedScrapeId: 1236
+      }
+    );
+
+    assert.equal(readiness.FrozenScrapeId, 1236);
+  });
+
+  it("accepts terminalized publication state awaiting runtime convergence", () => {
+    const readiness = parseFailureIsolationReadinessResult(
+      JSON.stringify({
+        CanExecute: true,
+        BlockingReason: null,
+        ScrapeId: 1266,
+        ExpectedPublishedScrapeId: 1236,
+        PublishedScrapeId: 1236,
+        CandidateStatus: "failed",
+        PublicReadsFrozen: false,
+        FrozenScrapeId: null,
+        FreezeReason: null,
+        WorkingPublicationId: null,
+        CandidatePublicationId: 301,
+        CandidatePublicationStatus: "failed",
+        CandidatePublishedScopeRowCount: 0,
+        ActiveWorkerQueryCount: 0,
+        WaitingLockCount: 0,
+        AdvisoryLockCount: 0,
+        MaintenanceActivityPresent: false,
+        RunningPhaseAttemptCount: 1,
+        ForeignRunningPhaseAttemptCount: 0,
+        WorkerStatus: "running",
+        WorkerInstanceId: "worker-1266",
+        WorkerUpdatedAtUtc: "2026-09-16T03:39:30Z",
+        WorkerCurrentOperationPresent: true,
+        FailedAcquisitionPhaseAttemptCount: 0,
+        AcquisitionCheckpointPresent: false,
+        PublicationMutationRequired: false,
+        PublicationIsolationComplete: true,
+        AcquisitionFailureMutationRequired: false
+      }),
+      {
+        scrapeId: 1266,
+        publishedScrapeId: 1236
+      }
+    );
+
+    assert.equal(readiness.PublicationIsolationComplete, true);
+  });
+
+  it("accepts an unfrozen uncheckpointed acquisition failure", () => {
+    const readiness = parseFailureIsolationReadinessResult(
+      JSON.stringify({
+        CanExecute: true,
+        BlockingReason: null,
+        ScrapeId: 1400,
+        ExpectedPublishedScrapeId: 1398,
+        PublishedScrapeId: 1398,
+        CandidateStatus: "running",
+        PublicReadsFrozen: false,
+        FrozenScrapeId: null,
+        FreezeReason: null,
+        WorkingPublicationId: 299,
+        CandidatePublicationId: 299,
+        CandidatePublicationStatus: "building",
+        CandidatePublishedScopeRowCount: 0,
+        ActiveWorkerQueryCount: 0,
+        WaitingLockCount: 0,
+        AdvisoryLockCount: 0,
+        MaintenanceActivityPresent: false,
+        RunningPhaseAttemptCount: 0,
+        ForeignRunningPhaseAttemptCount: 0,
+        WorkerStatus: "offline",
+        WorkerInstanceId: "worker-1400",
+        WorkerUpdatedAtUtc: "2026-09-16T21:32:23Z",
+        WorkerCurrentOperationPresent: false,
+        FailedAcquisitionPhaseAttemptCount: 1,
+        AcquisitionCheckpointPresent: false,
+        PublicationMutationRequired: false,
+        PublicationIsolationComplete: false,
+        AcquisitionFailureMutationRequired: true
+      }),
+      {
+        scrapeId: 1400,
+        publishedScrapeId: 1398
+      }
+    );
+
+    assert.equal(
+      readiness.AcquisitionFailureMutationRequired,
+      true
+    );
+  });
+
+  it("rejects a post-process freeze incorrectly attributed to the candidate", () => {
+    assert.throws(
+      () => parseFailureIsolationReadinessResult(
+        JSON.stringify({
+          CanExecute: true,
+          BlockingReason: null,
+          ScrapeId: 1266,
+          ExpectedPublishedScrapeId: 1236,
+          PublishedScrapeId: 1236,
+          CandidateStatus: "running",
+          PublicReadsFrozen: true,
+          FrozenScrapeId: 1266,
+          FreezeReason: "post-process",
+          WorkingPublicationId: 301,
+          CandidatePublicationId: 301,
+          CandidatePublicationStatus: "building",
+          CandidatePublishedScopeRowCount: 0,
+          ActiveWorkerQueryCount: 0,
+          WaitingLockCount: 0,
+          AdvisoryLockCount: 0,
+          MaintenanceActivityPresent: false,
+          RunningPhaseAttemptCount: 1,
+          ForeignRunningPhaseAttemptCount: 0,
+          WorkerStatus: "running",
+          WorkerInstanceId: "worker-1266",
+          WorkerUpdatedAtUtc: "2026-09-16T03:39:30Z",
+          WorkerCurrentOperationPresent: true,
+          FailedAcquisitionPhaseAttemptCount: 0,
+          AcquisitionCheckpointPresent: false,
+          PublicationMutationRequired: true,
+          PublicationIsolationComplete: false,
+          AcquisitionFailureMutationRequired: false
+        }),
+        {
+          scrapeId: 1266,
+          publishedScrapeId: 1236
+        }
+      ),
+      /frozen published scrape 1266, expected 1236/
+    );
+  });
+
+  it("propagates readiness subprocess failures before any worker stop can run", () => {
+    const evidenceDir = mkdtempSync(
+      path.join(os.tmpdir(), "fst-watchdog-readiness-")
+    );
+    try {
+      assert.throws(
+        () => verifyFailureIsolationReadiness({
+          composeDir: "/tmp/compose",
+          serviceContainer: "fstservice",
+          evidenceDir,
+          scrapeId: 1266,
+          publishedScrapeId: 1236,
+          runCommand() {
+            throw new Error("docker exec failed");
+          }
+        }),
+        /docker exec failed/
+      );
+    } finally {
+      rmSync(evidenceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects readiness payloads whose identity mismatches the requested scrape", () => {
+    assert.throws(
+      () => parseFailureIsolationReadinessResult(
+        JSON.stringify({
+          CanExecute: true,
+          BlockingReason: null,
+          ScrapeId: 1267,
+          ExpectedPublishedScrapeId: 1236,
+          PublishedScrapeId: 1236,
+          CandidateStatus: "running",
+          PublicReadsFrozen: true,
+          FrozenScrapeId: 1236,
+          FreezeReason: "post-process",
+          WorkingPublicationId: 301,
+          CandidatePublicationId: 301,
+          CandidatePublicationStatus: "building",
+          CandidatePublishedScopeRowCount: 0,
+          ActiveWorkerQueryCount: 0,
+          WaitingLockCount: 0,
+          AdvisoryLockCount: 0,
+          MaintenanceActivityPresent: false,
+          RunningPhaseAttemptCount: 1,
+          ForeignRunningPhaseAttemptCount: 0,
+          WorkerStatus: "running",
+          WorkerInstanceId: "worker-1267",
+          WorkerUpdatedAtUtc: "2026-09-16T03:39:30Z",
+          WorkerCurrentOperationPresent: true,
+          FailedAcquisitionPhaseAttemptCount: 0,
+          AcquisitionCheckpointPresent: false,
+          PublicationMutationRequired: true,
+          PublicationIsolationComplete: false,
+          AcquisitionFailureMutationRequired: false
+        }),
+        {
+          scrapeId: 1266,
+          publishedScrapeId: 1236
+        }
+      ),
+      /expected 1266/
+    );
+  });
+
+  it("maps resource-triggered watchdog recovery to the capacity isolation phase", () => {
+    assert.equal(
+      selectFailureIsolationPhase({
+        decision: "timeout",
+        reason: "worker_memory_threshold_exceeded"
+      }),
+      CAPACITY_FAILURE_PHASE
+    );
+    assert.equal(
+      selectFailureIsolationPhase({
+        decision: "timeout",
+        reason: "worker_process_failed"
+      }),
+      CAPACITY_FAILURE_PHASE
+    );
+    assert.equal(
+      selectFailureIsolationPhase({
+        decision: "timeout",
+        reason: "no_phase_progress"
+      }),
+      NO_PROGRESS_FAILURE_PHASE
+    );
   });
 });

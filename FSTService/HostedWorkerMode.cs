@@ -13,10 +13,12 @@ internal static class HostedWorkerModeResolver
     public static bool RequiresNoHostedServices(
         bool soloFamilyRankingBackfillRequested,
         bool leaderboardRivalsRecomputeRequested,
-        bool maxScoreMaintenanceRequested)
+        bool maxScoreMaintenanceRequested,
+        bool activeScrapeFailureIsolationRequested)
         => soloFamilyRankingBackfillRequested
            || leaderboardRivalsRecomputeRequested
-           || maxScoreMaintenanceRequested;
+           || maxScoreMaintenanceRequested
+           || activeScrapeFailureIsolationRequested;
 
     public static HostedWorkerMode Resolve(
         bool apiOnlyRequested,

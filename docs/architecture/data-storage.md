@@ -150,6 +150,15 @@ scope must match it. Legacy rows without a marker retain normal completion
 compatibility but keep the marker and scope fields null, so they remain
 non-resumable.
 
+An acquisition failure before this atomic update is not resumable and its
+metrics must not be reconstructed from partial staging. The fenced
+active-scrape failure-isolation command may terminalize only the exact
+unfrozen/no-checkpoint state with a durable failed `scrape.leaderboards`
+attempt, an offline worker with no current operation or running attempt, and a
+candidate-owned noncurrent working publication. It preserves the published
+scrape, releases the failed working publication, and writes no synthetic
+metrics. A present checkpoint rejects this path in favor of guarded resume.
+
 Rollback is code-only: disable scrape resume, or return to an older binary and
 restore that binary's legacy operator-supplied `Scraper:Resume*` values before
 attempting recovery. The nullable checkpoint columns and check constraints may
@@ -748,6 +757,11 @@ has no foreign key so startup is additive and rollback does not couple scrape
 history deletion to telemetry. An FK and explicit row-retention lifecycle are
 an L3 follow-up requiring measured growth, scrape-log retention, delete-lock,
 and rollback evidence; they are not part of PR #15.
+
+Attempt allocation still synchronizes with scrape lifecycle even without an
+FK: it takes a `FOR SHARE` lock on the matching `scrape_log` row and requires
+`status=running` before inserting. Terminal scrape updates therefore cannot
+commit concurrently with a late phase-attempt insert.
 
 The same row now stores subphase telemetry independently from parent phase
 progress: `current_subphase_epoch`, `subphase_sequence`,
