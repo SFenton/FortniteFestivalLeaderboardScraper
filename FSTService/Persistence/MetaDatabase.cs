@@ -87,6 +87,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
     internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
     internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
+    internal const string AcquisitionFailureIsolationFailurePhase = "scrape_acquisition_failed";
     internal const string MaxScoreMaintenanceSourceLockSql = """
         LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
         LOCK TABLE leaderboard_entries IN SHARE MODE;
@@ -113,6 +114,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     [
         FailedCandidateReadIsolationFailurePhase,
         NoProgressReadIsolationFailurePhase,
+        AcquisitionFailureIsolationFailurePhase,
         PostProcessReadIsolationFailurePhase,
         PublicationReadIsolationFailurePhase,
         StalePublicationCommitIntentFailurePhase,

@@ -70,6 +70,11 @@ Check:
 7. CPU and memory pressure.
 
 Use bounded read-only probes first.
+Before guarded worker recovery, apply the candidate release schema with
+`--initialize-schema-only`. The canonical `--recover-start` guard independently
+requires the four acquisition-checkpoint columns and validated
+`ck_scrape_log_acquisition_checkpoint` constraint before it can select a boot
+mode or start `fstworker`.
 
 ## Offline report-only observation
 
@@ -489,8 +494,9 @@ Before proxy mutation it verifies:
 - the shared nonblocking worker start/recreate lock;
 - PostgreSQL health and `fstservice` readiness;
 - a stopped/absent worker container before either boot lane may start;
-- either idle/unfrozen ordinary startup state or the exact active-candidate
-  recovery state (`currentUpdate.status` `updating` or `stalled`,
+- either inactive/unfrozen ordinary startup state (`currentUpdate.status`
+  `idle` or terminal `failed`) or the exact active-candidate recovery state
+  (`currentUpdate.status` `updating` or `stalled`,
   `freezeReason=post-process`, a different published scrape, and a stale or
   offline prior worker heartbeat).
 
@@ -585,19 +591,39 @@ recovery decision. `--max-worker-memory-percent` is an emergency hard-limit
 guard: unlike an ordinary no-progress timeout, it may stop a worker that still
 owns active queries. Resource recovery is rejected unless the resolved worker
 restart policy is `no`, preventing a race with continuous `on-failure`
-restarts. After the bounded Compose stop, the watchdog waits up to
+restarts. Before any bounded Compose stop, the watchdog must receive a
+successful machine-readable `--active-scrape-failure-isolation-check` result
+for the exact candidate/published identity; shell errors, malformed output,
+and blocker or identity mismatches fail closed and leave the worker running.
+After the bounded Compose stop, the watchdog waits up to
 `--worker-query-drain-seconds` (default `60`) for exact worker backends to
 disconnect, terminates only remaining `fstworker-scraper` backends (also
 the worker-owned `fst-path-generation-admission` lease backend, plus the
 captured worker IP as an alternate identity when available), and rechecks zero
 before the
-existing recovery transaction requires zero candidate publication mappings,
-an unchanged published pointer, no waiting locks, and no active database
-maintenance. Any failure after the stop still writes the query-drain/error
+code-owned `--active-scrape-failure-isolation` command requires zero candidate
+publication mappings, an unchanged published pointer, the candidate-owned
+working publication, and the canonical post-process freeze identity: the
+freeze reason is `post-process`, the freeze ID is the preserved published
+scrape, and the active candidate is different. It also requires no
+waiting/advisory locks and no active maintenance in the current FST database.
+Execute mode then reacquires the exclusive
+publication mutation fence, revalidates those invariants under the fence,
+forbids degraded shared-lock fallback, and only reports success after the
+terminal state still shows zero worker/lock/current-database-maintenance
+blockers, zero running phase attempts, worker status `offline`, and no current
+worker operation. Any failure after the stop still writes the query-drain/error
 evidence, renders the report, and attempts notification while publication
 remains fail-closed. A failed Docker memory sample is recorded in the
 observation and retried on the next poll; unexpected exit recovery remains the
 fallback for an OOM kill.
+An exact failed candidate with the preserved publication already unfrozen and
+no working publication may re-enter only to finish interrupted phase-attempt
+and worker-operation convergence. It cannot repeat or widen publication
+mutation or rerun publication artifact cleanup. The converger must still own
+the exact observed worker instance and
+freshness timestamp; a replacement worker or foreign running phase attempt
+causes rollback.
 
 Keep evidence on the 4 TB FST drive. Remove `--dry-run` only after the
 watchdog's own observation proves its timeout, database-activity,

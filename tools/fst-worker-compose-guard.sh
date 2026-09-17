@@ -683,6 +683,18 @@ if expected_scrape_id and resume_scrape_id != expected_scrape_id:
     )
 require_exact("Scraper__RivalsMaxDegreeOfParallelism", "2")
 for name in (
+    "Scraper__QueryLead",
+    "Scraper__QueryDrums",
+    "Scraper__QueryVocals",
+    "Scraper__QueryBass",
+    "Scraper__QueryProLead",
+    "Scraper__QueryProBass",
+    "Scraper__QueryProVocals",
+    "Scraper__QueryProCymbals",
+    "Scraper__QueryProDrums",
+):
+    require_exact(name, "true")
+for name in (
     "Features__EnforcePublicationCriticalPhases",
     "Features__EnforceScopeCompletenessManifests",
     "Features__RequireSuccessfulScrapeWriters",
@@ -1547,6 +1559,47 @@ wait_for_core_ready() {
     done
 }
 
+verify_acquisition_checkpoint_schema() {
+    local schema_state
+
+    if ! schema_state="$(
+        docker exec "$postgres_container" \
+            psql -X -A -t -q \
+                -v ON_ERROR_STOP=1 \
+                -c "/* fst_boot_acquisition_checkpoint_schema */ SELECT CASE
+                        WHEN (
+                            SELECT COUNT(*)
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'scrape_log'
+                              AND column_name IN (
+                                  'acquisition_completed_at',
+                                  'expected_solo_scope_count',
+                                  'expected_solo_scope_fingerprint_version',
+                                  'expected_solo_scope_fingerprint')
+                        ) = 4
+                        AND EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conrelid =
+                                    'public.scrape_log'::regclass
+                              AND conname =
+                                    'ck_scrape_log_acquisition_checkpoint'
+                              AND convalidated)
+                        THEN 'ready'
+                        ELSE 'missing'
+                    END"
+    )"
+    then
+        printf 'ERROR: recovery could not verify the acquisition checkpoint release schema\n' >&2
+        return 1
+    fi
+    if [[ "$schema_state" != "ready" ]]; then
+        printf 'ERROR: recovery requires the acquisition checkpoint release schema; run the candidate service with --initialize-schema-only before starting fstworker\n' >&2
+        return 1
+    fi
+}
+
 recovery_baseline_worker_instance=""
 recovery_baseline_worker_heartbeat=""
 recovery_current_update_status=""
@@ -1664,12 +1717,17 @@ raise SystemExit(0 if stale_after > 0 and age > stale_after else 1)
     return 1
 }
 
+recovery_update_is_terminal() {
+    [[ "$recovery_current_update_status" == "idle" \
+        || "$recovery_current_update_status" == "failed" ]]
+}
+
 capture_recovery_safety_snapshot() {
     if ! read_recovery_service_snapshot true; then
         return 1
     fi
-    if [[ "$recovery_current_update_status" != "idle" ]]; then
-        printf 'ERROR: recovery requires the current update state to be idle\n' >&2
+    if ! recovery_update_is_terminal; then
+        printf 'ERROR: recovery requires the current update state to be idle or failed\n' >&2
         return 1
     fi
     if [[ "$recovery_public_reads_frozen" != "false" ]]; then
@@ -2100,8 +2158,8 @@ determine_recovery_boot_mode() {
     recovery_baseline_worker_instance="$recovery_worker_api_instance"
     recovery_baseline_worker_heartbeat="$recovery_worker_api_heartbeat"
 
-    if [[ "$recovery_current_update_status" == "idle" \
-        && "$recovery_public_reads_frozen" == "false" ]]
+    if recovery_update_is_terminal \
+        && [[ "$recovery_public_reads_frozen" == "false" ]]
     then
         recovery_boot_mode="continuous-idle"
         return 0
@@ -2115,7 +2173,7 @@ determine_recovery_boot_mode() {
         recovery_deferred_publication_id="$recovery_published_scrape_id"
         return 0
     fi
-    if [[ "$recovery_current_update_status" == "idle" ]]; then
+    if recovery_update_is_terminal; then
         printf 'ERROR: recovery requires public reads to be unfrozen\n' >&2
         return 1
     fi
@@ -2123,7 +2181,7 @@ determine_recovery_boot_mode() {
     if [[ "$recovery_current_update_status" != "updating" \
         && "$recovery_current_update_status" != "stalled" ]]
     then
-        printf 'ERROR: recovery requires the current update state to be idle, updating, or stalled\n' >&2
+        printf 'ERROR: recovery requires the current update state to be idle, failed, updating, or stalled\n' >&2
         return 1
     fi
     if [[ "$recovery_public_reads_frozen" != "true" ]]; then
@@ -2732,7 +2790,8 @@ status = current.get("status")
 frozen = publication.get("publicReadsFrozen")
 if not isinstance(status, str) or not isinstance(frozen, bool):
     raise SystemExit(2)
-raise SystemExit(0 if status == "idle" and frozen is False else 3)
+raise SystemExit(
+    0 if status in {"idle", "failed"} and frozen is False else 3)
 ' <<< "$service_info" >/dev/null 2>&1
 }
 
@@ -2835,6 +2894,10 @@ if [[ "$ACTION" == "recover-start" ]]; then
     if ! enforce_recovery_total_deadline; then
         exit 1
     fi
+    if ! verify_acquisition_checkpoint_schema; then
+        exit 1
+    fi
+    printf 'compose_guard recovery=schema acquisition-checkpoint=ready\n'
     if ! determine_recovery_boot_mode; then
         exit 1
     fi
@@ -2843,7 +2906,8 @@ if [[ "$ACTION" == "recover-start" ]]; then
     fi
     case "$recovery_boot_mode" in
         continuous-idle)
-            printf 'compose_guard recovery=preflight core=ready worker=stopped update=idle reads=unfrozen\n'
+            printf 'compose_guard recovery=preflight core=ready worker=stopped update=%s reads=unfrozen\n' \
+                "$recovery_current_update_status"
             if ! run_proxy_recovery_sequence; then
                 exit 1
             fi

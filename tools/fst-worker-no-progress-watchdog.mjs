@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const NO_PROGRESS_FAILURE_PHASE = "post_process_no_progress_abandoned";
+export const CAPACITY_FAILURE_PHASE = "capacity_watchdog_abandoned";
 export const WATCHDOG_RECOVERY_EXIT_CODE = 42;
 export const WORKER_APPLICATION_NAMES = [
   "fstworker-scraper",
@@ -205,223 +206,330 @@ export function parseDockerPercentage(value) {
   return percent;
 }
 
-export function buildRecoverySql({
+export function selectFailureIsolationPhase(decision) {
+  return decision.reason === "worker_memory_threshold_exceeded"
+    || decision.reason === "worker_oom_killed"
+    || decision.reason === "worker_process_failed"
+    || decision.reason === "worker_container_exited"
+    ? CAPACITY_FAILURE_PHASE
+    : NO_PROGRESS_FAILURE_PHASE;
+}
+
+export function buildFailureIsolationCommand({
+  serviceContainer = "fstservice",
   scrapeId,
   publishedScrapeId,
+  failurePhase,
   failureMessage,
-  workerMessage,
-  workerApplicationNames = WORKER_APPLICATION_NAMES,
-  workerClientIp = ""
+  execute = true
 }) {
   const normalizedScrapeId = requirePositiveInteger(scrapeId, "scrapeId");
   const normalizedPublishedId = requirePositiveInteger(publishedScrapeId, "publishedScrapeId");
-  const workerActivityPredicate = buildWorkerActivityPredicate({
-    workerApplicationNames,
-    workerClientIp
-  });
+  if (execute) {
+    if (
+      failurePhase !== NO_PROGRESS_FAILURE_PHASE
+      && failurePhase !== CAPACITY_FAILURE_PHASE
+    ) {
+      throw new Error(`Unsupported failure phase: ${failurePhase}`);
+    }
+    if (!String(failureMessage ?? "").trim()) {
+      throw new Error("Failure message is required.");
+    }
+  }
+  return [
+    "exec",
+    "-i",
+    serviceContainer,
+    "dotnet",
+    "FSTService.dll",
+    "--active-scrape-failure-isolation",
+    ...(execute
+      ? ["--active-scrape-failure-isolation-execute"]
+      : ["--active-scrape-failure-isolation-check"]),
+    "--active-scrape-id",
+    String(normalizedScrapeId),
+    "--published-scrape-id",
+    String(normalizedPublishedId),
+    ...(execute
+      ? [
+          "--active-scrape-failure-phase",
+          failurePhase,
+          "--active-scrape-failure-message",
+          failureMessage
+        ]
+      : [])
+  ];
+}
 
-  return `BEGIN;
-SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '30s';
-
-DO $watchdog$
-DECLARE
-    recovery_at timestamptz := clock_timestamp();
-    changed_rows integer;
-    published_id bigint;
-    candidate_status text;
-    candidate_mappings bigint;
-    active_worker_queries bigint;
-    operation_started timestamptz;
-    ended_text text;
-BEGIN
-    PERFORM 1 FROM scrape_publication_state WHERE id = TRUE FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'scrape_publication_state singleton is missing';
-    END IF;
-
-    PERFORM 1 FROM scrape_log WHERE id = ${normalizedScrapeId} FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'scrape ${normalizedScrapeId} does not exist';
-    END IF;
-
-    SELECT published_scrape_id
-    INTO published_id
-    FROM scrape_publication_state
-    WHERE id = TRUE;
-    SELECT status
-    INTO candidate_status
-    FROM scrape_log
-    WHERE id = ${normalizedScrapeId};
-    SELECT count(*)
-    INTO candidate_mappings
-    FROM leaderboard_published_scope_source
-    WHERE published_scrape_id = ${normalizedScrapeId};
-    SELECT count(*)
-    INTO active_worker_queries
-    FROM pg_stat_activity
-    WHERE datname = current_database()
-      AND pid <> pg_backend_pid()
-      AND state <> 'idle'
-      AND ${workerActivityPredicate};
-
-    IF published_id <> ${normalizedPublishedId} THEN
-        RAISE EXCEPTION 'expected published scrape ${normalizedPublishedId}, found %', published_id;
-    END IF;
-    IF candidate_status NOT IN ('running', 'failed') THEN
-        RAISE EXCEPTION 'expected scrape ${normalizedScrapeId} running or failed after worker stop, found %', candidate_status;
-    END IF;
-    IF candidate_mappings <> 0 THEN
-        RAISE EXCEPTION 'scrape ${normalizedScrapeId} owns % published-source rows', candidate_mappings;
-    END IF;
-    IF active_worker_queries <> 0 THEN
-        RAISE EXCEPTION 'worker still owns % active database queries', active_worker_queries;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted) THEN
-        RAISE EXCEPTION 'ungranted database locks remain';
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory') THEN
-        RAISE EXCEPTION 'advisory database locks remain';
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_stat_progress_vacuum)
-       OR EXISTS (SELECT 1 FROM pg_stat_progress_create_index)
-       OR EXISTS (SELECT 1 FROM pg_stat_progress_cluster)
-       OR EXISTS (SELECT 1 FROM pg_stat_progress_analyze) THEN
-        RAISE EXCEPTION 'database maintenance progress remains active';
-    END IF;
-
-    UPDATE scrape_log
-    SET status = 'failed',
-        failed_at = COALESCE(failed_at, recovery_at),
-        failure_phase = CASE
-            WHEN status = 'running' THEN '${NO_PROGRESS_FAILURE_PHASE}'
-            ELSE failure_phase
-        END,
-        failure_message = CASE
-            WHEN status = 'running' THEN ${quoteLiteral(failureMessage)}
-            ELSE failure_message
-        END
-    WHERE id = ${normalizedScrapeId}
-      AND status IN ('running', 'failed')
-      AND NOT EXISTS (
-          SELECT 1
-          FROM scrape_publication_state
-          WHERE id = TRUE
-            AND published_scrape_id = ${normalizedScrapeId}
+export function parseFailureIsolationReadinessResult(
+  output,
+  { scrapeId, publishedScrapeId }
+) {
+  let parsed;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error(
+      `Active-scrape failure-isolation readiness returned malformed JSON: ${sanitizeError(error)}`
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness returned a non-object payload."
+    );
+  }
+  const expectedScrapeId = requirePositiveInteger(scrapeId, "scrapeId");
+  const expectedPublishedId = requirePositiveInteger(
+    publishedScrapeId,
+    "publishedScrapeId"
+  );
+  const requireIntegerField = (fieldName) => {
+    const value = Number(parsed[fieldName]);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(
+        `Active-scrape failure-isolation readiness field ${fieldName} is invalid.`
       );
-    GET DIAGNOSTICS changed_rows = ROW_COUNT;
-    IF changed_rows <> 1 THEN
-        RAISE EXCEPTION 'expected to fail one scrape row, changed %', changed_rows;
-    END IF;
+    }
+    return value;
+  };
+  const requireOptionalIntegerField = (fieldName) => {
+    const value = parsed[fieldName];
+    if (value === null) {
+      return null;
+    }
+    const number = Number(value);
+    if (!Number.isSafeInteger(number) || number <= 0) {
+      throw new Error(
+        `Active-scrape failure-isolation readiness field ${fieldName} is invalid.`
+      );
+    }
+    return number;
+  };
+  const requireBooleanField = (fieldName) => {
+    if (typeof parsed[fieldName] !== "boolean") {
+      throw new Error(
+        `Active-scrape failure-isolation readiness field ${fieldName} is invalid.`
+      );
+    }
+    return parsed[fieldName];
+  };
+  if (requireIntegerField("ScrapeId") !== expectedScrapeId) {
+    throw new Error(
+      `Active-scrape failure-isolation readiness reported scrape ${parsed.ScrapeId}, expected ${expectedScrapeId}.`
+    );
+  }
+  if (
+    requireIntegerField("ExpectedPublishedScrapeId")
+      !== expectedPublishedId
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness did not preserve the requested published scrape identity."
+    );
+  }
+  if (
+    requireOptionalIntegerField("PublishedScrapeId")
+      !== expectedPublishedId
+  ) {
+    throw new Error(
+      `Active-scrape failure-isolation readiness reported published scrape ${parsed.PublishedScrapeId}, expected ${expectedPublishedId}.`
+    );
+  }
+  if (parsed.CandidateStatus !== "running" && parsed.CandidateStatus !== "failed") {
+    throw new Error(
+      `Active-scrape failure-isolation readiness reported unsupported candidate status ${parsed.CandidateStatus}.`
+    );
+  }
+  if (!requireBooleanField("CanExecute")) {
+    throw new Error(
+      `Active-scrape failure-isolation readiness refused recovery: ${parsed.BlockingReason ?? "unknown blocker"}.`
+    );
+  }
+  const publicationMutationRequired =
+    requireBooleanField("PublicationMutationRequired");
+  const publicationIsolationComplete =
+    requireBooleanField("PublicationIsolationComplete");
+  const acquisitionFailureMutationRequired =
+    requireBooleanField("AcquisitionFailureMutationRequired");
+  if (
+    Number(publicationMutationRequired)
+      + Number(publicationIsolationComplete)
+      + Number(acquisitionFailureMutationRequired)
+      !== 1
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness must report exactly one isolation state."
+    );
+  }
+  const publicReadsFrozen =
+    requireBooleanField("PublicReadsFrozen");
+  const frozenScrapeId =
+    requireOptionalIntegerField("FrozenScrapeId");
+  const workingPublicationId =
+    requireOptionalIntegerField("WorkingPublicationId");
+  const candidatePublicationId =
+    requireOptionalIntegerField("CandidatePublicationId");
+  if (candidatePublicationId === null) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness requires a candidate publication."
+    );
+  }
+  if (
+    typeof parsed.CandidatePublicationStatus !== "string"
+    || !parsed.CandidatePublicationStatus.trim()
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness did not report candidate publication status."
+    );
+  }
+  if (publicationMutationRequired) {
+    if (!publicReadsFrozen) {
+      throw new Error(
+        "Active-scrape failure-isolation readiness lost the required public-read freeze."
+      );
+    }
+    if (frozenScrapeId !== expectedPublishedId) {
+      throw new Error(
+        `Active-scrape failure-isolation readiness reported frozen published scrape ${parsed.FrozenScrapeId}, expected ${expectedPublishedId}.`
+      );
+    }
+    if (parsed.FreezeReason !== "post-process") {
+      throw new Error(
+        `Active-scrape failure-isolation readiness reported freeze reason ${parsed.FreezeReason}, expected post-process.`
+      );
+    }
+    if (workingPublicationId !== candidatePublicationId) {
+      throw new Error(
+        `Active-scrape failure-isolation readiness reported candidate publication ${candidatePublicationId} and working publication ${workingPublicationId}.`
+      );
+    }
+  } else if (acquisitionFailureMutationRequired) {
+    if (
+      parsed.CandidateStatus !== "running"
+      || publicReadsFrozen
+      || frozenScrapeId !== null
+      || parsed.FreezeReason !== null
+      || workingPublicationId !== candidatePublicationId
+      || parsed.CandidatePublicationStatus === "current"
+      || parsed.CandidatePublicationStatus === "retained"
+      || parsed.CandidatePublicationStatus === "retired"
+      || requireIntegerField("RunningPhaseAttemptCount") !== 0
+      || requireIntegerField("FailedAcquisitionPhaseAttemptCount") === 0
+      || requireBooleanField("AcquisitionCheckpointPresent")
+      || parsed.WorkerStatus !== "offline"
+      || requireBooleanField("WorkerCurrentOperationPresent")
+    ) {
+      throw new Error(
+        "Active-scrape failure-isolation readiness reported an invalid acquisition-failure state."
+      );
+    }
+  } else if (
+    parsed.CandidateStatus !== "failed"
+    || publicReadsFrozen
+    || frozenScrapeId !== null
+    || parsed.FreezeReason !== null
+    || workingPublicationId !== null
+    || parsed.CandidatePublicationStatus !== "failed"
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported an invalid terminalized publication state."
+    );
+  }
+  if (requireIntegerField("CandidatePublishedScopeRowCount") !== 0) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported candidate published-scope rows."
+    );
+  }
+  if (requireIntegerField("ActiveWorkerQueryCount") !== 0) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported active worker queries."
+    );
+  }
+  if (requireIntegerField("WaitingLockCount") !== 0) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported waiting database locks."
+    );
+  }
+  if (requireIntegerField("AdvisoryLockCount") !== 0) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported advisory database locks."
+    );
+  }
+  if (requireBooleanField("MaintenanceActivityPresent")) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported active database maintenance."
+    );
+  }
+  requireIntegerField("RunningPhaseAttemptCount");
+  requireIntegerField("FailedAcquisitionPhaseAttemptCount");
+  requireBooleanField("AcquisitionCheckpointPresent");
+  if (requireIntegerField("ForeignRunningPhaseAttemptCount") !== 0) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness reported phase attempts owned by another worker instance."
+    );
+  }
+  if (
+    typeof parsed.WorkerStatus !== "string"
+    || !parsed.WorkerStatus.trim()
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness did not report persisted worker status."
+    );
+  }
+  if (
+    typeof parsed.WorkerInstanceId !== "string"
+    || !parsed.WorkerInstanceId.trim()
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness did not report persisted worker identity."
+    );
+  }
+  if (
+    typeof parsed.WorkerUpdatedAtUtc !== "string"
+    || !Number.isFinite(Date.parse(parsed.WorkerUpdatedAtUtc))
+  ) {
+    throw new Error(
+      "Active-scrape failure-isolation readiness did not report valid worker freshness."
+    );
+  }
+  requireBooleanField("WorkerCurrentOperationPresent");
+  return parsed;
+}
 
-    IF to_regclass('public.scrape_phase_attempts') IS NOT NULL THEN
-        UPDATE scrape_phase_attempts
-        SET status = 'interrupted',
-            heartbeat_at = GREATEST(heartbeat_at, recovery_at),
-            completed_at = recovery_at,
-            warning_message = COALESCE(
-                warning_message,
-                ${quoteLiteral(failureMessage)})
-        WHERE scrape_id = ${normalizedScrapeId}
-          AND status = 'running';
-    END IF;
-
-    IF to_regclass('public.publication_generations') IS NOT NULL THEN
-        UPDATE publication_generations
-        SET status = 'failed',
-            failed_at = COALESCE(failed_at, recovery_at),
-            failure_phase = CASE
-                WHEN status = 'failed' THEN failure_phase
-                ELSE '${NO_PROGRESS_FAILURE_PHASE}'
-            END,
-            failure_message = CASE
-                WHEN status = 'failed' THEN failure_message
-                ELSE ${quoteLiteral(failureMessage)}
-            END
-        WHERE scrape_id = ${normalizedScrapeId}
-          AND status NOT IN ('current', 'retained', 'retired');
-
-        UPDATE scrape_publication_state publication
-        SET working_publication_id = NULL,
-            updated_at = recovery_at
-        FROM publication_generations generation
-        WHERE publication.id = TRUE
-          AND generation.scrape_id = ${normalizedScrapeId}
-          AND publication.working_publication_id = generation.publication_id;
-
-        IF to_regclass('public.publication_api_response_cache_staging') IS NOT NULL THEN
-            DELETE FROM publication_api_response_cache_staging staging
-            USING publication_generations generation
-            WHERE generation.scrape_id = ${normalizedScrapeId}
-              AND staging.publication_id = generation.publication_id;
-        END IF;
-    END IF;
-
-    UPDATE scrape_publication_state
-    SET public_reads_frozen = FALSE,
-        public_reads_frozen_at = NULL,
-        public_reads_frozen_scrape_id = NULL,
-        public_reads_frozen_reason = NULL,
-        updated_at = recovery_at
-    WHERE id = TRUE
-      AND published_scrape_id = ${normalizedPublishedId};
-    GET DIAGNOSTICS changed_rows = ROW_COUNT;
-    IF changed_rows <> 1 THEN
-        RAISE EXCEPTION 'expected to unfreeze one publication row, changed %', changed_rows;
-    END IF;
-
-    SELECT NULLIF(current_operation_json->>'StartedAtUtc', '')::timestamptz
-    INTO operation_started
-    FROM service_worker_status
-    WHERE worker_key = 'scraper';
-    ended_text := to_char(
-        recovery_at AT TIME ZONE 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
-
-    UPDATE service_worker_status
-    SET status = 'offline',
-        last_status_change_at = recovery_at,
-        message = ${quoteLiteral(workerMessage)},
-        last_operation_json = CASE
-            WHEN current_operation_json IS NULL THEN last_operation_json
-            ELSE current_operation_json || jsonb_build_object(
-                'Status', 'failed',
-                'Detail', ${quoteLiteral(failureMessage)},
-                'UpdatedAtUtc', ended_text,
-                'EndedAtUtc', ended_text,
-                'ElapsedSeconds', CASE
-                    WHEN operation_started IS NULL THEN current_operation_json->'ElapsedSeconds'
-                    ELSE to_jsonb(EXTRACT(EPOCH FROM (recovery_at - operation_started)))
-                END)
-        END,
-        current_operation_json = NULL,
-        updated_at = recovery_at
-    WHERE worker_key = 'scraper';
-    GET DIAGNOSTICS changed_rows = ROW_COUNT;
-    IF changed_rows <> 1 THEN
-        RAISE EXCEPTION 'expected to reconcile one worker row, changed %', changed_rows;
-    END IF;
-END
-$watchdog$;
-
-COMMIT;
-
-SELECT id, status, failed_at, failure_phase, failure_message
-FROM scrape_log
-WHERE id = ${normalizedScrapeId};
-SELECT published_scrape_id, public_reads_frozen,
-       public_reads_frozen_at, public_reads_frozen_scrape_id,
-       public_reads_frozen_reason, updated_at
-FROM scrape_publication_state
-WHERE id = TRUE;
-SELECT worker_key, status, last_heartbeat_at, last_status_change_at,
-       message, current_operation_json, last_operation_json, updated_at
-FROM service_worker_status
-WHERE worker_key = 'scraper';
-SELECT count(*) AS candidate_published_scope_rows
-FROM leaderboard_published_scope_source
-WHERE published_scrape_id = ${normalizedScrapeId};
-`;
+export function verifyFailureIsolationReadiness({
+  composeDir,
+  serviceContainer,
+  evidenceDir,
+  scrapeId,
+  publishedScrapeId,
+  runCommand = run,
+  writeArtifact = writeFileSync
+}) {
+  const readinessCommand = buildFailureIsolationCommand({
+    serviceContainer,
+    scrapeId,
+    publishedScrapeId,
+    execute: false
+  });
+  writeArtifact(
+    path.join(evidenceDir, "readiness-command.json"),
+    `${JSON.stringify(readinessCommand, null, 2)}\n`
+  );
+  const readinessOutput = runCommand(
+    "docker",
+    readinessCommand,
+    { cwd: composeDir }
+  );
+  writeArtifact(
+    path.join(evidenceDir, "readiness-output.json"),
+    readinessOutput
+  );
+  return parseFailureIsolationReadinessResult(
+    readinessOutput,
+    {
+      scrapeId,
+      publishedScrapeId
+    }
+  );
 }
 
 function parseArgs(argv) {
@@ -926,6 +1034,7 @@ function stopAndRecover({
   decision,
   composeDir,
   postgresContainer,
+  serviceContainer,
   workerContainer,
   evidenceDir,
   stopTimeoutSeconds,
@@ -942,6 +1051,14 @@ function stopAndRecover({
       `Refusing recovery: scrape ${scrapeId} owns published-source rows.`
     );
   }
+
+  verifyFailureIsolationReadiness({
+    composeDir,
+    serviceContainer,
+    evidenceDir,
+    scrapeId,
+    publishedScrapeId
+  });
 
   run(
     "docker",
@@ -984,38 +1101,25 @@ function stopAndRecover({
     + `The worker was stopped before recovery; no active worker query remained, `
     + `candidate published-source rows were zero, and published scrape `
     + `${publishedScrapeId} was preserved and unfrozen.`;
-  const workerMessage =
-    `Worker stopped by worker safety watchdog; scrape ${scrapeId} failed and published `
-    + `scrape ${publishedScrapeId} was preserved.`;
-  const recoverySql = buildRecoverySql({
+  const failurePhase = selectFailureIsolationPhase(decision);
+  const recoveryCommand = buildFailureIsolationCommand({
+    serviceContainer,
     scrapeId,
     publishedScrapeId,
-    failureMessage,
-    workerMessage,
-    workerClientIp: observation.workerClientIp ?? ""
+    failurePhase,
+    failureMessage
   });
-  writeFileSync(path.join(evidenceDir, "recovery.sql"), recoverySql);
+  writeFileSync(
+    path.join(evidenceDir, "recovery-command.json"),
+    `${JSON.stringify(recoveryCommand, null, 2)}\n`
+  );
   const recoveryOutput = run(
     "docker",
-    [
-      "exec",
-      "-i",
-      postgresContainer,
-      "psql",
-      "-X",
-      "-v",
-      "ON_ERROR_STOP=1",
-      "-U",
-      "fst",
-      "-d",
-      "fstservice",
-      "-P",
-      "pager=off"
-    ],
-    { input: recoverySql }
+    recoveryCommand,
+    { cwd: composeDir }
   );
-  writeFileSync(path.join(evidenceDir, "recovery-output.txt"), recoveryOutput);
-  return { failureMessage, workerMessage, stoppedStatus, queryDrain };
+  writeFileSync(path.join(evidenceDir, "recovery-output.json"), recoveryOutput);
+  return { failureMessage, failurePhase, stoppedStatus, queryDrain };
 }
 
 function renderReport({
@@ -1055,7 +1159,10 @@ function renderReport({
     "",
     `- \`${evidenceDir}/observation.json\``,
     `- \`${evidenceDir}/decision.json\``,
-    `- \`${evidenceDir}/recovery.sql\` when recovery ran`,
+    `- \`${evidenceDir}/readiness-command.json\` when recovery ran`,
+    `- \`${evidenceDir}/readiness-output.json\` when recovery ran`,
+    `- \`${evidenceDir}/recovery-command.json\` when recovery ran`,
+    `- \`${evidenceDir}/recovery-output.json\` when recovery ran`,
     `- \`${evidenceDir}/rollback-to-pre-watchdog-state.sql\` when recovery ran`,
     `- \`${evidenceDir}/worker-query-drain.json\` when worker shutdown ran`,
     `- \`${evidenceDir}/recovery-error.txt\` when recovery failed`,
@@ -1170,6 +1277,7 @@ async function main() {
   const composeDir =
     args.values["compose-dir"] ?? "/home/sfenton/Docker/FestivalServiceTracker";
   const postgresContainer = args.values["postgres-container"] ?? "fst-postgres";
+  const serviceContainer = args.values["service-container"] ?? "fstservice";
   const workerContainer = args.values["worker-container"] ?? "fstworker";
   const evidenceDir = ensureEvidencePath(
     args.values["evidence-dir"]
@@ -1258,6 +1366,7 @@ async function main() {
             decision,
             composeDir,
             postgresContainer,
+            serviceContainer,
             workerContainer,
             evidenceDir,
             stopTimeoutSeconds,

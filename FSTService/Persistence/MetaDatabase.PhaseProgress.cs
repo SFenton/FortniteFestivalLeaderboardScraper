@@ -35,7 +35,33 @@ public sealed partial class MetaDatabase
             try
             {
                 using var conn = _ds.OpenConnection();
+                using var tx = conn.BeginTransaction();
+                using (var scrapeState = conn.CreateCommand())
+                {
+                    scrapeState.Transaction = tx;
+                    scrapeState.CommandText = """
+                        SELECT status
+                        FROM scrape_log
+                        WHERE id = @scrapeId
+                        FOR SHARE
+                        """;
+                    scrapeState.Parameters.AddWithValue(
+                        "scrapeId",
+                        checked((int)attempt.ScrapeId));
+                    var status =
+                        scrapeState.ExecuteScalar() as string;
+                    if (!string.Equals(
+                            status,
+                            "running",
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot start phase {attempt.PhaseId} for scrape {attempt.ScrapeId} with status {status ?? "missing"}.");
+                    }
+                }
+
                 using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
                 cmd.CommandText = """
                     WITH next_attempt AS (
                         SELECT COALESCE(MAX(attempt), 0) + 1 AS attempt
@@ -77,7 +103,10 @@ public sealed partial class MetaDatabase
                     RETURNING attempt
                     """;
                 AddPhaseAttemptStartParameters(cmd, attempt);
-                return Convert.ToInt32(cmd.ExecuteScalar());
+                var allocated =
+                    Convert.ToInt32(cmd.ExecuteScalar());
+                tx.Commit();
+                return allocated;
             }
             catch (PostgresException ex) when (
                 ex.SqlState == PostgresErrorCodes.UniqueViolation

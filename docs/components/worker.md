@@ -115,8 +115,9 @@ The host then runs `tools/fst-worker-compose-guard.sh --recover-start`. That
 action validates the continuous baseline and exact effective arrays, requires
 the worker profile and restart policy, and then chooses one of two safe boot
 paths under the same nonblocking worker-mutation lock. Idle and unfrozen state
-keeps the existing bounded effective-proxy recovery, runtime qualification, and
-continuous `fstworker` recreate with `--no-deps`. A stopped/absent worker plus
+or terminal failed and unfrozen state keeps the existing bounded
+effective-proxy recovery, runtime qualification, and continuous `fstworker`
+recreate with `--no-deps`. A stopped/absent worker plus
 an `updating` or `stalled` exact current scrape, frozen reads with
 `freezeReason=post-process`, a different published scrape, and a stale/offline
 prior worker heartbeat instead enters active-candidate recovery: the guard
@@ -142,8 +143,9 @@ failures uses the guard data profile `scrape-resume`. The profile authorizes
 only `SoloRankings` run-once recovery, requires a positive
 `Scraper:ResumeScrapeId`, explicit full-worker hosting
 (`Scraper:ApiOnly=false`, `Scraper:DisableScraperWorker=false`,
-`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, the
-publication correctness and snapshot-reuse gates, and
+`Scraper:RegistrationSyncWorkerOnly=false`), `Scraper:RunOnce=true`, all nine
+canonical `Scraper:Query*` solo flags enabled, the publication correctness and
+snapshot-reuse gates, and
 `Scraper:RivalsMaxDegreeOfParallelism=2`. The four acquisition totals and Epic
 page-count signal are not operator inputs: the worker loads them from the
 exact scrape's atomic PostgreSQL acquisition
@@ -173,7 +175,27 @@ published scrape ID. A gracefully stopped interrupted worker normally reports
 `--recover-start` applies the same durable-candidate gate automatically during
 boot before it mutates proxies or worker state. Legacy rows without the atomic
 acquisition checkpoint, including scrape `1399`, are intentionally refused and
-remain frozen until an operator chooses another recovery path.
+remain frozen until an operator uses the explicit active-candidate failure-
+isolation path or another reviewed recovery path. In the normal
+`post-process` freeze, `public_reads_frozen_scrape_id` names the preserved
+published scrape; the candidate is bound separately by
+`working_publication_id` and must differ from that published baseline.
+Failure isolation is not terminal until the same fenced transaction also
+interrupts the candidate's running phase attempts, moves the prior current
+worker operation to failed history, clears it, and persists scraper status
+`offline`.
+An acquisition failure before the atomic checkpoint commits is separately
+eligible only after the worker is offline and reads are already unfrozen. The
+service-owned check requires a durable failed `scrape.leaderboards` attempt,
+no acquisition checkpoint, no running attempt or current worker operation,
+and exact ownership of the noncurrent working publication. Execute mode fails
+that candidate and publication and releases the working pointer without
+inventing metrics; a valid checkpoint rejects isolation and must use guarded
+resume instead.
+Starting a durable phase attempt takes a shared row lock on its scrape and
+requires that scrape to remain `running`. A terminal failure update therefore
+either waits for and interrupts an already-starting attempt, or commits first
+and makes later attempt creation fail.
 
 Resume and ordinary scrape contexts both carry the immutable song catalog
 selected for their publication. Cleanup precompute must serialize canonical

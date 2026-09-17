@@ -227,6 +227,36 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Theory]
+    [InlineData(false, false, false, false, "RunOnce")]
+    [InlineData(true, true, false, false, "ApiOnly")]
+    [InlineData(true, false, true, false, "DisableScraperWorker")]
+    [InlineData(true, false, false, true, "RegistrationSyncWorkerOnly")]
+    public void ScraperOptionsValidator_RejectsResumeWithoutFullWorkerMode(
+        bool runOnce,
+        bool apiOnly,
+        bool disableScraperWorker,
+        bool registrationSyncWorkerOnly,
+        string expectedToken)
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                RunOnce = runOnce,
+                ApiOnly = apiOnly,
+                DisableScraperWorker = disableScraperWorker,
+                RegistrationSyncWorkerOnly =
+                    registrationSyncWorkerOnly,
+                ResumeScrapeId = 1399,
+            });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            expectedToken,
+            Assert.Single(result.Failures));
+    }
+
+    [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
     public void ScraperOptionsValidator_RejectsEnabledGraceWithUnlimitedBase(

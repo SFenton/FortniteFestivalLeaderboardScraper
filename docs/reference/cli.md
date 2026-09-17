@@ -249,6 +249,7 @@ legacy fetch.
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
 | `--initialize-snapshot-retention-schema-only` | Apply only the bounded snapshot-retention schema step and exit, without a host | Exactly one argument; all other flags/selectors are rejected |
 | `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
+| `--active-scrape-failure-isolation` | Read-only readiness/check report or explicit failure-isolation execution for one exact frozen active candidate | Required `--active-scrape-id`, `--published-scrape-id`, and exactly one of `--active-scrape-failure-isolation-check` or `--active-scrape-failure-isolation-execute`; execute mode also requires `--active-scrape-failure-phase` and `--active-scrape-failure-message` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
 | `--leaderboard-rivals-recompute-account` `<id>` | Recompute one account and exit | Accepts `--flag=value` form |
@@ -332,8 +333,61 @@ Catalog/publication/disabled-notification compatibility writes are skipped
 when their values are already correct.
 See the [source-preserving deployment order](../database/SnapshotGenerationOfflineRetentionReport.md).
 
-`--published-scrape-id` is parsed once for improvement-notification recovery
-and max-score maintenance. Both `--published-scrape-id 1296` and
+`--active-scrape-failure-isolation` is the code-only operator path for an
+active candidate that cannot resume. It accepts only one of three exact
+states: the requested scrape is still the frozen `post-process` candidate; its
+publication was already failed and unfrozen but runtime convergence remains;
+or acquisition failed before the durable acquisition checkpoint committed,
+reads are unfrozen, the worker is offline with no current operation or running
+phase attempt, and the candidate still owns the noncurrent working
+publication. The frozen state additionally requires the normal post-process
+freeze ID to name the preserved published scrape. Every state requires the
+requested published scrape to match the live pointer and the active candidate
+to differ from the published scrape. Zero published-scope source rows may belong to the candidate,
+zero worker-owned database queries may remain, no waiting/advisory locks may
+remain, and no maintenance progress may be active in the current FST database.
+`--active-scrape-failure-isolation-check` is the machine-readable no-op mode
+used by the watchdog before it stops `fstworker`; shell failure, malformed
+JSON, or any identity/blocker mismatch must fail closed. Both check and execute
+modes write exactly one JSON document to stdout and route startup diagnostics
+and logs to stderr. Execute mode then
+acquires the exclusive publication mutation fence, re-reads those exact
+identity and blocker invariants under that fence, refuses any raced change,
+does not fall back to shared-lock isolation, and only succeeds after the
+candidate is durably failed, the working publication is released, public reads
+are unfrozen, running phase attempts are interrupted, the persisted scraper
+operation is moved to failed history, worker status is `offline`, and the final
+blocker counts are zero.
+If publication isolation already completed but those runtime fields did not,
+check mode accepts only that exact failed/unfrozen/no-working-publication
+state, and execute mode idempotently finishes runtime convergence under the
+same exclusive fence without repeating publication mutation.
+That runtime-only path also skips failed-publication artifact cleanup and
+orphan sweeping.
+The acquisition-failure state additionally requires a durable failed
+`scrape.leaderboards` attempt and a null `acquisition_completed_at`; a valid
+checkpoint rejects isolation in favor of guarded resume. Execution marks the
+candidate and its publication failed, releases the working publication, keeps
+reads unfrozen, and never reconstructs or fabricates acquisition metrics.
+Runtime convergence is bound to the persisted worker instance ID and
+freshness timestamp observed under the fence. A newer worker row or a running
+phase attempt owned by another instance aborts and rolls back the convergence
+transaction.
+
+`--active-scrape-failure-phase` accepts only
+`post_process_no_progress_abandoned` and
+`capacity_watchdog_abandoned`, or `scrape_acquisition_failed`. The operator
+must supply an explicit phase matching the fenced state:
+`scrape_acquisition_failed` is exclusive to acquisition failure, while the
+watchdog/capacity phases are exclusive to frozen post-process isolation.
+Runtime-only convergence requires the phase already persisted on the failed
+candidate. The operator must supply an explicit
+`--active-scrape-failure-message`; the command does not infer acquisition or
+publication metrics.
+
+`--published-scrape-id` is parsed once for improvement-notification recovery,
+active-scrape failure isolation, and max-score maintenance. Both
+`--published-scrape-id 1296` and
 `--published-scrape-id=1296` are accepted. The owning command requires exactly
 one positive value; duplicates, blank/malformed values, and an orphaned scrape
 ID without either owning command are startup errors. The shared option does not

@@ -975,6 +975,32 @@ internal sealed class ScraperOptionsValidator
                 + ".");
         }
 
+        if (options.ResumeScrapeId > 0)
+        {
+            if (!options.RunOnce)
+            {
+                return ValidateOptionsResult.Fail(
+                    $"{ScraperOptions.Section}:"
+                    + nameof(options.ResumeScrapeId)
+                    + " requires "
+                    + nameof(options.RunOnce)
+                    + "=true.");
+            }
+
+            if (options.ApiOnly
+                || options.DisableScraperWorker
+                || options.RegistrationSyncWorkerOnly)
+            {
+                return ValidateOptionsResult.Fail(
+                    $"{ScraperOptions.Section}:"
+                    + nameof(options.ResumeScrapeId)
+                    + " requires full-worker hosting "
+                    + $"({nameof(options.ApiOnly)}=false, "
+                    + $"{nameof(options.DisableScraperWorker)}=false, "
+                    + $"{nameof(options.RegistrationSyncWorkerOnly)}=false).");
+            }
+        }
+
         var targetedTimeout =
             options.RegisteredBandTargetedProcessingTimeout
             ?? options.PostScrapeRefreshTimeout;

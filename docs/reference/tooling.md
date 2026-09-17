@@ -934,6 +934,12 @@ recreate core services or non-effective proxies. The guard passes
 worker-targeted `up`; proxy-only recreates remain effective-name-only. Output
 reports stages and counts without resolved endpoints, IPs, credentials, or
 environment values.
+After PostgreSQL and `fstservice` become ready, `--recover-start` also verifies
+all four additive acquisition-checkpoint columns and the validated
+`ck_scrape_log_acquisition_checkpoint` constraint before selecting a boot
+mode or touching the worker. Missing release schema fails closed and directs
+the operator to run the candidate service's idempotent
+`--initialize-schema-only` command first.
 
 Full-scrape run-once data profiles that enforce scope manifests and published
 scope sources also require
@@ -955,8 +961,8 @@ expected image to the final run-once overlay before the guard resolves Compose;
 the option is therefore both the selected image and the fail-closed assertion.
 
 If post-start readiness fails, cleanup stops the worker only while
-`currentUpdate` remains idle and public reads remain unfrozen. Otherwise it
-leaves the worker running and directs the operator to
+`currentUpdate` remains inactive (`idle` or terminal `failed`) and public reads
+remain unfrozen. Otherwise it leaves the worker running and directs the operator to
 `tools/fst-worker-no-progress-watchdog.mjs` and the canonical
 [live-safety procedure](../operations/live-safety.md).
 
@@ -971,7 +977,30 @@ attempt retain the existing operation/outcome/registered-refresh fallback.
 
 Guarded timeout recovery also marks running normalized attempts `interrupted`
 and records their prior values in rollback SQL. Pointer, mapping, worker-query,
-lock, and maintenance guards are unchanged.
+lock, and maintenance guards are unchanged, but recovery now first runs the
+machine-readable code-owned
+`dotnet FSTService.dll --active-scrape-failure-isolation --active-scrape-failure-isolation-check ...`
+command inside `fstservice`. Any subprocess failure, malformed JSON, or exact
+identity/blocker mismatch aborts the worker stop. The service command writes
+exactly one JSON document to stdout and sends startup diagnostics and logs to
+stderr. The mutation step still runs the explicit service command inside
+`fstservice`, but it now reacquires the exclusive publication mutation fence,
+revalidates the exact candidate/working-publication identity, the published
+baseline freeze identity, and zero
+worker/lock/current-database-maintenance blockers under that fence, and
+refuses raced blockers instead of taking degraded shared-lock isolation. The
+same transaction interrupts the candidate's running phase attempts and moves
+the persisted scraper operation to failed history with worker status
+`offline`; recovery is not successful while service-info can still report the
+old active operation. If publication isolation committed before runtime
+convergence, the service command recognizes only the exact
+failed/unfrozen/no-working-publication state and idempotently completes those
+runtime transitions under the exclusive fence.
+It does not rerun publication cache/catalog/path cleanup or band-table orphan
+sweeps.
+The worker status update is conditional on the exact observed instance ID and
+`updated_at`; foreign running phase attempts or a newer worker write abort
+convergence instead of being overwritten.
 
 The default behavior remains progress-only. Canary operators can opt into
 `--recover-worker-exit`, which treats an exited or OOM-killed worker as a
