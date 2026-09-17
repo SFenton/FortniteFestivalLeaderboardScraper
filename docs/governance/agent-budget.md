@@ -48,10 +48,10 @@ fixtures but never automatically promoted executors.
 keeps every model capability provisional. Deterministic routing, evidence,
 registered tools, tests, and receipts run without a model launch. Known-pattern
 work uses the opportunity's exact project-qualified medium coordinator:
-gpt-5.4 medium/default for routine, database, concurrency, storage,
+gpt-5.6-luna medium/default for routine, database, concurrency, storage,
 publication, provenance, debugging, live, and release-sensitive coordination.
 External research is conditional, and binding specification remains
-gpt-5.4 medium/default. Sol high/default appears only as receipt-bound
+gpt-5.6-luna medium/default. Sol high/default appears only as receipt-bound
 research for unresolved concurrency corruption, publication/provenance
 conflict, live data-loss/restore conflict, or release public-health/rollback
 conflict. No phase has standing Sol ownership or max/long residency.

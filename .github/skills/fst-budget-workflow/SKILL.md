@@ -64,7 +64,7 @@ safety or a specialist's explicit model/approval contract.
 7. Deployment and destructive work retain existing approval, current
    live-scrape A/B, exact-object and restoration gates. Application image
    release and destructive database maintenance use separate advisory machines;
-   they never share authorization or rollback. Routine review is gpt-5.4
+   they never share authorization or rollback. Routine review is gpt-5.6-luna
    medium/default. Both remain invalidated and disabled; Sol research appears
    only after `fst-live-data-loss-or-restore-conflict` or
    `fst-release-public-health-or-rollback-conflict` receipts.
