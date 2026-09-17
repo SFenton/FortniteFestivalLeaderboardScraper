@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
+import { dismissObstructions } from '../../support/drivers/app';
 
 // Verifies React Query request ownership across navigation and profile changes.
 const SONG_ID = 'song-cache-test';
@@ -370,6 +371,7 @@ test('React Query owns remote data across Player, Leaderboard, Rivals, and Compe
     localStorage.setItem('fst:trackedPlayer', JSON.stringify(profile));
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await dismissObstructions(page);
 
   await navigate(page, `/player/${PROFILE_A.accountId}`);
   await expect(page.getByText(PROFILE_A.displayName).first()).toBeVisible({ timeout: 15_000 });
@@ -394,6 +396,7 @@ test('React Query owns remote data across Player, Leaderboard, Rivals, and Compe
 
   await navigate(page, `/songs/${SONG_ID}/Solo_Guitar`);
   await expect(page.getByText('Top Player')).toBeVisible();
+  await dismissObstructions(page);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByTestId('leaderboard-page-info')).toHaveText('2 / 2');
   await navigate(page, '/rivals');
