@@ -673,4 +673,113 @@ public class ScraperWorkerTests : IDisposable
                 expectedPairs,
                 true);
     }
+
+    [Fact]
+    public void AcquisitionCheckpoint_failure_terminalizes_the_candidate()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedPairs =
+            GlobalLeaderboardScraper.AllInstruments
+                .Select(instrument => ("song-a", instrument))
+                .ToArray();
+        metaDatabase
+            .When(database =>
+                database.RecordScrapeAcquisitionCheckpoint(
+                    42,
+                    1,
+                    10,
+                    2,
+                    100,
+                    expectedPairs,
+                    true))
+            .Do(_ => throw new InvalidOperationException(
+                "checkpoint persistence failed"));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                scrapeId: 42,
+                songsScraped: 1,
+                totalEntries: 10,
+                totalRequests: 2,
+                totalBytes: 100,
+                epicReportedOver100Pages: true,
+                expectedSoloLeaderboardPairs: expectedPairs,
+                publicationCatalogSongIds: ["song-a"],
+                doSoloScrape: true,
+                soloCoverageComplete: true,
+                bandManifestGatePassed: true,
+                writerGatePassed: true));
+
+        Assert.Equal(
+            "checkpoint persistence failed",
+            error.Message);
+        metaDatabase.Received(1).FailScrapeRun(
+            42,
+            ScrapeOrchestrator
+                .AcquisitionCheckpointFailurePhase,
+            "checkpoint persistence failed");
+    }
+
+    [Fact]
+    public void AcquisitionCheckpoint_isolation_failure_surfaces_both_errors()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        IReadOnlyCollection<(string SongId, string Instrument)>
+            expectedPairs =
+            GlobalLeaderboardScraper.AllInstruments
+                .Select(instrument => ("song-a", instrument))
+                .ToArray();
+        metaDatabase
+            .When(database =>
+                database.RecordScrapeAcquisitionCheckpoint(
+                    42,
+                    1,
+                    10,
+                    2,
+                    100,
+                    expectedPairs,
+                    true))
+            .Do(_ => throw new InvalidOperationException(
+                "checkpoint persistence failed"));
+        metaDatabase
+            .When(database => database.FailScrapeRun(
+                42,
+                ScrapeOrchestrator
+                    .AcquisitionCheckpointFailurePhase,
+                "checkpoint persistence failed"))
+            .Do(_ => throw new InvalidOperationException(
+                "candidate isolation failed"));
+
+        var error = Assert.Throws<
+            ScrapeAcquisitionCheckpointIsolationException>(() =>
+            ScrapeOrchestrator.RecordAcquisitionCheckpointIfEligible(
+                metaDatabase,
+                scrapeId: 42,
+                songsScraped: 1,
+                totalEntries: 10,
+                totalRequests: 2,
+                totalBytes: 100,
+                epicReportedOver100Pages: true,
+                expectedSoloLeaderboardPairs: expectedPairs,
+                publicationCatalogSongIds: ["song-a"],
+                doSoloScrape: true,
+                soloCoverageComplete: true,
+                bandManifestGatePassed: true,
+                writerGatePassed: true));
+
+        Assert.Equal(42, error.ScrapeId);
+        var aggregate =
+            Assert.IsType<AggregateException>(
+                error.InnerException);
+        Assert.Collection(
+            aggregate.InnerExceptions,
+            checkpoint => Assert.Equal(
+                "checkpoint persistence failed",
+                checkpoint.Message),
+            isolation => Assert.Equal(
+                "candidate isolation failed",
+                isolation.Message));
+    }
 }

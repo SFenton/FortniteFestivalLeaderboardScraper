@@ -116,6 +116,7 @@ sources:
   - tools/check-docs.mjs
   - tools/check-coverage-ignores.test.mjs
   - tools/fst-worker-compose-guard.test.mjs
+  - tools/fst-worker-dual-lane-runonce.test.mjs
 update_triggers:
   - Test runners, scripts, projects, coverage gates, CI, or documentation checks change.
 ---
@@ -157,6 +158,7 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter 'FullyQualifiedName~MetaDatabaseTests|FullyQualifiedName~DatabaseInitializerTests|FullyQualifiedName~ScraperWorkerTests|FullyQualifiedName~ScraperWorkerStatefulTests'
 
 node --test tools/fst-worker-compose-guard.test.mjs
+node --test tools/fst-worker-dual-lane-runonce.test.mjs
 ```
 
 This proves idempotent bounded schema initialization, atomic persistence of all

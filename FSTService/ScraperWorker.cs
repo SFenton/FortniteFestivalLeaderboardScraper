@@ -1361,6 +1361,18 @@ public sealed class ScraperWorker : BackgroundService
                         "Full-data post-scrape derived work will be skipped unless the scrape returned a completed result.");
                     // Do NOT return — fall through so cleanup can unfreeze public reads.
                 }
+                catch (ScrapeAcquisitionCheckpointIsolationException ex)
+                {
+                    _workerStatus?.FailOperation(
+                        "scrape.leaderboards",
+                        ex);
+                    durableFailureIsolationConfirmed = false;
+                    _lifecycle.ScrapeFailureIsolationPending(
+                        ex.ScrapeId);
+                    _log.LogError(
+                        ex,
+                        "Scrape acquisition checkpoint failed and durable candidate isolation could not be recorded. Public reads will remain frozen for guarded recovery.");
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _workerStatus?.FailOperation("scrape.leaderboards", ex);

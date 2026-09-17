@@ -22,7 +22,8 @@ Options:
   --data-profile P      publication-cache-generation,
                         catalog-path-notification-source-cut, or
                         snapshot-reuse, leaderboard-rivals-batch, or
-                        legacy-reader-migration
+                        legacy-reader-migration, or
+                        acquisition-checkpoint-terminalization
   --expected-worker-image I
                         Exact fstworker image required by the data lane
   --check               Validate only (default)
@@ -53,7 +54,7 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     exit 64
 fi
 case "$DATA_PROFILE" in
-    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration)
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization)
         ;;
     *)
         printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2

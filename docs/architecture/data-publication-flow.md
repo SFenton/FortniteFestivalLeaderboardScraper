@@ -154,6 +154,13 @@ read-serving health does not admit the next scrape or imply source readiness.
    - Terminal completion compares a pre-existing checkpoint and exact solo
      scope contract when one exists. It never creates the acquisition marker
      or scope contract for legacy/uncheckpointed rows.
+   - If an eligible checkpoint write throws, the orchestrator durably fails
+     the candidate and working publication with phase
+     `acquisition_checkpoint` before propagating the original exception. It
+     never reconstructs missing metrics from staged rows; post-processing is
+     skipped and lifecycle cleanup then unfreezes the preserved publication.
+     If durable isolation also fails, the worker records both errors and keeps
+     reads frozen in isolation-pending state for guarded recovery.
    - Before a snapshot write, generation creation takes the shared
      partition-DDL advisory lock. An active retention/restore hold blocks both
      returning and creating the exact generation; committed DROP evidence also
