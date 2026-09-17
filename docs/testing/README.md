@@ -135,6 +135,10 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+Database initializer readiness tests use a one-minute cancellation bound:
+initializer exceptions still propagate, while the larger bound prevents
+coverage instrumentation and concurrent per-test PostgreSQL setup from turning
+runner scheduling latency into a false `TaskCanceledException`.
 
 Focused registered-band correctness and progress validation:
 

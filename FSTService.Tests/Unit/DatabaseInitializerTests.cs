@@ -17,6 +17,8 @@ namespace FSTService.Tests.Unit;
 
 public class DatabaseInitializerTests : IDisposable
 {
+    private static readonly TimeSpan StartupReadinessTimeout =
+        TimeSpan.FromMinutes(1);
     private readonly InMemoryMetaDatabase _metaFixture;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly string _tempDir;
@@ -306,7 +308,7 @@ public class DatabaseInitializerTests : IDisposable
         await init.StartAsync(CancellationToken.None);
 
         // Wait for background init
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(StartupReadinessTimeout);
         await init.WaitForReadyAsync(cts.Token);
 
         Assert.True(init.IsReady);
@@ -368,7 +370,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            new CancellationTokenSource(StartupReadinessTimeout);
 
         await Assert.ThrowsAnyAsync<Exception>(
             () => initializer.WaitForReadyAsync(cts.Token));
@@ -416,7 +418,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            new CancellationTokenSource(StartupReadinessTimeout);
         await initializer.WaitForReadyAsync(cts.Token);
         Assert.Equal(
             HealthStatus.Healthy,
@@ -612,7 +614,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            new CancellationTokenSource(StartupReadinessTimeout);
         await initializer.WaitForReadyAsync(cts.Token);
 
         Assert.Null(
@@ -669,7 +671,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-                new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                new CancellationTokenSource(StartupReadinessTimeout);
         await initializer.WaitForReadyAsync(cts.Token);
 
         Assert.False(
@@ -766,7 +768,7 @@ public class DatabaseInitializerTests : IDisposable
             StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await initializer.StartAsync(CancellationToken.None);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(StartupReadinessTimeout);
         await initializer.WaitForReadyAsync(cts.Token);
 
         Assert.True(initializer.IsReady);
@@ -932,7 +934,7 @@ public class DatabaseInitializerTests : IDisposable
 
         await initializer.StartAsync(CancellationToken.None);
         using var cts =
-            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            new CancellationTokenSource(StartupReadinessTimeout);
         await initializer.WaitForReadyAsync(cts.Token);
         Assert.True(initializer.IsReady);
         Assert.True(initializer.ReadOnlyServing);
@@ -972,7 +974,7 @@ public class DatabaseInitializerTests : IDisposable
             StartupPublicationReadOnlyState.ForInitializedDatabase(readOnly: true));
 
         await initializer.StartAsync(CancellationToken.None);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(StartupReadinessTimeout);
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => initializer.WaitForReadyAsync(cts.Token));
 
@@ -1033,7 +1035,7 @@ public class DatabaseInitializerTests : IDisposable
                 StartupPublicationReadOnlyState.ForInitializedDatabase());
 
             await initializer.StartAsync(CancellationToken.None);
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var cts = new CancellationTokenSource(StartupReadinessTimeout);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => initializer.WaitForReadyAsync(cts.Token));
 
