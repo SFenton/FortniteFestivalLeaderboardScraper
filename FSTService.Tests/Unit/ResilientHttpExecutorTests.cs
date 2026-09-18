@@ -62,6 +62,71 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_telemetry_distinguishes_physical_sends_and_retry_sources()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueError(HttpStatusCode.ServiceUnavailable);
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var response = await executor.SendAsync(
+            MakeRequest,
+            label: "telemetry",
+            maxRetries: 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, executor.TotalHttpSends);
+        Assert.Equal(1, executor.StatusRetries);
+        Assert.Equal(0, executor.NetworkErrors);
+        Assert.Equal(0, executor.CdnProbeAttempts);
+    }
+
+    [Fact]
+    public async Task TelemetryScope_counts_primary_and_failed_fallback_network_sends_once_each()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log);
+        using var cancellation = new CancellationTokenSource();
+        handler.EnqueueException(new HttpRequestException("primary transport"));
+        executor.CdnBlockFallbackOverride = (_, _, _) =>
+        {
+            cancellation.Cancel();
+            throw new HttpRequestException("fallback transport");
+        };
+        using var scope = executor.BeginTelemetryScope();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.SendAsync(
+                MakeEpicEventsRequest,
+                label: "failed-fallback",
+                ct: cancellation.Token));
+
+        var telemetry = scope.Snapshot();
+        Assert.Equal(2, telemetry.TotalHttpSends);
+        Assert.Equal(2, telemetry.NetworkErrors);
+    }
+
+    [Fact]
+    public async Task TelemetryScope_is_operation_scoped_across_parallel_children()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueJsonOk("""{"result":"outside"}""");
+        await executor.SendAsync(MakeRequest, label: "outside");
+
+        handler.EnqueueJsonOk("""{"result":"one"}""");
+        handler.EnqueueJsonOk("""{"result":"two"}""");
+        using var scope = executor.BeginTelemetryScope();
+        await Task.WhenAll(
+            executor.SendAsync(MakeRequest, label: "one"),
+            executor.SendAsync(MakeRequest, label: "two"));
+
+        var telemetry = scope.Snapshot();
+        Assert.Equal(2, telemetry.TotalHttpSends);
+        Assert.Equal(0, telemetry.ProbeHttpSends);
+    }
+
+    [Fact]
     public async Task SendAsync_ProxyCurlPrimary_UsesOverrideAndSkipsHttpClient()
     {
         var handler = new MockHttpMessageHandler();
@@ -577,7 +642,7 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("""{"result":"ok"}""", body);
         Assert.False(executor.IsCdnBlocked);
-        Assert.Equal(0, executor.CdnBlocksDetected);
+        Assert.Equal(1, executor.CdnBlocksDetected);
         Assert.Single(handler.Requests);
         Assert.Equal(2, executor.TotalHttpSends);
         Assert.Equal(1, acquiredRateTokens);
@@ -1208,6 +1273,183 @@ public sealed class ResilientHttpExecutorTests
         await Assert.ThrowsAsync<CdnBlockedException>(
             () => executor.SendAsync(() => MakeRequest(), label: "cdn-probe-netfail-slot-test"));
 
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
+    }
+
+    [Fact]
+    public async Task TelemetryScope_counts_probe_network_error_once_per_failed_probe_send()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+        handler.EnqueueHtml403();
+        handler.EnqueueException(new HttpRequestException("probe transport"));
+        handler.EnqueueJsonOk("""{"result":"clear"}""");
+
+        using var scope = executor.BeginTelemetryScope();
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "probe-network"));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+
+        var telemetry = scope.Snapshot();
+        Assert.Equal(3, telemetry.TotalHttpSends);
+        Assert.Equal(1, telemetry.NetworkErrors);
+        Assert.Equal(2, telemetry.ProbeHttpSends);
+    }
+
+    [Fact]
+    public async Task TelemetryScope_counts_probe_timeout_once_per_failed_probe_send()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            probeSendTimeout: TimeSpan.FromMilliseconds(20),
+            sendWallClockTimeout: TimeSpan.FromSeconds(1),
+            executorLifetime: default);
+        executor.CdnRetryDelaysOverride = [TimeSpan.Zero];
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+        handler.EnqueueJsonOk("""{"result":"clear"}""");
+
+        using var scope = executor.BeginTelemetryScope();
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "probe-timeout"));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+
+        var telemetry = scope.Snapshot();
+        Assert.Equal(3, telemetry.TotalHttpSends);
+        Assert.Equal(1, telemetry.NetworkErrors);
+        Assert.Equal(2, telemetry.ProbeHttpSends);
+    }
+
+    [Fact]
+    public async Task TelemetryScope_counts_probe_wire_boundaries_not_diagnostic_attempts()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"clear"}""");
+
+        using var scope = executor.BeginTelemetryScope();
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "probe-telemetry"));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+
+        var telemetry = scope.Snapshot();
+        Assert.Equal(3, telemetry.TotalHttpSends);
+        Assert.Equal(2, telemetry.ProbeHttpSends);
+        Assert.Equal(1, telemetry.ProbeSuccesses);
+        Assert.Equal(2, telemetry.CdnBlocksDetected);
+        Assert.Equal(executor.CdnProbeAttempts, telemetry.ProbeHttpSends);
+    }
+
+    [Fact]
+    public async Task ResetCdnStateAsync_quiesces_an_inflight_probe_before_releasing_state()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            probeSendTimeout: TimeSpan.FromSeconds(30),
+            sendWallClockTimeout: TimeSpan.FromSeconds(1),
+            executorLifetime: default);
+        executor.CdnRetryDelaysOverride = [TimeSpan.Zero];
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "reset-race"));
+        await handler.WaitForRequestCountAsync(2, TimeSpan.FromSeconds(2));
+
+        await executor.ResetCdnStateAsync(CancellationToken.None);
+
+        Assert.False(executor.IsProbeRunning);
+        Assert.False(executor.IsCdnBlocked);
+    }
+
+    [Fact]
+    public async Task ResetCdnStateAsync_allows_immediate_block_to_launch_probe_after_await()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            probeSendTimeout: TimeSpan.FromSeconds(30),
+            sendWallClockTimeout: TimeSpan.FromSeconds(1),
+            executorLifetime: default);
+        executor.CdnRetryDelaysOverride = [TimeSpan.Zero];
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "before-reset"));
+        await handler.WaitForRequestCountAsync(2, TimeSpan.FromSeconds(2));
+
+        await executor.ResetCdnStateAsync(CancellationToken.None);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"after-reset"}""");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "immediate-after-reset"));
+        await handler.WaitForRequestCountAsync(4, TimeSpan.FromSeconds(2));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+
+        Assert.False(executor.IsCdnBlocked);
+        Assert.False(executor.IsProbeRunning);
+    }
+
+    [Fact]
+    public async Task ResetCdnStateAsync_honors_cancellation_before_taking_ownership()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ResetCdnStateAsync(cancellation.Token));
+
+        Assert.False(executor.IsCdnBlocked);
+        Assert.False(executor.IsProbeRunning);
+    }
+
+    [Fact]
+    public async Task ResetCdnStateAsync_suppresses_launch_during_final_clear_window()
+    {
+        var handler = new MockHttpMessageHandler();
+        using var lifetime = new CancellationTokenSource();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler,
+            TimeSpan.FromSeconds(30),
+            lifetime.Token);
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "old-probe"));
+        await handler.WaitForRequestCountAsync(2, TimeSpan.FromSeconds(2));
+
+        Task<HttpResponseMessage>? suppressedLaunch = null;
+        executor.ResetBeforeReopenLaunches = () =>
+        {
+            handler.EnqueueHtml403();
+            suppressedLaunch = executor.SendAsync(
+                MakeRequest,
+                label: "reset-window");
+        };
+
+        await executor.ResetCdnStateAsync(CancellationToken.None);
+        Assert.NotNull(suppressedLaunch);
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => suppressedLaunch!);
+        Assert.False(executor.IsProbeRunning);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"after-reset"}""");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(MakeRequest, label: "after-reset"));
         await executor.WaitForCdnClearAsync(CancellationToken.None);
         Assert.False(executor.IsCdnBlocked);
     }

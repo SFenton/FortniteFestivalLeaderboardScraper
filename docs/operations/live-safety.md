@@ -70,6 +70,9 @@ Check:
 7. CPU and memory pressure.
 
 Use bounded read-only probes first.
+`tools/postgres-scrape-evidence.sh` includes `wire-send-telemetry.csv` and
+summarizes the durable counters. Missing columns on a legacy database remain
+null/unknown rather than being represented as zero.
 Before guarded worker recovery, apply the candidate release schema with
 `--initialize-schema-only`. The canonical `--recover-start` guard independently
 requires the four acquisition-checkpoint columns and validated
@@ -558,6 +561,18 @@ supply the resolved worker configuration SHA-256. Missing or mismatched
 identity/configuration fails before mutation. Explicit `true`, an unknown
 image, or any other drift fails closed. It is run-once-only and is preparation
 evidence only; it does not authorize a production start or promotion.
+
+The `wire-send-telemetry` profile is the live-admission contract for the
+durable physical HTTP send counters. It is run-once-only and must use exactly
+`candidate-800-32-4`; it preserves the checkpoint, publication, notification,
+registered-work, snapshot, and aggregation=false defaults above. The guard
+requires the exact worker image, local image ID, OCI revision, and resolved
+non-image configuration hash (the hash is mandatory for recreate). For live
+checks and recreates, after core/proxy preflight and before any worker action,
+the guard performs a read-only PostgreSQL schema check requiring all six
+`wire_send_*` columns plus validated `ck_scrape_log_wire_send_telemetry` and
+`ck_scrape_log_wire_send_telemetry_complete` constraints. Missing or
+unvalidated schema fails closed; `--config-only` never accesses PostgreSQL.
 
 Size the production unit timeout above the total deadline plus cleanup margin.
 The shared lock defaults to `.fst-worker-compose-guard.lock` under the resolved

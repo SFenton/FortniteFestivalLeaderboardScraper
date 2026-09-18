@@ -27,7 +27,8 @@ Options:
                         snapshot-reuse, leaderboard-rivals-batch, or
                         legacy-reader-migration, or
                         acquisition-checkpoint-terminalization, or
-                        band-maintenance-progress
+                        band-maintenance-progress, or
+                        wire-send-telemetry
   --expected-worker-image I
                         Exact fstworker image required by the data lane
   --expected-worker-image-id I
@@ -67,7 +68,7 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     exit 64
 fi
 case "$DATA_PROFILE" in
-    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress)
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress|wire-send-telemetry)
         ;;
     *)
         printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2
@@ -127,6 +128,12 @@ if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
     && "$NETWORK_PROFILE" != "candidate-800-32-4" ]]
 then
     printf 'ERROR: data profile band-maintenance-progress requires network profile candidate-800-32-4\n' >&2
+    exit 64
+fi
+if [[ "$DATA_PROFILE" == "wire-send-telemetry" \
+    && "$NETWORK_PROFILE" != "candidate-800-32-4" ]]
+then
+    printf 'ERROR: data profile wire-send-telemetry requires network profile candidate-800-32-4\n' >&2
     exit 64
 fi
 

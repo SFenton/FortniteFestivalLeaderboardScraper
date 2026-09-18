@@ -71,6 +71,7 @@ Options:
                              legacy-reader-migration
                              acquisition-checkpoint-terminalization
                              band-maintenance-progress
+                             wire-send-telemetry
                              scrape-resume
                            Every run-once config requires a data profile.
   --expected-worker-image I
@@ -173,7 +174,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress|scrape-resume)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress|wire-send-telemetry|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -212,6 +213,12 @@ then
     printf 'ERROR: data profile band-maintenance-progress requires --check-runonce or --recreate-runonce\n' >&2
     exit 64
 fi
+if [[ "$DATA_PROFILE" == "wire-send-telemetry" \
+    && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
+then
+    printf 'ERROR: data profile wire-send-telemetry requires --check-runonce or --recreate-runonce\n' >&2
+    exit 64
+fi
 
 if [[ "$DATA_PROFILE" != "none" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
     printf 'ERROR: --expected-worker-image is required with --data-profile\n' >&2
@@ -224,10 +231,18 @@ then
     printf 'ERROR: data profile band-maintenance-progress requires throughput profile candidate-800-32-4\n' >&2
     exit 64
 fi
-if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+if [[ "$DATA_PROFILE" == "wire-send-telemetry" \
+    && "$THROUGHPUT_PROFILE" != "candidate-800-32-4" ]]
+then
+    printf 'ERROR: data profile wire-send-telemetry requires throughput profile candidate-800-32-4\n' >&2
+    exit 64
+fi
+if [[ ( "$DATA_PROFILE" == "band-maintenance-progress" \
+        || "$DATA_PROFILE" == "wire-send-telemetry" ) \
     && ( -z "$EXPECTED_WORKER_IMAGE_ID" || -z "$EXPECTED_WORKER_REVISION" ) ]]
 then
-    printf 'ERROR: data profile band-maintenance-progress requires exact expected worker image ID and revision\n' >&2
+    printf 'ERROR: data profile %s requires exact expected worker image ID and revision\n' \
+        "$DATA_PROFILE" >&2
     exit 64
 fi
 
@@ -269,11 +284,13 @@ MUTATING_WORKER_ACTION=false
 if [[ "$ACTION" =~ ^(recreate|recreate-runonce|recover-start)$ ]]; then
     MUTATING_WORKER_ACTION=true
 fi
-if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+if [[ ( "$DATA_PROFILE" == "band-maintenance-progress" \
+        || "$DATA_PROFILE" == "wire-send-telemetry" ) \
     && "$MUTATING_WORKER_ACTION" == "true" \
     && -z "$EXPECTED_WORKER_CONFIG_SHA256" ]]
 then
-    printf 'ERROR: data profile band-maintenance-progress requires --expected-worker-config-sha256 for recreate\n' >&2
+    printf 'ERROR: data profile %s requires --expected-worker-config-sha256 for recreate\n' \
+        "$DATA_PROFILE" >&2
     exit 64
 fi
 
@@ -1021,6 +1038,7 @@ if data_profile in {
     "catalog-path-notification-source-cut",
     "acquisition-checkpoint-terminalization",
     "band-maintenance-progress",
+    "wire-send-telemetry",
 }:
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
@@ -1052,6 +1070,7 @@ if data_profile in {
 if data_profile in {
     "acquisition-checkpoint-terminalization",
     "band-maintenance-progress",
+    "wire-send-telemetry",
 }:
     exact_value("Features__UseSnapshotOverlayWorkerReaders", "false")
     exact_value("ImprovementNotifications__Scope", "registered")
@@ -1092,7 +1111,7 @@ if data_profile in {
             raise SystemExit(
                 f"ERROR: data profile {data_profile} "
                 f"requires {name}=false")
-if data_profile == "band-maintenance-progress":
+if data_profile in {"band-maintenance-progress", "wire-send-telemetry"}:
     exact_value(
         "Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation",
         "false")
@@ -1391,6 +1410,9 @@ mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
 postgres_container="$(sed -n 's/^CORE|postgres|//p' <<< "$validation")"
 service_container="$(sed -n 's/^CORE|fstservice|//p' <<< "$validation")"
 worker_container="$(sed -n 's/^CORE|fstworker|//p' <<< "$validation")"
+if [[ -z "$postgres_container" ]]; then
+    postgres_container="fst-postgres"
+fi
 
 if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     printf 'ERROR: internal guard node-count mismatch\n' >&2
@@ -1664,7 +1686,7 @@ verify_acquisition_checkpoint_schema() {
 
     if ! schema_state="$(
         docker exec "$postgres_container" \
-            psql -X -A -t -q \
+            psql -X -A -t -q -U fst -d fstservice \
                 -v ON_ERROR_STOP=1 \
                 -c "/* fst_boot_acquisition_checkpoint_schema */ SELECT CASE
                         WHEN (
@@ -1696,6 +1718,54 @@ verify_acquisition_checkpoint_schema() {
     fi
     if [[ "$schema_state" != "ready" ]]; then
         printf 'ERROR: recovery requires the acquisition checkpoint release schema; run the candidate service with --initialize-schema-only before starting fstworker\n' >&2
+        return 1
+    fi
+}
+
+verify_wire_send_telemetry_schema() {
+    local schema_state
+
+    if ! schema_state="$(
+        docker exec "$postgres_container" \
+            psql -X -A -t -q -U fst -d fstservice \
+                -v ON_ERROR_STOP=1 \
+                -c "/* fst_boot_wire_send_telemetry_schema */ SELECT CASE
+                        WHEN (
+                            SELECT COUNT(*)
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'scrape_log'
+                              AND data_type = 'bigint'
+                              AND udt_name = 'int8'
+                              AND column_name IN (
+                                  'wire_send_total',
+                                  'wire_send_probe_sends',
+                                  'wire_send_probe_successes',
+                                  'wire_send_status_retries',
+                                  'wire_send_network_errors',
+                                  'wire_send_cdn_blocks'
+                              )
+                        ) = 6
+                        AND (
+                            SELECT COUNT(*)
+                            FROM pg_constraint
+                            WHERE conrelid = 'public.scrape_log'::regclass
+                              AND conname IN (
+                                  'ck_scrape_log_wire_send_telemetry',
+                                  'ck_scrape_log_wire_send_telemetry_complete'
+                              )
+                              AND convalidated
+                        ) = 2
+                        THEN 'ready'
+                        ELSE 'missing'
+                    END"
+    )"
+    then
+        printf 'ERROR: wire-send-telemetry could not verify the durable telemetry schema\n' >&2
+        return 1
+    fi
+    if [[ "$schema_state" != "ready" ]]; then
+        printf 'ERROR: wire-send-telemetry requires all six telemetry columns and validated telemetry constraints; initialize the candidate schema before starting fstworker\n' >&2
         return 1
     fi
 }
@@ -3204,6 +3274,13 @@ if $RUNTIME_PROBES && [[ "$DATA_PROFILE" == "scrape-resume" ]]; then
     if ! validate_scrape_resume_runtime_state; then
         exit 1
     fi
+fi
+
+if $RUNTIME_PROBES && [[ "$DATA_PROFILE" == "wire-send-telemetry" ]]; then
+    if ! verify_wire_send_telemetry_schema; then
+        exit 1
+    fi
+    printf 'compose_guard schema=wire-send-telemetry-ready\n'
 fi
 
 case "$ACTION" in

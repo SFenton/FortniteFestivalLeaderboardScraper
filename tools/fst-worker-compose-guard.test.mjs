@@ -35,6 +35,10 @@ const bandMaintenanceProgressImage =
   "example.invalid/fstworker:band-maintenance-progress";
 const bandMaintenanceProgressRevision =
   "3".repeat(40);
+const wireSendTelemetryImage =
+  "example.invalid/fstworker:wire-send-telemetry";
+const wireSendTelemetryRevision =
+  "4".repeat(40);
 const immutableWorkerImage =
   "example.invalid/fstworker@sha256:" + "e".repeat(64);
 const canonicalSoloInstruments = [
@@ -611,6 +615,19 @@ if (args[0] === "exec") {
   if (
     (container === "fst-postgres" || container === "postgres")
     && commandArgs[0] === "psql"
+    && joined.includes("fst_boot_wire_send_telemetry_schema")
+  ) {
+    process.stdout.write(
+      scenario.wireSendTelemetrySchemaState
+        ?? (scenario.wireSendTelemetrySchemaReady === false
+          ? "missing"
+          : "ready")
+    );
+    process.exit(0);
+  }
+  if (
+    (container === "fst-postgres" || container === "postgres")
+    && commandArgs[0] === "psql"
     && joined.includes("fst_boot_active_recovery_state")
   ) {
     const state = activeRecoveryDatabaseState();
@@ -1175,6 +1192,32 @@ async function createActiveRecoveryHarness({
 }
 
 describe("fstworker Compose startup recovery", () => {
+  it("qualifies the telemetry schema gate to public bigint columns and constraints", async () => {
+    const source = await readFile(guardPath, "utf8");
+    const telemetryVerifier = source.match(
+      /verify_wire_send_telemetry_schema\(\) \{[\s\S]*?\n\}/
+    )?.[0];
+    const acquisitionVerifier = source.match(
+      /verify_acquisition_checkpoint_schema\(\) \{[\s\S]*?\n\}/
+    )?.[0];
+    assert.ok(telemetryVerifier);
+    assert.ok(acquisitionVerifier);
+    assert.match(telemetryVerifier, /table_schema = 'public'/);
+    assert.match(telemetryVerifier, /data_type = 'bigint'/);
+    assert.match(telemetryVerifier, /udt_name = 'int8'/);
+    assert.match(telemetryVerifier, /'public\.scrape_log'::regclass/);
+    assert.match(
+      telemetryVerifier,
+      /psql -X -A -t -q -U fst -d fstservice/
+    );
+    assert.match(
+      acquisitionVerifier,
+      /psql -X -A -t -q -U fst -d fstservice/
+    );
+    assert.doesNotMatch(acquisitionVerifier, /data_type = 'bigint'/);
+    assert.doesNotMatch(acquisitionVerifier, /udt_name = 'int8'/);
+  });
+
   it("creates the worker without starting it using supported Compose up flags", async () => {
     const source = await readFile(guardPath, "utf8");
     assert.match(
@@ -2934,6 +2977,183 @@ describe("fstworker Compose startup recovery", () => {
       assert.deepEqual(await harness.events(), []);
     } finally {
       await harness.cleanup();
+    }
+  });
+
+  it("accepts wire-send telemetry in config-only mode with the exact candidate contract", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: wireSendTelemetryImage
+    });
+    const harness = await createHarness({
+      config,
+      scenario: { resolvedWorkerRevision: wireSendTelemetryRevision }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "wire-send-telemetry",
+        "--expected-worker-image",
+        wireSendTelemetryImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        wireSendTelemetryRevision
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stdout, /data_profile=wire-send-telemetry/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects wire-send telemetry action, network, identity, and recreate binding drift", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: wireSendTelemetryImage
+    });
+    const configHash = workerConfigSha256(config);
+    for (const args of [
+      [
+        "--check",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4"
+      ],
+      [
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-1600-64-8"
+      ],
+      [
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--expected-worker-image-id",
+        "sha256:" + "b".repeat(64)
+      ],
+      [
+        "--recreate-runonce",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--expected-worker-config-sha256",
+        "f".repeat(64)
+      ]
+    ]) {
+      const harness = await createHarness({
+        config,
+        scenario: {
+          resolvedWorkerRevision: wireSendTelemetryRevision,
+          resolvedWorkerImageId:
+            args.includes("--expected-worker-image-id")
+              ? "sha256:" + "a".repeat(64)
+              : undefined
+        }
+      });
+      try {
+        const result = await harness.run([
+          ...args,
+          "--data-profile",
+          "wire-send-telemetry",
+          "--expected-worker-image",
+          wireSendTelemetryImage,
+          ...(args.includes("--expected-worker-image-id")
+            ? []
+            : ["--expected-worker-image-id", expectedWorkerImageId]),
+          "--expected-worker-revision",
+          wireSendTelemetryRevision
+        ]);
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(await harness.events(), []);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+    assert.match(configHash, /^[0-9a-f]{64}$/);
+  });
+
+  it("rejects wire-send telemetry when batched aggregation is enabled", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: wireSendTelemetryImage,
+      useBatchedMemberStatsAggregation: "true"
+    });
+    const harness = await createHarness({
+      config,
+      scenario: { resolvedWorkerRevision: wireSendTelemetryRevision }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "wire-send-telemetry",
+        "--expected-worker-image",
+        wireSendTelemetryImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        wireSendTelemetryRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.match(
+        result.stderr,
+        /requires Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=false/
+      );
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("requires the live wire-send telemetry schema before worker action", async () => {
+    for (const schemaState of [
+      "ready",
+      "missing",
+      "wrong-type",
+      "wrong-schema-constraint"
+    ]) {
+      const config = buildBandMaintenanceProgressRunonceConfig({
+        workerImage: wireSendTelemetryImage
+      });
+      const harness = await createHarness({
+        config,
+        scenario: {
+          resolvedWorkerRevision: wireSendTelemetryRevision,
+          wireSendTelemetrySchemaState: schemaState
+        }
+      });
+      try {
+        const result = await harness.run([
+          "--check-runonce",
+          "--throughput-profile",
+          "candidate-800-32-4",
+          "--data-profile",
+          "wire-send-telemetry",
+          "--expected-worker-image",
+          wireSendTelemetryImage,
+          "--expected-worker-image-id",
+          expectedWorkerImageId,
+          "--expected-worker-revision",
+          wireSendTelemetryRevision
+        ]);
+        if (schemaState === "ready") {
+          assert.equal(result.code, 0, result.stderr);
+          assert.match(result.stdout, /schema=wire-send-telemetry-ready/);
+        } else {
+          assert.notEqual(result.code, 0);
+          assert.match(result.stderr, /requires all six telemetry columns/);
+        }
+        assert.deepEqual(await harness.events(), []);
+      } finally {
+        await harness.cleanup();
+      }
     }
   });
 

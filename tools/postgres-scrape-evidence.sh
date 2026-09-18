@@ -164,6 +164,28 @@ else
     scrape_status_select="CASE WHEN scrape.completed_at IS NULL THEN 'running' ELSE 'completed' END AS status, NULL::timestamptz AS failed_at, NULL::text AS failure_phase, NULL::text AS failure_message, 0::integer AS best_effort_failure_count, ARRAY[]::text[] AS best_effort_failed_phases"
 fi
 
+has_wire_send_telemetry="$(
+    psql_scalar "
+        SELECT COUNT(*) = 6
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'scrape_log'
+          AND column_name IN (
+              'wire_send_total',
+              'wire_send_probe_sends',
+              'wire_send_probe_successes',
+              'wire_send_status_retries',
+              'wire_send_network_errors',
+              'wire_send_cdn_blocks'
+        );
+    "
+)"
+if [[ "$has_wire_send_telemetry" == "t" ]]; then
+    wire_send_select="scrape.wire_send_total, scrape.wire_send_probe_sends, scrape.wire_send_probe_successes, scrape.wire_send_status_retries, scrape.wire_send_network_errors, scrape.wire_send_cdn_blocks"
+else
+    wire_send_select="NULL::bigint AS wire_send_total, NULL::bigint AS wire_send_probe_sends, NULL::bigint AS wire_send_probe_successes, NULL::bigint AS wire_send_status_retries, NULL::bigint AS wire_send_network_errors, NULL::bigint AS wire_send_cdn_blocks"
+fi
+
 "$SCRIPT_DIR/postgres-capacity-guard.sh" \
     --action-class observation \
     --pg-container "$PG_CONTAINER" \
@@ -201,6 +223,7 @@ psql_csv "
         scrape.total_requests,
         scrape.total_bytes,
         scrape.epic_reported_over_100_pages,
+        $wire_send_select,
         $scrape_status_select,
         publication.published_scrape_id,
         publication.published_at,
@@ -213,6 +236,22 @@ psql_csv "
     CROSS JOIN scrape_publication_state publication
     WHERE scrape.id = $SCRAPE_ID
 " "$OUT_DIR/scrape-publication.csv"
+
+psql_csv "
+    SELECT
+        id AS scrape_id,
+        wire_send_total,
+        wire_send_probe_sends,
+        wire_send_probe_successes,
+        wire_send_status_retries,
+        wire_send_network_errors,
+        wire_send_cdn_blocks
+    FROM (
+        SELECT scrape.id, $wire_send_select
+        FROM scrape_log scrape
+        WHERE scrape.id = $SCRAPE_ID
+    ) scrape
+" "$OUT_DIR/wire-send-telemetry.csv"
 
 if [[ "$(psql_scalar "SELECT to_regclass('public.leaderboard_scope_manifests') IS NOT NULL;")" == "t" ]]; then
     psql_csv "
@@ -578,12 +617,33 @@ phase_rows = rows("phase-timings.csv")
 manifest_rows = rows("scope-manifests.csv")
 writer_failure_rows = rows("writer-failures.csv")
 phase_outcome_rows = rows("phase-outcomes.csv")
+wire_send = first_row("wire-send-telemetry.csv")
+
+def nullable_int(row, key):
+    value = row.get(key, "")
+    return int(value) if value not in {"", None} else None
 
 summary = {
     "label": (out_dir / "label.txt").read_text(encoding="utf-8").strip(),
     "scrapeId": int((out_dir / "scrape-id.txt").read_text(encoding="utf-8").strip()),
     "gitCommit": (out_dir / "git-commit.txt").read_text(encoding="utf-8").strip(),
     "scrape": scrape,
+    "wireSendTelemetry": {
+        "totalSends": nullable_int(wire_send, "wire_send_total"),
+        "probeSends": nullable_int(wire_send, "wire_send_probe_sends"),
+        "probeSuccesses": nullable_int(wire_send, "wire_send_probe_successes"),
+        "statusRetries": nullable_int(wire_send, "wire_send_status_retries"),
+        "networkErrors": nullable_int(wire_send, "wire_send_network_errors"),
+        "cdnBlocks": nullable_int(wire_send, "wire_send_cdn_blocks"),
+        "available": all(nullable_int(wire_send, key) is not None for key in (
+            "wire_send_total",
+            "wire_send_probe_sends",
+            "wire_send_probe_successes",
+            "wire_send_status_retries",
+            "wire_send_network_errors",
+            "wire_send_cdn_blocks",
+        )),
+    },
     "capacity": capacity["capacity"],
     "storage": capacity["storage"],
     "scopeTotals": {
@@ -709,6 +769,8 @@ report = [
     f"- Scrape: `{summary['scrapeId']}`",
     f"- Commit: `{summary['gitCommit']}`",
     f"- Published scrape: `{scrape.get('published_scrape_id', 'unknown')}`",
+    f"- Wire-send telemetry (total/probe/probe-success/retry/network/CDN): `{summary['wireSendTelemetry']['totalSends']}` / `{summary['wireSendTelemetry']['probeSends']}` / `{summary['wireSendTelemetry']['probeSuccesses']}` / `{summary['wireSendTelemetry']['statusRetries']}` / `{summary['wireSendTelemetry']['networkErrors']}` / `{summary['wireSendTelemetry']['cdnBlocks']}`",
+    f"- Wire-send telemetry complete: `{summary['wireSendTelemetry']['available']}`",
     f"- Public reads frozen: `{scrape.get('public_reads_frozen', 'unknown')}`",
     f"- Free bytes: `{summary['storage']['filesystemFreeBytes']}`",
     f"- Projected headroom days: `{summary['capacity']['projectedHeadroomDays']}`",

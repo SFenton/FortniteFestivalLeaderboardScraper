@@ -996,6 +996,21 @@ candidate cannot enable the separate projection aggregation optimization. It
 is accepted only for `--check-runonce` or `--recreate-runonce`, and is
 preparation evidence only; it adds no promotion or production authorization.
 
+The `wire-send-telemetry` data profile is the live-admission contract for the
+durable physical HTTP send telemetry. It is accepted only for
+`--check-runonce` or `--recreate-runonce`, requires
+`candidate-800-32-4`, and preserves the same checkpoint-terminalization
+publication, notification, registered-work, snapshot, and
+`Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=false`
+defaults. The wrapper supplies that aggregation setting explicitly. The
+guard requires the exact worker image, local image ID, OCI revision, and
+resolved non-image configuration SHA-256; recreate requires the SHA-256.
+For live checks/recreates, its read-only schema verifier runs after core/proxy
+preflight and before worker mutation, requiring all six durable telemetry
+columns and both validated telemetry constraints. `--config-only` skips all
+database access. Missing schema, constraints, or any identity/config/network
+drift fails closed.
+
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains inactive (`idle` or terminal `failed`) and public reads
 remain unfrozen. Otherwise it leaves the worker running and directs the operator to

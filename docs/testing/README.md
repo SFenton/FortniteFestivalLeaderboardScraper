@@ -1471,6 +1471,12 @@ identity/configuration bindings fail closed before mutation. The tests also
 verify that repository Compose default interpolation resolves the switch to
 `false` when its source variable is unset.
 
+The `wire-send-telemetry` admission tests additionally cover valid
+config-only validation, run-once/network/identity/configuration mismatches,
+aggregation drift, and live schema-ready versus schema-missing behavior.
+Live schema verification is read-only and is skipped by `--config-only`; the
+fake Docker harness models both outcomes without starting a worker.
+
 ## Documentation
 
 ```bash
