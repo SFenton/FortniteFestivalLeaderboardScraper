@@ -5,6 +5,9 @@ COMPOSE_DIR="${COMPOSE_DIR:-/home/sfenton/Docker/FestivalServiceTracker}"
 NETWORK_PROFILE=""
 DATA_PROFILE="catalog-path-notification-source-cut"
 EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
+EXPECTED_WORKER_IMAGE_ID="${EXPECTED_WORKER_IMAGE_ID:-}"
+EXPECTED_WORKER_REVISION="${EXPECTED_WORKER_REVISION:-}"
+EXPECTED_WORKER_CONFIG_SHA256="${EXPECTED_WORKER_CONFIG_SHA256:-}"
 ACTION="check"
 CONFIG_ONLY=false
 
@@ -23,9 +26,16 @@ Options:
                         catalog-path-notification-source-cut, or
                         snapshot-reuse, leaderboard-rivals-batch, or
                         legacy-reader-migration, or
-                        acquisition-checkpoint-terminalization
+                        acquisition-checkpoint-terminalization, or
+                        band-maintenance-progress
   --expected-worker-image I
                         Exact fstworker image required by the data lane
+  --expected-worker-image-id I
+                        Exact image ID required by the data lane
+  --expected-worker-revision R
+                        Exact OCI revision required by the data lane
+  --expected-worker-config-sha256 H
+                        Exact resolved worker configuration hash
   --check               Validate only (default)
   --recreate            Validate and recreate the run-once worker
   --config-only         Skip live proxy probes (check only)
@@ -39,6 +49,9 @@ while [[ $# -gt 0 ]]; do
         --network-profile) NETWORK_PROFILE="$2"; shift 2 ;;
         --data-profile) DATA_PROFILE="$2"; shift 2 ;;
         --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
+        --expected-worker-image-id) EXPECTED_WORKER_IMAGE_ID="$2"; shift 2 ;;
+        --expected-worker-revision) EXPECTED_WORKER_REVISION="$2"; shift 2 ;;
+        --expected-worker-config-sha256) EXPECTED_WORKER_CONFIG_SHA256="$2"; shift 2 ;;
         --check) ACTION="check"; shift ;;
         --recreate) ACTION="recreate"; shift ;;
         --config-only) CONFIG_ONLY=true; shift ;;
@@ -54,7 +67,7 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     exit 64
 fi
 case "$DATA_PROFILE" in
-    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization)
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress)
         ;;
     *)
         printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2
@@ -110,6 +123,13 @@ case "$NETWORK_PROFILE" in
         ;;
 esac
 
+if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+    && "$NETWORK_PROFILE" != "candidate-800-32-4" ]]
+then
+    printf 'ERROR: data profile band-maintenance-progress requires network profile candidate-800-32-4\n' >&2
+    exit 64
+fi
+
 guard_action="--check-runonce"
 if [[ "$ACTION" == "recreate" ]]; then
     guard_action="--recreate-runonce"
@@ -122,6 +142,15 @@ guard_args=(
     --expected-worker-image "$EXPECTED_WORKER_IMAGE"
     "$guard_action"
 )
+if [[ -n "$EXPECTED_WORKER_IMAGE_ID" ]]; then
+    guard_args+=(--expected-worker-image-id "$EXPECTED_WORKER_IMAGE_ID")
+fi
+if [[ -n "$EXPECTED_WORKER_REVISION" ]]; then
+    guard_args+=(--expected-worker-revision "$EXPECTED_WORKER_REVISION")
+fi
+if [[ -n "$EXPECTED_WORKER_CONFIG_SHA256" ]]; then
+    guard_args+=(--expected-worker-config-sha256 "$EXPECTED_WORKER_CONFIG_SHA256")
+fi
 if $CONFIG_ONLY; then
     guard_args+=(--config-only)
 fi
@@ -139,39 +168,47 @@ USE_SNAPSHOT_OVERLAY_WORKER_READERS=false
 if [[ "$DATA_PROFILE" == "legacy-reader-migration" ]]; then
     USE_SNAPSHOT_OVERLAY_WORKER_READERS=true
 fi
+guard_environment=(
+    RUN_ONCE=true
+    FST_WORKER_IMAGE="$EXPECTED_WORKER_IMAGE"
+    ENABLED_PHASES=All
+    PIA_MAX_REQUESTS_PER_SECOND="$MAX_RPS"
+    PIA_PROXY_MAX_REQUESTS_PER_SECOND_PER_ENDPOINT="$PER_ENDPOINT_RPS"
+    PIA_PROXY_MAX_CONCURRENT_REQUESTS_PER_ENDPOINT="$PER_ENDPOINT_CONCURRENCY"
+    PIA_INITIAL_DOP="$INITIAL_DOP"
+    PIA_INITIAL_CDN_LEARNED_MAX_DOP=360
+    PIA_DEGREE_OF_PARALLELISM=200
+    PIA_PAGE_CONCURRENCY=50
+    ENABLE_AUTOMATIC_PATH_GENERATION=false
+    LEADERBOARD_RIVALS_BATCH_SIZE=4
+    RIVALS_MAX_DEGREE_OF_PARALLELISM=2
+    REGISTERED_USER_REFRESH_TIMEOUT=00:00:00
+    REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT=00:06:00
+    REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT=00:05:00
+    ENABLE_REGISTERED_PLAYER_BAND_DISCOVERY_REMAINING_WORK_GRACE=false
+    ENABLE_REGISTERED_BAND_TARGETED_PROCESSING_REMAINING_WORK_GRACE=false
+    REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_DURATION=00:02:00
+    REGISTERED_BAND_REMAINING_WORK_GRACE_RECENT_PROGRESS_WINDOW=00:01:30
+    REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_REMAINING_LOOKUPS=3
+    REGISTERED_PLAYER_BAND_DISCOVERY_MAX_LOOKUPS_PER_PASS=80
+    REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS=80
+    IMPROVEMENT_NOTIFICATIONS_ENABLED=true
+    IMPROVEMENT_NOTIFICATIONS_SCOPE=registered
+    IMPROVEMENT_NOTIFICATIONS_INCLUDE_PLAYERS=true
+    IMPROVEMENT_NOTIFICATIONS_INCLUDE_BANDS=true
+    IMPROVEMENT_NOTIFICATIONS_INCLUDE_SONG_EVENTS=true
+    IMPROVEMENT_NOTIFICATIONS_INCLUDE_RANKINGS=true
+    IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION=true
+    IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES=false
+    SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS="$SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS"
+    USE_LEADERBOARD_SCOPE_FINGERPRINTS="$USE_LEADERBOARD_SCOPE_FINGERPRINTS"
+    USE_SNAPSHOT_OVERLAY_WORKER_READERS="$USE_SNAPSHOT_OVERLAY_WORKER_READERS"
+)
+if [[ "$DATA_PROFILE" != "band-maintenance-progress" ]]; then
+    guard_environment+=(
+        BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION=false
+    )
+fi
 
-RUN_ONCE=true \
-FST_WORKER_IMAGE="$EXPECTED_WORKER_IMAGE" \
-ENABLED_PHASES=All \
-PIA_MAX_REQUESTS_PER_SECOND="$MAX_RPS" \
-PIA_PROXY_MAX_REQUESTS_PER_SECOND_PER_ENDPOINT="$PER_ENDPOINT_RPS" \
-PIA_PROXY_MAX_CONCURRENT_REQUESTS_PER_ENDPOINT="$PER_ENDPOINT_CONCURRENCY" \
-PIA_INITIAL_DOP="$INITIAL_DOP" \
-PIA_INITIAL_CDN_LEARNED_MAX_DOP=360 \
-PIA_DEGREE_OF_PARALLELISM=200 \
-PIA_PAGE_CONCURRENCY=50 \
-ENABLE_AUTOMATIC_PATH_GENERATION=false \
-LEADERBOARD_RIVALS_BATCH_SIZE=4 \
-RIVALS_MAX_DEGREE_OF_PARALLELISM=2 \
-REGISTERED_USER_REFRESH_TIMEOUT=00:00:00 \
-REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT=00:06:00 \
-REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT=00:05:00 \
-ENABLE_REGISTERED_PLAYER_BAND_DISCOVERY_REMAINING_WORK_GRACE=false \
-ENABLE_REGISTERED_BAND_TARGETED_PROCESSING_REMAINING_WORK_GRACE=false \
-REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_DURATION=00:02:00 \
-REGISTERED_BAND_REMAINING_WORK_GRACE_RECENT_PROGRESS_WINDOW=00:01:30 \
-REGISTERED_BAND_REMAINING_WORK_GRACE_MAX_REMAINING_LOOKUPS=3 \
-REGISTERED_PLAYER_BAND_DISCOVERY_MAX_LOOKUPS_PER_PASS=80 \
-REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS=80 \
-IMPROVEMENT_NOTIFICATIONS_ENABLED=true \
-IMPROVEMENT_NOTIFICATIONS_SCOPE=registered \
-IMPROVEMENT_NOTIFICATIONS_INCLUDE_PLAYERS=true \
-IMPROVEMENT_NOTIFICATIONS_INCLUDE_BANDS=true \
-IMPROVEMENT_NOTIFICATIONS_INCLUDE_SONG_EVENTS=true \
-IMPROVEMENT_NOTIFICATIONS_INCLUDE_RANKINGS=true \
-IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION=true \
-IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES=false \
-SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS="$SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS" \
-USE_LEADERBOARD_SCOPE_FINGERPRINTS="$USE_LEADERBOARD_SCOPE_FINGERPRINTS" \
-USE_SNAPSHOT_OVERLAY_WORKER_READERS="$USE_SNAPSHOT_OVERLAY_WORKER_READERS" \
-"$(dirname "$0")/fst-worker-compose-guard.sh" "${guard_args[@]}"
+env "${guard_environment[@]}" \
+    "$(dirname "$0")/fst-worker-compose-guard.sh" "${guard_args[@]}"

@@ -360,7 +360,6 @@ public sealed class PostScrapeOrchestrator
             || registeredBandProcessingResult.ImpactedTeamsByBandType.Count > 0)
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
-            _progress.SetSubOperation("maintaining_band_projection");
             var mergedExtractionResult = bandExtractionResult with
             {
                 ImpactedTeamsByBandType = MergeImpactedTeams(
@@ -1443,18 +1442,34 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
+        // The impacted-scope set here is only a pre-filter candidate set:
+        // BandCurrentProjectionBuilder.RefreshScopesAsync still applies its own
+        // internal unchanged-scope filtering, which can shrink it further. Exact
+        // progress can only honestly begin once that filtering finalizes the
+        // actual selected-scope denominator, so no BeginPhaseProgress happens
+        // here — it happens at the builder seam (or the null-builder fallback
+        // below, which already knows the final count with no builder to defer
+        // to).
         await RunTimedBandMaintenanceSubphaseAsync(
             ctx,
             BandMaintenanceCurrentProjectionSubphase,
-            () => _bandCurrentProjectionBuilder is null
-                ? Task.FromResult(new BandMaintenanceTimingMetrics(
-                    RowsRead: impactedCurrentProjectionScopes.Count,
-                    RowsWritten: 0,
-                    RowsDeleted: 0,
-                    ScopeCount: 0))
-                : RefreshBandCurrentProjectionScopesAsync(
+            () =>
+            {
+                if (_bandCurrentProjectionBuilder is null)
+                {
+                    _progress.BeginPhaseProgress(impactedCurrentProjectionScopes.Count);
+                    _progress.ReportPhaseItemsComplete(impactedCurrentProjectionScopes.Count);
+                    return Task.FromResult(new BandMaintenanceTimingMetrics(
+                        RowsRead: impactedCurrentProjectionScopes.Count,
+                        RowsWritten: 0,
+                        RowsDeleted: 0,
+                        ScopeCount: 0));
+                }
+
+                return RefreshBandCurrentProjectionScopesAsync(
                     impactedCurrentProjectionScopes,
-                    ct),
+                    ct);
+            },
             static metrics => metrics);
     }
 
@@ -1475,6 +1490,7 @@ public sealed class PostScrapeOrchestrator
         Func<Task<T>> operation,
         Func<T, BandMaintenanceTimingMetrics> getMetrics)
     {
+        _progress.SetSubOperation(subphase);
         var startedAt = DateTime.UtcNow;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
@@ -1585,13 +1601,44 @@ public sealed class PostScrapeOrchestrator
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
             rebuildOptions.UseBatchedMemberStatsAggregation);
+
+        // Tracks whether the builder's unchanged-scope filtering finalized a
+        // real selected-scope denominator (via onScopesFinalized below) before
+        // any batch-level failure. If it never finalized, a fallback below has
+        // no honest denominator to report progress against and must stay
+        // indeterminate rather than inventing a chunk-local total.
+        var planFinalized = false;
+        var completedScopeKeys = new HashSet<BandCurrentProjectionScopeKey>();
+        var completedLock = new object();
+
+        void OnScopesFinalized(
+            IReadOnlyCollection<BandCurrentProjectionScopeKey> selectedScopes)
+        {
+            planFinalized = true;
+            _progress.BeginPhaseProgress(selectedScopes.Count);
+        }
+
+        void OnScopeCompleted(BandCurrentProjectionScopeKey scope)
+        {
+            lock (completedLock)
+            {
+                if (!completedScopeKeys.Add(scope))
+                    return;
+            }
+
+            if (planFinalized)
+                _progress.ReportPhaseItemComplete();
+        }
+
         BandCurrentProjectionIncrementalRefreshResult result;
         try
         {
             result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(
                 scopes,
                 rebuildOptions,
-                ct);
+                ct,
+                OnScopesFinalized,
+                OnScopeCompleted);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1600,6 +1647,9 @@ public sealed class PostScrapeOrchestrator
                 scopes,
                 FallbackChunkSize,
                 rebuildOptions,
+                planFinalized,
+                completedScopeKeys,
+                completedLock,
                 ct);
         }
 
@@ -1634,6 +1684,9 @@ public sealed class PostScrapeOrchestrator
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         int chunkSize,
         BandCurrentProjectionRebuildOptions rebuildOptions,
+        bool planFinalized,
+        HashSet<BandCurrentProjectionScopeKey> completedScopeKeys,
+        object completedLock,
         CancellationToken ct)
     {
         var scopeChunks = scopes
@@ -1654,6 +1707,27 @@ public sealed class PostScrapeOrchestrator
         long candidateRowsDeleted = 0;
         var elapsedMs = 0d;
 
+        // If the initial batch failed before its own unchanged-scope filtering
+        // finalized a selected-scope denominator, planFinalized is false and
+        // this fallback has no honest total to report progress against, so it
+        // stays indeterminate rather than inventing a chunk-local total. If
+        // the initial batch did finalize a plan before failing later, progress
+        // continues against that already-known denominator. Either way,
+        // completedScopeKeys de-duplicates scopes the initial (failed) attempt
+        // already completed successfully so this retry cannot double-count
+        // them.
+        void OnScopeCompleted(BandCurrentProjectionScopeKey scope)
+        {
+            lock (completedLock)
+            {
+                if (!completedScopeKeys.Add(scope))
+                    return;
+            }
+
+            if (planFinalized)
+                _progress.ReportPhaseItemComplete();
+        }
+
         foreach (var chunk in scopeChunks)
         {
             ct.ThrowIfCancellationRequested();
@@ -1663,7 +1737,9 @@ public sealed class PostScrapeOrchestrator
                     .RefreshScopesAsync(
                         chunk,
                         rebuildOptions,
-                        ct);
+                        ct,
+                        onScopesFinalized: null,
+                        onScopeCompleted: OnScopeCompleted);
                 refreshedScopes += result.ScopeCount;
                 successfulScopes += result.SuccessfulScopes;
                 failedScopes += result.FailedScopes;

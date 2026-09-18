@@ -374,9 +374,9 @@ Exact catalog selection
   -> registered-player band discovery
   -> registered-band targeted processing
   -> BandMaintenance:
-       global prune
-       -> search projection refresh
-       -> current band projection refresh
+       global prune (indeterminate subphase)
+       -> search projection refresh (indeterminate subphase)
+       -> current band projection refresh (exact scope-count subphase)
   -> ComputeRankings:
        per-instrument solo ranks
        -> composite + family + combo rankings
@@ -764,8 +764,11 @@ Order is evidence-driven:
    25/50 after sub-11 ms measured compute p95. Promotion still requires one
    full scrape/publication window, same-publication freeze injection, exact
    key/JSON/ETag parity, and no protected precompute/WAL/API regression;
-3. BandMaintenance current projection refresh. PR #47 merges the
-   implementation default-off: seven same-key `band_member_stats` aggregates
+3. BandMaintenance current projection refresh. Scrape `1404` accepted truthful
+   progress telemetry for the existing path: prune/search stay indeterminate,
+   while current projection begins exact progress only after unchanged-scope
+   filtering establishes the final denominator. PR #47 merges the separate
+   optimization default-off: seven same-key `band_member_stats` aggregates
    become one lateral aggregate only when the candidate switch is enabled.
    Schema and fixture tests prove `member_index` uniqueness inside the query
    key and exact parity for missing rows and nullable stat columns.

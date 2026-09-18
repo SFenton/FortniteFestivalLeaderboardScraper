@@ -846,6 +846,7 @@ public sealed class ScrapeProgressTracker
         _phaseUpdated = 0;
         _phaseAttempts = 0;
         _phaseRetryableUnavailable = 0;
+        Interlocked.Increment(ref _changeSequence);
     }
 
     /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>

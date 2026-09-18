@@ -571,6 +571,43 @@ partial work may have occurred; a successful no-work subphase records zero.
 BandExtraction membership/configuration work is not part of these
 BandMaintenance timings.
 
+The same three stable subphase IDs (`prune`, `search_projection_refresh`,
+`current_projection_refresh`) drive the durable phase-progress subphase
+reported under `post.band_maintenance`, reusing the existing
+`ScrapeProgressTracker.SetSubOperation`/`DurablePhaseProgressSink` subphase
+machinery instead of adding a phase-progress schema or web-specific case.
+`prune` and `search_projection_refresh` each run as a single blocking database
+call with no truthful denominator until they finish, so both stay
+indeterminate - they never report a fabricated total or percentage.
+`current_projection_refresh` is the only subphase with an honest final
+denominator, but that denominator is not known when the subphase starts: the
+extraction-plus-prune impacted-scope set merged before the subphase begins is
+only a pre-filter candidate count, because
+`BandCurrentProjectionBuilder.RefreshScopesAsync` still applies its own
+internal unchanged-scope filtering, which can shrink the candidate set
+further. Exact progress only begins once that builder-side filtering
+finalizes the actual selected-scope denominator - reporting `0`/`N` for the
+real `N` at that point, not at subphase start - and then advances through
+completion (`N`/`N`) as each selected scope's individual rebuild succeeds,
+including per-chunk progress when the primary batch falls back to chunked
+refresh. A scope only counts as complete once its own rebuild succeeds;
+scopes whose rebuild fails remain incomplete and the phase error propagates
+instead of showing spurious full completion. This mirrors the
+honest-subphase-progress pattern already used for `BandExtraction`,
+`RegisteredPlayerBandDiscovery`, and other post-scrape phases; it does not
+change `PhaseProgressCatalog` descriptors or the plan version.
+
+Run-once production scrape `1404` accepted the durable progress extension.
+Its terminal `post.band_maintenance` attempt retained
+`current_projection_refresh` as exact `8,643/8,643` scope progress at `100%`,
+with all three ordered timing rows successful and zero failed projection
+scopes. The scrape completed all `8,664` acquisition manifests, published
+generation `307`, completed improvement-notification recovery, unfroze public
+reads, and exited `0`. The external sampler was interrupted during acquisition,
+so this canary does not claim retained intermediate API samples; the exact
+transition, monotonic increment, duplicate suppression, and fallback behavior
+remain covered by the focused progress tests.
+
 Corrected live candidate scrape `1293` accepted this contract. It emitted
 exactly the three successful rows above, with no extras, and published normally.
 BandMaintenance took `7,939,927 ms`; the subphases accounted for

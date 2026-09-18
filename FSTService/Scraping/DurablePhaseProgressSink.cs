@@ -1185,6 +1185,23 @@ public sealed class DurablePhaseProgressSink
                 snapshot.WorkItemsTotalFinal == true);
         }
 
+        // Prune and search-projection maintenance run as single blocking database
+        // calls with no truthful denominator until they finish, so they stay
+        // indeterminate (falling through below). Current-projection maintenance
+        // filters its impacted scope set up front, giving it an honest final
+        // total the moment the subphase starts.
+        if (id == PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase
+            && descriptor.Id == "post.band_maintenance"
+            && snapshot.WorkItems is not null)
+        {
+            return ExactSubphase(
+                id,
+                descriptor.DefaultUnitsKind ?? "scopes",
+                snapshot.WorkItems.Completed,
+                snapshot.WorkItems.Total,
+                snapshot.WorkItemsTotalFinal == true);
+        }
+
         return new SubphaseProgressObservation(
             id,
             "indeterminate");

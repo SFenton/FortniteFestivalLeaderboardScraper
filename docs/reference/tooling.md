@@ -980,6 +980,22 @@ worker image exactly matches `--expected-worker-image`; an explicitly supplied
 value must still equal that default. The two max-lookups-per-pass settings
 remain required and exact because production Compose maps them.
 
+The `band-maintenance-progress` data profile is the telemetry-only follow-on
+for the accepted checkpoint-terminalization image. Pair it with
+`candidate-800-32-4` through the same wrapper. It preserves every
+checkpoint-terminalization, publication, notification, registered-work, and
+snapshot default, and requires
+the resolved
+`Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=false` key;
+an absent resolved key fails closed because production Compose interpolation
+supplies `false` when the source variable is unset. The caller must also
+supply the exact expected worker image, image ID, and OCI revision; a recreate
+must additionally supply `--expected-worker-config-sha256`. An unknown image,
+ID, revision, or resolved configuration fails closed, so the telemetry
+candidate cannot enable the separate projection aggregation optimization. It
+is accepted only for `--check-runonce` or `--recreate-runonce`, and is
+preparation evidence only; it adds no promotion or production authorization.
+
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains inactive (`idle` or terminal `failed`) and public reads
 remain unfrozen. Otherwise it leaves the worker running and directs the operator to

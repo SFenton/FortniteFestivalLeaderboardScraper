@@ -10,6 +10,7 @@ import {
   rm,
   writeFile
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -30,6 +31,10 @@ const sensitiveValues = [
 ];
 const expectedWorkerImageId = "sha256:" + "a".repeat(64);
 const expectedWorkerRevision = "1".repeat(40);
+const bandMaintenanceProgressImage =
+  "example.invalid/fstworker:band-maintenance-progress";
+const bandMaintenanceProgressRevision =
+  "3".repeat(40);
 const immutableWorkerImage =
   "example.invalid/fstworker@sha256:" + "e".repeat(64);
 const canonicalSoloInstruments = [
@@ -210,13 +215,40 @@ function workerProfileEnabled(commandArgs) {
 }
 
 function currentComposeConfig(commandArgs) {
+  function resolveComposeDefaults(value) {
+    if (Array.isArray(value)) {
+      return value.map(resolveComposeDefaults);
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, child]) => [
+          key,
+          resolveComposeDefaults(child)
+        ])
+      );
+    }
+    if (typeof value !== "string") {
+      return value;
+    }
+    const match = value.match(
+      /^\$\{BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION:-([^}]*)\}$/
+    );
+    if (!match) {
+      return value;
+    }
+    return process.env.BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION
+      || match[1];
+  }
+
+  let config;
   if (stdinConfig) {
-    return stdinConfig;
+    config = stdinConfig;
+  } else if (commandArgs.some((value) => value.endsWith("/docker-compose.runonce.yml") || value === "docker-compose.runonce.yml")) {
+    config = JSON.parse(readFileSync(runonceConfigPath, "utf8"));
+  } else {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
   }
-  if (commandArgs.some((value) => value.endsWith("/docker-compose.runonce.yml") || value === "docker-compose.runonce.yml")) {
-    return JSON.parse(readFileSync(runonceConfigPath, "utf8"));
-  }
-  return JSON.parse(readFileSync(configPath, "utf8"));
+  return resolveComposeDefaults(config);
 }
 
 function startModeFromConfig(config) {
@@ -820,6 +852,20 @@ function buildAcquisitionCheckpointTerminalizationRunonceConfig({
   return config;
 }
 
+function buildBandMaintenanceProgressRunonceConfig({
+  workerImage = "example.invalid/fstworker:test",
+  useBatchedMemberStatsAggregation =
+    "${BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION:-false}"
+} = {}) {
+  const config = buildAcquisitionCheckpointTerminalizationRunonceConfig({
+    workerImage
+  });
+  config.services.fstworker.environment
+    .Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation =
+    useBatchedMemberStatsAggregation;
+  return config;
+}
+
 function buildLeaderboardRivalsBatchRunonceConfig({
   accountBatchSize = "4",
   rivalsMaxDegreeOfParallelism = "2",
@@ -1157,6 +1203,49 @@ describe("fstworker Compose startup recovery", () => {
           /restart:\s*unless-stopped/
         );
       }
+    }
+  });
+
+  it("uses Compose's real default interpolation for the Band aggregation switch", async () => {
+    const compose = await readFile(
+      path.join(repositoryRoot, "docker-compose.yml"),
+      "utf8"
+    );
+    const mapping =
+      "Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=${BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION:-false}";
+    assert.match(compose, new RegExp(mapping.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "fst-worker-compose-default-test-")
+    );
+    const composePath = path.join(root, "compose.yml");
+    try {
+      await writeFile(
+        composePath,
+        [
+          "services:",
+          "  fstworker:",
+          "    image: example.invalid/fstworker:test",
+          "    environment:",
+          `      - ${mapping}`,
+          ""
+        ].join("\n")
+      );
+      const environment = { ...process.env };
+      delete environment.BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION;
+      const result = await execFileAsync(
+        "docker",
+        ["compose", "-f", composePath, "config", "--format", "json"],
+        { env: environment, encoding: "utf8" }
+      );
+      const resolved = JSON.parse(result.stdout);
+      assert.equal(
+        resolved.services.fstworker.environment
+          .Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation,
+        "false"
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
@@ -2538,6 +2627,304 @@ describe("fstworker Compose startup recovery", () => {
         "--config-only",
         "--data-profile",
         "acquisition-checkpoint-terminalization"
+      ]);
+      assert.equal(missingImageResult.code, 64);
+      assert.match(
+        missingImageResult.stderr,
+        /--expected-worker-image is required with --data-profile/
+      );
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts band-maintenance progress with checkpoint terminalization defaults", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: bandMaintenanceProgressImage
+    });
+    const harness = await createHarness({
+      config,
+      scenario: { resolvedWorkerRevision: bandMaintenanceProgressRevision }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stdout, /data_profile=band-maintenance-progress/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects band-maintenance progress omission when the exact image revision is unknown", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: bandMaintenanceProgressImage
+    });
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires exact expected worker image ID and revision/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects band-maintenance progress with a wrong candidate image revision", async () => {
+    const harness = await createHarness({
+      config: buildBandMaintenanceProgressRunonceConfig({
+        workerImage: bandMaintenanceProgressImage
+      }),
+      scenario: { resolvedWorkerRevision: "2".repeat(40) }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /expected worker image revision label does not match/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects band-maintenance progress with a wrong candidate image ID", async () => {
+    const harness = await createHarness({
+      config: buildBandMaintenanceProgressRunonceConfig({
+        workerImage: bandMaintenanceProgressImage
+      }),
+      scenario: {
+        resolvedWorkerImageId: "sha256:" + "b".repeat(64),
+        resolvedWorkerRevision: bandMaintenanceProgressRevision
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /expected worker image object is unavailable|expected worker image reference resolved to a different image ID/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("requires the Band configuration binding before recreate", async () => {
+    const harness = await createHarness({
+      config: buildBandMaintenanceProgressRunonceConfig({
+        workerImage: bandMaintenanceProgressImage
+      }),
+      scenario: {
+        resolvedWorkerRevision: bandMaintenanceProgressRevision
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recreate-runonce",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.equal(result.code, 64);
+      assert.match(
+        result.stderr,
+        /requires --expected-worker-config-sha256 for recreate/
+      );
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects band-maintenance progress omission with an unknown image binding", async () => {
+    const config = buildBandMaintenanceProgressRunonceConfig({
+      workerImage: "example.invalid/fstworker:unknown"
+    });
+    const harness = await createHarness({ config });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test",
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /resolved fstworker image must match example.invalid\/fstworker:test/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects every alternate throughput profile for band-maintenance progress", async () => {
+    for (const throughputProfile of [
+      "baseline-up-to-800-32-4",
+      "candidate-1600-64-8",
+      "candidate-1800-72-9",
+      "candidate-2000-80-10",
+      "candidate-2880-128-16"
+    ]) {
+      const harness = await createHarness({
+        config: buildBandMaintenanceProgressRunonceConfig()
+      });
+      try {
+        const result = await harness.run([
+          "--check-runonce",
+          "--config-only",
+          "--throughput-profile",
+          throughputProfile,
+          "--data-profile",
+          "band-maintenance-progress",
+          "--expected-worker-image",
+          "example.invalid/fstworker:test"
+        ]);
+        assert.equal(result.code, 64, throughputProfile);
+        assert.match(
+          result.stderr,
+          /requires throughput profile candidate-800-32-4/
+        );
+        assert.deepEqual(await harness.events(), []);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
+  it("rejects band-maintenance progress when batched aggregation is enabled", async () => {
+    const harness = await createHarness({
+      config: buildBandMaintenanceProgressRunonceConfig({
+        workerImage: bandMaintenanceProgressImage,
+        useBatchedMemberStatsAggregation: "true"
+      }),
+      scenario: { resolvedWorkerRevision: bandMaintenanceProgressRevision }
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--throughput-profile",
+        "candidate-800-32-4",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage,
+        "--expected-worker-image-id",
+        expectedWorkerImageId,
+        "--expected-worker-revision",
+        bandMaintenanceProgressRevision
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=false/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps band-maintenance progress run-once and image assertions fail-closed", async () => {
+    const harness = await createHarness({
+      config: buildBandMaintenanceProgressRunonceConfig()
+    });
+    try {
+      const continuousResult = await harness.run([
+        "--check",
+        "--config-only",
+        "--data-profile",
+        "band-maintenance-progress",
+        "--expected-worker-image",
+        bandMaintenanceProgressImage
+      ]);
+      assert.equal(continuousResult.code, 64);
+      assert.match(
+        continuousResult.stderr,
+        /requires --check-runonce or --recreate-runonce/
+      );
+
+      const missingImageResult = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "band-maintenance-progress"
       ]);
       assert.equal(missingImageResult.code, 64);
       assert.match(

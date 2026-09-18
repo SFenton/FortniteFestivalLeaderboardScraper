@@ -335,6 +335,102 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void BandMaintenance_prune_and_search_projection_subphases_stay_indeterminate()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "BandMaintenance")!;
+        sink.StartPhase(descriptor);
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        // Prune has no work-item total at all: still indeterminate.
+        var prune = Assert.Single(sink.ObserveTracker(new OperationSnapshot
+        {
+            Operation = "BandScraping",
+            SubOperation =
+                PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+        }));
+        Assert.Equal(
+            "indeterminate",
+            prune.SubphaseProgress?.Kind);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        // Search-projection refresh is a single blocking call with no truthful
+        // denominator, even if a caller mistakenly reported work items for it:
+        // it must still be projected as indeterminate.
+        var searchProjection = Assert.Single(sink.ObserveTracker(
+            new OperationSnapshot
+            {
+                Operation = "BandScraping",
+                SubOperation =
+                    PostScrapeOrchestrator
+                        .BandMaintenanceSearchProjectionSubphase,
+                WorkItems = new ProgressCounter
+                {
+                    Completed = 1,
+                    Total = 3,
+                },
+                WorkItemsTotalFinal = true,
+            }));
+        Assert.Equal(
+            "indeterminate",
+            searchProjection.SubphaseProgress?.Kind);
+    }
+
+    [Fact]
+    public void BandMaintenance_current_projection_subphase_reports_exact_scope_progress()
+    {
+        var (sink, _, clock) = CreateSink();
+        sink.AttachScrape(42, "instance-a");
+        var descriptor = PhaseProgressCatalog.FindPostScrape(
+            "BandMaintenance")!;
+        sink.StartPhase(descriptor);
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        // Once builder-side unchanged-scope filtering finalizes the selected
+        // scope set, the denominator is exact (0/N, not yet done).
+        var started = Assert.Single(sink.ObserveTracker(new OperationSnapshot
+        {
+            Operation = "BandScraping",
+            SubOperation =
+                PostScrapeOrchestrator
+                    .BandMaintenanceCurrentProjectionSubphase,
+            WorkItems = new ProgressCounter
+            {
+                Completed = 0,
+                Total = 9,
+            },
+            WorkItemsTotalFinal = true,
+        }));
+        Assert.Equal("exact", started.SubphaseProgress?.Kind);
+        Assert.Equal(
+            descriptor.DefaultUnitsKind,
+            started.SubphaseProgress?.UnitsKind);
+        Assert.Equal(0, started.SubphaseProgress?.UnitsCompleted);
+        Assert.Equal(9, started.SubphaseProgress?.UnitsTotal);
+        Assert.Equal(0, started.SubphaseProgress?.Percent);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var completed = Assert.Single(sink.ObserveTracker(new OperationSnapshot
+        {
+            Operation = "BandScraping",
+            SubOperation =
+                PostScrapeOrchestrator
+                    .BandMaintenanceCurrentProjectionSubphase,
+            WorkItems = new ProgressCounter
+            {
+                Completed = 9,
+                Total = 9,
+            },
+            WorkItemsTotalFinal = true,
+        }));
+        Assert.Equal("exact", completed.SubphaseProgress?.Kind);
+        Assert.Equal(100, completed.SubphaseProgress?.Percent);
+    }
+
+    [Fact]
     public void Final_total_shrink_never_persists_completed_above_total()
     {
         var (sink, metaDb, clock) = CreateSink();
