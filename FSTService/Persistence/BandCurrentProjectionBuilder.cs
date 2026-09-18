@@ -276,10 +276,26 @@ public sealed class BandCurrentProjectionBuilder
         return await RebuildScopeAsync(scope, options, generation, updateGlobalState: true, ct);
     }
 
+    /// <param name="onScopesFinalized">
+    /// Invoked exactly once on the normal (non-empty-input) path, immediately
+    /// after unchanged-scope filtering finalizes <c>scopesToRefresh</c> — the
+    /// actual, normalized/deduplicated, filtered selected-scope set that will
+    /// be rebuilt. Fires even when the selected count is zero (all scopes were
+    /// unchanged), so callers can begin exact progress reporting against the
+    /// real denominator instead of the pre-filter candidate count.
+    /// </param>
+    /// <param name="onScopeCompleted">
+    /// Invoked once per scope, only after that scope's individual rebuild
+    /// succeeds (never for scopes whose rebuild throws). Band-type groups are
+    /// processed concurrently, so this callback may be invoked concurrently
+    /// from multiple groups; callers must make it thread-safe.
+    /// </param>
     public async Task<BandCurrentProjectionIncrementalRefreshResult> RefreshScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         BandCurrentProjectionRebuildOptions? options = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<IReadOnlyCollection<BandCurrentProjectionScopeKey>>? onScopesFinalized = null,
+        Action<BandCurrentProjectionScopeKey>? onScopeCompleted = null)
     {
         options ??= new BandCurrentProjectionRebuildOptions();
         var normalizedScopes = scopes
@@ -309,6 +325,7 @@ public sealed class BandCurrentProjectionBuilder
         var scopesToRefresh = options.SkipUnchangedScopes
             ? await FilterScopesNeedingRefreshAsync(normalizedScopes, ct)
             : normalizedScopes;
+        onScopesFinalized?.Invoke(scopesToRefresh);
 
         if (scopesToRefresh.Length == 0)
         {
@@ -347,14 +364,24 @@ public sealed class BandCurrentProjectionBuilder
                 foreach (var scope in group)
                 {
                     innerCt.ThrowIfCancellationRequested();
+                    BandCurrentProjectionScopeResult scopeResult;
                     try
                     {
-                        results.Add(await RebuildScopeAsync(scope, options, generation, updateGlobalState: false, innerCt));
+                        scopeResult = await RebuildScopeAsync(
+                            scope,
+                            options,
+                            generation,
+                            updateGlobalState: false,
+                            innerCt);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         Interlocked.Increment(ref failedScopes);
+                        continue;
                     }
+
+                    results.Add(scopeResult);
+                    onScopeCompleted?.Invoke(scope);
                 }
             });
 

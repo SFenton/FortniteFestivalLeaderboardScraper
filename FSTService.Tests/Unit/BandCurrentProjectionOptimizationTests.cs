@@ -522,6 +522,82 @@ public sealed class BandCurrentProjectionOptimizationTests(
                 .LegacyMemberStatsAggregateSubqueriesPerRow);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task ChangedScopeFilteringCallbackSelectedDenominatorAndSuccessfulCallbacksMatchChangedScopeCount(
+        int changedScopes)
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 6, 4);
+        await PrimeAsync(fixture, scopes);
+        var changedSongIds = scopes
+            .Take(changedScopes)
+            .Select(static scope => scope.SongId)
+            .ToArray();
+        await MarkSourceChangedAsync(fixture, changedSongIds);
+
+        IReadOnlyCollection<BandCurrentProjectionScopeKey>? finalizedScopes = null;
+        var finalizedInvocations = 0;
+        var completedScopes = new List<BandCurrentProjectionScopeKey>();
+        var completedLock = new object();
+
+        var result = await CreateBuilder(fixture).RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true),
+            CancellationToken.None,
+            onScopesFinalized: selected =>
+            {
+                finalizedInvocations++;
+                finalizedScopes = selected;
+            },
+            onScopeCompleted: scope =>
+            {
+                lock (completedLock)
+                    completedScopes.Add(scope);
+            });
+
+        // The callback's selected denominator reflects the actually changed
+        // scopes only, after unchanged-scope filtering — not the full,
+        // pre-filter candidate set of 6 scopes provided as input.
+        Assert.Equal(1, finalizedInvocations);
+        Assert.Equal(changedScopes, finalizedScopes!.Count);
+        Assert.Equal(changedScopes, result.ScopeCount);
+        Assert.Equal(changedScopes, completedScopes.Count);
+        Assert.Equal(0, result.FailedScopes);
+        Assert.Equal(
+            finalizedScopes.OrderBy(static s => s.SongId, StringComparer.Ordinal),
+            completedScopes.OrderBy(static s => s.SongId, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AllScopesUnchangedInvokesFinalizedCallbackOnceWithZeroSelectedAndNoCompletions()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 3, 2);
+        await PrimeAsync(fixture, scopes);
+
+        IReadOnlyCollection<BandCurrentProjectionScopeKey>? finalizedScopes = null;
+        var finalizedInvocations = 0;
+        var completedCount = 0;
+
+        var result = await CreateBuilder(fixture).RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true),
+            CancellationToken.None,
+            onScopesFinalized: selected =>
+            {
+                finalizedInvocations++;
+                finalizedScopes = selected;
+            },
+            onScopeCompleted: _ => Interlocked.Increment(ref completedCount));
+
+        Assert.Equal(1, finalizedInvocations);
+        Assert.Empty(finalizedScopes!);
+        Assert.Equal(0, result.ScopeCount);
+        Assert.Equal(0, completedCount);
+    }
+
     [Fact]
     public async Task CandidateFailureRollsBackAndRetryPublishes()
     {
@@ -556,6 +632,44 @@ public sealed class BandCurrentProjectionOptimizationTests(
                 fixture,
                 scopes[0]));
         Assert.True(await ProjectionRowCountAsync(fixture) > 0);
+    }
+
+    [Fact]
+    public async Task FailedScopeIsSelectedButDoesNotInvokeSuccessfulCompletionUntilRetrySucceeds()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 1, 4);
+        await CreateInsertFailureTriggerAsync(fixture);
+        var builder = CreateBuilder(fixture);
+
+        IReadOnlyCollection<BandCurrentProjectionScopeKey>? finalizedScopes = null;
+        var completedScopes = new List<BandCurrentProjectionScopeKey>();
+
+        var failed = await builder.RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true),
+            CancellationToken.None,
+            onScopesFinalized: selected => finalizedScopes = selected,
+            onScopeCompleted: scope => completedScopes.Add(scope));
+
+        // The scope was selected (it's part of the finalized denominator) but
+        // its rebuild failed, so the successful-completion callback must not
+        // have fired for it.
+        Assert.Single(finalizedScopes!);
+        Assert.Equal(1, failed.FailedScopes);
+        Assert.Empty(completedScopes);
+
+        await DropInsertFailureTriggerAsync(fixture);
+        var retry = await builder.RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true),
+            CancellationToken.None,
+            onScopesFinalized: selected => finalizedScopes = selected,
+            onScopeCompleted: scope => completedScopes.Add(scope));
+
+        Assert.Equal(0, retry.FailedScopes);
+        Assert.Single(completedScopes);
+        Assert.Equal(scopes[0], completedScopes[0]);
     }
 
     [Fact]

@@ -545,6 +545,20 @@ the promotion handoff additionally binds the image ID, revision, and resolved
 worker configuration hash. Treat those exact identities as the rollback switch
 and proof that the paired candidate is the one being admitted.
 
+The `band-maintenance-progress` profile is a telemetry-only sibling of
+`acquisition-checkpoint-terminalization`. It must be paired with the exact
+`candidate-800-32-4` network control and preserves the checkpoint,
+publication, notification, and registered-work defaults. The guard additionally
+requires the resolved
+`Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=false` key;
+an absent resolved key fails closed because production Compose interpolation
+supplies `false` when the source variable is unset. The caller must supply the
+exact expected worker image, image ID, and OCI revision; a recreate must also
+supply the resolved worker configuration SHA-256. Missing or mismatched
+identity/configuration fails before mutation. Explicit `true`, an unknown
+image, or any other drift fails closed. It is run-once-only and is preparation
+evidence only; it does not authorize a production start or promotion.
+
 Size the production unit timeout above the total deadline plus cleanup margin.
 The shared lock defaults to `.fst-worker-compose-guard.lock` under the resolved
 Compose directory. Every unit and operator must use that same resolved

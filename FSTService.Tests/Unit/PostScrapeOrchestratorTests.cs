@@ -1998,6 +1998,134 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task BandMaintenance_transitions_subOperation_through_stable_subphase_ids()
+    {
+        var ctx = CreateContext();
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+            () => Task.FromResult(BandPruneResult.Empty),
+            PostScrapeOrchestrator.GetBandPruneTimingMetrics);
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+            _progress.GetProgressResponse().Current?.SubOperation);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+            () => Task.FromResult(
+                new BandSearchProjectionIncrementalResult(
+                    false, 0, 0, 0, 0, 0, 0, 0, 0)),
+            PostScrapeOrchestrator.GetBandSearchProjectionTimingMetrics);
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+            _progress.GetProgressResponse().Current?.SubOperation);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            () => Task.FromResult(
+                PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork),
+            static metrics => metrics);
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            _progress.GetProgressResponse().Current?.SubOperation);
+    }
+
+    [Fact]
+    public void BeginPhaseProgress_invalidates_cached_snapshot_after_async_planning()
+    {
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+        _progress.SetSubOperation(
+            PostScrapeOrchestrator
+                .BandMaintenanceCurrentProjectionSubphase);
+
+        Assert.Null(
+            _progress.GetProgressResponse().Current?.WorkItems);
+
+        _progress.BeginPhaseProgress(3);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.Equal(0, current?.WorkItems?.Completed);
+        Assert.Equal(3, current?.WorkItems?.Total);
+        Assert.True(current?.WorkItemsTotalFinal);
+    }
+
+    [Fact]
+    public async Task BandMaintenance_prune_and_search_projection_report_no_invented_totals()
+    {
+        const long scrapeId = 90_010;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+
+        // Neither prune nor search-projection maintenance run per-item, so
+        // neither may fabricate a work-item total: units must stay unset.
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+            () => Task.FromResult(BandPruneResult.Empty),
+            PostScrapeOrchestrator.GetBandPruneTimingMetrics);
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+            _progress.GetProgressResponse().Current?.SubOperation);
+        Assert.Null(_progress.GetProgressResponse().Current?.WorkItems);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+            () => Task.FromResult(
+                new BandSearchProjectionIncrementalResult(
+                    false, 0, 0, 0, 0, 0, 0, 0, 0)),
+            PostScrapeOrchestrator.GetBandSearchProjectionTimingMetrics);
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+            _progress.GetProgressResponse().Current?.SubOperation);
+        Assert.Null(_progress.GetProgressResponse().Current?.WorkItems);
+    }
+
+    [Fact]
+    public async Task BandMaintenance_reports_exact_scope_progress_only_after_filtering_produces_final_denominator()
+    {
+        const long scrapeId = 90_011;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+        var extractionResult = new BandExtractionResult(
+            0,
+            0,
+            0,
+            new Dictionary<string, IReadOnlyCollection<string>>(
+                StringComparer.OrdinalIgnoreCase),
+            [
+                new BandCurrentProjectionScopeKey(
+                    "song-1", "Band_Duets", "overall", ""),
+                new BandCurrentProjectionScopeKey(
+                    "song-2", "Band_Trios", "overall", ""),
+                new BandCurrentProjectionScopeKey(
+                    "song-3", "Band_Quad", "overall", ""),
+            ]);
+
+        await _sut.RunBandMaintenanceForTestAsync(
+            ctx,
+            extractionResult,
+            runFullMaintenance: false,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            current?.SubOperation);
+        // No BandCurrentProjectionBuilder is wired in this test host, so the
+        // orchestrator takes the no-op branch — but the exact final scope
+        // count (known up front from the filtered impacted set) must still be
+        // reported as fully completed, not left indeterminate.
+        Assert.Equal(3, current?.WorkItems?.Completed);
+        Assert.Equal(3, current?.WorkItems?.Total);
+        Assert.True(current?.WorkItemsTotalFinal);
+    }
+
+    [Fact]
     public async Task BandMaintenance_records_exact_three_stable_subphase_timings()
     {
         const long scrapeId = 90_001;

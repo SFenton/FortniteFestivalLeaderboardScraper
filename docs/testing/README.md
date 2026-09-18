@@ -1451,6 +1451,26 @@ bash -n tools/fst-worker-compose-guard.sh
 node --test tools/fst-worker-compose-guard.test.mjs
 ```
 
+The Band telemetry preparation additionally validates the exact run-once
+profile and wrapper contract without starting a worker:
+
+```bash
+node --test tools/fst-worker-compose-guard.test.mjs \
+  tools/fst-worker-dual-lane-runonce.test.mjs
+```
+
+The `band-maintenance-progress` profile must remain paired with
+`candidate-800-32-4`, preserve checkpoint-terminalization defaults, and reject
+the separate batched Band current-projection aggregation switch when it is
+enabled. The resolved Compose environment must contain the switch with exact
+value `false`; production interpolation supplies that value when the source
+variable is unset. An absent resolved key fails closed. The exact candidate
+image, image ID, and OCI revision are supplied independently; a recreate also
+requires the resolved worker configuration SHA-256. Unknown or mismatched
+identity/configuration bindings fail closed before mutation. The tests also
+verify that repository Compose default interpolation resolves the switch to
+`false` when its source variable is unset.
+
 ## Documentation
 
 ```bash

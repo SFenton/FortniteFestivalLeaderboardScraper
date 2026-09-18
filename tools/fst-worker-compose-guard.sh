@@ -70,6 +70,7 @@ Options:
                              leaderboard-rivals-batch
                              legacy-reader-migration
                              acquisition-checkpoint-terminalization
+                             band-maintenance-progress
                              scrape-resume
                            Every run-once config requires a data profile.
   --expected-worker-image I
@@ -122,7 +123,6 @@ then
     printf 'ERROR: --recover-start cannot be combined with a run-once or other action\n' >&2
     exit 64
 fi
-
 if ! $RUNTIME_PROBES && [[ "$ACTION" != "check" && "$ACTION" != "check-runonce" ]]; then
     printf 'ERROR: --config-only cannot be used with a worker start action\n' >&2
     exit 64
@@ -173,7 +173,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|scrape-resume)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|leaderboard-rivals-batch|legacy-reader-migration|acquisition-checkpoint-terminalization|band-maintenance-progress|scrape-resume)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -206,8 +206,28 @@ then
     exit 64
 fi
 
+if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+    && ! "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]
+then
+    printf 'ERROR: data profile band-maintenance-progress requires --check-runonce or --recreate-runonce\n' >&2
+    exit 64
+fi
+
 if [[ "$DATA_PROFILE" != "none" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
     printf 'ERROR: --expected-worker-image is required with --data-profile\n' >&2
+    exit 64
+fi
+
+if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+    && "$THROUGHPUT_PROFILE" != "candidate-800-32-4" ]]
+then
+    printf 'ERROR: data profile band-maintenance-progress requires throughput profile candidate-800-32-4\n' >&2
+    exit 64
+fi
+if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+    && ( -z "$EXPECTED_WORKER_IMAGE_ID" || -z "$EXPECTED_WORKER_REVISION" ) ]]
+then
+    printf 'ERROR: data profile band-maintenance-progress requires exact expected worker image ID and revision\n' >&2
     exit 64
 fi
 
@@ -248,6 +268,13 @@ fi
 MUTATING_WORKER_ACTION=false
 if [[ "$ACTION" =~ ^(recreate|recreate-runonce|recover-start)$ ]]; then
     MUTATING_WORKER_ACTION=true
+fi
+if [[ "$DATA_PROFILE" == "band-maintenance-progress" \
+    && "$MUTATING_WORKER_ACTION" == "true" \
+    && -z "$EXPECTED_WORKER_CONFIG_SHA256" ]]
+then
+    printf 'ERROR: data profile band-maintenance-progress requires --expected-worker-config-sha256 for recreate\n' >&2
+    exit 64
 fi
 
 if [[ -n "$INHERITED_WORKER_LOCK_FD" ]]; then
@@ -813,7 +840,11 @@ def exact_value(name, expected_value):
 def optional_exact_value(name, expected_value):
     if name not in environment:
         actual_worker_image = str(worker.get("image") or "").strip()
-        if expected_worker_image and actual_worker_image == expected_worker_image:
+        default_proven = (
+            expected_worker_image
+            and actual_worker_image == expected_worker_image
+        )
+        if default_proven:
             return
         raise SystemExit(
             f"ERROR: data profile {data_profile} requires "
@@ -989,6 +1020,7 @@ if data_profile == "registered-refresh-repair":
 if data_profile in {
     "catalog-path-notification-source-cut",
     "acquisition-checkpoint-terminalization",
+    "band-maintenance-progress",
 }:
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
@@ -1017,7 +1049,10 @@ if data_profile in {
             raise SystemExit(
                 f"ERROR: data profile {data_profile} "
                 f"requires {name}=false")
-if data_profile == "acquisition-checkpoint-terminalization":
+if data_profile in {
+    "acquisition-checkpoint-terminalization",
+    "band-maintenance-progress",
+}:
     exact_value("Features__UseSnapshotOverlayWorkerReaders", "false")
     exact_value("ImprovementNotifications__Scope", "registered")
     exact_value("ImprovementNotifications__RefreshSoloProjection", "true")
@@ -1047,7 +1082,7 @@ if data_profile == "acquisition-checkpoint-terminalization":
     ):
         if nonnegative_integer(name) != 80:
             raise SystemExit(
-                "ERROR: data profile acquisition-checkpoint-terminalization "
+                f"ERROR: data profile {data_profile} "
                 f"requires {name}=80")
     for name in (
         "Features__WriteLogicalLeaderboardVersions",
@@ -1055,8 +1090,12 @@ if data_profile == "acquisition-checkpoint-terminalization":
     ):
         if boolean(name):
             raise SystemExit(
-                "ERROR: data profile acquisition-checkpoint-terminalization "
+                f"ERROR: data profile {data_profile} "
                 f"requires {name}=false")
+if data_profile == "band-maintenance-progress":
+    exact_value(
+        "Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation",
+        "false")
 if data_profile == "snapshot-reuse":
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
