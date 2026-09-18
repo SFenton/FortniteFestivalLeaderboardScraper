@@ -28,7 +28,7 @@ internal sealed class ProxyRoutingHttpMessageHandler : HttpMessageHandler
                 ProxyRequestState.WireSendRecorder,
                 out var recordWireSend))
         {
-            recordWireSend();
+            recordWireSend(false);
         }
 
         try

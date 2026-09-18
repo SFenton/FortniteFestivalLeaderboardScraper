@@ -9,6 +9,7 @@ using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using NSubstitute;
@@ -143,6 +144,35 @@ public class DatabaseInitializerTests : IDisposable
                       AND conname =
                           'ck_scrape_log_acquisition_checkpoint'
                       AND convalidated
+                ),
+                (
+                    SELECT COUNT(*) = 6
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name IN (
+                          'wire_send_total',
+                          'wire_send_probe_sends',
+                          'wire_send_probe_successes',
+                          'wire_send_status_retries',
+                          'wire_send_network_errors',
+                          'wire_send_cdn_blocks')
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'scrape_log'::regclass
+                      AND conname =
+                          'ck_scrape_log_wire_send_telemetry'
+                      AND convalidated
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'scrape_log'::regclass
+                      AND conname =
+                          'ck_scrape_log_wire_send_telemetry_complete'
+                      AND convalidated
                 )
             """;
         using var reader = command.ExecuteReader();
@@ -152,6 +182,35 @@ public class DatabaseInitializerTests : IDisposable
         Assert.True(reader.GetBoolean(2));
         Assert.True(reader.GetBoolean(3));
         Assert.True(reader.GetBoolean(4));
+        Assert.True(reader.GetBoolean(5));
+        Assert.True(reader.GetBoolean(6));
+        Assert.True(reader.GetBoolean(7));
+    }
+
+    [Fact]
+    public void Wire_send_constraint_rejects_incomplete_telemetry()
+    {
+        var database = new MetaDatabase(
+            _metaFixture.DataSource,
+            NullLogger<MetaDatabase>.Instance,
+            scraperOptions: new ScraperOptions());
+        var scrapeId = database.StartScrapeRun();
+
+        using var connection = _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_log
+            SET wire_send_total = 1,
+                wire_send_probe_sends = NULL,
+                wire_send_probe_successes = 0,
+                wire_send_status_retries = 0,
+                wire_send_network_errors = 0,
+                wire_send_cdn_blocks = 0
+            WHERE id = @id
+            """;
+        command.Parameters.AddWithValue("id", scrapeId);
+
+        Assert.Throws<PostgresException>(() => command.ExecuteNonQuery());
     }
 
     [Fact]

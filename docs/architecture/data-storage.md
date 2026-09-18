@@ -37,6 +37,9 @@ sources:
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/ScrapeAcquisitionCheckpointSchema.cs
   - FSTService/Persistence/SoloAcquisitionScopeFingerprint.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Scraping/ResilientHttpExecutor.cs
+  - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
@@ -130,6 +133,36 @@ complete solo coverage, any band manifest gate has passed, and all writers have
 succeeded. Band-only and empty-solo passes do not create it. Repeated writes are
 accepted only when every metric and scope-contract value matches; a retry with
 drift is rejected.
+
+The same atomic checkpoint stores nullable wire-send telemetry:
+`wire_send_total` counts every physical HTTP send, including fallback and CDN
+probe sends; `wire_send_probe_sends` and `wire_send_probe_successes` identify probe
+sends and probes that observed CDN clearance. `wire_send_status_retries`
+counts retryable HTTP responses that scheduled another attempt,
+`wire_send_network_errors` counts exact transport, timeout, and disposed-send
+errors, and `wire_send_cdn_blocks` counts every physical response classified
+as a CDN block, including foreground, fallback, and probe responses.
+`total_requests` remains the logical request count and is not derived from
+wire sends. Successful acquisition writes all six counters atomically. A
+terminal or isolated acquisition failure writes only counters observed before
+the error; unavailable values remain null, never zero. Legacy and incomplete
+rows therefore retain explicit unknown evidence.
+The telemetry check constraints preserve all-null legacy rows and require
+complete rows to contain all six values, with probe successes bounded by probe
+sends and probe sends bounded by total sends.
+
+The standard read-only A/B pack from `tools/postgres-scrape-evidence.sh`
+exports these six durable values in `wire-send-telemetry.csv` and repeats them
+in `summary.json` and `report.md`. Pre-migration databases produce explicit
+null/unknown values rather than fabricated zeroes.
+
+Production run-once scrape `1405` accepted this contract. Its atomic
+checkpoint persisted `616,929` physical sends for `616,774` logical requests,
+with `0` probe sends/successes, `4` retryable-status retries, `1,162` physical
+network errors, and `0` physical CDN-block responses. All `8,676/8,676`
+manifests completed, publication `310` became current, notifications completed,
+public reads unfroze, and the worker exited `0`. The standard evidence pack
+read the same six values with `available=true`.
 
 The additive schema step uses the normal two-second lock timeout and
 15-second statement timeout. Its validated check constraint permits historical

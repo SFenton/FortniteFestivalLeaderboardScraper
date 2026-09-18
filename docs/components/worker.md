@@ -24,6 +24,8 @@ sources:
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/NotificationService.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/ResilientHttpExecutor.cs
+  - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
@@ -161,6 +163,28 @@ with the persisted metrics, and retains the existing freeze until publication
 or durable failure isolation. Normal terminal completion never manufactures a
 missing acquisition checkpoint; legacy completed rows therefore remain
 non-resumable.
+
+Acquisition persistence also records exact per-pass HTTP wire telemetry without
+changing publication or API contracts. Logical requests remain separate from
+physical sends; the checkpoint stores total sends, CDN probe sends and
+successes, retryable-status retries, transport errors, and CDN blocks. The
+executor owns these counters, including fallback/probe sends, and successful
+acquisition persists the snapshot atomically with the checkpoint.
+CDN-block counts are physical-response classifications, including foreground,
+fallback, and probe responses; they are not merely foreground recovery events.
+Failure/isolation cleanup persists only counters observed before the terminal
+error, leaving unavailable legacy or incomplete evidence null.
+The standard PostgreSQL scrape evidence pack exports and summarizes the same
+durable counters, including whether all six values are available.
+The `wire-send-telemetry` run-once admission profile pairs the exact
+`candidate-800-32-4` network with the same safe worker defaults and refuses
+live checks/recreates unless all six telemetry columns and both validated
+database constraints are present; config-only validation remains database-free.
+Production scrape `1405` accepted the profile and persistence path:
+`6,507` expected solo scopes and `8,676/8,676` manifests completed, all six
+wire counters were durable at the acquisition boundary, publication `310`
+completed with notifications and unfreeze, and the run-once worker exited `0`.
+
 The in-worker `ValidateResumeScrape` admission now also rejects any reduced
 canonical solo query scope before post-processing starts: every
 `Scraper:Query*` flag backing

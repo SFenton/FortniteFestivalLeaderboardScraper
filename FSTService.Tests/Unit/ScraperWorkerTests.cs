@@ -662,7 +662,8 @@ public class ScraperWorkerTests : IDisposable
                 doSoloScrape: true,
                 soloCoverageComplete: true,
                 bandManifestGatePassed: true,
-                writerGatePassed: true));
+                writerGatePassed: true,
+                wireSendTelemetry: new ScrapeWireSendTelemetry(12, 2, 1, 3, 4, 1)));
         metaDatabase.Received(1)
             .RecordScrapeAcquisitionCheckpoint(
                 42,
@@ -671,7 +672,8 @@ public class ScraperWorkerTests : IDisposable
                 2,
                 100,
                 expectedPairs,
-                true);
+                true,
+                new ScrapeWireSendTelemetry(12, 2, 1, 3, 4, 1));
     }
 
     [Fact]

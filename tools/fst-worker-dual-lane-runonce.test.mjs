@@ -222,6 +222,114 @@ PY
     }
   });
 
+  it("passes wire-send-telemetry with aggregation disabled and exact identity", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "fst-worker-dual-lane-runonce-wire-test-")
+    );
+    const wrapperCopy = path.join(root, "fst-worker-dual-lane-runonce.sh");
+    const guardCopy = path.join(root, "fst-worker-compose-guard.sh");
+    const capturePath = path.join(root, "capture.json");
+    try {
+      await writeFile(wrapperCopy, await readFile(wrapperPath));
+      await writeFile(
+        guardCopy,
+        `#!/usr/bin/env bash
+set -euo pipefail
+python3 - "$FST_DUAL_LANE_CAPTURE" "$@" <<'PY'
+import json
+import os
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({
+        "args": sys.argv[2:],
+        "aggregation": os.environ.get(
+            "BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION")
+    }, handle)
+PY
+`
+      );
+      await chmod(wrapperCopy, 0o755);
+      await chmod(guardCopy, 0o755);
+      await execFileAsync(
+        wrapperCopy,
+        [
+          "--network-profile",
+          "candidate-800-32-4",
+          "--data-profile",
+          "wire-send-telemetry",
+          "--expected-worker-image",
+          "example.invalid/fstworker:wire-send-telemetry",
+          "--expected-worker-image-id",
+          "sha256:" + "a".repeat(64),
+          "--expected-worker-revision",
+          "4".repeat(40),
+          "--expected-worker-config-sha256",
+          "b".repeat(64),
+          "--config-only"
+        ],
+        {
+          env: {
+            ...process.env,
+            FST_DUAL_LANE_CAPTURE: capturePath
+          }
+        }
+      );
+      const capture = JSON.parse(await readFile(capturePath, "utf8"));
+      assert.equal(capture.aggregation, "false");
+      assert.ok(capture.args.includes("--data-profile"));
+      assert.ok(capture.args.includes("wire-send-telemetry"));
+      assert.ok(capture.args.includes("--expected-worker-config-sha256"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects every alternate network profile for wire-send-telemetry", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "fst-worker-dual-lane-runonce-wire-reject-test-")
+    );
+    const wrapperCopy = path.join(root, "fst-worker-dual-lane-runonce.sh");
+    const guardCopy = path.join(root, "fst-worker-compose-guard.sh");
+    try {
+      await writeFile(wrapperCopy, await readFile(wrapperPath));
+      await writeFile(guardCopy, "#!/usr/bin/env bash\nexit 99\n");
+      await chmod(wrapperCopy, 0o755);
+      await chmod(guardCopy, 0o755);
+      for (const networkProfile of [
+        "candidate-1600-64-8",
+        "candidate-1800-72-9",
+        "candidate-2000-80-10",
+        "candidate-2880-128-16"
+      ]) {
+        await assert.rejects(
+          execFileAsync(
+            wrapperCopy,
+            [
+              "--network-profile",
+              networkProfile,
+              "--data-profile",
+              "wire-send-telemetry",
+              "--expected-worker-image",
+              "example.invalid/fstworker:wire-send-telemetry",
+              "--config-only"
+            ],
+            { env: { ...process.env } }
+          ),
+          (error) => {
+            assert.equal(error.code, 64);
+            assert.match(
+              error.stderr,
+              /requires network profile candidate-800-32-4/
+            );
+            return true;
+          }
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("propagates explicit Band aggregation drift to the guard", async () => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "fst-worker-dual-lane-runonce-band-drift-test-")

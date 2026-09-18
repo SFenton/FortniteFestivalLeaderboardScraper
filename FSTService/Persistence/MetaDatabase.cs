@@ -609,7 +609,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         long totalBytes,
         IReadOnlyCollection<(string SongId, string Instrument)>
             expectedSoloLeaderboardPairs,
-        bool epicReportedOver100Pages = false)
+        bool epicReportedOver100Pages = false,
+        ScrapeWireSendTelemetry? wireSendTelemetry = null)
     {
         ValidateScrapeMetrics(
             scrapeId,
@@ -626,6 +627,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 "A scrape acquisition checkpoint requires a non-empty expected solo leaderboard scope.",
                 nameof(expectedSoloLeaderboardPairs));
         }
+        if (wireSendTelemetry is { } telemetry)
+            ValidateWireSendTelemetry(telemetry);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -640,7 +643,13 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 expected_solo_scope_fingerprint_version =
                     @expectedSoloScopeFingerprintVersion,
                 expected_solo_scope_fingerprint =
-                    @expectedSoloScopeFingerprint
+                    @expectedSoloScopeFingerprint,
+                wire_send_total = @wireSendTotal,
+                wire_send_probe_sends = @wireSendProbe,
+                wire_send_probe_successes = @wireSendProbeSuccesses,
+                wire_send_status_retries = @wireSendStatusRetries,
+                wire_send_network_errors = @wireSendNetworkErrors,
+                wire_send_cdn_blocks = @wireSendCdnBlocks
             WHERE id = @id
               AND status = 'running'
               AND (
@@ -657,6 +666,31 @@ public sealed partial class MetaDatabase : IMetaDatabase
                             @expectedSoloScopeFingerprintVersion
                         AND expected_solo_scope_fingerprint =
                             @expectedSoloScopeFingerprint
+                        AND (
+                            (@wireSendTotal IS NULL AND wire_send_total IS NULL)
+                            OR wire_send_total = @wireSendTotal)
+                        AND (
+                            (@wireSendProbe IS NULL AND wire_send_probe_sends IS NULL)
+                            OR wire_send_probe_sends = @wireSendProbe)
+                        AND (
+                            (@wireSendProbeSuccesses IS NULL
+                             AND wire_send_probe_successes IS NULL)
+                            OR wire_send_probe_successes =
+                                @wireSendProbeSuccesses)
+                        AND (
+                            (@wireSendStatusRetries IS NULL
+                             AND wire_send_status_retries IS NULL)
+                            OR wire_send_status_retries =
+                                @wireSendStatusRetries)
+                        AND (
+                            (@wireSendNetworkErrors IS NULL
+                             AND wire_send_network_errors IS NULL)
+                            OR wire_send_network_errors =
+                                @wireSendNetworkErrors)
+                        AND (
+                            (@wireSendCdnBlocks IS NULL
+                             AND wire_send_cdn_blocks IS NULL)
+                            OR wire_send_cdn_blocks = @wireSendCdnBlocks)
                     )
               )
             """;
@@ -675,10 +709,59 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue(
             "expectedSoloScopeFingerprint",
             scopeContract.Fingerprint);
+        AddWireSendTelemetryParameters(cmd, wireSendTelemetry);
         cmd.Parameters.AddWithValue("id", (int)scrapeId);
         if (cmd.ExecuteNonQuery() != 1)
             throw new InvalidOperationException(
                 $"Scrape run {scrapeId} acquisition checkpoint is missing, not running, or conflicts with its persisted metrics.");
+    }
+
+    public void RecordScrapeAcquisitionTelemetry(
+        long scrapeId,
+        ScrapeWireSendTelemetry wireSendTelemetry)
+    {
+        ValidateScrapeId(scrapeId);
+        ValidateWireSendTelemetry(wireSendTelemetry);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_log
+            SET wire_send_total = COALESCE(wire_send_total, @wireSendTotal),
+                wire_send_probe_sends = COALESCE(wire_send_probe_sends, @wireSendProbe),
+                wire_send_probe_successes =
+                    COALESCE(wire_send_probe_successes, @wireSendProbeSuccesses),
+                wire_send_status_retries =
+                    COALESCE(wire_send_status_retries, @wireSendStatusRetries),
+                wire_send_network_errors =
+                    COALESCE(wire_send_network_errors, @wireSendNetworkErrors),
+                wire_send_cdn_blocks =
+                    COALESCE(wire_send_cdn_blocks, @wireSendCdnBlocks)
+            WHERE id = @id
+              AND acquisition_completed_at IS NULL
+              AND status IN ('running', 'failed')
+            """;
+        AddWireSendTelemetryParameters(cmd, wireSendTelemetry);
+        cmd.Parameters.AddWithValue("id", checked((int)scrapeId));
+        if (cmd.ExecuteNonQuery() == 1)
+            return;
+
+        using var state = conn.CreateCommand();
+        state.CommandText = """
+            SELECT status, acquisition_completed_at
+            FROM scrape_log
+            WHERE id = @id
+            """;
+        state.Parameters.AddWithValue("id", checked((int)scrapeId));
+        using var reader = state.ExecuteReader();
+        if (reader.Read()
+            && !reader.IsDBNull(1))
+        {
+            // The successful checkpoint already owns the durable telemetry.
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Scrape run {scrapeId} acquisition telemetry could not be recorded because the scrape is missing, not running/failed, or has incomplete state.");
     }
 
     public void CompleteScrapeRun(
@@ -1051,6 +1134,61 @@ public sealed partial class MetaDatabase : IMetaDatabase
             ActualCompleteSoloScopeOwnedByCatalog =
                 actualCompleteSoloScopeOwnedByCatalog,
         };
+    }
+
+    private static void AddWireSendTelemetryParameters(
+        NpgsqlCommand command,
+        ScrapeWireSendTelemetry? telemetry)
+    {
+        command.Parameters.Add(
+            "wireSendTotal",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.TotalSends ?? DBNull.Value;
+        command.Parameters.Add(
+            "wireSendProbe",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.ProbeSends ?? DBNull.Value;
+        command.Parameters.Add(
+            "wireSendProbeSuccesses",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.ProbeSuccesses ?? DBNull.Value;
+        command.Parameters.Add(
+            "wireSendStatusRetries",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.StatusRetries ?? DBNull.Value;
+        command.Parameters.Add(
+            "wireSendNetworkErrors",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.NetworkErrors ?? DBNull.Value;
+        command.Parameters.Add(
+            "wireSendCdnBlocks",
+            NpgsqlDbType.Bigint).Value =
+            (object?)telemetry?.CdnBlocks ?? DBNull.Value;
+    }
+
+    private static void ValidateWireSendTelemetry(ScrapeWireSendTelemetry telemetry)
+    {
+        if (telemetry.TotalSends < 0
+            || telemetry.ProbeSends < 0
+            || telemetry.ProbeSuccesses < 0
+            || telemetry.StatusRetries < 0
+            || telemetry.NetworkErrors < 0
+            || telemetry.CdnBlocks < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(telemetry),
+                "Wire-send telemetry counters cannot be negative.");
+        }
+        if (telemetry.ProbeSends > telemetry.TotalSends
+            || telemetry.ProbeSuccesses > telemetry.ProbeSends
+            || telemetry.StatusRetries > telemetry.TotalSends
+            || telemetry.NetworkErrors > telemetry.TotalSends
+            || telemetry.CdnBlocks > telemetry.TotalSends)
+        {
+            throw new ArgumentException(
+                "Wire-send probe counters cannot exceed total physical sends.",
+                nameof(telemetry));
+        }
     }
 
     private static void ValidateScrapeMetrics(

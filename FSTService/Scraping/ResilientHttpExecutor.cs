@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Net.Http.Headers;
+using System.Runtime.ExceptionServices;
 using System.Text;
 
 namespace FSTService.Scraping;
@@ -39,6 +40,32 @@ public enum CdnProbeState
 
 /// <summary>Event fired during CDN probe lifecycle.</summary>
 public readonly record struct CdnProbeEvent(CdnProbeState State, int Attempt, int MaxRetries, double NextRetrySeconds);
+
+public readonly record struct HttpSendTelemetry(
+    long TotalHttpSends,
+    long ProbeHttpSends,
+    long ProbeSuccesses,
+    long StatusRetries,
+    long NetworkErrors,
+    long CdnBlocksDetected)
+{
+    public bool HasAny =>
+        TotalHttpSends != 0
+        || ProbeHttpSends != 0
+        || ProbeSuccesses != 0
+        || StatusRetries != 0
+        || NetworkErrors != 0
+        || CdnBlocksDetected != 0;
+
+    public HttpSendTelemetry Since(HttpSendTelemetry baseline) =>
+        new(
+            TotalHttpSends - baseline.TotalHttpSends,
+            ProbeHttpSends - baseline.ProbeHttpSends,
+            ProbeSuccesses - baseline.ProbeSuccesses,
+            StatusRetries - baseline.StatusRetries,
+            NetworkErrors - baseline.NetworkErrors,
+            CdnBlocksDetected - baseline.CdnBlocksDetected);
+}
 
 /// <summary>Coarse-grained state of an in-flight <see cref="ResilientHttpExecutor.SendAsync"/> call.
 /// Used by the <c>/api/diag/inflight</c> endpoint to diagnose stuck scrapes.</summary>
@@ -182,6 +209,7 @@ public sealed class ResilientHttpExecutor
 
     /// <summary>Override CDN retry delays for testing (set to zero-delay arrays).</summary>
     internal TimeSpan[]? CdnRetryDelaysOverride { get; set; }
+    internal Action? ResetBeforeReopenLaunches { get; set; }
 
     /// <summary>Maximum jitter (ms) added before non-probe CDN retry attempts.
     /// Set to 0 in tests for determinism.</summary>
@@ -596,8 +624,9 @@ public sealed class ResilientHttpExecutor
     private long _cdnProbeAttempts;
     private long _cdnProbeSuccesses;
     private long _totalHttpSends;
-    private readonly AsyncLocal<HttpSendCounter?>
-        _httpSendCounter = new();
+    private long _statusRetries;
+    private long _networkErrors;
+    private readonly AsyncLocal<HttpSendTelemetryScope?> _telemetryScope = new();
 
     /// <summary>Number of times a CDN block (403 non-JSON) was detected.</summary>
     public long CdnBlocksDetected => Volatile.Read(ref _cdnBlocksDetected);
@@ -607,39 +636,122 @@ public sealed class ResilientHttpExecutor
     public long CdnProbeSuccesses => Volatile.Read(ref _cdnProbeSuccesses);
     /// <summary>Total HTTP sends (including probes, retries, everything).</summary>
     public long TotalHttpSends => Volatile.Read(ref _totalHttpSends);
+    public long StatusRetries => Volatile.Read(ref _statusRetries);
+    public long NetworkErrors => Volatile.Read(ref _networkErrors);
 
-    internal async Task<(T Result, long HttpSends)>
-        MeasureHttpSendsAsync<T>(
-            Func<Task<T>> operation)
+    internal HttpSendTelemetry CaptureTelemetry() =>
+        new(
+            TotalHttpSends,
+            CdnProbeAttempts,
+            CdnProbeSuccesses,
+            StatusRetries,
+            NetworkErrors,
+            CdnBlocksDetected);
+
+    internal TelemetryScope BeginTelemetryScope()
+    {
+        var scope = new HttpSendTelemetryScope(_telemetryScope.Value);
+        _telemetryScope.Value = scope;
+        return new TelemetryScope(this, scope);
+    }
+
+    internal async Task<(T Result, long HttpSends)> MeasureHttpSendsAsync<T>(
+        Func<Task<T>> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        var previous = _httpSendCounter.Value;
-        var counter = new HttpSendCounter();
-        _httpSendCounter.Value = counter;
-        try
+        using var scope = BeginTelemetryScope();
+        var result = await operation().ConfigureAwait(false);
+        return (result, scope.Snapshot().TotalHttpSends);
+    }
+
+    internal sealed class TelemetryScope : IDisposable
+    {
+        private readonly ResilientHttpExecutor _owner;
+        private readonly HttpSendTelemetryScope _scope;
+        private bool _disposed;
+
+        internal TelemetryScope(
+            ResilientHttpExecutor owner,
+            HttpSendTelemetryScope scope)
         {
-            var result = await operation();
-            return (
-                result,
-                Volatile.Read(ref counter.Count));
+            _owner = owner;
+            _scope = scope;
         }
-        finally
+
+        internal HttpSendTelemetry Snapshot() => _scope.Snapshot();
+
+        public void Dispose()
         {
-            _httpSendCounter.Value = previous;
+            if (_disposed)
+                return;
+            _disposed = true;
+            _owner._telemetryScope.Value = _scope.Parent;
         }
     }
 
-    private void RecordHttpSend()
+    internal sealed class HttpSendTelemetryScope
+    {
+        internal HttpSendTelemetryScope? Parent { get; }
+        internal long TotalHttpSends;
+        internal long ProbeHttpSends;
+        internal long ProbeSuccesses;
+        internal long StatusRetries;
+        internal long NetworkErrors;
+        internal long CdnBlocksDetected;
+
+        internal HttpSendTelemetryScope(HttpSendTelemetryScope? parent)
+            => Parent = parent;
+
+        internal void RecordSend(bool isProbe)
+        {
+            Interlocked.Increment(ref TotalHttpSends);
+            if (isProbe)
+                Interlocked.Increment(ref ProbeHttpSends);
+        }
+
+        internal HttpSendTelemetry Snapshot() => new(
+            Volatile.Read(ref TotalHttpSends),
+            Volatile.Read(ref ProbeHttpSends),
+            Volatile.Read(ref ProbeSuccesses),
+            Volatile.Read(ref StatusRetries),
+            Volatile.Read(ref NetworkErrors),
+            Volatile.Read(ref CdnBlocksDetected));
+    }
+
+    private void ForEachTelemetryScope(Action<HttpSendTelemetryScope> action)
+    {
+        for (var scope = _telemetryScope.Value; scope is not null; scope = scope.Parent)
+            action(scope);
+    }
+
+    private void RecordHttpSend(bool isProbe = false)
     {
         Interlocked.Increment(ref _totalHttpSends);
-        var counter = _httpSendCounter.Value;
-        if (counter is not null)
-            Interlocked.Increment(ref counter.Count);
+        ForEachTelemetryScope(scope => scope.RecordSend(isProbe));
     }
 
-    private sealed class HttpSendCounter
+    private void RecordStatusRetry()
     {
-        internal long Count;
+        Interlocked.Increment(ref _statusRetries);
+        ForEachTelemetryScope(scope => Interlocked.Increment(ref scope.StatusRetries));
+    }
+
+    private void RecordNetworkError()
+    {
+        Interlocked.Increment(ref _networkErrors);
+        ForEachTelemetryScope(scope => Interlocked.Increment(ref scope.NetworkErrors));
+    }
+
+    private void RecordCdnBlock()
+    {
+        Interlocked.Increment(ref _cdnBlocksDetected);
+        ForEachTelemetryScope(scope => Interlocked.Increment(ref scope.CdnBlocksDetected));
+    }
+
+    private void RecordProbeSuccess()
+    {
+        Interlocked.Increment(ref _cdnProbeSuccesses);
+        ForEachTelemetryScope(scope => Interlocked.Increment(ref scope.ProbeSuccesses));
     }
 
     /// <summary>
@@ -653,14 +765,17 @@ public sealed class ResilientHttpExecutor
     // When a CDN block is detected, the probe walks a backoff schedule.
     // Non-probes wait on _cdnResolved (a TCS) for the probe to signal success/failure.
     // The _probeRunning int (0/1) ensures only one probe runs at a time; it is an
-    // integer primitive (not a SemaphoreSlim) so ResetCdnState can forcibly clear it
-    // if a probe is abandoned/cancelled without deadlocking future probe launches.
+    // integer primitive (not a SemaphoreSlim); reset waits for the owning probe
+    // to release it before a future probe can launch.
     private DateTimeOffset _cdnCooldownUntil;
     private int _probeRunning; // 0 = no probe, 1 = probe in flight
     private int _cdnRetryIndex; // current position in the delay schedule
     private volatile TaskCompletionSource<bool>? _cdnResolved; // true=CDN clear, false=gave up
     private Task? _probeTask; // background probe task (fire-and-forget with TCS signal)
     private volatile CancellationTokenSource? _probeCts; // scoped to in-flight probe; null when idle
+    private readonly object _resetLock = new();
+    private TaskCompletionSource<bool>? _resetCompletion;
+    private int _resetInProgress;
 
     // ── Probe bounds & lifetime (Fix 1) ───────────────────────
     /// <summary>Default per-attempt timeout for probe HTTP sends. Prevents a single
@@ -867,6 +982,7 @@ public sealed class ResilientHttpExecutor
                 }
                 catch (HttpRequestException ex)
                 {
+                    RecordNetworkError();
                     if (IsCdnBlocked)
                         throw new CdnBlockedException(
                             $"CDN block on {label ?? "request"} (network error during CDN block: {ex.Message})");
@@ -893,6 +1009,7 @@ public sealed class ResilientHttpExecutor
                 }
                 catch (ObjectDisposedException ex) when (!ct.IsCancellationRequested)
                 {
+                    RecordNetworkError();
                     // SocketsHttpHandler connection pool reset mid-send (e.g. proxy rotation
                     // forcing ResetConnectionPool) can surface as ObjectDisposedException.
                     // Treat as transient and retry indefinitely.
@@ -922,6 +1039,7 @@ public sealed class ResilientHttpExecutor
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
+                    RecordNetworkError();
                     if (IsCdnBlocked)
                         throw new CdnBlockedException(
                             $"CDN block on {label ?? "request"} (timeout during CDN block)");
@@ -971,6 +1089,9 @@ public sealed class ResilientHttpExecutor
 
                     if (isCdnBlock)
                     {
+                        // Count each physical response classified as a CDN
+                        // block, including the foreground response.
+                        RecordCdnBlock();
                         try
                         {
                             var fallbackResponse =
@@ -983,6 +1104,7 @@ public sealed class ResilientHttpExecutor
                             {
                                 if (await IsCdnBlockResponseAsync(fallbackResponse, ct))
                                 {
+                                    RecordCdnBlock();
                                     fallbackResponse.Dispose();
                                 }
                                 else if ((int)fallbackResponse.StatusCode ==
@@ -1013,6 +1135,7 @@ public sealed class ResilientHttpExecutor
                         catch (HttpRequestException ex)
                         {
                             res.Dispose();
+                            RecordNetworkError();
                             networkErrors++;
                             _log.LogWarning(
                                 "curl fallback transport error for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
@@ -1022,7 +1145,6 @@ public sealed class ResilientHttpExecutor
                             continue;
                         }
 
-                        Interlocked.Increment(ref _cdnBlocksDetected);
                         res.Dispose();
 
                         var cdnDecision = ProxyCdnBlockDecision.PauseGlobally;
@@ -1080,6 +1202,7 @@ public sealed class ResilientHttpExecutor
 
                 if (retryable && statusAttempt < maxRetries)
                 {
+                    RecordStatusRetry();
                     statusAttempt++;
 
                     // Honour Retry-After header on 429
@@ -1139,13 +1262,22 @@ public sealed class ResilientHttpExecutor
         CancellationToken ct)
     {
         // Only one probe at a time — integer CAS gate (Fix 2).
-        // Use an integer primitive rather than SemaphoreSlim so ResetCdnState can
-        // force-release it without risking deadlock if the prior probe is
-        // wedged/abandoned. _ = ct suppresses unused-parameter warning: the caller
+        // ResetCdnState cancels but does not force-release this gate; the owning
+        // probe releases it in finally so a new probe cannot overlap an old one.
+        // _ = ct suppresses unused-parameter warning: the caller
         // token intentionally does NOT flow into the probe (Fix 1 — decoupling).
         _ = ct;
-        if (Interlocked.CompareExchange(ref _probeRunning, 1, 0) != 0)
+        if (Volatile.Read(ref _resetInProgress) != 0
+            || Interlocked.CompareExchange(ref _probeRunning, 1, 0) != 0)
             return; // probe already running
+
+        // Reset may have started after the first check but before this probe
+        // acquired the gate. Do not launch into a reset finalization window.
+        if (Volatile.Read(ref _resetInProgress) != 0)
+        {
+            Interlocked.Exchange(ref _probeRunning, 0);
+            return;
+        }
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _cdnResolved = tcs;
@@ -1194,7 +1326,7 @@ public sealed class ResilientHttpExecutor
                     try
                     {
                         Interlocked.Increment(ref _cdnProbeAttempts);
-                        PrepareWireSendCounting(probeRequest);
+                        PrepareWireSendCounting(probeRequest, isProbe: true);
                         res = await _http.SendAsync(probeRequest, sendCts.Token);
                         if (res.IsSuccessStatusCode)
                             _proxyHealth?.ReportSuccess(probeRequest);
@@ -1206,12 +1338,14 @@ public sealed class ResilientHttpExecutor
                     }
                     catch (HttpRequestException ex)
                     {
+                        RecordNetworkError();
                         _log.LogWarning("CDN probe HTTP error (attempt {CdnAttempt}): {Error}", i + 1, ex.Message);
                         _proxyHealth?.ReportFailure(probeRequest, ProxyFailureKind.Transport);
                         continue;
                     }
                     catch (OperationCanceledException) when (!probeToken.IsCancellationRequested)
                     {
+                        RecordNetworkError();
                         // Per-attempt send timeout fired; probe itself is healthy.
                         _log.LogWarning(
                             "CDN probe send timed out after {Timeout:F1}s (attempt {CdnAttempt})",
@@ -1232,13 +1366,14 @@ public sealed class ResilientHttpExecutor
 
                     if (isCdnBlock)
                     {
+                        RecordCdnBlock();
                         _proxyHealth?.ReportFailure(probeRequest, ProxyFailureKind.CdnBlock);
                         res.Dispose();
                         continue; // still blocked
                     }
 
                     // CDN cleared
-                    Interlocked.Increment(ref _cdnProbeSuccesses);
+                    RecordProbeSuccess();
                     _cdnCooldownUntil = default;
                     _cdnRetryIndex = 0;
                     res.Dispose();
@@ -1342,6 +1477,7 @@ public sealed class ResilientHttpExecutor
 
             if (await IsCdnBlockResponseAsync(fallbackResponse, ct))
             {
+                RecordCdnBlock();
                 fallbackResponse.Dispose();
                 return null;
             }
@@ -1360,6 +1496,7 @@ public sealed class ResilientHttpExecutor
         }
         catch (HttpRequestException ex)
         {
+            RecordNetworkError();
             _log.LogWarning(
                 "curl fallback also failed for {Operation} after .NET HTTP transport failure: {Error}",
                 label ?? "request",
@@ -1372,7 +1509,8 @@ public sealed class ResilientHttpExecutor
         => request.RequestUri is { Host: "events-public-service-live.ol.epicgames.com" };
 
     private void PrepareWireSendCounting(
-        HttpRequestMessage request)
+        HttpRequestMessage request,
+        bool isProbe = false)
     {
         if (_proxyHealth is ProxyPool
             {
@@ -1381,10 +1519,10 @@ public sealed class ResilientHttpExecutor
         {
             request.Options.Set(
                 ProxyRequestState.WireSendRecorder,
-                (Action)RecordHttpSend);
+                (Action<bool>)(_ => RecordHttpSend(isProbe)));
             return;
         }
-        RecordHttpSend();
+        RecordHttpSend(isProbe);
     }
 
     internal ProxyCdnBlockDecision ReportMalformedSuccessResponse(
@@ -1397,7 +1535,7 @@ public sealed class ResilientHttpExecutor
             return ProxyCdnBlockDecision.PauseGlobally;
         }
 
-        Interlocked.Increment(ref _cdnBlocksDetected);
+        RecordCdnBlock();
         var decision = ProxyCdnBlockDecision.PauseGlobally;
         if (_proxyHealth is IProxyCdnBlockHandler handler)
         {
@@ -1434,13 +1572,37 @@ public sealed class ResilientHttpExecutor
     /// stale state from a previous pass imposing unnecessarily long cooldowns.
     ///
     /// <para>If a probe is currently in flight (including one wedged on an
-    /// indefinite HTTP send), this method cancels the probe's scoped CTS, releases
-    /// the probe gate, resolves any outstanding waiters with a non-cancelled
-    /// completion, and arms a short cooldown floor (<see cref="ResetCooldownFloor"/>)
-    /// to prevent a hot-loop of callers racing to send requests before the CDN
-    /// state has fully cleared.</para>
+    /// indefinite HTTP send), this method cancels the probe's scoped CTS,
+    /// resolves outstanding waiters with a non-cancelled completion, and waits
+    /// for the owning probe to release its gate before returning. The async
+    /// scrape-boundary variant performs the same ownership-safe wait without
+    /// blocking a caller thread.</para>
     /// </summary>
     public void ResetCdnState()
+    {
+        var (completion, owner, hadActiveProbe) = BeginReset();
+        if (owner)
+        {
+            try
+            {
+                CompleteResetAsync(completion, synchronous: true, hadActiveProbe)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch
+            {
+                completion.TrySetException(new InvalidOperationException(
+                    "Synchronous CDN reset failed."));
+                throw;
+            }
+        }
+        else
+        {
+            completion.Task.GetAwaiter().GetResult();
+        }
+    }
+
+    private void ResetCdnStateCore()
     {
         // Snapshot before mutating so concurrent probe finally-block doesn't
         // double-dispose or see a stale reference.
@@ -1473,10 +1635,9 @@ public sealed class ResilientHttpExecutor
         // waiters don't hang. TrySetResult is a no-op if already completed.
         prevResolved?.TrySetResult(false);
 
-        // Force-release the gate. If the probe's finally runs later and calls
-        // Interlocked.Exchange(ref _probeRunning, 0) again, that's a harmless
-        // no-op — the value is already 0.
-        Interlocked.Exchange(ref _probeRunning, 0);
+        // Do not release the gate here. The old probe owns it until its finally
+        // block runs; releasing it before that point would allow a new probe to
+        // overlap the old probe and contaminate an operation-scoped snapshot.
     }
 
     /// <summary>Short cooldown armed after <see cref="ResetCdnState"/> when an
@@ -1545,6 +1706,97 @@ public sealed class ResilientHttpExecutor
                 .WaitAsync(ct)
                 .ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Cancels and awaits any existing CDN probe before resetting shared state.
+    /// This is the safe boundary for starting a new scrape operation.
+    /// </summary>
+    internal async Task ResetCdnStateAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var (completion, owner, _) = BeginReset();
+        if (owner)
+        {
+            // Once ownership is acquired, always finish the safety reset. A caller
+            // cancelling after this point must not reopen probe launches early.
+            await CompleteResetAsync(completion, synchronous: false, hadActiveProbe: false)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    private (
+        TaskCompletionSource<bool> Completion,
+        bool Owner,
+        bool HadActiveProbe) BeginReset()
+    {
+        lock (_resetLock)
+        {
+            if (_resetCompletion is not null)
+                return (_resetCompletion, false, false);
+
+            var completion = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _resetCompletion = completion;
+            Volatile.Write(ref _resetInProgress, 1);
+            var hadActiveProbe = Volatile.Read(ref _probeRunning) == 1;
+            ResetCdnStateCore();
+            return (completion, true, hadActiveProbe);
+        }
+    }
+
+    private async Task CompleteResetAsync(
+        TaskCompletionSource<bool> completion,
+        bool synchronous,
+        bool hadActiveProbe)
+    {
+        Exception? failure = null;
+        try
+        {
+            if (synchronous)
+            {
+                QuiesceCdnProbeAsync(CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else
+            {
+                await QuiesceCdnProbeAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
+            _cdnRetryIndex = 0;
+            _cdnResolved = null;
+            _cdnCooldownUntil = synchronous && hadActiveProbe
+                ? DateTimeOffset.UtcNow + ResetCooldownFloor
+                : default;
+            ResetBeforeReopenLaunches?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        finally
+        {
+            lock (_resetLock)
+            {
+                Volatile.Write(ref _resetInProgress, 0);
+                if (ReferenceEquals(_resetCompletion, completion))
+                    _resetCompletion = null;
+            }
+
+            if (failure is null)
+                completion.TrySetResult(true);
+            else
+                completion.TrySetException(failure);
+        }
+
+        if (failure is not null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     /// <summary>

@@ -89,15 +89,15 @@ public sealed class ScrapeOrchestrator
         var accessTokenProvider = tokenManager is not null
             ? new ScrapeAccessTokenProvider(tokenManager, accessToken, _log)
             : null;
+        var passCt = ct;
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
-        _globalScraper.ResetCdnState();
+        await _globalScraper.Executor.ResetCdnStateAsync(passCt);
 
         // Reset DOP to initial configured value so a CDN slash from a previous
         // pass doesn't leave us stuck at minDop for the next pass.
         _pool.ResetDop();
 
-        var passCt = ct;
         var catalogSongs = service.Songs
             .Where(static song => song.track?.su is not null)
             .ToArray();
@@ -108,6 +108,10 @@ public sealed class ScrapeOrchestrator
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun(catalogToken);
+        using var wireSendTelemetryScope =
+            _globalScraper.Executor.BeginTelemetryScope();
+        try
+        {
         var publicationId = _persistence.Meta
             .GetPublicationGenerationForScrape(scrapeId)?
             .PublicationId
@@ -670,6 +674,13 @@ public sealed class ScrapeOrchestrator
 
         var expectedSoloScopeCount =
             expectedSoloLeaderboardPairs?.Count ?? 0;
+        // Include all scrape-owned probe sends in the successful checkpoint.
+        // The pass token may be cancelled while the probe still has exact
+        // evidence to finish, so quiesce with a non-cancelled token.
+        await _globalScraper.Executor
+            .QuiesceCdnProbeAsync(CancellationToken.None);
+        var wireSendTelemetry =
+            ToPersistenceTelemetry(wireSendTelemetryScope.Snapshot());
         var acquisitionCheckpointRecorded =
             RecordAcquisitionCheckpointIfEligible(
                 _persistence.Meta,
@@ -686,7 +697,8 @@ public sealed class ScrapeOrchestrator
                 doSoloScrape,
                 soloCoverageResult?.IsComplete == true,
                 bandManifestResult is null || bandManifestResult.IsComplete,
-                failedWriterResults.Length == 0);
+                failedWriterResults.Length == 0,
+                wireSendTelemetry);
         if (acquisitionCheckpointRecorded)
         {
             _log.LogInformation(
@@ -731,7 +743,39 @@ public sealed class ScrapeOrchestrator
             ScrapeDuration = sw.Elapsed,
             EpicReportedOver100Pages = epicReportedOver100Pages,
         };
+        }
+        finally
+        {
+            try
+            {
+                // A probe is scrape-owned background work. Quiesce it before
+                // taking the terminal snapshot, but do not use passCt: a
+                // cancelled pass still has exact sends to preserve.
+                await _globalScraper.Executor
+                    .QuiesceCdnProbeAsync(CancellationToken.None);
+                _persistence.Meta.RecordScrapeAcquisitionTelemetry(
+                    scrapeId,
+                    ToPersistenceTelemetry(wireSendTelemetryScope.Snapshot()));
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Could not persist partial wire-send telemetry for scrape {ScrapeId}.",
+                    scrapeId);
+            }
+        }
     }
+
+    private static ScrapeWireSendTelemetry ToPersistenceTelemetry(
+        HttpSendTelemetry telemetry) =>
+        new(
+            telemetry.TotalHttpSends,
+            telemetry.ProbeHttpSends,
+            telemetry.ProbeSuccesses,
+            telemetry.StatusRetries,
+            telemetry.NetworkErrors,
+            telemetry.CdnBlocksDetected);
 
     private async Task ObserveTimedOutBandTaskAsync(Task bandTask, CancellationToken passCt)
     {
@@ -812,7 +856,8 @@ public sealed class ScrapeOrchestrator
         bool doSoloScrape,
         bool soloCoverageComplete,
         bool bandManifestGatePassed,
-        bool writerGatePassed)
+        bool writerGatePassed,
+        ScrapeWireSendTelemetry? wireSendTelemetry = null)
     {
         if (!doSoloScrape
             || expectedSoloLeaderboardPairs is not { Count: > 0 }
@@ -835,7 +880,8 @@ public sealed class ScrapeOrchestrator
                 totalRequests,
                 totalBytes,
                 expectedSoloLeaderboardPairs,
-                epicReportedOver100Pages);
+                epicReportedOver100Pages,
+                wireSendTelemetry);
         }
         catch (Exception ex)
         {

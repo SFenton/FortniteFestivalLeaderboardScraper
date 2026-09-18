@@ -25,7 +25,11 @@ public interface IMetaDatabase : IDisposable
         long totalBytes,
         IReadOnlyCollection<(string SongId, string Instrument)>
             expectedSoloLeaderboardPairs,
-        bool epicReportedOver100Pages = false);
+        bool epicReportedOver100Pages = false,
+        ScrapeWireSendTelemetry? wireSendTelemetry = null);
+    void RecordScrapeAcquisitionTelemetry(
+        long scrapeId,
+        ScrapeWireSendTelemetry wireSendTelemetry);
     void CompleteScrapeRun(
         long scrapeId,
         int songsScraped,

@@ -1225,6 +1225,119 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task AcquisitionCheckpoint_persists_wire_send_telemetry_atomically()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        var telemetry = new ScrapeWireSendTelemetry(
+            TotalSends: 12,
+            ProbeSends: 3,
+            ProbeSuccesses: 1,
+            StatusRetries: 4,
+            NetworkErrors: 2,
+            CdnBlocks: 2);
+        var pairs = SoloPairs("song-a");
+
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId,
+            1,
+            10,
+            2,
+            100,
+            pairs,
+            wireSendTelemetry: telemetry);
+
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT wire_send_total, wire_send_probe_sends,
+                   wire_send_probe_successes, wire_send_status_retries,
+                   wire_send_network_errors, wire_send_cdn_blocks,
+                   acquisition_completed_at
+            FROM scrape_log
+            WHERE id = @scrapeId
+            """;
+        command.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(12, reader.GetInt64(0));
+        Assert.Equal(3, reader.GetInt64(1));
+        Assert.Equal(1, reader.GetInt64(2));
+        Assert.Equal(4, reader.GetInt64(3));
+        Assert.Equal(2, reader.GetInt64(4));
+        Assert.Equal(2, reader.GetInt64(5));
+        Assert.False(reader.IsDBNull(6));
+    }
+
+    [Fact]
+    public void Failed_acquisition_can_persist_exact_partial_wire_send_telemetry()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.RecordScrapeAcquisitionTelemetry(
+            scrapeId,
+            new ScrapeWireSendTelemetry(
+                TotalSends: 5,
+                ProbeSends: 0,
+                ProbeSuccesses: 0,
+                StatusRetries: 1,
+                NetworkErrors: 2,
+                CdnBlocks: 1));
+        Db.FailScrapeRun(scrapeId, "leaderboards", "test failure");
+
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT wire_send_total, wire_send_status_retries,
+                   wire_send_network_errors, wire_send_cdn_blocks,
+                   acquisition_completed_at, status
+            FROM scrape_log
+            WHERE id = @scrapeId
+            """;
+        command.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(5, reader.GetInt64(0));
+        Assert.Equal(1, reader.GetInt64(1));
+        Assert.Equal(2, reader.GetInt64(2));
+        Assert.Equal(1, reader.GetInt64(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.Equal("failed", reader.GetString(5));
+    }
+
+    [Fact]
+    public void AcquisitionTelemetry_validates_id_and_is_idempotent_after_checkpoint()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Db.RecordScrapeAcquisitionTelemetry(
+                0,
+                new ScrapeWireSendTelemetry(1, 0, 0, 0, 0, 0)));
+        Assert.Throws<ArgumentException>(() =>
+            Db.RecordScrapeAcquisitionTelemetry(
+                1,
+                new ScrapeWireSendTelemetry(1, 0, 0, 2, 2, 2)));
+
+        var scrapeId = Db.StartScrapeRun();
+        Db.RecordScrapeAcquisitionCheckpoint(
+            scrapeId,
+            1,
+            1,
+            1,
+            1,
+            SoloPairs("song-a"),
+            wireSendTelemetry: new ScrapeWireSendTelemetry(1, 0, 0, 0, 0, 0));
+
+        // The successful checkpoint owns the durable values; terminal cleanup
+        // is an expected no-op rather than a silently ignored missing update.
+        Db.RecordScrapeAcquisitionTelemetry(
+            scrapeId,
+            new ScrapeWireSendTelemetry(2, 0, 0, 0, 0, 0));
+    }
+
+    [Fact]
     public void LegacyPartialMetrics_without_checkpoint_are_not_resumable()
     {
         var scrapeId = Db.StartScrapeRun();
