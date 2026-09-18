@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { isPrimaryDesktopProject, isPrimaryMobileProject } from '../../support/projects';
+import { dismissObstructions } from '../../support/drivers/app';
 
 const PLAYER = { type: 'player', accountId: 'web32-player', displayName: 'WEB32 Player' } as const;
 const BAND = {
@@ -23,7 +24,7 @@ test('desktop first-open chunks preserve loading, close/reopen, focus, and sorti
   const moduleRequests = trackModuleRequests(page);
   await seedState(page, null);
   await page.goto('/#/songs', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   expect(moduleRequests.some(url => url.includes('/components/search/SearchModal.tsx'))).toBe(false);
   expect(moduleRequests.some(url => url.includes('@dnd-kit'))).toBe(false);
@@ -71,7 +72,7 @@ test('desktop profile selection and notifications load only on interaction', asy
   const moduleRequests = trackModuleRequests(page);
   await seedState(page, null);
   await page.goto('/#/songs', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   const profileButton = page.getByTestId('desktop-header-profile');
   await profileButton.click();
@@ -86,7 +87,7 @@ test('desktop profile selection and notifications load only on interaction', asy
 
   await seedState(page, PLAYER);
   await page.reload({ waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
   expect(moduleRequests.some(url => url.includes('/components/notifications/MobileNotificationsModal.tsx'))).toBe(false);
   expect(moduleRequests.some(url => url.includes('/components/notifications/notificationMocks.ts'))).toBe(false);
 
@@ -110,7 +111,7 @@ test('desktop filters defer both Songs and selected-band controls', async ({ pag
   const moduleRequests = trackModuleRequests(page);
   await seedState(page, PLAYER);
   await page.goto('/#/songs', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   const filterButton = page.getByRole('button', { name: 'Filter' }).first();
   await filterButton.click();
@@ -123,7 +124,7 @@ test('desktop filters defer both Songs and selected-band controls', async ({ pag
 
   await seedState(page, BAND);
   await page.reload({ waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
   expect(moduleRequests.some(url => url.includes('/pages/band/modals/BandInstrumentFilterModal.tsx'))).toBe(false);
 
   const bandFilterButton = page.getByTestId('band-filter-pill');
@@ -141,7 +142,7 @@ test('mobile search uses touch-driven field focus and restores the launch contro
   test.skip(!isPrimaryMobileProject(testInfo.project.name), 'mobile keyboard behavior is covered once');
   await seedState(page, null);
   await page.goto('/#/songs', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   const searchButton = page.getByTestId('mobile-header-search');
   const releaseSearchModule = await holdFirstRoute(page, '**/src/components/search/SearchModal.tsx*');
@@ -183,7 +184,7 @@ test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus'
   test.skip(!isPrimaryMobileProject(testInfo.project.name), 'mobile Rivals focus behavior is covered once');
   await seedState(page, PLAYER);
   await page.goto('/#/rivals', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   const findRivalButton = page.getByRole('button', { name: 'Find Rival' });
   await findRivalButton.tap();
@@ -208,7 +209,7 @@ test('lazy chunk failure stays in an accessible fail-closed modal', async ({ pag
   test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'chunk failure behavior is covered once');
   await seedState(page, null);
   await page.goto('/#/songs', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
   await page.route('**/src/components/search/SearchModal.tsx*', route => route.abort('failed'), { times: 1 });
 
   await page.getByTestId('desktop-header-search').click();
@@ -267,30 +268,6 @@ async function seedState(page: Page, profile: typeof PLAYER | typeof BAND | null
       }));
     }
   }, profile);
-}
-
-async function dismissOverlays(page: Page) {
-  await page.waitForTimeout(750);
-  let quietChecks = 0;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const firstRunClose = page.getByTestId('fre-close').last();
-    if (await firstRunClose.isVisible().catch(() => false)) {
-      await firstRunClose.evaluate(element => (element as HTMLButtonElement).click());
-      await firstRunClose.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
-      quietChecks = 0;
-      continue;
-    }
-    const dismiss = page.getByRole('button', { name: 'Dismiss' }).last();
-    if (await dismiss.isVisible().catch(() => false)) {
-      await dismiss.evaluate(element => (element as HTMLButtonElement).click());
-      await dismiss.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
-      quietChecks = 0;
-      continue;
-    }
-    quietChecks += 1;
-    if (quietChecks >= 3) return;
-    await page.waitForTimeout(300);
-  }
 }
 
 async function installApiMocks(page: Page) {

@@ -91,9 +91,13 @@ src/**/*.story.tsx      Production component scenarios
 - Use test IDs for geometry, virtualization, chart internals, and generated
   rows that do not have a stable accessible identity.
 - Drivers perform stable user actions. Assertions remain in specs.
+- `support/drivers/app.ts` owns bounded, forced dismissal of transient First Run
+  and release-notes obstructions; specs should use `dismissObstructions` rather
+  than evaluating a dismissal button directly because modal replacement can
+  detach the locator during a mobile action.
 - Do not centralize every production test ID into one registry.
-- Avoid `waitForTimeout`; use web-first assertions, request records, the
-  Playwright clock, or transition completion signals.
+- Avoid arbitrary `waitForTimeout`; the obstruction driver is the bounded
+  polling exception for transient modal replacement.
 
 ## Projects
 
