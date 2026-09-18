@@ -102,13 +102,17 @@ export function VirtualizedSuggestionsList({
     scrollMargin,
   });
   const previousMeasurementKeyRef = useRef(measurementKey);
+  const previousIdentityRef = useRef(identity);
 
   useEffect(() => {
     virtualizer.measure();
   }, [identity, isNarrow, virtualizer]);
 
   useLayoutEffect(() => {
-    if (previousMeasurementKeyRef.current === measurementKey) return;
+    const identityChanged = previousIdentityRef.current !== identity;
+    const measurementChanged = previousMeasurementKeyRef.current !== measurementKey;
+    if (!identityChanged && !measurementChanged) return;
+    previousIdentityRef.current = identity;
     previousMeasurementKeyRef.current = measurementKey;
     const scrollElement = scrollContainerRef.current;
     if (!scrollElement) return;
@@ -128,9 +132,9 @@ export function VirtualizedSuggestionsList({
     return () => {
       cancelAnimationFrame(firstFrame);
       cancelAnimationFrame(secondFrame);
-      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
     };
-  }, [measurementKey, scrollContainerRef, virtualizer]);
+  }, [identity, measurementKey, scrollContainerRef, virtualizer]);
 
   useScrollFade(
     scrollContainerRef,
