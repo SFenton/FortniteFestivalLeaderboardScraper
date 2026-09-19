@@ -18,6 +18,21 @@ describe('PublicationBoundary', () => {
     vi.useRealTimers();
   });
 
+  it('shows the accessible purple startup splash while publication is unresolved', () => {
+    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    render(
+      <PublicationBoundary>
+        <div>Published app</div>
+      </PublicationBoundary>,
+    );
+
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('startup-splash')).toBeInTheDocument();
+    expect(screen.queryByText('Loading published data...')).not.toBeInTheDocument();
+    expect(screen.queryByText('Published app')).not.toBeInTheDocument();
+  });
+
   it('shows service unavailable while retrying a transient bootstrap failure', async () => {
     global.fetch = vi.fn()
       .mockRejectedValueOnce(new Error('temporary outage'))

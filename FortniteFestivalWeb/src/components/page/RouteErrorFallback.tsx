@@ -9,10 +9,12 @@ import {
   flexColumn, flexCenter, padding, border,
 } from '@festival/theme';
 import PressableButton from '../common/PressableButton';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 
 export default function RouteErrorFallback() {
   const { t } = useTranslation();
   const s = useStyles();
+  useSetPageReady(true);
   return (
     <div style={s.container}>
       <h1 style={s.title}>{t('common.error')}</h1>

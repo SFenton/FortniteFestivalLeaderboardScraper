@@ -7,8 +7,8 @@ import { useLocation } from 'react-router-dom';
  * Pages publish `true` when their main content has reached `LoadPhase.ContentIn`
  * (or otherwise considers itself "in"). The shell reads this and AND's it into
  * the mobile FAB's `ready` prop so the FAB row reveals in lockstep with the
- * page's own staggered content. Pages that do not opt in default to `true`
- * so unmigrated routes behave as before.
+ * page's own staggered content and the initial app reveal. Every terminal
+ * route must publish readiness; the safe default is `false`.
  */
 type PageReadyContextValue = {
   pageReady: boolean;

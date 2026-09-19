@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render as renderWithTestingLibrary, waitFor, fireEvent } from '@testing-library/react';
+import { render as renderWithTestingLibrary, waitFor, fireEvent, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
@@ -23,6 +23,7 @@ const mockApi = vi.hoisted(() => {
 import App from '../../src/App';
 import type { SelectedBandProfile } from '../../src/hooks/data/useSelectedProfile';
 import { queryClient } from '../../src/api/queryClient';
+import { seedAllFirstRunSeen } from '../helpers/firstRunState';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
@@ -77,6 +78,49 @@ beforeEach(() => {
 });
 
 describe('AppShell', () => {
+  it('keeps the shell inert until the splash reveals it, then admits the changelog portal', async () => {
+    seedAllFirstRunSeen();
+    const { container } = render(<App />);
+
+    const shell = await screen.findByTestId('app-shell');
+    const splash = screen.getByTestId('startup-splash');
+    expect(shell).toHaveAttribute('inert');
+    expect(shell).toHaveAttribute('aria-hidden', 'true');
+    expect(shell).toHaveStyle({ opacity: '0' });
+    expect(screen.queryByRole('dialog', { name: /What's New/i })).not.toBeInTheDocument();
+
+    await waitFor(() => expect(splash).toHaveAttribute('data-phase', 'revealing'), { timeout: 3_000 });
+    expect(shell).toHaveStyle({ opacity: '1' });
+    expect(shell).toHaveAttribute('inert');
+    expect(screen.queryByRole('dialog', { name: /What's New/i })).not.toBeInTheDocument();
+
+    fireEvent.transitionEnd(splash, { propertyName: 'opacity' });
+
+    await waitFor(() => expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument());
+    expect(shell).not.toHaveAttribute('inert');
+    expect(shell).not.toHaveAttribute('aria-hidden');
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /What's New/i })).toBeInTheDocument());
+    expect(container.querySelector('[data-testid="app-shell"]')).toBe(shell);
+  });
+
+  it('does not mount the First Run body portal before startup entry completes', async () => {
+    const { changelogHash } = await import('../../src/changelogHash');
+    const { APP_VERSION } = await import('../../src/hooks/data/useVersions');
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    render(<App />);
+
+    const splash = screen.getByTestId('startup-splash');
+    expect(screen.queryByTestId('fre-overlay')).not.toBeInTheDocument();
+
+    await waitFor(() => expect(splash).toHaveAttribute('data-phase', 'revealing'), { timeout: 3_000 });
+    expect(screen.queryByTestId('fre-overlay')).not.toBeInTheDocument();
+
+    fireEvent.transitionEnd(splash, { propertyName: 'opacity' });
+
+    await waitFor(() => expect(screen.getByTestId('fre-overlay')).toBeInTheDocument());
+    expect(screen.queryByRole('dialog', { name: /What's New/i })).not.toBeInTheDocument();
+  });
+
   /* ── Route rendering ── */
   it('renders songs page by default (/ redirects to /songs)', async () => {
     const { container } = render(<App />);

@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-19
-last_verified_commit: b991958d
+last_verified_commit: 1e9bade8
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -14,6 +14,10 @@ sources:
   - FortniteFestivalWeb/src/App.tsx
   - FortniteFestivalWeb/src/App.module.css
   - FortniteFestivalWeb/src/appStyles.ts
+  - FortniteFestivalWeb/src/components/common/StartupSplash.tsx
+  - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
+  - FortniteFestivalWeb/src/components/leaderboard/PaginatedLeaderboard.tsx
+  - FortniteFestivalWeb/src/components/maintenance/BackendAvailabilityGate.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.module.css
   - FortniteFestivalWeb/src/components/page/PageQuickLinks.tsx
@@ -33,6 +37,9 @@ sources:
   - FortniteFestivalWeb/src/components/shell/ShellScrollRestoration.tsx
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
+  - FortniteFestivalWeb/src/contexts/PageReadyContext.tsx
+  - FortniteFestivalWeb/src/contexts/StartupEntranceContext.tsx
+  - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
@@ -73,6 +80,8 @@ sources:
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
+  - FortniteFestivalWeb/e2e/specs/browser/startup-transition.spec.ts
+  - FortniteFestivalWeb/e2e/specs/platform/publication.spec.ts
   - FortniteFestivalWeb/e2e/README.md
   - FortniteFestivalWeb/nginx.conf
 update_triggers:
@@ -111,7 +120,31 @@ removed together rather than retained to inflate coverage.
 
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
-WebSocket, and remounts the app with the new publication ID.
+WebSocket, and remounts the app with the new publication ID. Unresolved
+publication and backend-availability checks use the same full-viewport,
+solid-`--color-bg-app` startup surface with one centered `ArcSpinner`; they do
+not expose the maintenance title, status copy, or logo treatment. The
+publication boundary owns the one visually hidden polite loading announcement,
+while later bootstrap stages are accessibility-silent. Actual publication or
+availability failures still render the full maintenance experience.
+
+After the application mounts, `PageReadyProvider` starts each route as not
+ready. The shell remains `opacity: 0`, `inert`, and `aria-hidden` behind an
+app-owned startup splash while the active page and lazy animated background
+prepare. When the page publishes its terminal content-ready state, the shell
+becomes opaque underneath the still-covered splash and only the splash fades
+for the shared 300 ms transition. Completion accepts the splash's own opacity
+`transitionend` and has a 100 ms safety fallback; reduced-motion users enter
+without the fade. Entry is latched for the lifetime of the mounted app, so
+normal route readiness resets never replay the startup surface.
+
+Songs publishes readiness at `LoadPhase.ContentIn`; route-error fallbacks
+publish terminal readiness immediately, while unsupported URLs redirect to
+Songs and complete through its normal readiness path.
+`StartupEntranceContext` also prevents First Run, changelog, and fixed
+leaderboard-footer body portals from mounting before entry. First Run may
+reserve eligibility while hidden and retains priority over the changelog when
+both are eligible.
 
 ## Routes
 

@@ -145,11 +145,14 @@ import { HEADER_NOTIFICATION_SWAP_FADE_MS, type HeaderNotificationVisualState } 
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { PageReadyProvider, usePageReady } from './contexts/PageReadyContext';
+import { StartupEntranceProvider } from './contexts/StartupEntranceContext';
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { FabVisibilityProvider } from './contexts/FabVisibilityContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useShopState } from './hooks/data/useShopState';
+import { useInitialAppReveal } from './hooks/ui/useInitialAppReveal';
+import StartupSplash from './components/common/StartupSplash';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
@@ -452,6 +455,8 @@ function WideDesktopLayout({
 }
 function AppShell() {
   const { t } = useTranslation();
+  const pageReady = usePageReady();
+  const startupReveal = useInitialAppReveal(pageReady);
   const { profile: selectedProfile, player, clearPlayer } = useTrackedPlayer();
   useSelectedProfileNameRefresh(selectedProfile);
   const { state: { songs } } = useFestival();
@@ -557,7 +562,7 @@ function AppShell() {
   });
   const [changelogDismissed, setChangelogDismissed] = useState(false);
   const { activeCarouselKey } = useFirstRunContext();
-  const showChangelog = hasNewChangelog && !changelogDismissed && !activeCarouselKey;
+  const showChangelog = startupReveal.entered && hasNewChangelog && !changelogDismissed && !activeCarouselKey;
   /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
     localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
@@ -959,10 +964,9 @@ function AppShell() {
   const playerBandsFilterGroup = useMemo(() => new URLSearchParams(location.search).get('group') ?? 'all', [location.search]);
   const playerBandsFilterActive = PLAYER_BANDS_ACTIVE_FILTER_GROUPS.has(playerBandsFilterGroup);
   const showMobileFab = isMobile && !notificationsOpen;
-  // Pages publish their content-ready state via `useSetPageReady` (defaults to
-  // true for pages that don't opt in). The FAB row's `ready` prop AND's with
-  // this so the FAB reveals in lockstep with the page's own staggered content.
-  const pageReady = usePageReady();
+  // Pages publish their content-ready state via `useSetPageReady`. The startup
+  // entrance and FAB row both consume it so shell chrome and page content
+  // reveal in lockstep.
   const isStatisticsRoute = routePathname === AppRoutes.statistics;
   const isPlayerDetailRoute = RoutePatterns.player.test(routePathname);
   const playerDetailFabReady = isStatisticsRoute
@@ -979,6 +983,7 @@ function AppShell() {
   const bandRankingsComboOnlyAction = !showBandRankingsMetricFab ? leaderboardBandComboFabActions[0] : undefined;
 
   return (
+    <StartupEntranceProvider complete={startupReveal.entered}>
     <BandFilterActionProvider value={bandFilterActionValue}>
     <PlayerDataProvider accountId={player?.accountId}>
     <FabVisibilityProvider mobileFabHidden={!showMobileFab}>
@@ -997,7 +1002,16 @@ function AppShell() {
         </Suspense>
       </ErrorBoundary>
     )}
-    <div style={appStyles.shell}>
+    <div
+      data-testid="app-shell"
+      data-startup-phase={startupReveal.phase}
+      inert={!startupReveal.entered}
+      aria-hidden={startupReveal.entered ? undefined : true}
+      style={{
+        ...appStyles.shell,
+        opacity: startupReveal.phase === 'waiting' ? 0 : 1,
+      }}
+    >
       <RouteAccessibility
         pathname={location.pathname}
         titleOverride={navTitle}
@@ -1488,9 +1502,16 @@ function AppShell() {
         )}
       </LazyModalBoundary>
     </div>
+    {startupReveal.phase !== 'entered' && (
+      <StartupSplash
+        phase={startupReveal.phase === 'revealing' ? 'revealing' : 'covered'}
+        onExitComplete={startupReveal.complete}
+      />
+    )}
     </>
     </FabVisibilityProvider>
     </PlayerDataProvider>
     </BandFilterActionProvider>
+    </StartupEntranceProvider>
   );
 }

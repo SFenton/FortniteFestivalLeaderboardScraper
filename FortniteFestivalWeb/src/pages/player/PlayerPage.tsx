@@ -24,6 +24,7 @@ import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { statisticsSlides } from './firstRun';
+import { useStartupEntranceComplete } from '../../contexts/StartupEntranceContext';
 
 
 /** Track rendered accounts so we can skip stagger animation on revisit. */
@@ -54,6 +55,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   useRegisterFirstRun('statistics', t('nav.statistics'), slidesMemo);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
   const firstRun = useFirstRun('statistics', firstRunGateCtx, slidesMemo);
+  const startupEntranceComplete = useStartupEntranceComplete();
 
   // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({
@@ -229,7 +231,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       {loadPhase === LoadPhase.ContentIn && data && (
         <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} showUntrackedHistoryNotice={showUntrackedHistoryNotice} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => { setShowCompleteBanner(false); if (isTrackedPlayer) ctx.dismissSyncBanner(); }} statsData={statsData} rankingQueryResults={instrumentRankingQueries.map(q => q.data ?? null)} />
       )}
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
+      {startupEntranceComplete && firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </>
   );
 }
