@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-07
+last_verified: 2026-09-19
 last_verified_commit: 0b07fff0
 sources:
   - FSTService/Api/ApiEndpoints.cs
@@ -30,6 +30,8 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Api/PublicationReadiness.cs
   - FSTService/Api/AdminPathRegenerationGate.cs
+  - FSTService/Api/AdminEndpoints.cs
+  - FSTService/Scraping/ItemShopService.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
@@ -144,6 +146,11 @@ building. Immediate live generation must not race a staged publication-safe
 promotion, and in publication-bound mode path state changes through worker
 scrape-pass staging, guarded max-score maintenance, or the rearm route instead.
 The route, auth, and payload shape are unchanged.
+
+`POST /api/admin/shop/refresh` remains an authenticated `AdminPrivate` route.
+It returns `409 Conflict` with `error=item_shop_refresh_disabled` when
+`Scraper:EnableItemShopRefresh=false`, so a worker or persisted-state-only role
+cannot bypass Item Shop provider ownership through the manual endpoint.
 
 `POST /api/admin/path-generation/rearm?songId=<id>` is a protected private
 route that clears automatic scrape-pass staging deferral state

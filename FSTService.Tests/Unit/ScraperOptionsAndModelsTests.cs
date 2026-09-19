@@ -42,6 +42,10 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.QueryProBass);
         Assert.Equal("data", opts.DataDirectory);
         Assert.Equal("data/device-auth.json", opts.DeviceAuthPath);
+        Assert.True(opts.EnableItemShopRefresh);
+        Assert.Equal(
+            TimeSpan.FromMinutes(15),
+            opts.ItemShopRefreshInterval);
         Assert.False(opts.ApiOnly);
         Assert.False(opts.SkipStartupSchemaInitialization);
         Assert.False(opts.RolloutReadOnlyStartup);
@@ -96,6 +100,8 @@ public class ScraperOptionsAndModelsTests
             DegreeOfParallelism = 8,
             QueryLead = false,
             QueryBass = false,
+            EnableItemShopRefresh = false,
+            ItemShopRefreshInterval = TimeSpan.FromMinutes(30),
             ApiOnly = true,
             RolloutReadOnlyStartup = true,
             RolloutPostgresReadOnly = true,
@@ -110,6 +116,10 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(8, opts.DegreeOfParallelism);
         Assert.False(opts.QueryLead);
         Assert.False(opts.QueryBass);
+        Assert.False(opts.EnableItemShopRefresh);
+        Assert.Equal(
+            TimeSpan.FromMinutes(30),
+            opts.ItemShopRefreshInterval);
         Assert.True(opts.ApiOnly);
         Assert.True(opts.RolloutReadOnlyStartup);
         Assert.True(opts.RolloutPostgresReadOnly);
@@ -175,6 +185,38 @@ public class ScraperOptionsAndModelsTests
             {
                 MaxScoreMaintenanceCommandTimeoutSeconds =
                     value,
+            });
+
+        Assert.False(result.Failed);
+    }
+
+    [Fact]
+    public void ScraperOptionsValidator_RejectsNonPositiveItemShopIntervalWhenEnabled()
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableItemShopRefresh = true,
+                ItemShopRefreshInterval = TimeSpan.Zero,
+            });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            nameof(ScraperOptions.ItemShopRefreshInterval),
+            result.FailureMessage,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScraperOptionsValidator_AllowsUnusedItemShopIntervalWhenDisabled()
+    {
+        var result = new ScraperOptionsValidator().Validate(
+            null,
+            new ScraperOptions
+            {
+                EnableItemShopRefresh = false,
+                ItemShopRefreshInterval = TimeSpan.Zero,
             });
 
         Assert.False(result.Failed);

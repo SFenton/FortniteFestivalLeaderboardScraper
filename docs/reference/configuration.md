@@ -1,12 +1,14 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-14
+last_verified: 2026-09-19
 last_verified_commit: d15cbdf7
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
   - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Scraping/ItemShopService.cs
+  - FSTService/StartupInitializer.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
@@ -125,6 +127,21 @@ remain tied to the catalog captured when the worker allocated its publication.
 The repository Compose files contain only a commented 15-minute example.
 Production keeps the code default unless the production-owned Compose project
 explicitly overrides `Scraper__SongSyncInterval`.
+
+## Item Shop reconciliation
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `Scraper:EnableItemShopRefresh` | `true` | Makes the process responsible for provider polling, reconciliation, service notifications, and shop timers |
+| `Scraper:ItemShopRefreshInterval` | `00:15:00` | Daytime reconciliation cadence; must be positive when refresh ownership is enabled |
+
+The Compose forms are `Scraper__EnableItemShopRefresh` and
+`Scraper__ItemShopRefreshInterval`. Production role files explicitly enable
+refresh on `fstservice` at 15 minutes and disable it on `fstworker`. A disabled
+role still loads and serves the persisted `item_shop_tracks` projection but
+performs no provider request, notification reconciliation, cleanup, or timer
+registration. This is a backend role setting with no browser feature-flag
+surface.
 
 ## Path generation
 
@@ -305,6 +322,9 @@ reuse, legacy automatic path generation, and publication read context. It sets
 and CHOpt maxima from the publication snapshot and rejects immediate admin path
 regeneration. It intentionally does not set
 `Scraper__EnableScrapePassPathGeneration`: staging is worker-only.
+The service role also sets `Scraper__EnableItemShopRefresh=true` and
+`Scraper__ItemShopRefreshInterval=00:15:00`, making it the sole supported
+provider-refresh owner.
 
 `deploy/config/fstworker-role.env` sets
 `Scraper__UsePublicationPathArtifacts=true` and
@@ -323,9 +343,10 @@ restart.
 the three publication correctness gates, writes published scope sources, keeps
 public-read ownership off the worker, enables scope fingerprints and
 unchanged-snapshot reuse after accepted scrape 1303, leaves publication read
-context disabled, and sets
+context disabled, sets `Scraper__EnableItemShopRefresh=false`, and sets
 `WriteLegacyLiveLeaderboardDuringScrape=false`.
-With that value, the post-scrape legacy stored-rank phase completes its
+The worker therefore loads persisted Item Shop state without provider HTTP or
+shop timers. With the legacy-write value, the post-scrape legacy stored-rank phase completes its
 publication-critical contract without performing a rank update. It is never
 persisted as skipped. Setting the rollback flag to `true` restores the existing
 legacy recompute implementation and its publication-critical failure behavior.

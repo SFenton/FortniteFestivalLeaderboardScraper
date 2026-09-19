@@ -215,27 +215,60 @@ public class ItemShopServiceTests
         HttpMessageHandler handler,
         MetaDatabase? metaDb = null,
         ImprovementNotificationService? improvementNotifications = null)
+        => CreateServiceWithCatalog(
+            handler,
+            metaDb,
+            improvementNotifications).Service;
+
+    private static (
+        ItemShopService Service,
+        FestivalService FestivalService)
+        CreateServiceWithCatalog(
+            HttpMessageHandler handler,
+            MetaDatabase? metaDb = null,
+            ImprovementNotificationService? improvementNotifications = null)
     {
         var http = new HttpClient(handler);
         var svc = new FestivalService((IFestivalPersistence?)null);
 
-        // Add a test song that matches the hash in our fake HTML
+        AddCatalogSong(
+            svc,
+            "1faef457-e84e-424b-b9de-65417f34f863",
+            "Flowers",
+            "Miley Cyrus",
+            "flowers");
+
+        return (
+            new ItemShopService(
+                http,
+                svc,
+                metaDb ?? new InMemoryMetaDatabase().Db,
+                improvementNotifications,
+                Substitute.For<ILogger<ItemShopService>>()),
+            svc);
+    }
+
+    private static void AddCatalogSong(
+        FestivalService service,
+        string songId,
+        string title,
+        string artist,
+        string? providerTrackId = null)
+    {
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var songsField = typeof(FestivalService).GetField("_songs", flags)!;
         var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
-        var dict = (Dictionary<string, Song>)songsField.GetValue(svc)!;
-        dict["1faef457-e84e-424b-b9de-65417f34f863"] = new Song
+        var dict = (Dictionary<string, Song>)songsField.GetValue(service)!;
+        var track = new Track
         {
-            track = new Track { su = "1faef457-e84e-424b-b9de-65417f34f863", tt = "Flowers", an = "Miley Cyrus" },
+            su = songId,
+            tt = title,
+            an = artist,
         };
-        dirtyField.SetValue(svc, true);
-
-        return new ItemShopService(
-            http,
-            svc,
-            metaDb ?? new InMemoryMetaDatabase().Db,
-            improvementNotifications,
-            Substitute.For<ILogger<ItemShopService>>());
+        if (providerTrackId is not null)
+            track.ti = $"SparksSong:{providerTrackId}";
+        dict[songId] = new Song { track = track };
+        dirtyField.SetValue(service, true);
     }
 
     private static string MakeShopJson(params string[] titles)
@@ -461,23 +494,130 @@ public class ItemShopServiceTests
     }
 
     [Fact]
-    public void ExtractEntries_Deduplicates()
+    public void ExtractEntries_DeduplicatesByStableIdAndMergesMetadata()
     {
         var json = """
         {
             "data": {
                 "entries": [
-                    { "tracks": [{ "title": "Dream On" }], "outDate": "2026-03-30T23:59:59.999Z" },
-                    { "tracks": [{ "title": "Dream On" }], "outDate": "2026-04-01T23:59:59.999Z" }
+                    {
+                        "tracks": [{ "id": "dream-on", "title": "Dream On" }],
+                        "inDate": "2026-03-28T00:00:00.000Z",
+                        "outDate": "2026-03-30T23:59:59.999Z",
+                        "banner": { "backendValue": "AmountOff" }
+                    },
+                    {
+                        "tracks": [{ "id": "dream-on", "title": "Dream On" }],
+                        "inDate": "2026-03-29T00:00:00.000Z",
+                        "outDate": "2026-04-01T23:59:59.999Z",
+                        "banner": { "backendValue": "New" }
+                    }
                 ]
             }
         }
         """;
 
         var entries = ItemShopService.ExtractJamTrackEntries(json);
-        Assert.Single(entries);
-        // First occurrence wins
-        Assert.Equal(30, entries[0].OutDate!.Value.Day);
+        var entry = Assert.Single(entries);
+        Assert.Equal("dream-on", entry.TrackId);
+        Assert.True(entry.IsNew);
+        Assert.Equal(29, entry.InDate!.Value.Day);
+        Assert.Equal(1, entry.OutDate!.Value.Day);
+    }
+
+    [Fact]
+    public void ExtractEntries_DuplicateOrderDoesNotChangeMergedResult()
+    {
+        const string first = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{ "id": "cryforme", "title": "Cry For Me" }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "AmountOff" }
+                    },
+                    {
+                        "tracks": [{ "id": "cryforme", "title": "Cry For Me" }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "New" }
+                    }
+                ]
+            }
+        }
+        """;
+        const string reversed = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{ "id": "cryforme", "title": "Cry For Me" }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "New" }
+                    },
+                    {
+                        "tracks": [{ "id": "cryforme", "title": "Cry For Me" }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "AmountOff" }
+                    }
+                ]
+            }
+        }
+        """;
+
+        Assert.Equal(
+            Assert.Single(ItemShopService.ExtractJamTrackEntries(first)),
+            Assert.Single(ItemShopService.ExtractJamTrackEntries(reversed)));
+    }
+
+    [Fact]
+    public void ExtractEntries_DuplicateWithUnknownEndDoesNotClaimLeavingDate()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{ "id": "track-id", "title": "Song" }],
+                        "outDate": "2026-09-19T23:59:59.999Z"
+                    },
+                    {
+                        "tracks": [{ "id": "track-id", "title": "Song" }]
+                    }
+                ]
+            }
+        }
+        """;
+
+        var entry = Assert.Single(
+            ItemShopService.ExtractJamTrackEntries(json));
+
+        Assert.Null(entry.OutDate);
+    }
+
+    [Fact]
+    public void ExtractEntries_DoesNotMergeDifferentStableIdsWithSameTitle()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "id": "first", "title": "Same Title" }] },
+                    { "tracks": [{ "id": "second", "title": "Same Title" }] }
+                ]
+            }
+        }
+        """;
+
+        var entries = ItemShopService.ExtractJamTrackEntries(json);
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains(entries, entry => entry.TrackId == "first");
+        Assert.Contains(entries, entry => entry.TrackId == "second");
     }
 
     [Fact]
@@ -577,8 +717,8 @@ public class ItemShopServiceTests
         var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Dream On"] = "song-1",
-            ["Flowers"]  = "song-2",
-            ["Maps"]     = "song-3",
+            ["Flowers"] = "song-2",
+            ["Maps"] = "song-3",
         };
 
         var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
@@ -671,6 +811,7 @@ public class ItemShopServiceTests
             NullLogger<ImprovementNotificationService>.Instance);
         var handler = new MockHttpMessageHandler();
         handler.EnqueueJsonOk(json);
+        handler.EnqueueJsonOk(json);
         var service = CreateService(handler, metaFixture.Db, notifications);
 
         var result = await service.ScrapeAsync(CancellationToken.None);
@@ -683,12 +824,380 @@ public class ItemShopServiceTests
         Assert.Equal("Flowers", notification.Payload.GetProperty("songTitle").GetString());
         Assert.Equal("Miley Cyrus", notification.Payload.GetProperty("artist").GetString());
 
-        var retryHandler = new MockHttpMessageHandler();
-        retryHandler.EnqueueJsonOk(json);
-        var retryService = CreateService(retryHandler, metaFixture.Db, notifications);
-        await retryService.ScrapeAsync(CancellationToken.None);
+        var retryResult =
+            await service.ScrapeAsync(CancellationToken.None);
 
+        Assert.Equal(-1, retryResult);
         Assert.Single(notifications.GetPlayerNotifications("registered-after-shop-update", includeExpired: true).Items);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_UnchangedPayloadRetriesFailedServiceNotification()
+    {
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{ "title": "Flowers" }],
+                        "inDate": "2026-05-22T00:00:00Z",
+                        "banner": { "backendValue": "New" }
+                    }
+                ]
+            }
+        }
+        """;
+        var metaFixture = new InMemoryMetaDatabase();
+        var notifications = new ImprovementNotificationService(
+            metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        handler.EnqueueJsonOk(json);
+        var service = CreateService(
+            handler,
+            metaFixture.Db,
+            notifications);
+
+        using (var connection =
+               metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                "ALTER TABLE service_notifications RENAME TO service_notifications_unavailable";
+            command.ExecuteNonQuery();
+        }
+
+        var first = await service.ScrapeAsync(
+            CancellationToken.None);
+
+        using (var connection =
+               metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                "ALTER TABLE service_notifications_unavailable RENAME TO service_notifications";
+            command.ExecuteNonQuery();
+        }
+
+        var retry = await service.ScrapeAsync(
+            CancellationToken.None);
+
+        Assert.Equal(1, first);
+        Assert.Equal(1, retry);
+        Assert.Single(
+            notifications.GetPlayerNotifications(
+                "registered-after-shop-update",
+                includeExpired: true).Items);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_StableTrackIdMatchesCanonicalCatalogIdentity()
+    {
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{
+                            "id": "provider-track",
+                            "title": "Provider Display Title"
+                        }]
+                    }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        var metaFixture = new InMemoryMetaDatabase();
+        var (service, festivalService) =
+            CreateServiceWithCatalog(handler, metaFixture.Db);
+        AddCatalogSong(
+            festivalService,
+            "stable-song-id",
+            "Canonical Catalog Title",
+            "Artist",
+            "provider-track");
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Equal(1, result);
+        Assert.Contains("stable-song-id", service.InShopSongIds);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_BundleFirstDuplicatePreservesStandaloneNewEvidence()
+    {
+        const string songId =
+            "a60ce1e2-62c9-44d5-9131-3767e52ca68e";
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{
+                            "id": "sid_placeholder_858",
+                            "title": "Cry For Me (Wa Wa Wa)"
+                        }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "AmountOff" }
+                    },
+                    {
+                        "tracks": [{
+                            "id": "sid_placeholder_858",
+                            "title": "Cry For Me (Wa Wa Wa)"
+                        }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "outDate": "2026-10-02T23:59:59.999Z",
+                        "banner": { "backendValue": "New" }
+                    }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        var metaFixture = new InMemoryMetaDatabase();
+        var notifications = new ImprovementNotificationService(
+            metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var (service, festivalService) =
+            CreateServiceWithCatalog(
+                handler,
+                metaFixture.Db,
+                notifications);
+        AddCatalogSong(
+            festivalService,
+            songId,
+            "Cry For Me (Wa Wa Wa)",
+            "The Weeknd",
+            "sid_placeholder_858");
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Equal(1, result);
+        Assert.Contains(songId, service.NewSongIds);
+        var notification = Assert.Single(
+            notifications.GetPlayerNotifications(
+                "late-profile",
+                includeExpired: true).Items);
+        Assert.Equal(songId, notification.SongId);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_DoesNotCollapseDistinctStableIdsByTitleFallback()
+    {
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{
+                            "id": "first-provider-id",
+                            "title": "Flowers"
+                        }]
+                    },
+                    {
+                        "tracks": [{
+                            "id": "second-provider-id",
+                            "title": "Flowers"
+                        }]
+                    }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Equal(0, result);
+        Assert.Empty(service.InShopSongIds);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_UnchangedPayloadRematchesAfterCatalogCatchup()
+    {
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{
+                            "id": "late-track",
+                            "title": "Late Track"
+                        }],
+                        "inDate": "2026-09-19T00:00:00Z",
+                        "banner": { "backendValue": "New" }
+                    }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        handler.EnqueueJsonOk(json);
+        var metaFixture = new InMemoryMetaDatabase();
+        var notifications = new ImprovementNotificationService(
+            metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var (service, festivalService) =
+            CreateServiceWithCatalog(
+                handler,
+                metaFixture.Db,
+                notifications);
+
+        var first = await service.ScrapeAsync(CancellationToken.None);
+        AddCatalogSong(
+            festivalService,
+            "late-song-id",
+            "Late Track",
+            "Late Artist",
+            "late-track");
+        var second = await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Equal(0, first);
+        Assert.Equal(1, second);
+        Assert.Contains("late-song-id", service.InShopSongIds);
+        var notification = Assert.Single(
+            notifications.GetPlayerNotifications(
+                "late-profile",
+                includeExpired: true).Items);
+        Assert.Equal("late-song-id", notification.SongId);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_IncompletePayloadDoesNotRemovePersistedState()
+    {
+        const string flowersJson = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "id": "flowers", "title": "Flowers" }] }
+                ]
+            }
+        }
+        """;
+        const string unmatchedJson = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "id": "unknown", "title": "Unknown" }] }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(flowersJson);
+        handler.EnqueueJsonOk(unmatchedJson);
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        await service.ScrapeAsync(CancellationToken.None);
+        await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Contains(
+            "1faef457-e84e-424b-b9de-65417f34f863",
+            service.InShopSongIds);
+    }
+
+    [Fact]
+    public async Task ScheduledReconciliation_ConfirmsRemovalAcrossTwoPolls()
+    {
+        const string flowersJson = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "id": "flowers", "title": "Flowers" }] }
+                ]
+            }
+        }
+        """;
+        const string mapsJson = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "id": "maps", "title": "Maps" }] }
+                ]
+            }
+        }
+        """;
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(flowersJson);
+        handler.EnqueueJsonOk(mapsJson);
+        handler.EnqueueJsonOk(mapsJson);
+        var metaFixture = new InMemoryMetaDatabase();
+        var (service, festivalService) =
+            CreateServiceWithCatalog(handler, metaFixture.Db);
+        AddCatalogSong(
+            festivalService,
+            "maps-song-id",
+            "Maps",
+            "Maroon 5",
+            "maps");
+
+        await service.ScrapeAsync(CancellationToken.None);
+        await service.TryRunScheduledReconciliationAsync();
+        Assert.Contains(
+            "1faef457-e84e-424b-b9de-65417f34f863",
+            service.InShopSongIds);
+        Assert.Contains("maps-song-id", service.InShopSongIds);
+
+        await service.TryRunScheduledReconciliationAsync();
+        Assert.DoesNotContain(
+            "1faef457-e84e-424b-b9de-65417f34f863",
+            service.InShopSongIds);
+        Assert.Contains("maps-song-id", service.InShopSongIds);
+    }
+
+    [Fact]
+    public async Task ScheduledReconciliation_SkipsOverlappingScrape()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueHang();
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+        using var cts = new CancellationTokenSource();
+
+        var activeScrape = service.ScrapeAsync(cts.Token);
+        await handler.WaitForRequestCountAsync(1, TimeSpan.FromSeconds(5));
+
+        var scheduledRan =
+            await service.TryRunScheduledReconciliationAsync();
+
+        Assert.False(scheduledRan);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => activeScrape);
+    }
+
+    [Fact]
+    public async Task InitializePersistedStateOnly_DoesNotCallProviderOrScheduleTimers()
+    {
+        var handler = new MockHttpMessageHandler();
+        var metaFixture = new InMemoryMetaDatabase();
+        metaFixture.Db.SaveItemShopTracks(
+            new HashSet<string>
+            {
+                "1faef457-e84e-424b-b9de-65417f34f863",
+            },
+            new HashSet<string>(),
+            new HashSet<string>(),
+            DateTime.UtcNow);
+        using var service = CreateService(handler, metaFixture.Db);
+
+        await service.InitializePersistedStateOnlyAsync();
+
+        Assert.Empty(handler.Requests);
+        Assert.False(service.HasScheduledRefresh);
+        Assert.Contains(
+            "1faef457-e84e-424b-b9de-65417f34f863",
+            service.InShopSongIds);
     }
 
     [Fact]

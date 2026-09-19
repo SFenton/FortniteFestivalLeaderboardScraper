@@ -523,9 +523,8 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         Assert.NotNull(deferral.NextAttemptAtUtc);
         Assert.Equal(1, deferral.AttemptCount);
         Assert.Equal(0, CountGenerations("song-a"));
-        Assert.Empty(
-            store.GetAutomaticPathGenerationCandidates(DateTime.UtcNow)
-                .Where(static candidate => candidate.SongId == "song-a"));
+        Assert.DoesNotContain(store.GetAutomaticPathGenerationCandidates(DateTime.UtcNow)
+, static candidate => candidate.SongId == "song-a");
 
         // Next pass: the conflicted song is backed off, so the cap goes to
         // the next pending song instead of starving it.
@@ -1596,6 +1595,23 @@ public sealed class DeploymentRolePathGenerationConfigTests
     }
 
     [Fact]
+    public void Service_role_owns_item_shop_provider_refresh()
+    {
+        var serviceRole = ReadRoleEnv("fstservice-role.env");
+        var workerRole = ReadRoleEnv("fstworker-role.env");
+
+        Assert.Equal(
+            "true",
+            serviceRole["Scraper__EnableItemShopRefresh"]);
+        Assert.Equal(
+            "00:15:00",
+            serviceRole["Scraper__ItemShopRefreshInterval"]);
+        Assert.Equal(
+            "false",
+            workerRole["Scraper__EnableItemShopRefresh"]);
+    }
+
+    [Fact]
     public void Role_configurations_pass_option_validation()
     {
         foreach (var roleFile in
@@ -1604,6 +1620,9 @@ public sealed class DeploymentRolePathGenerationConfigTests
             var role = ReadRoleEnv(roleFile);
             var options = new ScraperOptions
             {
+                EnableItemShopRefresh = ReadBool(
+                    role,
+                    "Scraper__EnableItemShopRefresh"),
                 UsePublicationPathArtifacts = ReadBool(
                     role,
                     "Scraper__UsePublicationPathArtifacts"),
@@ -1614,6 +1633,13 @@ public sealed class DeploymentRolePathGenerationConfigTests
                     role,
                     "Scraper__EnableAutomaticPathGeneration"),
             };
+            if (role.TryGetValue(
+                    "Scraper__ItemShopRefreshInterval",
+                    out var shopRefreshInterval))
+            {
+                options.ItemShopRefreshInterval =
+                    TimeSpan.Parse(shopRefreshInterval);
+            }
             if (options.EnableScrapePassPathGeneration)
             {
                 // Secrets stay outside tracked role files; inject the

@@ -19,18 +19,50 @@ public interface IShopProvider
 }
 
 /// <summary>Entry extracted from the fortnite-api.com shop JSON for a single jam track.</summary>
-internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate, bool IsNew = false, DateTime? InDate = null);
+internal readonly record struct ShopTrackEntry(
+    string Title,
+    DateTime? OutDate,
+    bool IsNew = false,
+    DateTime? InDate = null,
+    string? TrackId = null);
+
+internal readonly record struct ItemShopScrapeOutcome(
+    int MatchedCount,
+    int TotalCount,
+    int UnmatchedCount,
+    bool ContentChanged,
+    bool StateChanged,
+    bool CandidateStateAccepted,
+    bool NotificationsSucceeded,
+    long NotificationsInserted)
+{
+    public bool IsComplete =>
+        TotalCount > 0
+        && UnmatchedCount == 0
+        && CandidateStateAccepted
+        && NotificationsSucceeded;
+
+    public int PublicResult =>
+        TotalCount == 0
+            ? 0
+            : ContentChanged || StateChanged || NotificationsInserted > 0
+                ? MatchedCount
+                : -1;
+}
 
 /// <summary>
 /// Scrapes the Fortnite Item Shop Jam Tracks page to determine which songs
 /// are currently available for purchase, and provides in-memory lookup of
 /// the current in-shop set.
 /// </summary>
-public sealed partial class ItemShopService : IShopProvider
+public sealed partial class ItemShopService : IShopProvider, IDisposable
 {
     private const string FortniteApiShopUrl = "https://fortnite-api.com/v2/shop";
+    private const string SparkTrackTemplatePrefix = "SparksSong:";
     private const int MidnightRetryIntervalMs = 15_000;
     private const int MidnightMaxRetries = 40; // ~10 minutes
+    internal static readonly TimeSpan DefaultReconciliationInterval =
+        TimeSpan.FromMinutes(15);
 
     private readonly HttpClient _http;
     private readonly FestivalService _festivalService;
@@ -47,7 +79,13 @@ public sealed partial class ItemShopService : IShopProvider
     private string? _lastContentHash;
     private DateTime? _lastScrapedAt;
     private Timer? _midnightTimer;
+    private Timer? _reconciliationTimer;
+    private TimeSpan _reconciliationInterval =
+        DefaultReconciliationInterval;
+    private string? _pendingNegativeFingerprint;
+    private readonly SemaphoreSlim _scrapeGate = new(1, 1);
     private readonly object _lock = new();
+    private bool _disposed;
 
     /// <summary>The set of songIds currently in the Item Shop.</summary>
     public IReadOnlySet<string> InShopSongIds
@@ -110,8 +148,22 @@ public sealed partial class ItemShopService : IShopProvider
     /// Loads persisted shop data from DB, then kicks off an async scrape.
     /// Call after FestivalService and IMetaDatabase are initialized.
     /// </summary>
-    public async Task InitializeAsync(CancellationToken ct = default)
+    public Task InitializeAsync(CancellationToken ct = default)
+        => InitializeAsync(DefaultReconciliationInterval, ct);
+
+    public async Task InitializeAsync(
+        TimeSpan reconciliationInterval,
+        CancellationToken ct = default)
     {
+        if (reconciliationInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(reconciliationInterval),
+                reconciliationInterval,
+                "Item Shop reconciliation interval must be positive.");
+        }
+
+        _reconciliationInterval = reconciliationInterval;
         LoadPersistedState();
 
         // Scrape for fresh data (best-effort on startup)
@@ -126,6 +178,7 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Schedule midnight UTC timer
         ScheduleMidnightTimer();
+        ScheduleReconciliationTimer();
     }
 
     /// <summary>
@@ -140,7 +193,8 @@ public sealed partial class ItemShopService : IShopProvider
         return Task.CompletedTask;
     }
 
-    internal bool HasScheduledRefresh => _midnightTimer is not null;
+    internal bool HasScheduledRefresh =>
+        _midnightTimer is not null && _reconciliationTimer is not null;
 
     private void LoadPersistedState()
     {
@@ -162,11 +216,29 @@ public sealed partial class ItemShopService : IShopProvider
     // ─── Scrape Logic ───────────────────────────────────────────
 
     /// <summary>
-    /// Fetches the Item Shop from fortnite-api.com, matches Jam Track titles to the
+    /// Fetches the Item Shop from fortnite-api.com, matches Jam Tracks to the
     /// song catalog, and updates the in-memory set + DB.
     /// Returns the count of matched songs, or -1 if content was unchanged.
     /// </summary>
     public async Task<int> ScrapeAsync(CancellationToken ct = default)
+    {
+        await _scrapeGate.WaitAsync(ct);
+        try
+        {
+            var outcome = await ScrapeCoreAsync(
+                allowNegativeConfirmation: false,
+                ct);
+            return outcome.PublicResult;
+        }
+        finally
+        {
+            _scrapeGate.Release();
+        }
+    }
+
+    private async Task<ItemShopScrapeOutcome> ScrapeCoreAsync(
+        bool allowNegativeConfirmation,
+        CancellationToken ct)
     {
         _log.LogInformation("Fetching Item Shop Jam Tracks from fortnite-api.com...");
 
@@ -177,101 +249,192 @@ public sealed partial class ItemShopService : IShopProvider
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync(ct);
 
-        // Parse the API response for jam track entries (title + outDate)
+        // Parse the provider response before deciding whether it changed.
         var entries = ExtractJamTrackEntries(json);
         var now = DateTime.UtcNow;
         var expiredServiceNotificationCount = CleanupExpiredServiceNotifications(now);
-        var titles = entries.Select(e => e.Title).ToList();
-        if (titles.Count == 0)
+        if (entries.Count == 0)
         {
             _log.LogWarning("No Jam Tracks found in fortnite-api.com shop response.");
             await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
-            return 0;
+            return new ItemShopScrapeOutcome(
+                0,
+                0,
+                0,
+                ContentChanged: false,
+                StateChanged: false,
+                CandidateStateAccepted: false,
+                NotificationsSucceeded: true,
+                NotificationsInserted: 0);
         }
 
-        // Content change detection
         var contentHash = ComputeContentHash(entries);
-        if (contentHash == _lastContentHash)
-        {
-            _log.LogDebug("Shop content unchanged ({Count} tracks).", titles.Count);
-            await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
-            return -1;
-        }
+        var contentChanged = !string.Equals(
+            contentHash,
+            _lastContentHash,
+            StringComparison.Ordinal);
 
-        // Match titles to song catalog
-        var matched = MatchTitlesToSongs(titles);
+        var matchedEntries = MatchEntriesToSongs(entries);
 
-        // If we have unmatched titles, try refreshing the song catalog
-        if (matched.Count < titles.Count)
+        // If we have unmatched tracks, try refreshing the song catalog.
+        if (matchedEntries.Count < entries.Count)
         {
-            var unmatchedCount = titles.Count - matched.Count;
+            var unmatchedCount = entries.Count - matchedEntries.Count;
             _log.LogInformation(
                 "{Unmatched} shop tracks unmatched. Syncing song catalog...",
                 unmatchedCount);
 
             await _festivalService.SyncSongsAsync();
-            matched = MatchTitlesToSongs(titles);
+            matchedEntries = MatchEntriesToSongs(entries);
 
-            var stillUnmatched = titles.Count - matched.Count;
+            var stillUnmatched = entries.Count - matchedEntries.Count;
             if (stillUnmatched > 0)
             {
-                var matchedTitles = new HashSet<string>(
-                    _festivalService.Songs
-                        .Where(s => s.track?.tt is not null && matched.Contains(s.track.su))
-                        .Select(s => s.track.tt!),
-                    StringComparer.OrdinalIgnoreCase);
-                var unmatched = titles.Where(t => !matchedTitles.Contains(t)).ToList();
+                var unmatched = entries
+                    .Where(entry =>
+                        !matchedEntries.ContainsKey(
+                            GetEntryIdentityKey(entry)))
+                    .Select(entry => entry.Title)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
                 _log.LogWarning(
                     "{Count} shop tracks still unmatched after catalog sync: {Titles}",
                     stillUnmatched, string.Join(", ", unmatched));
             }
         }
 
-        // Compute diff before updating state
+        var matched = matchedEntries.Values
+            .Select(song => song.track.su)
+            .Where(songId => !string.IsNullOrWhiteSpace(songId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unmatchedAfterSync = entries.Count - matchedEntries.Count;
+
         HashSet<string> previousIds;
         HashSet<string> previousLeaving;
         HashSet<string> previousNew;
         lock (_lock)
         {
-            previousIds = _inShopSongIds;
-            previousLeaving = _leavingTomorrowSongIds;
-            previousNew = _newSongIds;
+            previousIds = new HashSet<string>(
+                _inShopSongIds,
+                StringComparer.OrdinalIgnoreCase);
+            previousLeaving = new HashSet<string>(
+                _leavingTomorrowSongIds,
+                StringComparer.OrdinalIgnoreCase);
+            previousNew = new HashSet<string>(
+                _newSongIds,
+                StringComparer.OrdinalIgnoreCase);
         }
-        var added = matched.Except(previousIds).ToList();
-        var removed = previousIds.Except(matched).ToList();
 
-        // Compute leaving-tomorrow set from outDate
-        var leavingTomorrow = ComputeLeavingTomorrow(entries, matched);
-        var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
-        var newSongIds = ComputeNewSongIds(entries, matched);
-        var newChanged = !newSongIds.SetEquals(previousNew);
-        var serviceNotificationInputs = BuildNewShopSongNotifications(entries, matched, now);
-        var insertedServiceNotificationCount = UpsertNewShopSongNotifications(serviceNotificationInputs, now);
+        var candidateLeaving = ComputeLeavingTomorrow(
+            entries,
+            matchedEntries,
+            now);
+        var candidateNew = ComputeNewSongIds(
+            entries,
+            matchedEntries);
+        var hasNegativeTransition =
+            previousIds.Except(matched).Any()
+            || previousNew.Except(candidateNew).Any()
+            || previousLeaving.Except(candidateLeaving).Any();
+        var candidateFingerprint = ComputeDerivedStateHash(
+            matched,
+            candidateLeaving,
+            candidateNew);
+        var acceptCandidateState = ShouldAcceptCandidateState(
+            hasNegativeTransition,
+            unmatchedAfterSync > 0,
+            candidateFingerprint,
+            allowNegativeConfirmation);
 
-        // Update state
+        HashSet<string> effectiveIds;
+        HashSet<string> effectiveLeaving;
+        HashSet<string> effectiveNew;
+        if (acceptCandidateState)
+        {
+            effectiveIds = matched;
+            effectiveLeaving = candidateLeaving;
+            effectiveNew = candidateNew;
+        }
+        else
+        {
+            effectiveIds = new HashSet<string>(
+                previousIds,
+                StringComparer.OrdinalIgnoreCase);
+            effectiveIds.UnionWith(matched);
+            effectiveLeaving = new HashSet<string>(
+                previousLeaving,
+                StringComparer.OrdinalIgnoreCase);
+            effectiveLeaving.UnionWith(candidateLeaving);
+            effectiveLeaving.IntersectWith(effectiveIds);
+            effectiveNew = new HashSet<string>(
+                previousNew,
+                StringComparer.OrdinalIgnoreCase);
+            effectiveNew.UnionWith(candidateNew);
+            effectiveNew.IntersectWith(effectiveIds);
+        }
+
+        var added = effectiveIds.Except(previousIds).ToList();
+        var removed = previousIds.Except(effectiveIds).ToList();
+        var leavingChanged =
+            !effectiveLeaving.SetEquals(previousLeaving);
+        var newChanged = !effectiveNew.SetEquals(previousNew);
+        var stateChanged =
+            added.Count > 0
+            || removed.Count > 0
+            || leavingChanged
+            || newChanged;
+
+        var serviceNotificationInputs =
+            BuildNewShopSongNotifications(
+                entries,
+                matchedEntries,
+                now);
+        var notificationWrite = UpsertNewShopSongNotifications(
+            serviceNotificationInputs,
+            now);
+
         lock (_lock)
         {
-            _inShopSongIds = matched;
-            _leavingTomorrowSongIds = leavingTomorrow;
-            _newSongIds = newSongIds;
+            _inShopSongIds = effectiveIds;
+            _leavingTomorrowSongIds = effectiveLeaving;
+            _newSongIds = effectiveNew;
             _lastContentHash = contentHash;
             _lastScrapedAt = now;
         }
 
-        // Persist to DB
-        _metaDb.SaveItemShopTracks(matched, leavingTomorrow, newSongIds, now);
+        if (stateChanged)
+        {
+            _metaDb.SaveItemShopTracks(
+                effectiveIds,
+                effectiveLeaving,
+                effectiveNew,
+                now);
+        }
 
-        // Prime the shop cache so /api/shop serves instantly
-        PrimeShopCache(matched, leavingTomorrow, newSongIds);
+        if (stateChanged || contentChanged)
+        {
+            PrimeShopCache(
+                effectiveIds,
+                effectiveLeaving,
+                effectiveNew);
+        }
 
         // Broadcast shop change to all connected WebSocket clients
-        if (_notifications is not null && (added.Count > 0 || removed.Count > 0 || leavingChanged || newChanged))
+        if (_notifications is not null && stateChanged)
         {
             try
             {
                 var addedEnriched = FSTService.Api.ShopCacheService.BuildEnrichedSongList(
-                    added, leavingTomorrow, newSongIds, _festivalService);
-                await _notifications.NotifyShopChangedAsync(addedEnriched, removed, matched.Count, leavingTomorrow, newSongIds);
+                    added,
+                    effectiveLeaving,
+                    effectiveNew,
+                    _festivalService);
+                await _notifications.NotifyShopChangedAsync(
+                    addedEnriched,
+                    removed,
+                    effectiveIds.Count,
+                    effectiveLeaving,
+                    effectiveNew);
                 _log.LogInformation(
                     "Shop change broadcast: {Added} added, {Removed} removed, leaving changed: {LeavingChanged}, new changed: {NewChanged}.",
                     added.Count, removed.Count, leavingChanged, newChanged);
@@ -282,13 +445,27 @@ public sealed partial class ItemShopService : IShopProvider
             }
         }
 
-        await NotifyNotificationFeedChangedIfNeededAsync(insertedServiceNotificationCount, expiredServiceNotificationCount);
+        await NotifyNotificationFeedChangedIfNeededAsync(
+            notificationWrite.Inserted,
+            expiredServiceNotificationCount);
 
         _log.LogInformation(
-            "Item Shop update complete: {Matched}/{Total} tracks matched.",
-            matched.Count, titles.Count);
+            "Item Shop reconciliation complete: {Matched}/{Total} tracks matched; contentChanged={ContentChanged}, stateChanged={StateChanged}, notificationsSucceeded={NotificationsSucceeded}.",
+            matched.Count,
+            entries.Count,
+            contentChanged,
+            stateChanged,
+            notificationWrite.Succeeded);
 
-        return matched.Count;
+        return new ItemShopScrapeOutcome(
+            matched.Count,
+            entries.Count,
+            unmatchedAfterSync,
+            contentChanged,
+            stateChanged,
+            acceptCandidateState,
+            notificationWrite.Succeeded,
+            notificationWrite.Inserted);
     }
 
     /// <summary>
@@ -299,21 +476,79 @@ public sealed partial class ItemShopService : IShopProvider
 
     // ─── Matching ───────────────────────────────────────────────
 
-    private HashSet<string> MatchTitlesToSongs(List<string> titles)
+    private Dictionary<string, FortniteFestival.Core.Song>
+        MatchEntriesToSongs(IReadOnlyList<ShopTrackEntry> entries)
     {
-        // Build case-insensitive title → songId lookup
-        var titleToSong = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousEntryTitles = entries
+            .GroupBy(
+                entry => entry.Title,
+                StringComparer.OrdinalIgnoreCase)
+            .Where(group => group
+                .Select(GetEntryIdentityKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Skip(1)
+                .Any())
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var trackIdToSong =
+            new Dictionary<string, FortniteFestival.Core.Song>(
+                StringComparer.OrdinalIgnoreCase);
+        var titleToSong =
+            new Dictionary<string, FortniteFestival.Core.Song?>(
+                StringComparer.OrdinalIgnoreCase);
         foreach (var song in _festivalService.Songs)
         {
-            if (song.track?.tt is not null && song.track.su is not null)
-                titleToSong.TryAdd(song.track.tt, song.track.su);
+            if (song.track?.su is null)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(song.track.ti))
+            {
+                trackIdToSong.TryAdd(song.track.ti, song);
+                if (song.track.ti.StartsWith(
+                        SparkTrackTemplatePrefix,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    trackIdToSong.TryAdd(
+                        song.track.ti[SparkTrackTemplatePrefix.Length..],
+                        song);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(song.track.tt))
+                continue;
+
+            if (!titleToSong.TryAdd(song.track.tt, song)
+                && titleToSong[song.track.tt]?.track.su
+                    != song.track.su)
+            {
+                titleToSong[song.track.tt] = null;
+            }
         }
 
-        var matched = new HashSet<string>();
-        foreach (var title in titles)
+        var matched =
+            new Dictionary<string, FortniteFestival.Core.Song>(
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
         {
-            if (titleToSong.TryGetValue(title, out var songId))
-                matched.Add(songId);
+            FortniteFestival.Core.Song? song = null;
+            if (!string.IsNullOrWhiteSpace(entry.TrackId))
+            {
+                trackIdToSong.TryGetValue(entry.TrackId, out song);
+            }
+
+            if (song is null
+                && !ambiguousEntryTitles.Contains(entry.Title)
+                && titleToSong.TryGetValue(entry.Title, out var titleMatch))
+            {
+                if (string.IsNullOrWhiteSpace(entry.TrackId)
+                    || string.IsNullOrWhiteSpace(titleMatch?.track?.ti))
+                {
+                    song = titleMatch;
+                }
+            }
+
+            if (song is not null)
+                matched[GetEntryIdentityKey(entry)] = song;
         }
 
         return matched;
@@ -351,18 +586,21 @@ public sealed partial class ItemShopService : IShopProvider
     }
 
     /// <summary>
-    /// Extracts Jam Track entries (title + outDate) from the fortnite-api.com /v2/shop JSON response.
-    /// Each shop entry has an <c>outDate</c> that applies to all tracks within it.
+    /// Extracts Jam Track entries from the fortnite-api.com /v2/shop JSON
+    /// response. Offer-level dates and banners apply to every contained track.
     /// </summary>
     internal static List<ShopTrackEntry> ExtractJamTrackEntries(string json)
     {
-        var result = new List<ShopTrackEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result =
+            new Dictionary<string, ShopTrackEntry>(
+                StringComparer.OrdinalIgnoreCase);
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data)) return result;
-            if (!data.TryGetProperty("entries", out var entries)) return result;
+            if (!doc.RootElement.TryGetProperty("data", out var data))
+                return [];
+            if (!data.TryGetProperty("entries", out var entries))
+                return [];
 
             foreach (var entry in entries.EnumerateArray())
             {
@@ -397,10 +635,23 @@ public sealed partial class ItemShopService : IShopProvider
                 foreach (var track in tracks.EnumerateArray())
                 {
                     if (track.TryGetProperty("title", out var title) &&
-                        title.GetString() is { Length: > 0 } t &&
-                        seen.Add(t))
+                        title.GetString() is { Length: > 0 } t)
                     {
-                        result.Add(new ShopTrackEntry(t, outDate, isNew, inDate));
+                        var trackId =
+                            track.TryGetProperty("id", out var id)
+                                ? id.GetString()
+                                : null;
+                        var candidate = new ShopTrackEntry(
+                            t,
+                            outDate,
+                            isNew,
+                            inDate,
+                            trackId);
+                        var key = GetEntryIdentityKey(candidate);
+                        if (result.TryGetValue(key, out var current))
+                            result[key] = MergeEntries(current, candidate);
+                        else
+                            result[key] = candidate;
                     }
                 }
             }
@@ -409,8 +660,61 @@ public sealed partial class ItemShopService : IShopProvider
         {
             // Malformed JSON — return empty
         }
-        return result;
+        return result.Values.ToList();
     }
+
+    private static ShopTrackEntry MergeEntries(
+        ShopTrackEntry current,
+        ShopTrackEntry candidate)
+    {
+        var mergedIsNew = current.IsNew || candidate.IsNew;
+        DateTime? mergedInDate;
+        if (candidate.IsNew)
+        {
+            mergedInDate = current.IsNew
+                ? Latest(current.InDate, candidate.InDate)
+                : candidate.InDate ?? current.InDate;
+        }
+        else
+        {
+            mergedInDate = Latest(
+                current.InDate,
+                candidate.InDate);
+        }
+
+        return current with
+        {
+            OutDate = LatestKnownEnd(current.OutDate, candidate.OutDate),
+            IsNew = mergedIsNew,
+            InDate = mergedInDate,
+            TrackId = current.TrackId ?? candidate.TrackId,
+        };
+    }
+
+    private static DateTime? Latest(
+        DateTime? first,
+        DateTime? second)
+    {
+        if (!first.HasValue)
+            return second;
+        if (!second.HasValue)
+            return first;
+        return first.Value >= second.Value ? first : second;
+    }
+
+    private static DateTime? LatestKnownEnd(
+        DateTime? first,
+        DateTime? second)
+    {
+        if (!first.HasValue || !second.HasValue)
+            return null;
+        return first.Value >= second.Value ? first : second;
+    }
+
+    private static string GetEntryIdentityKey(ShopTrackEntry entry)
+        => !string.IsNullOrWhiteSpace(entry.TrackId)
+            ? $"id:{entry.TrackId}"
+            : $"title:{entry.Title}";
 
     private static bool IsNewBannerValue(System.Text.Json.JsonElement banner, string propertyName)
     {
@@ -447,23 +751,6 @@ public sealed partial class ItemShopService : IShopProvider
         return leaving;
     }
 
-    /// <summary>
-    /// Instance overload that resolves title→songId from the FestivalService catalog.
-    /// </summary>
-    private HashSet<string> ComputeLeavingTomorrow(
-        List<ShopTrackEntry> entries,
-        HashSet<string> matchedSongIds)
-    {
-        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var song in _festivalService.Songs)
-        {
-            if (song.track?.tt is not null && song.track.su is not null)
-                titleToSongId.TryAdd(song.track.tt, song.track.su);
-        }
-
-        return ComputeLeavingTomorrow(entries, matchedSongIds, titleToSongId);
-    }
-
     internal static HashSet<string> ComputeNewSongIds(
         List<ShopTrackEntry> entries,
         HashSet<string> matchedSongIds,
@@ -482,20 +769,6 @@ public sealed partial class ItemShopService : IShopProvider
         }
 
         return newSongIds;
-    }
-
-    private HashSet<string> ComputeNewSongIds(
-        List<ShopTrackEntry> entries,
-        HashSet<string> matchedSongIds)
-    {
-        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var song in _festivalService.Songs)
-        {
-            if (song.track?.tt is not null && song.track.su is not null)
-                titleToSongId.TryAdd(song.track.tt, song.track.su);
-        }
-
-        return ComputeNewSongIds(entries, matchedSongIds, titleToSongId);
     }
 
     // ─── HTML Parsing (legacy) ──────────────────────────────────
@@ -523,7 +796,16 @@ public sealed partial class ItemShopService : IShopProvider
     private static string ComputeContentHash(List<ShopTrackEntry> entries)
     {
         var sorted = entries
-            .Select(e => string.Concat(e.Title, '\t', e.OutDate?.ToString("O") ?? "", '\t', e.IsNew ? "1" : "0"))
+            .Select(e => string.Concat(
+                GetEntryIdentityKey(e),
+                '\t',
+                e.Title,
+                '\t',
+                e.InDate?.ToString("O") ?? "",
+                '\t',
+                e.OutDate?.ToString("O") ?? "",
+                '\t',
+                e.IsNew ? "1" : "0"))
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
         var combined = string.Join('\n', sorted);
@@ -531,10 +813,65 @@ public sealed partial class ItemShopService : IShopProvider
         return Convert.ToHexString(bytes);
     }
 
+    private static string ComputeDerivedStateHash(
+        IReadOnlySet<string> songIds,
+        IReadOnlySet<string> leavingTomorrow,
+        IReadOnlySet<string> newSongIds)
+    {
+        var rows = songIds
+            .OrderBy(songId => songId, StringComparer.Ordinal)
+            .Select(songId => string.Concat(
+                songId,
+                '\t',
+                leavingTomorrow.Contains(songId) ? "1" : "0",
+                '\t',
+                newSongIds.Contains(songId) ? "1" : "0"));
+        return Convert.ToHexString(
+            SHA256.HashData(
+                Encoding.UTF8.GetBytes(string.Join('\n', rows))));
+    }
+
+    private bool ShouldAcceptCandidateState(
+        bool hasNegativeTransition,
+        bool hasUnmatchedEntries,
+        string candidateFingerprint,
+        bool allowNegativeConfirmation)
+    {
+        if (!hasNegativeTransition)
+        {
+            _pendingNegativeFingerprint = null;
+            return true;
+        }
+
+        if (hasUnmatchedEntries)
+        {
+            _pendingNegativeFingerprint = candidateFingerprint;
+            return false;
+        }
+
+        if (allowNegativeConfirmation
+            && string.Equals(
+                _pendingNegativeFingerprint,
+                candidateFingerprint,
+                StringComparison.Ordinal))
+        {
+            _pendingNegativeFingerprint = null;
+            return true;
+        }
+
+        _pendingNegativeFingerprint = candidateFingerprint;
+        _log.LogWarning(
+            "Deferred Item Shop removals or metadata downgrades until a regular reconciliation confirms the same candidate state.");
+        return false;
+    }
+
     // ─── Midnight Timer ─────────────────────────────────────────
 
     private void ScheduleMidnightTimer()
     {
+        if (_disposed)
+            return;
+
         var now = DateTime.UtcNow;
         var nextMidnight = now.Date.AddDays(1); // next 00:00 UTC
         var delay = nextMidnight - now;
@@ -545,98 +882,128 @@ public sealed partial class ItemShopService : IShopProvider
             nextMidnight.ToString("yyyy-MM-dd HH:mm"), delay);
     }
 
+    private void ScheduleReconciliationTimer()
+    {
+        if (_disposed)
+            return;
+
+        _reconciliationTimer?.Dispose();
+        _reconciliationTimer = new Timer(
+            OnReconciliationTimer,
+            null,
+            _reconciliationInterval,
+            _reconciliationInterval);
+        _log.LogInformation(
+            "Item Shop daytime reconciliation scheduled every {Interval}.",
+            _reconciliationInterval);
+    }
+
+    private async void OnReconciliationTimer(object? state)
+    {
+        try
+        {
+            await TryRunScheduledReconciliationAsync(
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Scheduled Item Shop reconciliation failed.");
+        }
+    }
+
+    internal async Task<bool> TryRunScheduledReconciliationAsync(
+        CancellationToken ct = default)
+    {
+        if (!await _scrapeGate.WaitAsync(0, ct))
+        {
+            _log.LogDebug(
+                "Skipped overlapping Item Shop reconciliation; another refresh is active.");
+            return false;
+        }
+
+        try
+        {
+            var outcome = await ScrapeCoreAsync(
+                allowNegativeConfirmation: true,
+                ct);
+            if (!outcome.IsComplete)
+            {
+                _log.LogWarning(
+                    "Item Shop reconciliation remains incomplete: {Unmatched} unmatched tracks; notificationsSucceeded={NotificationsSucceeded}.",
+                    outcome.UnmatchedCount,
+                    outcome.NotificationsSucceeded);
+            }
+            return true;
+        }
+        finally
+        {
+            _scrapeGate.Release();
+        }
+    }
+
     private async void OnMidnightTimer(object? state)
     {
         _log.LogInformation("Midnight UTC — starting shop rotation poll...");
 
-        // Recompute leaving-tomorrow since the date boundary shifted,
-        // even before we detect any content change.
-        await RecomputeLeavingTomorrowAsync();
-
-        for (int attempt = 1; attempt <= MidnightMaxRetries; attempt++)
-        {
-            try
-            {
-                var result = await ScrapeAsync(CancellationToken.None);
-                if (result >= 0) // content changed (or first scrape)
-                {
-                    _log.LogInformation("Shop rotation detected on attempt {Attempt}.", attempt);
-                    break;
-                }
-
-                // Content unchanged — shop hasn't rotated yet
-                if (attempt < MidnightMaxRetries)
-                {
-                    _log.LogDebug("Shop unchanged, retrying in {Delay}s (attempt {Attempt}/{Max})...",
-                        MidnightRetryIntervalMs / 1000, attempt, MidnightMaxRetries);
-                    await Task.Delay(MidnightRetryIntervalMs);
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Shop scrape failed on attempt {Attempt}.", attempt);
-                if (attempt < MidnightMaxRetries)
-                    await Task.Delay(MidnightRetryIntervalMs);
-            }
-        }
-
-        // Re-schedule for next midnight
-        ScheduleMidnightTimer();
-    }
-
-    // ─── Leaving-Tomorrow Recompute ────────────────────────────
-
-    /// <summary>
-    /// Re-fetches the shop JSON solely to recompute the leaving-tomorrow set
-    /// (the date boundary has shifted at midnight). Broadcasts the updated set
-    /// even if the shop content hasn't changed.
-    /// </summary>
-    private async Task RecomputeLeavingTomorrowAsync()
-    {
+        await _scrapeGate.WaitAsync();
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, FortniteApiShopUrl);
-            request.Headers.Accept.ParseAdd("application/json");
-            using var response = await _http.SendAsync(request, CancellationToken.None);
-            response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
-
-            var entries = ExtractJamTrackEntries(json);
-            HashSet<string> currentIds;
-            HashSet<string> previousNew;
-            lock (_lock) currentIds = _inShopSongIds;
-            lock (_lock) previousNew = _newSongIds;
-
-            var leavingTomorrow = ComputeLeavingTomorrow(entries, currentIds);
-            HashSet<string> previousLeaving;
-            var newSongIds = ComputeNewSongIds(entries, currentIds);
-            lock (_lock)
+            ItemShopScrapeOutcome? latestOutcome = null;
+            var rotationObserved = false;
+            for (int attempt = 1; attempt <= MidnightMaxRetries; attempt++)
             {
-                previousLeaving = _leavingTomorrowSongIds;
-                _leavingTomorrowSongIds = leavingTomorrow;
-                _newSongIds = newSongIds;
-            }
-
-            var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
-            var newChanged = !newSongIds.SetEquals(previousNew);
-            if (leavingChanged || newChanged)
-            {
-                _metaDb.SaveItemShopTracks(currentIds, leavingTomorrow, newSongIds, DateTime.UtcNow);
-                PrimeShopCache(currentIds, leavingTomorrow, newSongIds);
-
-                if (_notifications is not null)
+                try
                 {
-                    await _notifications.NotifyShopChangedAsync([], [], currentIds.Count, leavingTomorrow, newSongIds);
-                    _log.LogInformation("Shop metadata updated at midnight: {Leaving} leaving tomorrow, {New} new.", leavingTomorrow.Count, newSongIds.Count);
+                    latestOutcome = await ScrapeCoreAsync(
+                        allowNegativeConfirmation: attempt > 1,
+                        CancellationToken.None);
+                    rotationObserved |=
+                        latestOutcome.Value.ContentChanged
+                        || latestOutcome.Value.StateChanged;
+                    if (rotationObserved
+                        && latestOutcome.Value.IsComplete)
+                    {
+                        _log.LogInformation(
+                            "Shop rotation detected and reconciled on attempt {Attempt}.",
+                            attempt);
+                        break;
+                    }
+
+                    if (attempt < MidnightMaxRetries)
+                    {
+                        _log.LogDebug(
+                            "Shop rotation not fully reconciled, retrying in {Delay}s (attempt {Attempt}/{Max})...",
+                            MidnightRetryIntervalMs / 1000,
+                            attempt,
+                            MidnightMaxRetries);
+                        await Task.Delay(MidnightRetryIntervalMs);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Shop scrape failed on attempt {Attempt}.",
+                        attempt);
+                    if (attempt < MidnightMaxRetries)
+                        await Task.Delay(MidnightRetryIntervalMs);
                 }
             }
 
-            var expiredServiceNotificationCount = CleanupExpiredServiceNotifications(DateTime.UtcNow);
-            await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
+            if (latestOutcome is { IsComplete: false } incomplete)
+            {
+                _log.LogWarning(
+                    "Midnight Item Shop polling ended incomplete: {Unmatched} unmatched tracks; notificationsSucceeded={NotificationsSucceeded}. Daytime reconciliation will retry.",
+                    incomplete.UnmatchedCount,
+                    incomplete.NotificationsSucceeded);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _log.LogWarning(ex, "Failed to recompute leaving-tomorrow set at midnight.");
+            _scrapeGate.Release();
+            ScheduleMidnightTimer();
         }
     }
 
@@ -657,26 +1024,26 @@ public sealed partial class ItemShopService : IShopProvider
 
     private IReadOnlyList<NewShopSongServiceNotification> BuildNewShopSongNotifications(
         List<ShopTrackEntry> entries,
-        HashSet<string> matchedSongIds,
+        IReadOnlyDictionary<string, FortniteFestival.Core.Song>
+            matchedEntries,
         DateTime detectedAtUtc)
     {
         if (_improvementNotifications is null) return [];
-
-        var titleToSong = new Dictionary<string, FortniteFestival.Core.Song>(StringComparer.OrdinalIgnoreCase);
-        foreach (var song in _festivalService.Songs)
-        {
-            if (song.track?.tt is not null)
-                titleToSong.TryAdd(song.track.tt, song);
-        }
 
         var notifications = new List<NewShopSongServiceNotification>();
         var seenSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
         {
             if (!entry.IsNew) continue;
-            if (!titleToSong.TryGetValue(entry.Title, out var song) || song.track?.su is null) continue;
+            if (!matchedEntries.TryGetValue(
+                    GetEntryIdentityKey(entry),
+                    out var song)
+                || song.track?.su is null)
+            {
+                continue;
+            }
             var songId = song.track.su;
-            if (!matchedSongIds.Contains(songId) || !seenSongIds.Add(songId)) continue;
+            if (!seenSongIds.Add(songId)) continue;
 
             notifications.Add(new NewShopSongServiceNotification(
                 songId,
@@ -690,23 +1057,73 @@ public sealed partial class ItemShopService : IShopProvider
         return notifications;
     }
 
-    private long UpsertNewShopSongNotifications(
+    private (long Inserted, bool Succeeded)
+        UpsertNewShopSongNotifications(
         IReadOnlyList<NewShopSongServiceNotification> notifications,
         DateTime detectedAtUtc)
     {
-        if (_improvementNotifications is null || notifications.Count == 0) return 0;
+        if (_improvementNotifications is null
+            || notifications.Count == 0)
+        {
+            return (0, true);
+        }
         try
         {
             var inserted = _improvementNotifications.UpsertNewShopSongNotifications(notifications, detectedAtUtc);
             if (inserted > 0)
                 _log.LogInformation("Inserted {Count} service notification(s) for new Item Shop songs.", inserted);
-            return inserted;
+            return (inserted, true);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to insert service notifications for new Item Shop songs.");
-            return 0;
+            return (0, false);
         }
+    }
+
+    private static HashSet<string> ComputeLeavingTomorrow(
+        List<ShopTrackEntry> entries,
+        IReadOnlyDictionary<string, FortniteFestival.Core.Song>
+            matchedEntries,
+        DateTime utcNow)
+    {
+        var leaving = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (entry.OutDate?.Date != utcNow.Date)
+                continue;
+            if (matchedEntries.TryGetValue(
+                    GetEntryIdentityKey(entry),
+                    out var song)
+                && !string.IsNullOrWhiteSpace(song.track?.su))
+            {
+                leaving.Add(song.track.su);
+            }
+        }
+        return leaving;
+    }
+
+    private static HashSet<string> ComputeNewSongIds(
+        List<ShopTrackEntry> entries,
+        IReadOnlyDictionary<string, FortniteFestival.Core.Song>
+            matchedEntries)
+    {
+        var newSongIds = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (!entry.IsNew)
+                continue;
+            if (matchedEntries.TryGetValue(
+                    GetEntryIdentityKey(entry),
+                    out var song)
+                && !string.IsNullOrWhiteSpace(song.track?.su))
+            {
+                newSongIds.Add(song.track.su);
+            }
+        }
+        return newSongIds;
     }
 
     private long CleanupExpiredServiceNotifications(DateTime detectedAtUtc)
@@ -748,6 +1165,16 @@ public sealed partial class ItemShopService : IShopProvider
         => url is not null && url.StartsWith(ApiEndpoints.AlbumArtPrefix, StringComparison.Ordinal)
             ? url[ApiEndpoints.AlbumArtPrefix.Length..]
             : url;
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _midnightTimer?.Dispose();
+        _reconciliationTimer?.Dispose();
+    }
 
     // ─── Regex ──────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-14
+last_verified: 2026-09-19
 last_verified_commit: d15cbdf7
 sources:
   - FSTService/Scraping/Capture/
@@ -16,6 +16,9 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/ImprovementNotificationSchema.cs
+  - FSTService/Persistence/ImprovementNotificationService.cs
+  - FSTService/Scraping/ItemShopService.cs
   - FSTService/Persistence/MetaDatabase.Publication.cs
   - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/SongCatalogSnapshot.cs
@@ -114,6 +117,23 @@ surface is not the production service persistence model.
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations, publication-bound path artifact snapshots |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, immutable snapshot-generation observations/deferrals/holds/hash chains, bounded plan-only retirement policies/jobs/events, immutable quarantine/reattach/attestation evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay and capture evidence artifacts | Immutable Tier-0 filesystem packages plus the non-production `fst.capture-package.v2` manifest/request/scope contract; never publication authority |
+
+### Item Shop derived state
+
+`item_shop_tracks` is the live derived projection keyed by canonical song ID,
+with `scraped_at`, `leaving_tomorrow`, and `is_new`. The API-service role is
+the supported writer: it resolves provider `track.id` through catalog
+`track.ti` to `track.su`, aggregates duplicate offers before deriving flags,
+and replaces the projection transactionally only when accepted state changes.
+The worker role loads this table but does not refresh or write it.
+
+Positive additions and `New` upgrades are retained from every valid response.
+Removals and downgrades require a repeated complete candidate; unmatched or
+empty responses do not delete prior rows. The same reconciliation builds
+`service_new_shop_song` rows in `service_notifications`. Reprocessing an
+unchanged provider payload is intentional, and the unique
+`(notification_kind, song_id, source_key)` index makes notification recovery
+idempotent.
 
 ### Scrape acquisition checkpoint
 
