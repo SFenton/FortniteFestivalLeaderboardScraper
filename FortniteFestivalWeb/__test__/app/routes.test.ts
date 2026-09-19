@@ -207,9 +207,9 @@ describe('RoutePatterns', () => {
         expect(matchRouteMetadata(pathname)[0]).toBe(expectedKeys[expectedTitleKey]);
       });
 
-      it('uses Songs metadata for the root redirect and Not Found for unknown paths', () => {
+      it('uses Songs metadata for root and unsupported-route redirects', () => {
         expect(matchRouteMetadata('/')[0]).toBe('nav.songs');
-        expect(matchRouteMetadata('/not-found')[0]).toBe('apiError.notFound');
+        expect(matchRouteMetadata('/not-found')[0]).toBe('nav.songs');
       });
 
       it('normalizes trailing slashes before matching metadata', () => {

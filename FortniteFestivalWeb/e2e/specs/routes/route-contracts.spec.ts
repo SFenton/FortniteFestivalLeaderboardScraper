@@ -40,13 +40,12 @@ test.describe('public route contracts', () => {
     });
   }
 
-  test('unknown routes retain the URL and render an intentional not-found page', async ({ page }) => {
-    await gotoAppRoute(page, '/missing/deep-link');
+  test('unknown routes redirect to Songs', async ({ page }) => {
+    await page.goto('/missing/deep-link', { waitUntil: 'load' });
 
-    await expect(page).toHaveURL(/#\/missing\/deep-link$/);
-    await expect(page).toHaveTitle(/Not Found/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Not Found' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Go to Songs' })).toHaveAttribute('href', '#/songs');
+    await expect(page).toHaveURL(/#\/songs$/);
+    await expect(page).toHaveTitle(/Songs/);
+    await expectMainContent(page, 'Deterministic Song');
   });
 
   test('malformed encoded song links do not crash the application shell', async ({ page }) => {
