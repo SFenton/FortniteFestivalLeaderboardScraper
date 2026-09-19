@@ -25,7 +25,6 @@ const META = {
   compete: ['compete.title', 'Compete'],
   settings: ['settings.title', 'Settings'],
   licenses: ['settings.licenses.title', 'Licenses'],
-  notFound: ['apiError.notFound', 'Not Found'],
 } as const satisfies Record<string, RouteMetadata>;
 
 export function matchRouteMetadata(pathname: string): RouteMetadata {
@@ -57,6 +56,6 @@ export function matchRouteMetadata(pathname: string): RouteMetadata {
     case Routes.root:
       return META.songs;
     default:
-      return META.notFound;
+      return META.songs;
   }
 }

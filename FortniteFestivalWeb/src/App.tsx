@@ -37,7 +37,6 @@ const BandRankingsPage = lazy(() => import('./pages/leaderboards/BandRankingsPag
 const BandPage = lazy(() => import('./pages/band/BandPage'));
 const PlayerBandsPage = lazy(() => import('./pages/band/PlayerBandsPage'));
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
-const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const AnimatedBackground = lazy(() => import('./components/shell/AnimatedBackground').then(module => ({
   default: module.AnimatedBackground,
 })));
@@ -132,7 +131,7 @@ function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | nu
       />
       <Route path={AppRoutes.settings} element={<RouteBoundary><SettingsPage /></RouteBoundary>} />
       <Route path={AppRoutes.settingsLicenses} element={<RouteBoundary><LicensesPage /></RouteBoundary>} />
-      <Route path="*" element={<RouteBoundary><NotFoundPage /></RouteBoundary>} />
+      <Route path="*" element={<RedirectToSongs />} />
     </Routes>
     </Suspense>
   );
@@ -800,7 +799,7 @@ function AppShell() {
   const knownRoute = isKnownRoutePath(routePathname);
   const navTitle = routePathname === AppRoutes.statistics
     ? (player?.displayName ?? (selectedProfile?.type === 'band' ? selectedProfile.displayName : t('nav.statistics')))
-    : (NAV_TITLES[routePathname] ?? (knownRoute ? null : t('apiError.notFound')));
+    : (NAV_TITLES[routePathname] ?? (knownRoute ? null : t('nav.songs')));
   const mainLabel = navTitle ?? t('common.brandName');
   const fallbackRouteHeading = navTitle !== null;
 

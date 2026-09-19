@@ -28,8 +28,8 @@ separate a held fallback from a ready dialog identified by its actual controls.
 Detached-target measurements are rejected rather than treated as quiet focus.
 
 Route contracts also own selected-player/band guard behavior, replace-history
-semantics, malformed deep-link resilience, and the intentional Not Found
-surface. Ownership specs verify that full-song history and Suggestions
+semantics, malformed deep-link resilience, and unsupported-route redirects to
+Songs. Ownership specs verify that full-song history and Suggestions
 rivals-all requests remain account-scoped and reusable across route remounts.
 
 ## Layout

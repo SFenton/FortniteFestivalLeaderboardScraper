@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-06
-last_verified_commit: 341d5e88
+last_verified: 2026-09-19
+last_verified_commit: b991958d
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -69,7 +69,6 @@ sources:
   - FortniteFestivalWeb/src/api/
   - FortniteFestivalWeb/src/components/page/RouteBoundary.tsx
   - FortniteFestivalWeb/src/components/page/RouteGuards.tsx
-  - FortniteFestivalWeb/src/pages/NotFoundPage.tsx
   - FortniteFestivalWeb/src/contexts/
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -129,11 +128,11 @@ tree. Static destinations and route-family matchers stay centralized in
 `src/routes.ts`; route title/announcement metadata stays in
 `src/routeMetadata.ts`. `RouteBoundary` gives every normal route, including
 the eager Songs page, the standard recoverable error UI. `RequirePlayer` and
-`RequireSelection` own access redirects with replace semantics, while one
-wildcard route retains malformed URLs and renders an intentional Not Found
-page. Route and tab ownership normalize trailing slashes, and Licenses remains
-owned by the Settings tab. The manual is the only feature currently exposed
-through `/api/features`.
+`RequireSelection` own access redirects with replace semantics, and the
+wildcard route uses the same replacement redirect for unsupported URLs so they
+land on `/songs`. Route and tab ownership normalize trailing slashes, and
+Licenses remains owned by the Settings tab. The manual is the only feature
+currently exposed through `/api/features`.
 
 ## State ownership
 
@@ -225,9 +224,10 @@ document titles, polite route announcements, and focus transfer for distinct
 PUSH/REPLACE navigation. Initial navigation and POP do not move focus; modal
 ownership delays route focus and preserves a different connected control that
 the modal restores. `src/routes.ts` and `src/routeMetadata.ts` supply route
-matching, titles, and mobile chrome labels, including Not Found metadata. A
-visually hidden fallback H1 covers lazy/mobile gaps and self-removes whenever a
-page-owned visible H1 is present.
+matching, titles, and mobile chrome labels; unknown locations use Songs
+metadata while the wildcard replacement redirect settles. A visually hidden
+fallback H1 covers lazy/mobile gaps and self-removes whenever a page-owned
+visible H1 is present.
 
 Focus ownership and focus appearance are separate. `installFocusAppearance`
 runs before React in both the application and component gallery. Its
