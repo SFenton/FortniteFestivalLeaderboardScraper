@@ -58,8 +58,23 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
-        app.MapPost("/api/admin/shop/refresh", async (ItemShopService shopService, ILogger<ItemShopService> log, CancellationToken ct) =>
+        app.MapPost("/api/admin/shop/refresh", async (
+            ItemShopService shopService,
+            IOptions<ScraperOptions> scraperOptions,
+            ILogger<ItemShopService> log,
+            CancellationToken ct) =>
         {
+            if (!scraperOptions.Value.EnableItemShopRefresh)
+            {
+                return Results.Conflict(new
+                {
+                    success = false,
+                    error = "item_shop_refresh_disabled",
+                    message =
+                        "Item Shop provider refresh is disabled for this service role.",
+                });
+            }
+
             try
             {
                 var result = await shopService.TriggerScrapeAsync(ct);

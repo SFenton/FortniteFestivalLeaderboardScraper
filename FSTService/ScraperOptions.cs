@@ -57,6 +57,19 @@ public sealed class ScraperOptions
     public TimeSpan SongSyncInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Whether this process owns Item Shop provider polling and reconciliation.
+    /// Production enables this on the API service and disables it on the worker.
+    /// </summary>
+    public bool EnableItemShopRefresh { get; set; } = true;
+
+    /// <summary>
+    /// How often the Item Shop is reconciled outside the accelerated midnight
+    /// rotation window (default: 15 minutes).
+    /// </summary>
+    public TimeSpan ItemShopRefreshInterval { get; set; } =
+        TimeSpan.FromMinutes(15);
+
+    /// <summary>
     /// Max concurrent leaderboard requests per scrape pass.
     /// </summary>
     public int DegreeOfParallelism { get; set; } = 16;
@@ -873,6 +886,17 @@ internal sealed class ScraperOptionsValidator
         ScraperOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (options.EnableItemShopRefresh
+            && options.ItemShopRefreshInterval <= TimeSpan.Zero)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(ScraperOptions.ItemShopRefreshInterval)
+                + " must be positive when "
+                + nameof(ScraperOptions.EnableItemShopRefresh)
+                + " is enabled.");
+        }
+
         if (!ScraperOptions.IsValidMaxScoreMaintenanceCommandTimeout(
                 options.MaxScoreMaintenanceCommandTimeoutSeconds))
         {

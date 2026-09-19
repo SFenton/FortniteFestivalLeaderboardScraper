@@ -161,8 +161,18 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
                     bandOrphanSweep.ExaminedTableCount);
             }
 
-            // Initialize Item Shop service (loads from DB + first scrape)
-            await _shopService.InitializeAsync(ct);
+            if (_scraperOptions.EnableItemShopRefresh)
+            {
+                await _shopService.InitializeAsync(
+                    _scraperOptions.ItemShopRefreshInterval,
+                    ct);
+            }
+            else
+            {
+                await _shopService.InitializePersistedStateOnlyAsync(ct);
+                _log.LogInformation(
+                    "Item Shop provider refresh disabled for this process; loaded persisted shop state only.");
+            }
 
             EnsurePublishedScopeSourceReadiness();
             _log.LogInformation(

@@ -1,12 +1,14 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-07
+last_verified: 2026-09-19
 last_verified_commit: 0b07fff0
 sources:
   - FSTService/Program.cs
   - FSTService/StartupPublicationReadOnlyState.cs
   - FSTService/StartupInitializer.cs
+  - FSTService/ScraperOptions.cs
+  - FSTService/Scraping/ItemShopService.cs
   - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
   - FSTService/Persistence/SnapshotRetentionSchemaCommand.cs
   - FSTService/HostedWorkerMode.cs
@@ -109,6 +111,36 @@ role.
 
 The application can serve static `wwwroot` assets when an embedded web bundle
 exists. The normal split deployment uses the standalone Nginx web container.
+
+### Item Shop reconciliation
+
+The public `fstservice` role owns Item Shop provider polling. Startup performs
+one best-effort fetch, a UTC-midnight loop polls every 15 seconds for up to ten
+minutes around rotation, and a configurable daytime timer reconciles every 15
+minutes by default. All startup, scheduled, midnight, and manual refreshes
+share one single-flight gate. The `fstworker` role loads the persisted shop
+projection for local reads but does not contact the provider or register shop
+timers. Its protected `POST /api/admin/shop/refresh` surface returns
+`409 Conflict` with `error=item_shop_refresh_disabled` rather than bypassing
+role ownership.
+
+Provider occurrences are grouped by stable `track.id`. Catalog resolution
+first maps that ID through `track.ti` (including the `SparksSong:` prefix) to
+the canonical `track.su`; a unique title is only a fallback when stable
+identity is unavailable in the catalog and the response title itself is not
+ambiguous. Duplicate offers merge order-independently: any explicit `New`
+banner wins, while an uncertain or earlier duplicate end date cannot create a
+premature `leavingTomorrow` classification.
+
+Every successful nonempty response is re-parsed, re-matched, and reconciled
+even when its content fingerprint is unchanged. This lets a later catalog
+refresh resolve a previously unmatched shop track and retries
+`service_new_shop_song` inserts after transient failures; the existing
+`(notification_kind, song_id, source_key)` uniqueness contract keeps retries
+idempotent. Additions and `New` upgrades apply immediately. Removals and
+metadata downgrades require the same complete candidate on a confirming
+scheduled pass, and a response with unmatched tracks cannot remove prior
+state.
 
 ## Middleware order
 

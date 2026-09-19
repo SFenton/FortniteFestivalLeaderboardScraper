@@ -377,6 +377,42 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_ItemShopRefreshDisabled_LoadsPersistedStateWithoutHttpOrTimers()
+    {
+        var festivalService =
+            new FestivalService((IFestivalPersistence?)null);
+        var shopHandler = new CountingFailureHandler();
+        using var shopService = new ItemShopService(
+            new HttpClient(shopHandler),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var initializer = new StartupInitializer(
+            _persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                EnableItemShopRefresh = false,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>(),
+            StartupPublicationReadOnlyState.ForInitializedDatabase());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(StartupReadinessTimeout);
+        await initializer.WaitForReadyAsync(cts.Token);
+
+        Assert.Equal(0, shopHandler.RequestCount);
+        Assert.False(shopService.HasScheduledRefresh);
+        Assert.True(initializer.IsReady);
+    }
+
+    [Fact]
     public async Task StartAsync_InvalidPublishedScopeBindingFailsClosedBeforeReady()
     {
         var scrapeId = PublishReadyScopeSource();

@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-27
+last_verified: 2026-09-19
 last_verified_commit: c35b7f47
 sources:
   - docker-compose.yml
@@ -9,6 +9,7 @@ sources:
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
   - FSTService/StartupInitializer.cs
+  - FSTService/Scraping/ItemShopService.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/PublicationGeneration.cs
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
@@ -99,13 +100,23 @@ and run as the same Unix owner, or set one explicit shared absolute lock path.
 | Service | Role | Key boundary |
 |---|---|---|
 | `postgres` | PostgreSQL 17 source of truth | Persistent data volume on the FST drive |
-| `fstservice` | API/frontend role | No Docker socket; scheduled scraper disabled |
-| `fstworker` | Full mutation worker | `worker` profile, bounded process-crash restart, worker-only Docker socket, guarded host startup |
+| `fstservice` | API/frontend role | No Docker socket; scheduled scraper disabled; owns Item Shop provider reconciliation |
+| `fstworker` | Full mutation worker | `worker` profile, bounded process-crash restart, worker-only Docker socket, guarded host startup; loads persisted Item Shop state only |
 | `festivalweb` | Nginx static SPA and reverse proxy | Can render maintenance UI independently of API readiness |
 
 `fstservice` and `fstworker` use the same .NET image with different command and
 role configuration. `festivalweb` is a separate multi-stage image. FSTService
 also supports an embedded SPA fallback for single-container deployments.
+The service role sets `Scraper__EnableItemShopRefresh=true`; the worker role
+sets it to `false`, preventing two processes from replacing the same
+`item_shop_tracks` projection.
+
+When rolling out this ownership split while a scrape is active, recreate
+`fstservice` first and leave the running worker untouched. The old worker
+binary can still own its legacy midnight shop timer, so recreate it with the
+new image and role file at the next verified idle and unfrozen worker boundary,
+before the next UTC midnight. Confirm afterward that service logs show Item
+Shop scheduling and worker logs show persisted-state-only initialization.
 
 ## Repository templates
 

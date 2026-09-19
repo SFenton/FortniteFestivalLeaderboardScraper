@@ -8247,6 +8247,36 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Admin_ShopRefresh_WhenRoleDoesNotOwnRefresh_ReturnsConflict()
+    {
+        using var factory =
+            _factory.WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.PostConfigure<ScraperOptions>(
+                        options =>
+                            options.EnableItemShopRefresh = false);
+                });
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "X-API-Key",
+            FstWebApplicationFactory.TestApiKey);
+
+        using var response = await client.PostAsync(
+            "/api/admin/shop/refresh",
+            null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body =
+            await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "item_shop_refresh_disabled",
+            body.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task Admin_FirstSeenCalculate_RequiresAuth()
     {
         var response = await _client.PostAsync("/api/firstseen/calculate", null);

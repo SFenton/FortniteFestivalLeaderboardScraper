@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-14
+last_verified: 2026-09-19
 last_verified_commit: d15cbdf7
 sources:
   - FSTService/Scraping/Capture/
@@ -19,6 +19,8 @@ sources:
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/SongCatalogRefreshWorker.cs
+  - FSTService/Scraping/ItemShopService.cs
+  - FSTService/StartupInitializer.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -97,6 +99,10 @@ Full-worker mode registers:
 
 API/frontend modes register only the background services appropriate to those
 roles. Registration-sync mode omits scheduled scrape and band-history work.
+The production worker role also sets
+`Scraper__EnableItemShopRefresh=false`: startup loads persisted Item Shop state
+for local consumers without provider HTTP, notification reconciliation, or
+shop timers. The API service is the sole supported Item Shop refresh owner.
 
 ## Production startup
 
