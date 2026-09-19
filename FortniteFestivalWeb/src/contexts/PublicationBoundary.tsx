@@ -8,6 +8,7 @@ import {
 } from '../api/publication';
 import { clearSongsCache } from '../api/songsCache';
 import MaintenanceApp from '../components/maintenance/MaintenanceApp';
+import StartupSplash from '../components/common/StartupSplash';
 import { resetAppWebSocketForPublicationChange } from '../hooks/data/useAppWebSocket';
 
 export default function PublicationBoundary({
@@ -61,7 +62,7 @@ export default function PublicationBoundary({
     return <MaintenanceApp />;
   }
   if (!publication) {
-    return <div aria-busy="true">Loading published data...</div>;
+    return <StartupSplash announce />;
   }
 
   return <div key={`${publication.publicationId}:${refreshRevision}`}>{children}</div>;

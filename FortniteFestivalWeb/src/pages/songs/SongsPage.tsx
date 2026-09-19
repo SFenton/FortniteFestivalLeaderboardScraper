@@ -17,6 +17,7 @@ import MobileFloatingActionButton from '../../components/shell/fab/MobileFloatin
 import ComboInstrumentFabAccessory from '../../components/shell/fab/ComboInstrumentFabAccessory';
 import type { ActionItem } from '../../components/shell/fab/FloatingActionButton';
 import { useSearchQuery } from '../../contexts/SearchQueryContext';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
@@ -904,6 +905,7 @@ export default function SongsPage() {
   const [loadPhase, setLoadPhase] = useState<LoadPhase>(
     dataReady ? LoadPhase.ContentIn : LoadPhase.Loading,
   );
+  useSetPageReady(loadPhase === LoadPhase.ContentIn);
   // Track whether the initial load phase was set via settings change (not mount)
   const isSettingsChangeRef = useRef(false);
   // Whether to run stagger animation on the current contentIn transition

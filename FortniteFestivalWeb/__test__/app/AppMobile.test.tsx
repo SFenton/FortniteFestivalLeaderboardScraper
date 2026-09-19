@@ -283,6 +283,13 @@ const mockApi = vi.hoisted(() => {
 });
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
+vi.mock('../../src/hooks/ui/useInitialAppReveal', () => ({
+  useInitialAppReveal: () => ({
+    complete: () => {},
+    entered: true,
+    phase: 'entered' as const,
+  }),
+}));
 
 import App, { getEmptyBandFilterActionLabel, getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups, prependFabActionGroup, shouldShowBandFilterAction } from '../../src/App';
 import { queryClient } from '../../src/api/queryClient';

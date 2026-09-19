@@ -10,6 +10,7 @@ import {
   recordFocusEvents,
   tabTo,
 } from '../../support/focusAppearance';
+import { waitForStartupEntrance } from '../../support/drivers/app';
 
 test.use({ scenario: createPopulatedScenario() });
 
@@ -34,6 +35,7 @@ test.afterEach(async ({ page, browser, isMobile }, testInfo) => {
 
 test('returning-user startup leaves focus alone and real Tab reveals the skip link', async ({ page }, testInfo) => {
   await page.goto('/#/settings');
+  await waitForStartupEntrance(page);
   const main = page.locator('main#main-content');
   await expect(main).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -184,6 +186,7 @@ test('shared settings control stays silent after pointer activation and switches
 
 test('custom song-title link has transparent tap feedback and remains keyboard visible', async ({ page, isMobile }, testInfo) => {
   await page.goto('/#/songs/e2e-song-01/Solo_Guitar');
+  await waitForStartupEntrance(page);
   const title = page.getByRole('link').filter({ has: page.getByRole('heading', { level: 1 }) });
   await expect(title).toBeVisible();
   const appearance = await captureAppearance(title, 'custom-title-link', testInfo);
@@ -196,6 +199,7 @@ test('custom song-title link has transparent tap feedback and remains keyboard v
 
 test('keyboard-opened Search preserves visible focus and exact Escape return', async ({ page, isMobile }, testInfo) => {
   await page.goto('/#/settings');
+  await waitForStartupEntrance(page);
   const launcher = page.getByTestId(isMobile ? 'mobile-header-search' : 'desktop-header-search');
   await tabTo(page, launcher);
   await expectVisibleFocus(launcher);
@@ -226,6 +230,7 @@ test('keyboard-opened Search preserves visible focus and exact Escape return', a
 
 test('keyboard route activation keeps a visible main focus target', async ({ page }) => {
   await page.goto('/#/settings');
+  await waitForStartupEntrance(page);
   const licenses = page.getByRole('link', { name: 'Licenses', exact: true });
   await tabTo(page, licenses);
   await expectVisibleFocus(licenses);

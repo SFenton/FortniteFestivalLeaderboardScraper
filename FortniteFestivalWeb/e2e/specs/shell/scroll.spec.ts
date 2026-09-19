@@ -2,6 +2,7 @@ import { test, expect } from '../../fixtures/fre';
 import type { Page } from '@playwright/test';
 import { changelogHash } from '../../../src/changelogHash';
 import { isPrimaryDesktopProject } from '../../support/projects';
+import { dismissObstructions } from '../../support/drivers/app';
 
 // Scroll tests are designed for desktop viewports only
 test.beforeEach(async ({ page, freState }, testInfo) => {
@@ -18,17 +19,10 @@ test.beforeEach(async ({ page, freState }, testInfo) => {
   }));
 });
 
-async function dismissFirstRun(page: Page) {
-  const overlay = page.getByTestId('fre-overlay');
-  if (!await overlay.isVisible().catch(() => false)) return;
-  await page.getByTestId('fre-close').click();
-  await expect(overlay).toBeHidden({ timeout: 5_000 });
-}
-
 test('scroll works at 1280px (narrow desktop)', async ({ page }) => {
   await page.goto('/#/songs');
   await page.getByText('Scroll Test Song 1', { exact: true }).waitFor({ state: 'visible' });
-  await dismissFirstRun(page);
+  await dismissObstructions(page);
 
   const state = await readShellScrollState(page);
   console.log('shell scroll state:', JSON.stringify(state));
@@ -51,7 +45,7 @@ test('scroll works at 1920px (wide desktop)', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.goto('/#/songs');
   await page.getByText('Scroll Test Song 1', { exact: true }).waitFor({ state: 'visible' });
-  await dismissFirstRun(page);
+  await dismissObstructions(page);
 
   const state = await readShellScrollState(page);
   console.log('Wide shell scroll state:', JSON.stringify(state));
