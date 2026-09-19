@@ -5,6 +5,7 @@ const OVERLAY_SETTLE_TIMEOUT_MS = 2_000;
 const OVERLAY_ATTEMPTS = 12;
 const OVERLAY_POLL_INTERVAL_MS = 150;
 const OVERLAY_QUIET_CHECKS = 8;
+const STARTUP_ENTRANCE_TIMEOUT_MS = 15_000;
 
 export async function gotoAppRoute(page: Page, route: string): Promise<void> {
   const normalized = route.startsWith('/') ? route : `/${route}`;
@@ -12,7 +13,17 @@ export async function gotoAppRoute(page: Page, route: string): Promise<void> {
   await dismissObstructions(page);
 }
 
+export async function waitForStartupEntrance(page: Page): Promise<void> {
+  await expect(page.getByTestId('app-shell')).toHaveAttribute(
+    'data-startup-phase',
+    'entered',
+    { timeout: STARTUP_ENTRANCE_TIMEOUT_MS },
+  );
+}
+
 export async function dismissObstructions(page: Page): Promise<void> {
+  await waitForStartupEntrance(page);
+
   let quietChecks = 0;
   for (let attempt = 0; attempt < OVERLAY_ATTEMPTS; attempt += 1) {
     const firstRunClose = page.getByTestId('fre-close').last();
