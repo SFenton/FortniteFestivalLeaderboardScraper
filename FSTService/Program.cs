@@ -50,9 +50,14 @@ var activeScrapeFailureIsolationRequested = args.Any(
     argument => argument.Equals(
         ActiveScrapeFailureIsolationCommand.MaintenanceFlag,
         StringComparison.OrdinalIgnoreCase));
+var interruptedAcquisitionNormalizationRequested =
+    InterruptedAcquisitionNormalizationCommand.IsRequested(args);
+var machineReadableIsolationCommandRequested =
+    activeScrapeFailureIsolationRequested
+    || interruptedAcquisitionNormalizationRequested;
 
 var builder = WebApplication.CreateBuilder(args);
-if (activeScrapeFailureIsolationRequested)
+if (machineReadableIsolationCommandRequested)
 {
     builder.Services.Configure<
         Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(
@@ -74,7 +79,7 @@ builder.Services.AddSingleton<ServiceInstanceIdentity>();
     int target = Math.Max(200, Math.Max(prevWorker, scraperDop));
     ThreadPool.SetMinThreads(target, target);
     ThreadPool.GetMinThreads(out int newWorker, out int newIo);
-    var output = activeScrapeFailureIsolationRequested
+    var output = machineReadableIsolationCommandRequested
         ? Console.Error
         : Console.Out;
     output.WriteLine(
@@ -120,6 +125,8 @@ var maxScoreMaintenanceCommand =
     MaxScoreMaintenanceCommand.Parse(
         args,
         publishedScrapeIdArgument);
+var interruptedAcquisitionNormalizationCommand =
+    InterruptedAcquisitionNormalizationCommand.Parse(args);
 var activeScrapeFailureIsolationCommand =
     ActiveScrapeFailureIsolationCommand.Parse(
         args,
@@ -151,6 +158,7 @@ if (rolloutReadOnlyStartupRequested
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || interruptedAcquisitionNormalizationCommand is not null
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -162,6 +170,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || interruptedAcquisitionNormalizationCommand is not null
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -173,6 +182,7 @@ if (soloFamilyRankingBackfillCommand is not null
     && (improvementNotificationRecoveryRequested
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
+        || interruptedAcquisitionNormalizationCommand is not null
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -183,6 +193,7 @@ if (soloFamilyRankingBackfillCommand is not null
 if (leaderboardRivalsRecomputeCommand is not null
     && (improvementNotificationRecoveryRequested
         || maxScoreMaintenanceCommand is not null
+        || interruptedAcquisitionNormalizationCommand is not null
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -192,11 +203,20 @@ if (leaderboardRivalsRecomputeCommand is not null
 }
 if (maxScoreMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
+        || interruptedAcquisitionNormalizationCommand is not null
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
         "Max-score maintenance cannot run with another one-shot schema or notification command.");
+}
+if (interruptedAcquisitionNormalizationCommand is not null
+    && (improvementNotificationRecoveryRequested
+        || activeScrapeFailureIsolationCommand is not null
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Interrupted-acquisition normalization cannot run with another one-shot schema or notification command.");
 }
 publishedScrapeIdArgument.RejectIfOrphaned(
     improvementNotificationRecoveryRequested
@@ -213,6 +233,7 @@ var apiOnlyRequested = improvementNotificationRecoveryRequested
     || soloFamilyRankingBackfillCommand is not null
     || leaderboardRivalsRecomputeCommand is not null
     || maxScoreMaintenanceCommand is not null
+    || interruptedAcquisitionNormalizationCommand is not null
     || activeScrapeFailureIsolationCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
@@ -240,7 +261,8 @@ var strictOneShotWithoutHostedServices =
         soloFamilyRankingBackfillCommand is not null,
         leaderboardRivalsRecomputeCommand is not null,
         maxScoreMaintenanceCommand is not null,
-        activeScrapeFailureIsolationCommand is not null);
+        activeScrapeFailureIsolationCommand is not null)
+    || interruptedAcquisitionNormalizationCommand is not null;
 
 builder.Services.AddSingleton<
     IValidateOptions<ScraperOptions>,
@@ -461,7 +483,9 @@ builder.Services.AddSingleton<TokenManager>();
 // ─── Persistence (PostgreSQL) ───────────────────────────────
 
 var pgApplicationName =
-        maxScoreMaintenanceCommand?.Action
+        interruptedAcquisitionNormalizationCommand is not null
+        ? "fst-interrupted-acquisition-normalization"
+        : maxScoreMaintenanceCommand?.Action
             == MaxScoreMaintenanceAction.Rollback
         ? "fst-max-score-rollback"
         : soloFamilyRankingBackfillCommand is not null
@@ -964,6 +988,11 @@ else if (maxScoreMaintenanceCommand is not null)
     app.Logger.LogInformation(
         "Max-score maintenance one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
 }
+else if (interruptedAcquisitionNormalizationCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Interrupted-acquisition normalization one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
 else if (activeScrapeFailureIsolationCommand is not null)
 {
     app.Logger.LogInformation(
@@ -1207,6 +1236,33 @@ if (maxScoreMaintenanceCommand is not null)
             DryRun: false,
             Succeeded: false,
         })
+    {
+        Environment.ExitCode = 2;
+    }
+    return;
+}
+
+if (interruptedAcquisitionNormalizationCommand is not null)
+{
+    var metaDb =
+        app.Services.GetRequiredService<
+            FSTService.Persistence.MetaDatabase>();
+    object report =
+        interruptedAcquisitionNormalizationCommand.Execute
+        ? metaDb.ExecuteInterruptedAcquisitionNormalization(
+            interruptedAcquisitionNormalizationCommand)
+        : metaDb.GetInterruptedAcquisitionNormalizationReadiness(
+            interruptedAcquisitionNormalizationCommand);
+    Console.WriteLine(
+        System.Text.Json.JsonSerializer.Serialize(report));
+    if (report is InterruptedAcquisitionNormalizationReadiness
+            {
+                CanExecute: false,
+            }
+        or InterruptedAcquisitionNormalizationExecutionResult
+            {
+                Succeeded: false,
+            })
     {
         Environment.ExitCode = 2;
     }

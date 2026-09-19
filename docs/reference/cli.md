@@ -1,10 +1,13 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-12
-last_verified_commit: c0b30c41
+last_verified: 2026-09-18
+last_verified_commit: c7488355
 sources:
   - FSTService/Program.cs
+  - FSTService/Persistence/InterruptedAcquisitionNormalizationCommand.cs
+  - FSTService/Persistence/InterruptedAcquisitionNormalizationModels.cs
+  - FSTService/Persistence/MetaDatabase.InterruptedAcquisitionNormalization.cs
   - FSTService/Scraping/Capture/CaptureOnlyCommand.cs
   - FSTService/Scraping/Capture/CaptureOnlyEntryPoint.cs
   - FSTService/Scraping/Capture/CaptureOnlyRunner.cs
@@ -249,6 +252,7 @@ legacy fetch.
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
 | `--initialize-snapshot-retention-schema-only` | Apply only the bounded snapshot-retention schema step and exit, without a host | Exactly one argument; all other flags/selectors are rejected |
 | `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
+| `--interrupted-acquisition-normalization` | Read-only exact-state check or atomic normalization of one interrupted acquisition attempt before official failure isolation | Requires exactly one of `--interrupted-acquisition-normalization-check` or `--interrupted-acquisition-normalization-execute` plus every namespaced identity flag described below |
 | `--active-scrape-failure-isolation` | Read-only readiness/check report or explicit failure-isolation execution for one exact frozen active candidate | Required `--active-scrape-id`, `--published-scrape-id`, and exactly one of `--active-scrape-failure-isolation-check` or `--active-scrape-failure-isolation-execute`; execute mode also requires `--active-scrape-failure-phase` and `--active-scrape-failure-message` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
@@ -392,6 +396,81 @@ active-scrape failure isolation, and max-score maintenance. Both
 one positive value; duplicates, blank/malformed values, and an orphaned scrape
 ID without either owning command are startup errors. The shared option does not
 activate max-score parsing by itself.
+
+### Interrupted acquisition normalization
+
+`--interrupted-acquisition-normalization` is a narrower, one-shot handoff into
+the unchanged official active-scrape failure-isolation command. It does not
+terminalize a scrape or publication. It only converts one exact stale
+`scrape.leaderboards` attempt from `interrupted` to `failed` and moves that
+same stale worker current operation into failed last-operation history.
+
+Both modes require all of:
+
+```text
+--interrupted-acquisition-normalization
+--interrupted-acquisition-normalization-check
+  or --interrupted-acquisition-normalization-execute
+--interrupted-acquisition-scrape-id <positive-id>
+--interrupted-acquisition-published-scrape-id <positive-id>
+--interrupted-acquisition-current-publication-id <positive-id>
+--interrupted-acquisition-previous-publication-id <positive-id>
+--interrupted-acquisition-working-publication-id <positive-id>
+--interrupted-acquisition-worker-instance-id <exact-instance>
+--interrupted-acquisition-worker-freshness-utc <UTC-microsecond-timestamp>
+--interrupted-acquisition-phase-id scrape.leaderboards
+--interrupted-acquisition-attempt <positive-attempt>
+```
+
+The command rejects unknown, duplicate, missing, blank, non-UTC, and
+sub-microsecond arguments. Current, previous, and working publication IDs must
+be distinct. The worker freshness value binds `updated_at`,
+`last_heartbeat_at`, and `last_status_change_at`; execute never advances those
+timestamps.
+
+Check mode starts one repeatable-read, read-only transaction, acquires the
+shared publication advisory fence, and writes exactly one JSON document. It
+requires the exact published/current/previous/working pointers, an unfrozen
+singleton with no commit intent, one running uncheckpointed candidate, its
+single building generation, no newer or other running scrape, no candidate
+source mappings, no worker query, waiting/advisory lock, maintenance progress,
+or running phase attempt, and exactly one terminally timestamped interrupted
+attempt. The scraper worker must be offline in scraper mode with the exact
+instance/freshness identity. Its canonical version-2 current operation must
+name the same scrape, operation ID, phase ID, phase ordinal, plan version, and
+attempt.
+
+Execute first performs that read-only check, then independently acquires the
+exclusive publication fence and row-locks/revalidates the singleton, scrape,
+generation, attempt, and worker identities. One transaction changes only:
+
+- the exact attempt `status` to `failed` and its `error_message` to the fixed
+  normalization message; and
+- the exact worker `current_operation_json` to `NULL`, with that operation
+  copied to `last_operation_json` as failed at the preserved attempt terminal
+  timestamp.
+
+Scrape status/metrics, publication and generation rows, freeze state, source
+mappings, caches, schema, files, and every other phase/worker row remain
+unchanged. Missing schema rejects before mutation; this mode never initializes
+schema or registers hosted services. An exact retry reports
+`already_normalized`; a replacement worker, freshness change, foreign/current
+operation, running/new attempt, or pointer/checkpoint/generation drift rejects.
+
+After commit, the result includes a fresh call to the existing
+`GetActiveScrapeFailureIsolationReadiness`, followed by a final exact-state
+reread under the shared publication fence. Success requires that unchanged
+official readiness to report
+`AcquisitionFailureMutationRequired=true` and that the final reread still
+matches every supplied scrape, generation, freeze, pointer, attempt, worker
+instance/freshness, and offline/current-operation identity, with exactly one
+normalized failed attempt and no other or running attempt. A replacement
+worker, newer attempt, or any other drift fails closed; an already-normalized
+retry is not exempt. The operator then runs the ordinary
+`--active-scrape-failure-isolation-check` and explicit
+`--active-scrape-failure-isolation-execute` commands with failure phase
+`scrape_acquisition_failed`. CLI availability is not production authorization;
+follow [live safety](../operations/live-safety.md).
 
 ### Max-score correction
 

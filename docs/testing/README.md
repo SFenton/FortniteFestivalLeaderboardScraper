@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-14
-last_verified_commit: d15cbdf7
+last_verified: 2026-09-18
+last_verified_commit: c7488355
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -31,6 +31,7 @@ sources:
   - FSTService.Tests/Unit/DatabaseInitializerTests.cs
   - FSTService.Tests/Unit/ScraperWorkerStatefulTests.cs
   - FSTService.Tests/Unit/MetaDatabaseTests.cs
+  - FSTService.Tests/Unit/InterruptedAcquisitionNormalizationTests.cs
   - FSTService.Tests/Unit/PublicationReadinessTests.cs
   - FSTService.Tests/Unit/PublicReadGateTests.cs
   - FSTService.Tests/Unit/NotificationServiceTests.cs
@@ -176,6 +177,25 @@ flag is disabled for resume post-processing, explicit full-worker host refusal
 for `scrape-resume` guard paths (`ApiOnly`, disabled scraper worker, and
 registration-sync-only), and removal of operator-supplied metric estimates
 from guard admission.
+
+Focused interrupted-acquisition normalization validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~InterruptedAcquisitionNormalization'
+```
+
+This PostgreSQL-backed suite proves the read-only shared-fence check, exact
+exclusive-fence/row-lock execution, two-field-family mutation boundary,
+official acquisition-failure readiness handoff, idempotency, and rejection of
+missing/malformed/attempt-2/multiple attempts, foreign operations, replacement
+workers, pointer/checkpoint/generation/freeze/source-mapping drift, active
+worker queries, waiting/advisory locks, newer scrape state, and missing schema.
+Deterministic PostgreSQL-backed race hooks prove that replacement workers and
+newer attempts introduced between exact-state and official-readiness proof
+fail closed for both first execution and an already-normalized retry. The
+entrypoint test also proves one JSON document on stdout and no schema or
+hosted-service initialization.
 
 Focused snapshot-retention policy validation:
 

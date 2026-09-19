@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-07
-last_verified_commit: b1695507
+last_verified: 2026-09-18
+last_verified_commit: c7488355
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -10,6 +10,8 @@ sources:
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
   - FSTService/ScraperOptions.cs
   - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/InterruptedAcquisitionNormalizationCommand.cs
+  - FSTService/Persistence/MetaDatabase.InterruptedAcquisitionNormalization.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
@@ -672,6 +674,56 @@ stop the worker or clear the freeze first.
 Do not bypass a failed gate by relaxing `service_healthy`, enabling a candidate
 continuous profile, or broad-recreating the canonical pool. Investigate the
 reported sanitized stage while keeping API/web/PostgreSQL available.
+
+### Interrupted acquisition normalization handoff
+
+An offline worker can leave an uncheckpointed acquisition with one durable
+`scrape.leaderboards` attempt marked `interrupted` while its exact current
+operation remains in `service_worker_status`. The official active-scrape
+failure-isolation terminalizer intentionally does not reinterpret that state.
+The dedicated `--interrupted-acquisition-normalization` one-shot may be used
+only to make that exact attempt/operation pair eligible for the unchanged
+terminalizer.
+
+Before check or execute, independently retain the exact active/published scrape
+IDs; current, previous, and working publication IDs; worker instance and
+microsecond freshness timestamp; phase ID; and attempt. The worker must remain
+stopped. Public reads must be unfrozen, the candidate must still own its
+building working publication, and acquisition checkpoint state must remain
+absent. Any newer scrape, other attempt, active worker backend, candidate
+source mapping, waiting/advisory lock, maintenance progress, freeze/commit
+intent, pointer/generation drift, or replacement worker is a hard rejection.
+
+Check is read-only under the shared publication fence. Execute reacquires the
+exclusive fence, row-locks and revalidates every supplied identity, and commits
+only the exact attempt status/error plus the exact worker current-to-last
+operation transition. It does not fail `scrape_log`, release the working
+publication, change generation/freeze/cache/source state, initialize schema,
+touch artifacts, or start hosted services. A missing prerequisite schema is a
+rejection, not an initialization request.
+
+After normalization, require all of:
+
+1. the normalizer's final state is `already_normalized`;
+2. its embedded unchanged official readiness reports
+   `AcquisitionFailureMutationRequired=true`;
+3. its final exact-state reread, performed after official readiness, still
+   matches every supplied pointer, scrape/generation/freeze identity,
+   worker instance/freshness identity, and exactly one normalized failed
+   phase attempt with zero other/running attempts and no current worker
+   operation;
+4. a separate ordinary
+   `--active-scrape-failure-isolation-check` succeeds for the same
+   active/published scrape identity;
+5. only then, an explicitly authorized ordinary isolation execute uses
+   `scrape_acquisition_failed` and an operator-supplied message.
+
+There is no broad live rollback or worker-instance update in the normalizer.
+If final proof or the official follow-up rejects, including an
+already-normalized retry, fail closed, keep the worker stopped, and preserve
+the exact state for investigation. Disposable smoke validation may prove
+rollback by restoring its isolated pre-mutation PostgreSQL dump; that is not
+permission to restore or rewrite production.
 
 ## Public-read and publication safety
 
