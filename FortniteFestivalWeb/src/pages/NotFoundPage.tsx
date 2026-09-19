@@ -9,10 +9,12 @@ import Page from './Page';
 import { PageMessage } from './PageMessage';
 import PageHeader from '../components/common/PageHeader';
 import { Routes } from '../routes';
+import { useSetPageReady } from '../contexts/PageReadyContext';
 
 export default function NotFoundPage() {
   const { t } = useTranslation();
   const styles = useStyles();
+  useSetPageReady(true);
 
   return (
     <Page before={<PageHeader title={t('apiError.notFound')} />}>

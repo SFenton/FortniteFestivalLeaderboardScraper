@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useRef, useState, useMemo, type AnimationEventHa
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useStartupEntranceComplete } from '../../contexts/StartupEntranceContext';
 import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
 import { Gap, Layout, PointerEvents, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
@@ -118,6 +119,7 @@ export function PaginatedLeaderboard<T>({
   footerAnimKey,
 }: PaginatedLeaderboardProps<T>) {
   const isWideDesktop = useIsWideDesktop();
+  const startupEntranceComplete = useStartupEntranceComplete();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const scrollContainerRef = useScrollContainer();
   const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
@@ -297,7 +299,7 @@ export function PaginatedLeaderboard<T>({
           rowHeight={rowHeight}
         />
       )}
-      {hasPlayerFooter && renderPlayerFooter && createPortal(
+      {startupEntranceComplete && hasPlayerFooter && renderPlayerFooter && createPortal(
         <div
           style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, footerPlacement), ...wideOverride, ...footerStaggerStyle }}
           onAnimationEnd={(ev) => {

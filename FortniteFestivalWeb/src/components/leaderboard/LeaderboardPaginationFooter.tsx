@@ -4,6 +4,7 @@ import { Gap, Layout } from '@festival/theme';
 import { readSafeAreaBottomPx, safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 import { getScrollViewportRect } from '../../utils/scrollViewport';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useStartupEntranceComplete } from '../../contexts/StartupEntranceContext';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import Paginator from '../common/Paginator';
 import { fixedFooterWide, plbStyles as s } from './paginatedLeaderboardStyles';
@@ -127,7 +128,9 @@ export function FixedLeaderboardPagination({
   rowHeight = Layout.entryRowHeight,
 }: FixedLeaderboardPaginationProps) {
   const isWideDesktop = useIsWideDesktop();
+  const startupEntranceComplete = useStartupEntranceComplete();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
+  if (!startupEntranceComplete) return null;
 
   return createPortal(
     <div data-testid="leaderboard-fixed-pagination" style={{ ...getFixedPaginationStyle(hasFab, hasPlayerFooter, rowHeight, footerPlacement), ...wideOverride }}>
@@ -158,10 +161,12 @@ export function FixedLeaderboardPlayerFooter({
   children,
 }: FixedLeaderboardPlayerFooterProps) {
   const isWideDesktop = useIsWideDesktop();
+  const startupEntranceComplete = useStartupEntranceComplete();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
     ? { height: rowHeight, boxSizing: 'border-box' }
     : undefined;
+  if (!startupEntranceComplete) return null;
 
   return createPortal(
     <div data-testid="leaderboard-fixed-player-footer" style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, footerPlacement), ...wideOverride }}>

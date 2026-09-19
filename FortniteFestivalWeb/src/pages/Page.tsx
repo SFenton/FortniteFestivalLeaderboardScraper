@@ -31,7 +31,9 @@ import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
 import { LoadPhase } from '@festival/core/runtime';
 import ArcSpinner from '../components/common/ArcSpinner';
 import ErrorBoundary from '../components/page/ErrorBoundary';
+import BackgroundImage from '../components/page/BackgroundImage';
 import { PageQuickLinksRail, PageQuickLinksModal, type PageQuickLinksConfig } from '../components/page/PageQuickLinks';
+import { useStartupEntranceComplete } from '../contexts/StartupEntranceContext';
 
 const FirstRunCarousel = lazy(() => import('../components/firstRun/FirstRunCarousel'));
 
@@ -363,7 +365,8 @@ export default function Page({
 function PageFirstRun({ config }: { config: NonNullable<PageProps['firstRun']> }) {
   useRegisterFirstRun(config.key, config.label, config.slides);
   const firstRun = useFirstRun(config.key, config.gateContext, config.slides);
-  if (!firstRun.show) return null;
+  const startupEntranceComplete = useStartupEntranceComplete();
+  if (!startupEntranceComplete || !firstRun.show) return null;
   return (
     <ErrorBoundary fallback={null}>
       <Suspense fallback={null}>
@@ -372,8 +375,6 @@ function PageFirstRun({ config }: { config: NonNullable<PageProps['firstRun']> }
     </ErrorBoundary>
   );
 }
-
-import BackgroundImage from '../components/page/BackgroundImage';
 
 /* ── Convenience sub-components for common patterns ── */
 

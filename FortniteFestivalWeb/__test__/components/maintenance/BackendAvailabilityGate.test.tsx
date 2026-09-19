@@ -51,12 +51,15 @@ function mockServiceInfo(workerStatus: string, currentUpdateStatus = 'idle') {
 }
 
 describe('BackendAvailabilityGate', () => {
-  it('shows a status check message while the backend check is pending', () => {
+  it('shows an accessibility-silent startup splash while the backend check is pending', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
 
     renderGate();
 
-    expect(screen.getByText('Checking Festival Score Tracker status...')).toBeInTheDocument();
+    expect(screen.getByTestId('startup-splash')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByTestId('arc-spinner')).toBeInTheDocument();
+    expect(screen.queryByText('Checking Festival Score Tracker status...')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(screen.queryByText('App content')).not.toBeInTheDocument();
   });
 

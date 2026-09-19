@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useServiceInfo } from '../../hooks/data/useServiceInfo';
+import StartupSplash from '../common/StartupSplash';
 import MaintenanceApp from './MaintenanceApp';
 
 type BackendAvailabilityGateProps = {
@@ -10,5 +11,6 @@ export default function BackendAvailabilityGate({ children }: BackendAvailabilit
   const serviceInfo = useServiceInfo('availability');
 
   if (serviceInfo.isSuccess) return <>{children}</>;
-  return <MaintenanceApp checking={serviceInfo.isPending} />;
+  if (serviceInfo.isPending) return <StartupSplash />;
+  return <MaintenanceApp />;
 }
