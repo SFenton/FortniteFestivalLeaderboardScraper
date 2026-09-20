@@ -29,10 +29,23 @@ export function evaluateNoProgressObservation(
   if (!observation.workerRunning && !recoverWorkerExit) {
     return { decision: "inactive", reason: "worker_container_not_running" };
   }
-  if (observation.scrapeStatus !== "running") {
+  const publicationInProgress =
+    observation.scrapeStatus === "completed"
+    && observation.publicReadsFrozen === true
+    && observation.publicReadsFrozenReason === "publish";
+  if (publicationInProgress && recoverWorkerExit) {
+    return {
+      decision: "terminal",
+      reason: "publication_recovery_requires_operator"
+    };
+  }
+  if (observation.scrapeStatus !== "running" && !publicationInProgress) {
     return { decision: "terminal", reason: `scrape_${observation.scrapeStatus ?? "missing"}` };
   }
-  if (observation.publicReadsFrozenReason !== "post-process") {
+  if (
+    observation.publicReadsFrozenReason !== "post-process"
+    && observation.publicReadsFrozenReason !== "publish"
+  ) {
     return { decision: "outside_post_process", reason: "publication_not_in_post_process" };
   }
 

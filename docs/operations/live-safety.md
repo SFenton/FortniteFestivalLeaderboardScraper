@@ -513,12 +513,15 @@ It never clears a freeze, rewrites publication state, restarts core services,
 changes provider selectors, promotes spares, or installs static endpoint IPs.
 
 If the active lane is selected, the guard next issues bounded read-only
-PostgreSQL queries through the live `fst-postgres` container, validates the
+PostgreSQL queries through the live `fst-postgres` container with the explicit
+`fst` role and `fstservice` database, validates the
 candidate's exact acquisition checkpoint version, positive persisted metrics,
 canonical solo-scope count/fingerprint, complete manifests, zero writer
 failures, zero publication-critical failures, exact publication/catalog
 identity, and absence of another ready/deferred publication path that should be
-resumed instead. Legacy or partial rows are refused without mutation. Scrape
+resumed instead. Publication catalog schema `1` is validated as the legacy
+bare song array; schema `2` is validated through its top-level `songs` array.
+Legacy or partial rows are refused without mutation. Scrape
 `1399` is the canonical example: its legacy null
 `songs_scraped`/`total_entries`/`total_requests`/`total_bytes` values and
 missing checkpoint fields make it intentionally unrecoverable by boot
@@ -530,7 +533,10 @@ continuous and run-once merged worker configurations before any start. It then
 starts only the existing `scrape-resume` run-once profile, waits for durable
 publication success plus unfreeze while the same lock remains held, and only
 after that success snapshot reruns idle/unfrozen safety checks and recreates
-the continuous worker. Any timeout, mismatch, signal, durable failure,
+the continuous worker. The stopped/absent-worker requirement applies before
+the run-once start; subsequent recovery observations allow that exact worker
+to remain present while its identity and durable candidate state are checked.
+Any timeout, mismatch, signal, durable failure,
 publication drift, or core/proxy loss fails closed and preserves the freeze.
 
 Use the dual-lane run-once wrapper for a full-scrape candidate. The
@@ -658,6 +664,11 @@ evidence, renders the report, and attempts notification while publication
 remains fail-closed. A failed Docker memory sample is recorded in the
 observation and retried on the next poll; unexpected exit recovery remains the
 fallback for an OOM kill.
+In observation-only mode, the watchdog continues after the scrape row becomes
+`completed` when public reads remain frozen with reason `publish`. This covers
+publication preparation/commit without treating scrape completion as terminal.
+Automatic worker-exit recovery is deliberately refused in that state;
+publication recovery remains manual and must preserve the publication fence.
 An exact failed candidate with the preserved publication already unfrozen and
 no working publication may re-enter only to finish interrupted phase-attempt
 and worker-operation convergence. It cannot repeat or widen publication

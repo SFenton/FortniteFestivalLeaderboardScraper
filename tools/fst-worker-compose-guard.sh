@@ -2013,7 +2013,7 @@ load_active_resume_state_json() {
     local scrape_id="$1"
 
     docker exec "$postgres_container" \
-        psql -X -A -t -q \
+        psql -X -A -t -q -U fst -d fstservice \
             -v ON_ERROR_STOP=1 \
             -c "/* fst_boot_active_recovery_state */ WITH target_scrape AS (
                     SELECT
@@ -2255,7 +2255,16 @@ if not isinstance(fingerprint, str) or len(fingerprint) != 64 or any(ch not in "
 catalog_json = state.get("publicationCatalogJson")
 if not isinstance(catalog_json, str) or not catalog_json:
     fail("recovery candidate publication song catalog is missing")
-catalog = json.loads(catalog_json)
+catalog_document = json.loads(catalog_json)
+catalog_schema_version = state.get("publicationCatalogSchemaVersion")
+if catalog_schema_version == 1:
+    catalog = catalog_document
+elif catalog_schema_version == 2 and isinstance(catalog_document, dict):
+    catalog = catalog_document.get("songs")
+else:
+    fail("recovery candidate publication song catalog schema is unsupported")
+if not isinstance(catalog, list):
+    fail("recovery candidate publication song catalog is invalid")
 catalog_song_ids = []
 for item in catalog:
     if not isinstance(item, dict):
@@ -2782,7 +2791,7 @@ run_active_resume_recovery() {
             printf 'ERROR: active recovery exceeded its total deadline before publication convergence\n' >&2
             return 1
         fi
-        if ! read_recovery_service_snapshot; then
+        if ! read_recovery_service_snapshot true; then
             return 1
         fi
         if ! recovery_active_resume_state_json="$(

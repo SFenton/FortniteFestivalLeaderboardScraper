@@ -1070,6 +1070,11 @@ zero-mapping, publication-pointer, lock, and maintenance gates run. These
 resource modes require the resolved worker restart policy `no`; they are not
 valid for the continuous `on-failure` lane. Recovery failures still produce
 query-drain/error evidence and a report while publication remains fail-closed.
+Observation-only monitoring continues after `scrape_log.status` becomes
+`completed` while public reads remain frozen with reason `publish`, using the
+active publication attempt for progress and query deferral. Automatic worker
+exit recovery never operates in that state; publication recovery remains an
+explicit operator-owned path.
 Observations include container status, restart policy, OOM state, exit code,
 memory percentage, and a sanitized memory-sample error when Docker statistics
 are temporarily unavailable.
@@ -1077,8 +1082,9 @@ are temporarily unavailable.
 Accepted scrape `1296` used normalized attempts in all 392 watchdog
 observations across network, post-process, rankings, cleanup, and publication.
 In 358 samples `heartbeat_at` advanced beyond `last_progress_at` without
-masking progress. The terminal decision was `scrape_completed`; old-schema
-fallback remains covered for rolling deployments.
+masking progress. A scrape is now terminal to the observation loop only after
+it is no longer in the completed-but-publishing state; old-schema fallback
+remains covered for rolling deployments.
 
 The action's host-side controls are documented in
 [Configuration](configuration.md). Validate changes with:

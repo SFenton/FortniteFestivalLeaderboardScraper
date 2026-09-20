@@ -168,7 +168,10 @@ song catalog, skips network/writer phases, reruns the solo-leaderboards chain
 with the persisted metrics, and retains the existing freeze until publication
 or durable failure isolation. Normal terminal completion never manufactures a
 missing acquisition checkpoint; legacy completed rows therefore remain
-non-resumable.
+non-resumable. The host guard reads this state with the explicit `fst` role and
+`fstservice` database, accepts the legacy schema-1 catalog array and the
+schema-2 `{ "songs": [...] }` envelope, and permits the exact run-once worker
+to remain present during post-start convergence checks.
 
 Acquisition persistence also records exact per-pass HTTP wire telemetry without
 changing publication or API contracts. Logical requests remain separate from
