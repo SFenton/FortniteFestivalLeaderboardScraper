@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import os from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -22,6 +22,7 @@ function observation(overrides = {}) {
     workerRunning: true,
     scrapeStatus: "running",
     scrapeStartedAt: "2026-07-27T01:00:00Z",
+    publicReadsFrozen: true,
     publicReadsFrozenReason: "post-process",
     operation: {
       OperationKey: "scrape.post_process",
@@ -35,6 +36,18 @@ function observation(overrides = {}) {
 }
 
 describe("FST worker no-progress watchdog", () => {
+  it("keeps an observation row when no normalized phase attempt is running", () => {
+    const source = readFileSync(
+      new URL("./fst-worker-no-progress-watchdog.mjs", import.meta.url),
+      "utf8"
+    );
+
+    assert.match(
+      source,
+      /LEFT JOIN normalized_phase normalized ON TRUE/
+    );
+  });
+
   it("times out a stale post-process operation with no database activity", () => {
     const decision = evaluateNoProgressObservation(observation(), {
       idleSeconds: 2700
@@ -144,6 +157,45 @@ describe("FST worker no-progress watchdog", () => {
 
     assert.equal(decision.decision, "terminal");
     assert.equal(decision.reason, "scrape_completed");
+  });
+
+  it("continues observing a completed scrape while publication is frozen", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        scrapeStatus: "completed",
+        publicReadsFrozen: true,
+        publicReadsFrozenReason: "publish",
+        operation: {
+          PhaseId: "publication.commit",
+          StartedAtUtc: "2026-07-27T17:55:00Z",
+          UpdatedAtUtc: "2026-07-27T17:59:30Z"
+        },
+        latestPhaseProgressAt: "2026-07-27T17:59:30Z"
+      }),
+      { idleSeconds: 2700 }
+    );
+
+    assert.equal(decision.decision, "healthy");
+    assert.equal(decision.reason, "phase_progress_within_threshold");
+    assert.equal(decision.idleForSeconds, 30);
+  });
+
+  it("never auto-recovers a completed scrape publication", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        workerRunning: false,
+        scrapeStatus: "completed",
+        publicReadsFrozen: true,
+        publicReadsFrozenReason: "publish"
+      }),
+      { recoverWorkerExit: true }
+    );
+
+    assert.equal(decision.decision, "terminal");
+    assert.equal(
+      decision.reason,
+      "publication_recovery_requires_operator"
+    );
   });
 
   it("uses the memory safety gate even while worker queries remain active", () => {

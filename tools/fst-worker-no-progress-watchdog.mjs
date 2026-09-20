@@ -29,10 +29,23 @@ export function evaluateNoProgressObservation(
   if (!observation.workerRunning && !recoverWorkerExit) {
     return { decision: "inactive", reason: "worker_container_not_running" };
   }
-  if (observation.scrapeStatus !== "running") {
+  const publicationInProgress =
+    observation.scrapeStatus === "completed"
+    && observation.publicReadsFrozen === true
+    && observation.publicReadsFrozenReason === "publish";
+  if (publicationInProgress && recoverWorkerExit) {
+    return {
+      decision: "terminal",
+      reason: "publication_recovery_requires_operator"
+    };
+  }
+  if (observation.scrapeStatus !== "running" && !publicationInProgress) {
     return { decision: "terminal", reason: `scrape_${observation.scrapeStatus ?? "missing"}` };
   }
-  if (observation.publicReadsFrozenReason !== "post-process") {
+  if (
+    observation.publicReadsFrozenReason !== "post-process"
+    && observation.publicReadsFrozenReason !== "publish"
+  ) {
     return { decision: "outside_post_process", reason: "publication_not_in_post_process" };
   }
 
@@ -937,7 +950,7 @@ LEFT JOIN service_worker_status worker ON worker.worker_key = 'scraper'
 CROSS JOIN latest_phase phase
 CROSS JOIN worker_activity activity
 CROSS JOIN registered_refresh_progress refresh
-CROSS JOIN normalized_phase normalized
+LEFT JOIN normalized_phase normalized ON TRUE
 WHERE publication.id = TRUE;
 `;
   const output = run(

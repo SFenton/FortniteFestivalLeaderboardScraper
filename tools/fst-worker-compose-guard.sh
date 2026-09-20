@@ -670,6 +670,66 @@ load_resolved_compose_json() {
     )
 }
 
+build_active_resume_compose_json() {
+    local continuous_compose_json="$1"
+    local scrape_id="$2"
+    local worker_image="$3"
+
+    python3 -c '
+import json
+import sys
+
+scrape_id = int(sys.argv[1])
+worker_image = sys.argv[2]
+config = json.load(sys.stdin)
+worker = (config.get("services") or {}).get("fstworker")
+if not isinstance(worker, dict):
+    raise SystemExit(
+        "ERROR: recovery could not resolve the continuous worker service")
+environment = worker.get("environment")
+if not isinstance(environment, dict):
+    environment = {}
+    worker["environment"] = environment
+
+worker["image"] = worker_image
+worker["restart"] = "no"
+environment.update({
+    "Scraper__RunOnce": "true",
+    "Scraper__ApiOnly": "false",
+    "Scraper__DisableScraperWorker": "false",
+    "Scraper__RegistrationSyncWorkerOnly": "false",
+    "Scraper__EnabledPhases": "SoloRankings",
+    "Scraper__RegisteredUserRefreshTimeout": "00:00:00",
+    "Scraper__ResumeScrapeId": str(scrape_id),
+    "Scraper__ResumeSongsScraped": "0",
+    "Scraper__ResumeTotalEntries": "0",
+    "Scraper__ResumeTotalRequests": "0",
+    "Scraper__ResumeTotalBytes": "0",
+    "Scraper__ResumeEpicReportedOver100Pages": "false",
+    "Scraper__RivalsMaxDegreeOfParallelism": "2",
+    "Scraper__QueryLead": "true",
+    "Scraper__QueryDrums": "true",
+    "Scraper__QueryVocals": "true",
+    "Scraper__QueryBass": "true",
+    "Scraper__QueryProLead": "true",
+    "Scraper__QueryProBass": "true",
+    "Scraper__QueryProVocals": "true",
+    "Scraper__QueryProCymbals": "true",
+    "Scraper__QueryProDrums": "true",
+    "Features__EnforcePublicationCriticalPhases": "true",
+    "Features__EnforceScopeCompletenessManifests": "true",
+    "Features__RequireSuccessfulScrapeWriters": "true",
+    "Features__UseLeaderboardScopeFingerprints": "true",
+    "Features__WritePublishedScopeSources": "true",
+    "Features__SkipUnchangedPhysicalLeaderboardSnapshots": "true",
+    "Features__UseStoredSoloProjectionRanksForFilteredReads": "false",
+    "Features__WriteLogicalLeaderboardVersions": "false",
+    "DatabaseMaintenance__SnapshotRetentionRewriteEnabled": "false",
+})
+print(json.dumps(config, sort_keys=True, separators=(",", ":")))
+' "$scrape_id" "$worker_image" <<< "$continuous_compose_json"
+}
+
 validate_scrape_resume_worker_binding() {
     local compose_json_arg="$1"
     local expected_scrape_id="${2:-}"
@@ -2013,7 +2073,7 @@ load_active_resume_state_json() {
     local scrape_id="$1"
 
     docker exec "$postgres_container" \
-        psql -X -A -t -q \
+        psql -X -A -t -q -U fst -d fstservice \
             -v ON_ERROR_STOP=1 \
             -c "/* fst_boot_active_recovery_state */ WITH target_scrape AS (
                     SELECT
@@ -2255,7 +2315,16 @@ if not isinstance(fingerprint, str) or len(fingerprint) != 64 or any(ch not in "
 catalog_json = state.get("publicationCatalogJson")
 if not isinstance(catalog_json, str) or not catalog_json:
     fail("recovery candidate publication song catalog is missing")
-catalog = json.loads(catalog_json)
+catalog_document = json.loads(catalog_json)
+catalog_schema_version = state.get("publicationCatalogSchemaVersion")
+if catalog_schema_version == 1:
+    catalog = catalog_document
+elif catalog_schema_version == 2 and isinstance(catalog_document, dict):
+    catalog = catalog_document.get("songs")
+else:
+    fail("recovery candidate publication song catalog schema is unsupported")
+if not isinstance(catalog, list):
+    fail("recovery candidate publication song catalog is invalid")
 catalog_song_ids = []
 for item in catalog:
     if not isinstance(item, dict):
@@ -2725,7 +2794,13 @@ run_active_resume_recovery() {
         return 1
     fi
 
-    if ! runonce_compose_json="$(load_resolved_compose_json true)"; then
+    if ! runonce_compose_json="$(
+        build_active_resume_compose_json \
+            "$compose_json" \
+            "$recovery_active_scrape_id" \
+            "$continuous_worker_image"
+    )"
+    then
         return 1
     fi
     if ! mapfile -t runonce_binding_lines < <(
@@ -2782,7 +2857,7 @@ run_active_resume_recovery() {
             printf 'ERROR: active recovery exceeded its total deadline before publication convergence\n' >&2
             return 1
         fi
-        if ! read_recovery_service_snapshot; then
+        if ! read_recovery_service_snapshot true; then
             return 1
         fi
         if ! recovery_active_resume_state_json="$(

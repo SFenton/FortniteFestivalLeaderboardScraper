@@ -892,6 +892,13 @@ guard-only `worker` Compose profile. Continuous actions require
 production-owned boot orchestrator has started core services and effective
 proxies.
 
+For an active resumable scrape, `--recover-start` derives a recovery-only
+Compose JSON snapshot from the validated continuous configuration rather than
+trusting mutable run-once overlay defaults. It pins the exact continuous image
+and forces `restart: no`, the durable scrape ID, `SoloRankings`, full-worker
+hosting, all canonical solo queries, and the publication/snapshot safety
+flags before hashing and starting the recovery worker.
+
 Every worker-start/recreate action shares one nonblocking host lock; checks do
 not take it. By default the lock is derived as
 `<resolved-compose-dir>/.fst-worker-compose-guard.lock`; an explicit absolute
@@ -1023,8 +1030,11 @@ remain unfrozen. Otherwise it leaves the worker running and directs the operator
 `scrape_phase_attempts` relation once at startup. When a running attempt
 exists, its `last_progress_at` and start time take precedence over
 `current_operation_json.UpdatedAtUtc`; `heartbeat_at` is deliberately excluded
-from timeout progress. Older databases or windows without an active normalized
-attempt retain the existing operation/outcome/registered-refresh fallback.
+from timeout progress. The optional normalized-attempt row is left-joined, so
+publication and terminal windows still produce an observation after the last
+running phase attempt closes. Older databases or windows without an active
+normalized attempt retain the existing
+operation/outcome/registered-refresh fallback.
 
 Guarded timeout recovery also marks running normalized attempts `interrupted`
 and records their prior values in rollback SQL. Pointer, mapping, worker-query,
@@ -1070,6 +1080,11 @@ zero-mapping, publication-pointer, lock, and maintenance gates run. These
 resource modes require the resolved worker restart policy `no`; they are not
 valid for the continuous `on-failure` lane. Recovery failures still produce
 query-drain/error evidence and a report while publication remains fail-closed.
+Observation-only monitoring continues after `scrape_log.status` becomes
+`completed` while public reads remain frozen with reason `publish`, using the
+active publication attempt for progress and query deferral. Automatic worker
+exit recovery never operates in that state; publication recovery remains an
+explicit operator-owned path.
 Observations include container status, restart policy, OOM state, exit code,
 memory percentage, and a sanitized memory-sample error when Docker statistics
 are temporarily unavailable.
@@ -1077,8 +1092,9 @@ are temporarily unavailable.
 Accepted scrape `1296` used normalized attempts in all 392 watchdog
 observations across network, post-process, rankings, cleanup, and publication.
 In 358 samples `heartbeat_at` advanced beyond `last_progress_at` without
-masking progress. The terminal decision was `scrape_completed`; old-schema
-fallback remains covered for rolling deployments.
+masking progress. A scrape is now terminal to the observation loop only after
+it is no longer in the completed-but-publishing state; old-schema fallback
+remains covered for rolling deployments.
 
 The action's host-side controls are documented in
 [Configuration](configuration.md). Validate changes with:

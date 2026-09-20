@@ -168,7 +168,15 @@ song catalog, skips network/writer phases, reruns the solo-leaderboards chain
 with the persisted metrics, and retains the existing freeze until publication
 or durable failure isolation. Normal terminal completion never manufactures a
 missing acquisition checkpoint; legacy completed rows therefore remain
-non-resumable.
+non-resumable. The host guard reads this state with the explicit `fst` role and
+`fstservice` database, accepts the legacy schema-1 catalog array and the
+schema-2 `{ "songs": [...] }` envelope, and permits the exact run-once worker
+to remain present during post-start convergence checks. The recovery-only
+Compose snapshot is derived from the already validated continuous snapshot:
+the guard pins its exact image and forces `restart: no`, the durable scrape ID,
+`SoloRankings`, full-worker hosting, all canonical solo queries, and the
+publication/snapshot safety gates. Mutable run-once overlay defaults therefore
+cannot redirect active recovery.
 
 Acquisition persistence also records exact per-pass HTTP wire telemetry without
 changing publication or API contracts. Logical requests remain separate from

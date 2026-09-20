@@ -100,10 +100,15 @@ function soloScopeFingerprint(pairs) {
   return hash.digest("hex");
 }
 
-function buildPublicationCatalogJson(songIds) {
-  return JSON.stringify(songIds.map((songId) => ({
+function buildPublicationCatalogJson(songIds, schemaVersion = 1) {
+  const songs = songIds.map((songId) => ({
     track: { su: songId }
-  })));
+  }));
+  return JSON.stringify(
+    schemaVersion === 2
+      ? { songs }
+      : songs
+  );
 }
 
 function buildActiveRecoveryResumeState({
@@ -171,7 +176,11 @@ function buildActiveRecoveryResumeState({
     publicationCatalogContentHash,
     publicationSongCount: songIds.length,
     publicationCatalogJson:
-      publicationCatalogJson ?? buildPublicationCatalogJson(songIds),
+      publicationCatalogJson
+      ?? buildPublicationCatalogJson(
+        songIds,
+        publicationCatalogSchemaVersion
+      ),
     completeSoloPairs: pairs,
     startupShouldResumeDeferredPublication
   };
@@ -547,6 +556,17 @@ if (args[0] === "inspect") {
       process.stdout.write(runtime.workerContainerId ?? "");
     } else {
       process.stdout.write(state);
+      if (
+        (name === "fstworker" || name === runtime.workerContainerId)
+        && format.includes(".State.Status")
+        && scenario.runonceWorkerExitsAfterStateProbe
+        && runtime.workerStarted
+        && runtime.lastWorkerStartMode === "runonce"
+      ) {
+        runtime.workerStarted = false;
+        runtime.workerState = "exited|none";
+        saveRuntime();
+      }
     }
   } else {
     process.stdout.write("{}");
@@ -630,6 +650,19 @@ if (args[0] === "exec") {
     && commandArgs[0] === "psql"
     && joined.includes("fst_boot_active_recovery_state")
   ) {
+    const userIndex = commandArgs.indexOf("-U");
+    const databaseIndex = commandArgs.indexOf("-d");
+    if (
+      userIndex < 0
+      || commandArgs[userIndex + 1] !== "fst"
+      || databaseIndex < 0
+      || commandArgs[databaseIndex + 1] !== "fstservice"
+    ) {
+      process.stderr.write(
+        "active recovery query requires explicit PostgreSQL identity\n"
+      );
+      process.exit(98);
+    }
     const state = activeRecoveryDatabaseState();
     if (state) {
       process.stdout.write(JSON.stringify(state));
@@ -1665,6 +1698,47 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
+  it("accepts the schema-v2 publication catalog envelope for active recovery", async () => {
+    const harness = await createActiveRecoveryHarness({
+      resumeState: buildActiveRecoveryResumeState({
+        publicationCatalogSchemaVersion: 2
+      })
+    });
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-start|fstworker"
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("observes a running scrape-resume worker until its terminal exit", async () => {
+    const harness = await createActiveRecoveryHarness({
+      scenario: {
+        runonceWorkerExitsImmediately: false,
+        runonceWorkerExitsAfterStateProbe: true
+      }
+    });
+    try {
+      const result = await harness.run(["--recover-start"]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-start|fstworker"
+      ]);
+      assert.doesNotMatch(
+        result.stderr,
+        /recovery requires fstworker to be stopped or absent/
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("refuses active scrape recovery for a legacy null checkpoint before any mutation", async () => {
     const harness = await createActiveRecoveryHarness({
       resumeState: buildActiveRecoveryResumeState({
@@ -1724,6 +1798,13 @@ describe("fstworker Compose startup recovery", () => {
         expected: /fingerprint version is unsupported/
       },
       {
+        name: "unsupported publication catalog schema",
+        resumeState: buildActiveRecoveryResumeState({
+          publicationCatalogSchemaVersion: 3
+        }),
+        expected: /publication song catalog schema is unsupported/
+      },
+      {
         name: "wrong scope count",
         resumeState: buildActiveRecoveryResumeState({
           expectedSoloScopeCount: 17
@@ -1779,45 +1860,38 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  it("fails active recovery before mutation when the run-once image or config drifts", async () => {
-    const wrongImageHarness = await createActiveRecoveryHarness({
+  it("derives active recovery identity and mode independently of run-once overlay drift", async () => {
+    const staleRunonceConfig = buildScrapeResumeRunonceConfig({
+      resumeScrapeId: "9999",
+      workerImage: "example.invalid/fstworker@sha256:" + "d".repeat(64)
+    });
+    Object.assign(staleRunonceConfig.services.fstworker.environment, {
+      Scraper__RunOnce: "false",
+      Scraper__ApiOnly: "true",
+      Scraper__DisableScraperWorker: "true",
+      Scraper__RegistrationSyncWorkerOnly: "true",
+      Scraper__EnabledPhases: "All",
+      Scraper__QueryLead: "false",
+      Scraper__RivalsMaxDegreeOfParallelism: "9",
+      Features__WriteLogicalLeaderboardVersions: "true"
+    });
+    const harness = await createActiveRecoveryHarness({
       config: buildComposeConfig({ workerImage: immutableWorkerImage }),
-      runonceConfig: buildScrapeResumeRunonceConfig({
-        resumeScrapeId: "1305",
-        workerImage: "example.invalid/fstworker@sha256:" + "d".repeat(64)
-      })
+      runonceConfig: staleRunonceConfig
     });
     try {
-      const result = await wrongImageHarness.run(["--recover-start"]);
-      assert.notEqual(result.code, 0);
-      assert.deepEqual(await wrongImageHarness.events(), []);
+      const result = await harness.run(["--recover-start"]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "worker-start|fstworker",
+        "worker-start|fstworker"
+      ]);
       assert.match(
-        result.stderr,
-        /recovery run-once worker image must match/
+        result.stdout,
+        /recovery=active-candidate scrape=1305 published=1304 mode=scrape-resume/
       );
     } finally {
-      await wrongImageHarness.cleanup();
-    }
-
-    const mismatchedConfig = buildScrapeResumeRunonceConfig({
-      resumeScrapeId: "1305",
-      workerImage: immutableWorkerImage
-    });
-    mismatchedConfig.services.fstworker.environment.Features__WriteLogicalLeaderboardVersions =
-      "true";
-    const configHarness = await createActiveRecoveryHarness({
-      runonceConfig: mismatchedConfig
-    });
-    try {
-      const result = await configHarness.run(["--recover-start"]);
-      assert.notEqual(result.code, 0);
-      assert.deepEqual(await configHarness.events(), []);
-      assert.match(
-        result.stderr,
-        /Features__WriteLogicalLeaderboardVersions=false|active recovery could not start the scrape-resume worker|configuration hash does not match/
-      );
-    } finally {
-      await configHarness.cleanup();
+      await harness.cleanup();
     }
   });
 
@@ -3285,7 +3359,7 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  it("rejects scrape-resume on non-full-worker hosting modes before any mutation", async () => {
+  it("rejects explicit scrape-resume on non-full-worker hosting modes before any mutation", async () => {
     const cases = [
       {
         name: "api-only",
@@ -3331,25 +3405,10 @@ describe("fstworker Compose startup recovery", () => {
       } finally {
         await genericHarness.cleanup();
       }
-
-      const activeHarness = await createActiveRecoveryHarness({
-        config: buildComposeConfig({
-          workerImage: immutableWorkerImage
-        }),
-        runonceConfig
-      });
-      try {
-        const result = await activeHarness.run(["--recover-start"]);
-        assert.notEqual(result.code, 0, testCase.name);
-        assert.deepEqual(await activeHarness.events(), [], testCase.name);
-        assert.match(result.stderr, testCase.expected, testCase.name);
-      } finally {
-        await activeHarness.cleanup();
-      }
     }
   });
 
-  it("rejects scrape-resume when any canonical solo query flag is disabled", async () => {
+  it("rejects explicit scrape-resume when any canonical solo query flag is disabled", async () => {
     const cases = [
       { key: "Scraper__QueryLead", instrument: "Lead" },
       { key: "Scraper__QueryDrums", instrument: "Drums" },
@@ -3388,25 +3447,6 @@ describe("fstworker Compose startup recovery", () => {
         );
       } finally {
         await genericHarness.cleanup();
-      }
-
-      const activeHarness = await createActiveRecoveryHarness({
-        config: buildComposeConfig({
-          workerImage: immutableWorkerImage
-        }),
-        runonceConfig
-      });
-      try {
-        const result = await activeHarness.run(["--recover-start"]);
-        assert.notEqual(result.code, 0, testCase.instrument);
-        assert.deepEqual(await activeHarness.events(), [], testCase.instrument);
-        assert.match(
-          result.stderr,
-          new RegExp(`${testCase.key}=true`),
-          testCase.instrument
-        );
-      } finally {
-        await activeHarness.cleanup();
       }
     }
   });
