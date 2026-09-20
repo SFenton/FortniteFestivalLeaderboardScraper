@@ -24,6 +24,8 @@ Current architecture and ownership are indexed in `docs/README.md`.
 - Keep task state and documentation accurate.
 - Commit and push accepted/project-required changes unless the operator says
   not to.
+- Enable or preserve auto-merge only on pull requests authored by `SFenton`;
+  every other author's pull request requires a manual merge.
 - Prefer read-only evidence before mutation; never fabricate measurements.
 - Use `.github/agent-budget.json` and `fst-budget-workflow` for bounded generic
   research and delivery. Tandem and autonomous-plan execution are explicit-only.
