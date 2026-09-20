@@ -1,0 +1,68 @@
+name: Enforce auto-merge author policy
+
+on:
+  pull_request_target:
+    branches:
+      - master
+    types:
+      - auto_merge_enabled
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-author-policy
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target is safe here because no pull request code is checked out or executed.
+      - name: Disable auto-merge on non-owner pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_BRANCH: master
+          ALLOWED_AUTHOR: SFenton
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          disabled=0
+          while IFS=$'\t' read -r pull_request_id number author; do
+            [ -n "$pull_request_id" ] || continue
+            [ "$author" != "$ALLOWED_AUTHOR" ] || continue
+
+            gh api graphql \
+              -f query='
+                mutation($pullRequestId: ID!) {
+                  disablePullRequestAutoMerge(
+                    input: { pullRequestId: $pullRequestId }
+                  ) {
+                    pullRequest {
+                      number
+                    }
+                  }
+                }
+              ' \
+              -F pullRequestId="$pull_request_id" \
+              >/dev/null
+
+            echo "::notice title=Auto-merge disabled::PR #${number} is authored by ${author}, not ${ALLOWED_AUTHOR}."
+            disabled=$((disabled + 1))
+          done < <(
+            gh pr list \
+              --repo "$REPOSITORY" \
+              --state open \
+              --base "$BASE_BRANCH" \
+              --limit 1000 \
+              --json id,number,author,autoMergeRequest \
+              --jq '.[] | select(.autoMergeRequest != null) | [.id, (.number | tostring), .author.login] | @tsv'
+          )
+
+          echo "Disabled auto-merge on ${disabled} unauthorized pull request(s)."
