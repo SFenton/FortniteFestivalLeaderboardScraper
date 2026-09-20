@@ -28,6 +28,9 @@ public sealed record ActiveScrapeFailureIsolationCommand(
         MetaDatabase.NoProgressReadIsolationFailurePhase,
         MetaDatabase.FailedCandidateReadIsolationFailurePhase,
         MetaDatabase.AcquisitionFailureIsolationFailurePhase,
+        MetaDatabase.PostProcessReadIsolationFailurePhase,
+        MetaDatabase.PublicationReadIsolationFailurePhase,
+        MetaDatabase.StalePublicationCommitIntentFailurePhase,
     ];
 
     public static ActiveScrapeFailureIsolationCommand? Parse(
@@ -102,7 +105,7 @@ public sealed record ActiveScrapeFailureIsolationCommand(
         var failurePhase = RequireSingleValue(
             failurePhaseValues,
             FailurePhaseFlag);
-        if (!SupportedFailurePhases.Contains(failurePhase))
+        if (!IsSupportedFailurePhase(failurePhase))
         {
             throw new ArgumentException(
                 $"{FailurePhaseFlag} must be one of {string.Join(", ", SupportedFailurePhases.Order())}.");
@@ -124,6 +127,9 @@ public sealed record ActiveScrapeFailureIsolationCommand(
             FailurePhase: failurePhase,
             FailureMessage: failureMessage.Trim());
     }
+
+    internal static bool IsSupportedFailurePhase(string failurePhase)
+        => SupportedFailurePhases.Contains(failurePhase);
 
     private static int Count(
         IReadOnlyList<string> args,

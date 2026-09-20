@@ -5222,12 +5222,66 @@ public sealed class MetaDatabaseTests : IDisposable
                 state.CandidatePublicationId)!.Status);
     }
 
-    [Fact]
-    public void ExecuteActiveScrapeFailureIsolation_finishes_partial_runtime_convergence()
+    [Theory]
+    [InlineData(MetaDatabase.PostProcessReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.PublicationReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.StalePublicationCommitIntentFailurePhase)]
+    public void ExecuteActiveScrapeFailureIsolation_rejects_internal_phase_for_fresh_mutation(
+        string failurePhase)
+    {
+        var state = CreatePostProcessFrozenCandidate();
+
+        var result =
+            Db.ExecuteActiveScrapeFailureIsolation(
+                state.CandidateScrapeId,
+                state.PublishedScrapeId,
+                failurePhase,
+                "persisted failure");
+
+        Assert.False(result.Succeeded);
+        Assert.NotNull(result.MutationReadiness);
+        Assert.Null(result.After);
+        Assert.Contains(
+            "does not match",
+            result.Error);
+        Assert.Equal(
+            "running",
+            Db.GetServiceRuntimeState(
+                    WorkerStatusPublisher.ScraperWorkerKey)
+                .LatestScrape?.Status);
+        Assert.Equal(
+            state.CandidatePublicationId,
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.True(Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            PublicationGenerationStatus.Building,
+            Db.GetPublicationGeneration(
+                state.CandidatePublicationId)!.Status);
+    }
+
+    [Theory]
+    [InlineData(
+        MetaDatabase.NoProgressReadIsolationFailurePhase,
+        "watchdog timeout")]
+    [InlineData(
+        MetaDatabase.PostProcessReadIsolationFailurePhase,
+        "A task was canceled.")]
+    [InlineData(
+        MetaDatabase.PublicationReadIsolationFailurePhase,
+        "publication failed")]
+    [InlineData(
+        MetaDatabase.StalePublicationCommitIntentFailurePhase,
+        "stale publication intent")]
+    public void ExecuteActiveScrapeFailureIsolation_finishes_partial_runtime_convergence(
+        string failurePhase,
+        string failureMessage)
     {
         var state = CreatePostProcessFrozenCandidate();
         TerminalizePublicationWithoutRuntimeConvergence(
-            state.CandidateScrapeId);
+            state.CandidateScrapeId,
+            failurePhase,
+            failureMessage);
         var artifactCleanupInvoked = false;
         Db.ActiveScrapeFailureIsolationArtifactCleanupTestHook =
             () => artifactCleanupInvoked = true;
@@ -5251,9 +5305,8 @@ public sealed class MetaDatabaseTests : IDisposable
                 Db.ExecuteActiveScrapeFailureIsolation(
                     state.CandidateScrapeId,
                     state.PublishedScrapeId,
-                    MetaDatabase
-                        .NoProgressReadIsolationFailurePhase,
-                    "watchdog timeout");
+                    failurePhase,
+                    failureMessage);
 
             Assert.True(result.Succeeded);
             Assert.NotNull(result.MutationReadiness);
@@ -9816,7 +9869,10 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     private void TerminalizePublicationWithoutRuntimeConvergence(
-        long scrapeId)
+        long scrapeId,
+        string failurePhase =
+            MetaDatabase.NoProgressReadIsolationFailurePhase,
+        string failureMessage = "watchdog timeout")
     {
         using var connection = DataSource.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -9858,10 +9914,10 @@ public sealed class MetaDatabaseTests : IDisposable
             DateTime.UtcNow);
         command.Parameters.AddWithValue(
             "phase",
-            MetaDatabase.NoProgressReadIsolationFailurePhase);
+            failurePhase);
         command.Parameters.AddWithValue(
             "message",
-            "watchdog timeout");
+            failureMessage);
         command.Parameters.AddWithValue(
             "scrapeId",
             checked((int)scrapeId));

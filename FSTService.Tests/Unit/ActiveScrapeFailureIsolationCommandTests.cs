@@ -94,6 +94,36 @@ public sealed class ActiveScrapeFailureIsolationCommandTests
             command!.FailurePhase);
     }
 
+    [Theory]
+    [InlineData(MetaDatabase.PostProcessReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.PublicationReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.StalePublicationCommitIntentFailurePhase)]
+    public void Parse_accepts_persisted_runtime_convergence_failure_phase(
+        string failurePhase)
+    {
+        var command =
+            ActiveScrapeFailureIsolationCommand.Parse(
+                [
+                    ActiveScrapeFailureIsolationCommand
+                        .MaintenanceFlag,
+                    ActiveScrapeFailureIsolationCommand
+                        .ExecuteFlag,
+                    $"{ActiveScrapeFailureIsolationCommand.ScrapeIdFlag}=1412",
+                    $"{PublishedScrapeIdArgument.Flag}=1411",
+                    ActiveScrapeFailureIsolationCommand
+                        .FailurePhaseFlag,
+                    failurePhase,
+                    ActiveScrapeFailureIsolationCommand
+                        .FailureMessageFlag,
+                    "persisted failure",
+                ],
+                PublishedScrapeIdArgument.Parse(
+                    [$"{PublishedScrapeIdArgument.Flag}=1411"]));
+
+        Assert.NotNull(command);
+        Assert.Equal(failurePhase, command!.FailurePhase);
+    }
+
     [Fact]
     public void Parse_accepts_check_mode_without_failure_payload()
     {
