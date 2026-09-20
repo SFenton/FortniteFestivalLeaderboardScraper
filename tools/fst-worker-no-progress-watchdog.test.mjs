@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import os from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -36,6 +36,18 @@ function observation(overrides = {}) {
 }
 
 describe("FST worker no-progress watchdog", () => {
+  it("keeps an observation row when no normalized phase attempt is running", () => {
+    const source = readFileSync(
+      new URL("./fst-worker-no-progress-watchdog.mjs", import.meta.url),
+      "utf8"
+    );
+
+    assert.match(
+      source,
+      /LEFT JOIN normalized_phase normalized ON TRUE/
+    );
+  });
+
   it("times out a stale post-process operation with no database activity", () => {
     const decision = evaluateNoProgressObservation(observation(), {
       idleSeconds: 2700

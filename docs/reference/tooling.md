@@ -1030,8 +1030,11 @@ remain unfrozen. Otherwise it leaves the worker running and directs the operator
 `scrape_phase_attempts` relation once at startup. When a running attempt
 exists, its `last_progress_at` and start time take precedence over
 `current_operation_json.UpdatedAtUtc`; `heartbeat_at` is deliberately excluded
-from timeout progress. Older databases or windows without an active normalized
-attempt retain the existing operation/outcome/registered-refresh fallback.
+from timeout progress. The optional normalized-attempt row is left-joined, so
+publication and terminal windows still produce an observation after the last
+running phase attempt closes. Older databases or windows without an active
+normalized attempt retain the existing
+operation/outcome/registered-refresh fallback.
 
 Guarded timeout recovery also marks running normalized attempts `interrupted`
 and records their prior values in rollback SQL. Pointer, mapping, worker-query,

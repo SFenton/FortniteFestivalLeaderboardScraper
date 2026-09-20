@@ -950,7 +950,7 @@ LEFT JOIN service_worker_status worker ON worker.worker_key = 'scraper'
 CROSS JOIN latest_phase phase
 CROSS JOIN worker_activity activity
 CROSS JOIN registered_refresh_progress refresh
-CROSS JOIN normalized_phase normalized
+LEFT JOIN normalized_phase normalized ON TRUE
 WHERE publication.id = TRUE;
 `;
   const output = run(
