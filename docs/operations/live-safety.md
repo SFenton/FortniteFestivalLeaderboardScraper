@@ -528,15 +528,18 @@ missing checkpoint fields make it intentionally unrecoverable by boot
 automation, and the guard must not synthesize replacements.
 
 On active-candidate admission the guard binds the exact current worker image
-reference, local image ID, OCI revision, and the non-image hashes of both the
-continuous and run-once merged worker configurations before any start. It then
-starts only the existing `scrape-resume` run-once profile, waits for durable
-publication success plus unfreeze while the same lock remains held, and only
-after that success snapshot reruns idle/unfrozen safety checks and recreates
-the continuous worker. The stopped/absent-worker requirement applies before
-the run-once start; subsequent recovery observations allow that exact worker
-to remain present while its identity and durable candidate state are checked.
-Any timeout, mismatch, signal, durable failure,
+reference, local image ID, OCI revision, and continuous non-image configuration
+hash before any start. It derives an immutable recovery-only Compose snapshot
+from that validated continuous snapshot, forcing the exact image,
+`restart: no`, scrape ID, `SoloRankings` mode, full-worker/query flags, and
+publication/snapshot safety gates instead of trusting mutable run-once overlay
+defaults. The derived non-image configuration is hashed before startup. The
+guard then waits for durable publication success plus unfreeze while the same
+lock remains held, and only after that success snapshot reruns idle/unfrozen
+safety checks and recreates the continuous worker. The stopped/absent-worker
+requirement applies before the run-once start; subsequent recovery observations
+allow that exact worker to remain present while its identity and durable
+candidate state are checked. Any timeout, mismatch, signal, durable failure,
 publication drift, or core/proxy loss fails closed and preserves the freeze.
 
 Use the dual-lane run-once wrapper for a full-scrape candidate. The

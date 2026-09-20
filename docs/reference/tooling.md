@@ -892,6 +892,13 @@ guard-only `worker` Compose profile. Continuous actions require
 production-owned boot orchestrator has started core services and effective
 proxies.
 
+For an active resumable scrape, `--recover-start` derives a recovery-only
+Compose JSON snapshot from the validated continuous configuration rather than
+trusting mutable run-once overlay defaults. It pins the exact continuous image
+and forces `restart: no`, the durable scrape ID, `SoloRankings`, full-worker
+hosting, all canonical solo queries, and the publication/snapshot safety
+flags before hashing and starting the recovery worker.
+
 Every worker-start/recreate action shares one nonblocking host lock; checks do
 not take it. By default the lock is derived as
 `<resolved-compose-dir>/.fst-worker-compose-guard.lock`; an explicit absolute
