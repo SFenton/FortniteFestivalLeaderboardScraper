@@ -555,9 +555,8 @@ public sealed partial class MetaDatabase
                 nameof(failureMessage));
         }
 
-        if (failurePhase != NoProgressReadIsolationFailurePhase
-            && failurePhase != FailedCandidateReadIsolationFailurePhase
-            && failurePhase != AcquisitionFailureIsolationFailurePhase)
+        if (!ActiveScrapeFailureIsolationCommand
+                .IsSupportedFailurePhase(failurePhase))
         {
             throw new ArgumentException(
                 $"Unsupported active-scrape isolation failure phase '{failurePhase}'.",

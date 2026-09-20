@@ -378,14 +378,16 @@ freshness timestamp observed under the fence. A newer worker row or a running
 phase attempt owned by another instance aborts and rolls back the convergence
 transaction.
 
-`--active-scrape-failure-phase` accepts only
-`post_process_no_progress_abandoned` and
-`capacity_watchdog_abandoned`, or `scrape_acquisition_failed`. The operator
-must supply an explicit phase matching the fenced state:
+`--active-scrape-failure-phase` accepts
+`post_process_no_progress_abandoned`, `capacity_watchdog_abandoned`,
+`scrape_acquisition_failed`, and the internally persisted
+`post_process`, `publication`, or `stale_publication_commit_intent` phases.
+The operator must supply an explicit phase matching the fenced state:
 `scrape_acquisition_failed` is exclusive to acquisition failure, while the
 watchdog/capacity phases are exclusive to frozen post-process isolation.
-Runtime-only convergence requires the phase already persisted on the failed
-candidate. The operator must supply an explicit
+The additional internal phases are accepted only for runtime-only convergence
+after publication isolation is already complete and must exactly match the
+failed candidate. The operator must supply an explicit
 `--active-scrape-failure-message`; the command does not infer acquisition or
 publication metrics.
 
