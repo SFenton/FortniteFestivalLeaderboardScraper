@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { dismissObstructions } from '../../../support/drivers/app';
 import { isPrimaryMobileProject, WIDE_PROJECT } from '../../../support/projects';
 
 test.beforeEach(async ({ page }) => {
@@ -8,7 +9,7 @@ test.beforeEach(async ({ page }) => {
 
 test('direct Manual URL migrates to the hash route and renders the Manual', async ({ page }) => {
   await page.goto('/manual', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   await expect(page).toHaveURL(/\/#\/manual$/);
   await expect(page.getByRole('heading', { name: 'Navigation Basics' })).toBeVisible();
@@ -42,7 +43,7 @@ test('desktop Manual loads only near responsive images and preserves carousel st
   }, { times: 1 });
 
   await page.goto('/#/manual', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
   await expect(page.getByRole('heading', { name: 'Navigation Basics' })).toBeVisible();
 
   const firstCarousel = page.getByTestId('manual-carousel-navigation-overview');
@@ -118,7 +119,7 @@ test('mobile Manual selects the small source and keeps swipe/button behavior wit
   page.on('pageerror', error => pageErrors.push(error.message));
 
   await page.goto('/#/manual', { waitUntil: 'load' });
-  await dismissOverlays(page);
+  await dismissObstructions(page);
 
   const carousel = page.getByTestId('manual-carousel-navigation-overview');
   const mobileImage = carousel.getByRole('img', { name: 'Navigation overview screenshot for Mobile' });
@@ -155,40 +156,6 @@ async function seedState(page: Page) {
     localStorage.setItem('fst:firstRun', JSON.stringify({}));
     localStorage.setItem('fst:appSettings', JSON.stringify({ disableLightTrails: true }));
   });
-}
-
-async function dismissOverlays(page: Page) {
-  await page.waitForTimeout(750);
-  let quietChecks = 0;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const dismiss = page.getByRole('button', { name: 'Dismiss', exact: true }).last();
-    if (await dismiss.isVisible().catch(() => false)) {
-      await dismiss.evaluate(element => (element as HTMLButtonElement).click());
-      await page.waitForTimeout(600);
-      quietChecks = 0;
-      continue;
-    }
-    const firstRunClose = page.getByTestId('fre-close');
-    if (await firstRunClose.isVisible().catch(() => false)) {
-      await firstRunClose.evaluate(element => (element as HTMLButtonElement).click());
-      await page.waitForTimeout(600);
-      quietChecks = 0;
-      continue;
-    }
-    const dialog = page.getByRole('dialog').last();
-    if (await dialog.isVisible().catch(() => false)) {
-      const button = dialog.getByRole('button', { name: /close|skip|got it|continue|done|later|dismiss/i }).last();
-      if (await button.isVisible().catch(() => false)) {
-        await button.evaluate(element => (element as HTMLButtonElement).click());
-        await page.waitForTimeout(600);
-        quietChecks = 0;
-        continue;
-      }
-    }
-    quietChecks += 1;
-    if (quietChecks >= 3) return;
-    await page.waitForTimeout(200);
-  }
 }
 
 async function waitForRequestSettle(page: Page) {
