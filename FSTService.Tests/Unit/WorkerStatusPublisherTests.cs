@@ -197,6 +197,57 @@ public sealed class WorkerStatusPublisherTests
     }
 
     [Fact]
+    public void Detached_scrape_is_not_inherited_by_next_phase_operation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.StartScrapePhaseAttempt(
+                Arg.Any<ScrapePhaseAttemptStart>())
+            .Returns(1);
+        metaDb.GetSuccessfulPhaseDurationSamples(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>(),
+                Arg.Any<int>())
+            .Returns([]);
+        var sink = new DurablePhaseProgressSink(
+            metaDb,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DurablePhaseProgressSink>.Instance);
+        var publisher = new WorkerStatusPublisher(
+            metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance,
+            sink);
+        publisher.AttachScrape(1413);
+        publisher.BeginOperation(
+            "scrape.publication",
+            "Resuming deferred leaderboard publication",
+            phase: "Publishing",
+            subOperation: "resuming_deferred_publication");
+        publisher.CompleteOperation("scrape.publication");
+        publisher.DetachScrape(
+            1413,
+            "Deferred publication completed.");
+        metaDb.ClearReceivedCalls();
+
+        publisher.BeginOperation(
+            "scrape.leaderboards",
+            "Scraping leaderboard scores",
+            phase: "Scraping",
+            subOperation: "fetching_leaderboards");
+
+        metaDb.DidNotReceive()
+            .StartScrapePhaseAttempt(
+                Arg.Any<ScrapePhaseAttemptStart>());
+
+        publisher.AttachScrape(1414);
+
+        metaDb.Received(1).StartScrapePhaseAttempt(
+            Arg.Is<ScrapePhaseAttemptStart>(start =>
+                start.ScrapeId == 1414
+                && start.PhaseId == "scrape.leaderboards"));
+    }
+
+    [Fact]
     public void Attaching_tags_operation_without_phase_descriptor()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

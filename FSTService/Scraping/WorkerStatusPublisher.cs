@@ -82,6 +82,18 @@ public sealed class WorkerStatusPublisher
         }
     }
 
+    public void DetachScrape(long scrapeId, string? detail = null)
+    {
+        lock (_gate)
+        {
+            if (_scrapeId != scrapeId)
+                return;
+            _scrapeId = null;
+        }
+
+        _phaseProgress?.EndScrape(detail);
+    }
+
     public void PublishHeartbeat(string status = "running", string? message = null)
     {
         var now = DateTime.UtcNow;

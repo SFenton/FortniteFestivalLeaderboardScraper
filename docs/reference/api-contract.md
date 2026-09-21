@@ -469,6 +469,10 @@ When parallel phase attempts are active, service-info selects the lowest phase
 ordinal deterministically, then the newest attempt for that phase. Worker JSON
 activity and heartbeat updates are fenced by worker instance/start time so an
 older process cannot replace a newer worker's fallback summary.
+After standalone deferred-publication recovery, the worker detaches the
+completed scrape before starting the next scrape operation. Service-info
+therefore must not briefly report the prior scrape ID or open the new
+acquisition phase against that completed row.
 
 Matched candidate scrape `1300` accepted the reserved-descriptor projection:
 the v2 plan remained 28 ordered descriptors, exactly

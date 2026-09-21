@@ -5,6 +5,7 @@ using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -381,6 +382,95 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
                 .WorkingPublicationId);
         Assert.False(
             _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task DeferredPublicationRecoveryPersistsRetryAndDetachesCompletedScrape()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var phaseProgress = new DurablePhaseProgressSink(
+            _metaDb,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DurablePhaseProgressSink>.Instance);
+        var workerStatus = new WorkerStatusPublisher(
+            _metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance,
+            phaseProgress);
+        var worker = CreateWorker(
+            workerStatus: workerStatus);
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.CompletedTask;
+
+        await InvokePrivateAsync(
+            worker,
+            "ResumeDeferredPublicationBeforeGatesAsync",
+            CancellationToken.None);
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT status
+                FROM scrape_phase_attempts
+                WHERE scrape_id = @scrapeId
+                  AND phase_id = 'publication.commit'
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                deferredScrapeId);
+            Assert.Equal(
+                "completed",
+                command.ExecuteScalar());
+        }
+
+        workerStatus.BeginOperation(
+            "scrape.leaderboards",
+            "Scraping leaderboard scores",
+            phase: "Scraping",
+            subOperation: "fetching_leaderboards");
+
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM scrape_phase_attempts
+                WHERE scrape_id = @scrapeId
+                  AND phase_id = 'scrape.leaderboards'
+                """;
+            command.Parameters.AddWithValue(
+                "scrapeId",
+                deferredScrapeId);
+            Assert.Equal(
+                0L,
+                command.ExecuteScalar());
+        }
     }
 
     [Fact]

@@ -137,13 +137,15 @@ public abstract class ScraperWorkerTestBase : IDisposable
         ISnapshotGenerationRetentionPlanner?
             snapshotGenerationRetentionPlanner = null,
         BackgroundWorkCoordinator?
-            backgroundWorkCoordinator = null)
+            backgroundWorkCoordinator = null,
+        WorkerStatusPublisher? workerStatus = null)
         => CreateWorkerWithHttp(
             opts,
             null,
             publicationCommitOptions,
             snapshotGenerationRetentionPlanner,
-            backgroundWorkCoordinator);
+            backgroundWorkCoordinator,
+            workerStatus);
 
     protected ScraperWorker CreateWorkerWithHttp(
         ScraperOptions? opts,
@@ -153,7 +155,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
         ISnapshotGenerationRetentionPlanner?
             snapshotGenerationRetentionPlanner = null,
         BackgroundWorkCoordinator?
-            backgroundWorkCoordinator = null)
+            backgroundWorkCoordinator = null,
+        WorkerStatusPublisher? workerStatus = null)
     {
         opts ??= new ScraperOptions
         {
@@ -316,6 +319,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             registrationMutations,
             snapshotGenerationRetentionPlanner:
                 snapshotGenerationRetentionPlanner,
+            workerStatus: workerStatus,
             publicationCommitOptions:
                 Options.Create(
                     publicationCommitOptions

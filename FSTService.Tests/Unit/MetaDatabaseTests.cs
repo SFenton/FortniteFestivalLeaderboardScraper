@@ -86,6 +86,130 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void StartScrapePhaseAttempt_rejects_completed_nonpublication_phase()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Db.StartScrapePhaseAttempt(
+                CreatePhaseAttemptStart(
+                    scrapeId,
+                    "post.compute_rankings",
+                    phaseOrdinal: 310)));
+
+        Assert.Contains("status completed", error.Message);
+    }
+
+    [Fact]
+    public void StartScrapePhaseAttempt_rejects_completed_publication_without_deferred_state()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        Db.PrepareScrapePublication(
+            scrapeId,
+            promoteCachedResponses: false);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Db.StartScrapePhaseAttempt(
+                CreatePhaseAttemptStart(
+                    scrapeId,
+                    "publication.commit",
+                    phaseOrdinal: 900)));
+
+        Assert.Contains("status completed", error.Message);
+    }
+
+    [Fact]
+    public void StartScrapePhaseAttempt_allows_exact_deferred_publication_retry()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var initialAttempt = Db.StartScrapePhaseAttempt(
+            CreatePhaseAttemptStart(
+                scrapeId,
+                "publication.commit",
+                phaseOrdinal: 900));
+        var initialCompletedAt = DateTime.UtcNow;
+        Assert.True(Db.CompleteScrapePhaseAttempt(
+            new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "publication.commit",
+                initialAttempt,
+                "failed",
+                initialCompletedAt,
+                initialCompletedAt,
+                initialCompletedAt,
+                null,
+                "ready publication deferred")));
+        Db.CompleteScrapeRun(
+            scrapeId,
+            songsScraped: 1,
+            totalEntries: 1,
+            totalRequests: 1,
+            totalBytes: 1);
+        Db.PrepareScrapePublication(
+            scrapeId,
+            promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(
+            true,
+            scrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+
+        var attempt = Db.StartScrapePhaseAttempt(
+            CreatePhaseAttemptStart(
+                scrapeId,
+                "publication.commit",
+                phaseOrdinal: 900));
+
+        Assert.Equal(2, attempt);
+    }
+
+    private static ScrapePhaseAttemptStart CreatePhaseAttemptStart(
+        long scrapeId,
+        string phaseId,
+        int phaseOrdinal)
+    {
+        var now = DateTime.UtcNow;
+        return new ScrapePhaseAttemptStart(
+            scrapeId,
+            phaseId,
+            "scrape.update",
+            phaseOrdinal,
+            PhaseProgressCatalog.PlanVersion,
+            "phase-start-test",
+            null,
+            "running",
+            "steps",
+            null,
+            null,
+            false,
+            null,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            now,
+            "build-test",
+            "config-test");
+    }
+
+    [Fact]
     public void StartScrapeRun_allocates_working_publication_generation()
     {
         var scrapeId = Db.StartScrapeRun();
