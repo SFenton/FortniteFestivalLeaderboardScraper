@@ -50,10 +50,51 @@ public sealed partial class MetaDatabase
                         checked((int)attempt.ScrapeId));
                     var status =
                         scrapeState.ExecuteScalar() as string;
-                    if (!string.Equals(
+                    var canStart =
+                        string.Equals(
                             status,
                             "running",
+                            StringComparison.Ordinal);
+                    if (!canStart
+                        && string.Equals(
+                            status,
+                            "completed",
+                            StringComparison.Ordinal)
+                        && string.Equals(
+                            attempt.PhaseId,
+                            "publication.commit",
                             StringComparison.Ordinal))
+                    {
+                        using var deferredState =
+                            conn.CreateCommand();
+                        deferredState.Transaction = tx;
+                        deferredState.CommandText = """
+                            SELECT EXISTS (
+                                SELECT 1
+                                FROM scrape_publication_state publication
+                                JOIN publication_generations generation
+                                  ON generation.publication_id =
+                                        publication.working_publication_id
+                                WHERE publication.id = TRUE
+                                  AND publication.public_reads_frozen
+                                  AND publication.public_reads_frozen_reason =
+                                        @deferredReason
+                                  AND generation.scrape_id = @scrapeId
+                                  AND generation.status = 'ready'
+                            )
+                            """;
+                        deferredState.Parameters.AddWithValue(
+                            "deferredReason",
+                            PublicReadFreezeState
+                                .PublicationCommitDeferredReason);
+                        deferredState.Parameters.AddWithValue(
+                            "scrapeId",
+                            checked((int)attempt.ScrapeId));
+                        canStart =
+                            deferredState.ExecuteScalar()
+                            is true;
+                    }
+                    if (!canStart)
                     {
                         throw new InvalidOperationException(
                             $"Cannot start phase {attempt.PhaseId} for scrape {attempt.ScrapeId} with status {status ?? "missing"}.");

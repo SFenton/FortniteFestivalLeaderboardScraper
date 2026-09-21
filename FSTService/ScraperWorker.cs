@@ -2064,6 +2064,9 @@ public sealed class ScraperWorker : BackgroundService
                 "scrape.publication",
                 "deferred",
                 "worker shutdown");
+            _workerStatus?.DetachScrape(
+                preparation.ScrapeId,
+                "Deferred publication stopped with the worker.");
             return new DeferredPublicationResumeOutcome(
                 Handled: true,
                 Published: false,
@@ -2075,6 +2078,9 @@ public sealed class ScraperWorker : BackgroundService
                 "scrape.publication",
                 ex,
                 "deferred publication remains ready");
+            _workerStatus?.DetachScrape(
+                preparation.ScrapeId,
+                "Deferred publication remains ready.");
             return new DeferredPublicationResumeOutcome(
                 Handled: true,
                 Published: false,
@@ -2109,6 +2115,9 @@ public sealed class ScraperWorker : BackgroundService
             _workerStatus?.FailOperation(
                 "scrape.publication",
                 ex.InnerException ?? ex);
+            _workerStatus?.DetachScrape(
+                preparation.ScrapeId,
+                "Deferred publication failed.");
             return new DeferredPublicationResumeOutcome(
                 Handled: true,
                 Published: false,
@@ -2138,6 +2147,9 @@ public sealed class ScraperWorker : BackgroundService
             _workerStatus?.FailOperation(
                 "scrape.publication",
                 ex);
+            _workerStatus?.DetachScrape(
+                preparation.ScrapeId,
+                "Deferred publication failed.");
             return new DeferredPublicationResumeOutcome(
                 Handled: true,
                 Published: false,
@@ -2217,6 +2229,9 @@ public sealed class ScraperWorker : BackgroundService
                 preparation.PublicationId);
         }
 
+        _workerStatus?.DetachScrape(
+            preparation.ScrapeId,
+            "Deferred publication completed.");
         return new DeferredPublicationResumeOutcome(
             Handled: true,
             Published: true,

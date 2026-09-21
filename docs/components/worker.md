@@ -857,7 +857,13 @@ Terminal status is authoritative. Some bounded or parent-tracker phases
 complete with a truthful observed fraction below 100%; browser code must not
 rewrite those counters to 100 or interpret them as remaining publication work.
 Ready-publication deferral also creates distinct failed attempts followed by a
-successful retry, preserving the actual retry history.
+successful retry, preserving the actual retry history. A retry may open
+`publication.commit` after the scrape row is completed only while that exact
+scrape still owns the ready working publication and the public-read freeze is
+`publication-commit-deferred`; every other phase start remains restricted to a
+running scrape. Standalone recovery detaches that completed scrape from the
+worker status publisher after each handled retry, so the next acquisition
+cannot transiently inherit the prior scrape ID.
 
 ## Replay and capture evidence contracts
 
