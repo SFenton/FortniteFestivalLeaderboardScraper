@@ -85,6 +85,27 @@ export function inspectOpportunity(root, opportunityId) {
     { model: 'gpt-5.6-luna', effort: 'medium', context: 'default' },
     'routine reviewer',
   );
+  const sourceImplementer = opportunity.team?.sourceImplementer?.profile ?? null;
+  if (['publication', 'provenance'].includes(opportunityId)) {
+    assertProfile(
+      sourceImplementer,
+      { model: 'gpt-6-sol', effort: 'max', context: 'default' },
+      'source implementer',
+    );
+    assert(opportunity.team.sourceImplementer.role === 'source-implementer' &&
+      opportunity.team.sourceImplementer.evidenceStatus === 'operator-approved' &&
+      opportunity.phases.filter(phase =>
+        phase.kind === 'source-implementation' &&
+        phase.profileRef === 'source-implementer').length === 1,
+    'operator-approved source implementation phase required');
+  } else {
+    assert(sourceImplementer === null &&
+      !opportunity.phases.some(phase => phase.kind === 'source-implementation'),
+    'release and destructive variants cannot have a source implementer');
+  }
+  assert(opportunity.team.repositoryApply.authority === 'operator' &&
+    opportunity.team.repositoryApply.enabled === false,
+  'model ownership cannot enable automatic repository application');
   if (opportunity.team?.workerCandidate?.profile) {
     assertProfile(
       opportunity.team.workerCandidate.profile,
@@ -230,6 +251,7 @@ export function inspectOpportunity(root, opportunityId) {
     opportunity: opportunityId,
     routine,
     reviewer,
+    sourceImplementer,
     researchProfiles,
     escalationTriggers: [...new Set(researchProfiles.flatMap(profile => profile.triggerIds ?? []))],
     requiresTriggerReceipt: researchProfiles.every(profile => profile.requiresTriggerReceipt === true),

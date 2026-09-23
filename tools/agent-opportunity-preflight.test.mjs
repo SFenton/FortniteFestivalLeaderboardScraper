@@ -17,6 +17,15 @@ for (const opportunity of [
     assert.equal(result.reviewer.model, 'gpt-5.6-luna');
     assert.equal(result.reviewer.effort, 'medium');
     assert.equal(result.reviewer.context, 'default');
+    if (['publication', 'provenance'].includes(opportunity)) {
+      assert.deepEqual(result.sourceImplementer, {
+        model: 'gpt-6-sol',
+        effort: 'max',
+        context: 'default',
+      });
+    } else {
+      assert.equal(result.sourceImplementer, null);
+    }
     assert.ok(result.researchProfiles.length >= 1);
     for (const profile of result.researchProfiles) {
       assert.equal(profile.kind, 'research-frontier');
@@ -45,6 +54,26 @@ for (const opportunity of [
     }
   });
 }
+
+test('Sol source pin covers enabled source opportunities but not live or release execution', () => {
+  const policy = JSON.parse(fs.readFileSync('.github/agent-opportunities.json', 'utf8'));
+  const sourceIds = [
+    'focused-tests', 'database', 'concurrency', 'performance', 'storage',
+    'publication', 'provenance', 'cross-contract', 'debugging',
+  ];
+  for (const item of policy.opportunities) {
+    const sourcePhases = item.phases.filter(phase => phase.kind === 'source-implementation');
+    if (sourceIds.includes(item.id)) {
+      assert.equal(item.team.sourceImplementer.profile.model, 'gpt-6-sol');
+      assert.equal(sourcePhases.length, 1, item.id);
+      assert.equal(sourcePhases[0].profileRef, 'source-implementer');
+    } else {
+      assert.equal(item.team.sourceImplementer, undefined, item.id);
+      assert.equal(sourcePhases.length, 0, item.id);
+    }
+    assert.equal(item.team.repositoryApply.enabled, false, item.id);
+  }
+});
 
 test('destructive parity is never documented as standing authorization', () => {
   for (const file of [

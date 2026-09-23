@@ -73,6 +73,15 @@
           },
           "evidenceStatus": "provisional"
         },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
+        },
         "reviewer": {
           "role": "medium-review",
           "profile": {
@@ -177,9 +186,14 @@
           "id": "review-bounded",
           "kind": "medium-review",
           "profileRef": "reviewer"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "MAI Code 1.1 Flash may stage only pure formatter tests. A medium reviewer may direct one revision; no application or operational authority is granted."
+      "rationale": "MAI Code 1.1 Flash may stage only pure formatter tests. Luna reviews one revision; operator-approved Sol owns source implementation without automatic application or operational authority."
     },
     {
       "id": "database",
@@ -212,6 +226,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -302,9 +325,14 @@
           "id": "coordinate",
           "kind": "medium-coordinator",
           "profileRef": "coordinator"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Known database work is medium-owned after deterministic local-container tests. Live loss or restore conflict is the receipt-bound Sol high/default research boundary."
+      "rationale": "Luna coordinates database work after deterministic tests; operator-approved Sol owns source changes only. Live loss or restore conflict remains a separate receipt-bound research boundary."
     },
     {
       "id": "concurrency",
@@ -336,6 +364,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -450,9 +487,14 @@
             ],
             "requiresTriggerReceipt": true
           }
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Concurrency is sensitive medium work. Max/long requires a receipt proving corruption or deadlock remains after matched interleavings."
+      "rationale": "Luna coordinates concurrency work; operator-approved Sol owns source changes. Sol research into unresolved corruption or deadlock still requires a receipt."
     },
     {
       "id": "performance",
@@ -485,6 +527,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -581,9 +632,14 @@
           "id": "coordinate",
           "kind": "medium-coordinator",
           "profileRef": "coordinator"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Performance work requires matched deterministic evidence. Max/long is not a speed default and opens only for unresolved correctness conflict."
+      "rationale": "Matched deterministic evidence precedes operator-approved Sol source implementation; no performance win or separate Sol research is inferred from its pin."
     },
     {
       "id": "storage",
@@ -616,6 +672,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -706,9 +771,14 @@
           "id": "coordinate",
           "kind": "medium-coordinator",
           "profileRef": "coordinator"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Storage analysis is medium-owned and read-only by default. Loss or restore contradictions require a critical trigger receipt."
+      "rationale": "Luna coordinates read-only storage analysis; operator-approved Sol owns source changes only. Loss or restore contradictions require a separate critical trigger receipt."
     },
     {
       "id": "publication",
@@ -739,6 +809,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -859,9 +938,14 @@
             ],
             "requiresTriggerReceipt": true
           }
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Routine publication coordination is medium-owned after manifest and contract checks. Conflicting publication/provenance evidence is the only receipt-bound Sol high/default research route."
+      "rationale": "Luna coordinates publication checks; operator-approved Sol owns source changes only. Conflicting publication/provenance research remains separately receipt-bound."
     },
     {
       "id": "provenance",
@@ -892,6 +976,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -1012,9 +1105,14 @@
             ],
             "requiresTriggerReceipt": true
           }
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "A sensitive medium coordinator owns known provenance synchronization. Max/long requires a concrete publication or historical ownership conflict."
+      "rationale": "Luna coordinates provenance checks; operator-approved Sol owns source changes only. Publication or historical ownership conflicts require separate research receipts."
     },
     {
       "id": "cross-contract",
@@ -1045,6 +1143,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -1147,9 +1254,14 @@
           "id": "coordinate",
           "kind": "medium-coordinator",
           "profileRef": "coordinator"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "Cross-contract synchronization is a routine medium-owned pattern after deterministic documentation, service, and web checks."
+      "rationale": "Luna coordinates cross-contract checks; operator-approved Sol owns source changes after deterministic documentation, service, and web checks."
     },
     {
       "id": "debugging",
@@ -1182,6 +1294,15 @@
             "context": "default"
           },
           "evidenceStatus": "provisional"
+        },
+        "sourceImplementer": {
+          "role": "source-implementer",
+          "profile": {
+            "model": "gpt-6-sol",
+            "effort": "max",
+            "context": "default"
+          },
+          "evidenceStatus": "operator-approved"
         },
         "reviewer": {
           "role": "medium-review",
@@ -1278,9 +1399,14 @@
           "id": "coordinate",
           "kind": "medium-coordinator",
           "profileRef": "coordinator"
+        },
+        {
+          "id": "implement-source",
+          "kind": "source-implementation",
+          "profileRef": "source-implementer"
         }
       ],
-      "rationale": "A sensitive medium coordinator owns ordinary debugging. Critical review requires reproduced corruption or publication/provenance conflict."
+      "rationale": "Luna coordinates debugging; operator-approved Sol owns source changes only. Critical review still requires reproduced corruption or publication/provenance conflict."
     },
     {
       "id": "live-operations",

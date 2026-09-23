@@ -34,6 +34,12 @@ Current architecture and ownership are indexed in `docs/README.md`.
   Identity never bypasses deterministic version 3 routing or exact project
   pins. Unqualified models may orchestrate/read but gain no semantic,
   repository-apply, database, production, release, or destructive authority.
+- Enabled source opportunities pin `gpt-6-sol` max/default for
+  operator-approved source implementation after Luna medium/default
+  coordination; live operations and release/destructive variants do not.
+  This pin is not repository-apply, database, production, or release authority.
+  Automated repository application remains disabled; explicit operator-approved
+  source changes still use normal CLI permissions and required validation.
 - The installed continuous-improvement observer follows
   `.github/agent-learning.json`, stores sanitized metadata only, and silently
   no-ops when no reusable pattern qualifies. Automatic build requests are

@@ -20,6 +20,10 @@ Resolve every phase through the hierarchical version 3
   receipts launch no model and need no model-bound authorization;
 - known-pattern work uses the exact opportunity medium coordinator:
   gpt-5.6-luna medium/default for routine, database, concurrency, storage, publication, provenance, debugging, live, and release-sensitive coordination;
+- operator-approved source implementation in enabled source opportunities
+  uses the separate gpt-6-sol max/default implementer pin after coordination.
+  Record a not-run, zero-usage leg when no implementation is requested;
+  this role never operates live services or a release machine;
 - conditional external research uses Sol high/default only after
   `approved-novel-public-research`;
 - a binding novel spec or consequential architecture review uses Sol
@@ -48,6 +52,9 @@ Overall model identity never bypasses routing. gpt-5.4, Sol, or another
 current model may fill a role only when it exactly matches that role's
 qualified profile; otherwise it may orchestrate/read but gains no semantic,
 repository-apply, live, release, or destructive authority.
+The Sol source pin does not enable automatic repository application. Source
+changes require the operator's explicit request and normal CLI permissions;
+live database, release, and destructive execution retain their separate gates.
 
 ## Input contract
 
