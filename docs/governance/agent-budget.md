@@ -22,11 +22,13 @@ The project adapter in `.github/agent-budget.json` selects evidence and
 validation, not permissions. Generic routing/evidence/audit/evaluation tooling
 belongs to `SFenton/copilot-config`; project safety remains here.
 
-Use `fst-budget-workflow`. The shared installer adds a personal default
-instruction that activates `budget-workflow` automatically for substantive
-engineering and research; users need not name the skill. It prefers deterministic
-commands, exact evidence ranges and one execution owner. HydraFusion may coordinate a well-scoped task;
-do not nest a second HydraFusion workflow or implicit tandem underneath it.
+Use `fst-budget-workflow`. The current shared installer does not activate the
+optional personal `budget-workflow` skill or its hooks. Use the project skill's
+bounded direct workflow when the global skill is absent; do not assume a
+repository hook enforces routing. Prefer deterministic commands, exact
+evidence ranges and one execution owner. HydraFusion may coordinate a
+well-scoped task; do not nest a second HydraFusion workflow or implicit tandem
+underneath it.
 Unknown or novel data/performance decisions retain frontier research.
 The overall interactive model may be Sol, HydraFusion, or another model.
 Identity never bypasses deterministic routing or exact project pins. A matching
