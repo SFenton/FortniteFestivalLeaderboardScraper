@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-08
-last_verified_commit: 2dfb035e
+last_verified: 2026-09-23
+last_verified_commit: 220cc35a
 sources:
   - AGENTS.md
   - .github/agent-budget.json
@@ -22,11 +22,13 @@ The project adapter in `.github/agent-budget.json` selects evidence and
 validation, not permissions. Generic routing/evidence/audit/evaluation tooling
 belongs to `SFenton/copilot-config`; project safety remains here.
 
-Use `fst-budget-workflow`. The shared installer adds a personal default
-instruction that activates `budget-workflow` automatically for substantive
-engineering and research; users need not name the skill. It prefers deterministic
-commands, exact evidence ranges and one execution owner. HydraFusion may coordinate a well-scoped task;
-do not nest a second HydraFusion workflow or implicit tandem underneath it.
+Use `fst-budget-workflow`. The current shared installer does not activate the
+optional personal `budget-workflow` skill or its hooks. Use the project skill's
+bounded direct workflow when the global skill is absent; do not assume a
+repository hook enforces routing. Prefer deterministic commands, exact
+evidence ranges and one execution owner. HydraFusion may coordinate a
+well-scoped task; do not nest a second HydraFusion workflow or implicit tandem
+underneath it.
 Unknown or novel data/performance decisions retain frontier research.
 The overall interactive model may be Sol, HydraFusion, or another model.
 Identity never bypasses deterministic routing or exact project pins. A matching
@@ -50,11 +52,19 @@ registered tools, tests, and receipts run without a model launch. Known-pattern
 work uses the opportunity's exact project-qualified medium coordinator:
 gpt-5.6-luna medium/default for routine, database, concurrency, storage,
 publication, provenance, debugging, live, and release-sensitive coordination.
-External research is conditional, and binding specification remains
-gpt-5.6-luna medium/default. Sol high/default appears only as receipt-bound
-research for unresolved concurrency corruption, publication/provenance
-conflict, live data-loss/restore conflict, or release public-health/rollback
-conflict. No phase has standing Sol ownership or max/long residency.
+For the nine enabled source opportunities, operator-approved source
+implementation uses a separate `gpt-6-sol` max/default phase after Luna
+coordination and staged-worker review where applicable. Read-only tasks
+record that phase as not-run with zero usage. It is a semantic source role,
+not automatic repository application or live/production authority. Explicit
+operator-requested source changes use normal CLI permissions and still
+require review, affected validation, rollback and documentation. The
+`repositoryApply.enabled: false` gate continues to prohibit automatic
+pipeline application. Live operations and application-release/destructive
+variants have no Sol source pin. External research remains conditional,
+binding specification stays Luna medium/default, and Sol high/default
+research still requires its named evidence-bound conflict receipt. No
+research phase gains standing Sol ownership.
 
 The adapter advertises only the implemented focused-test worker class. MAI Code
 1.1 Flash may produce one provisional staged formatter-test artifact and one
@@ -66,8 +76,10 @@ Only `unattended-application` requires >=30 matched held-out cases, >=10
 families where used, independent review, confidence, matching terminal
 outcomes, zero critical failures, fault-tested rollback, reconciled usage, and
 positive complete all-leg savings.
-Research, debugging, database/concurrency/performance work, publication,
-provenance, live state, release, and destructive operations are never delegated.
+Database, concurrency, performance, publication, provenance and debugging
+source changes remain with the pinned implementer, not a cheap worker.
+Production, database mutation, release and destructive operations remain
+separately gated and never follow from a model pin.
 
 Database work still uses `database-management` and relevant focused advisors.
 Live authorization gates are unchanged. Cheap-model summaries cannot establish

@@ -24,6 +24,12 @@ receipt-bound Sol high/default research legs require named evidence-bound
 trigger receipts;
 release, publication, provenance, or concurrency terminology alone is not a
 trigger.
+After Luna medium/default coordination, enabled source opportunities pin
+`gpt-6-sol` max/default for operator-approved source implementation. Skip this
+model leg with explicit zero usage when no source change is requested. The
+source role is separate from receipt-bound research, does not enable automatic
+repository application, and grants no live, database, GitHub, release, or
+destructive authority.
 
 Research uses `evidence/research.mjs plan` and phase-aware `evidencePolicy`.
 Local feature/ownership questions are repository-only; computation/storage
@@ -46,7 +52,8 @@ safety or a specialist's explicit model/approval contract.
    request one exact revision; only unattended application uses the 30-case
    promotion floor. Database
    behavior, concurrency, performance, publication, provenance, storage,
-   debugging, and cross-contract changes stay with the owner.
+   debugging, and cross-contract source changes stay with the pinned Sol
+   implementer rather than a cheap worker.
 3. DB work invokes `database-management` and the relevant advisor only:
    probing, evaluation, implementation, improvement, PostgreSQL, or artifact
    analytics. Do not load every advisor or start autonomous-plan-executor.
@@ -65,8 +72,9 @@ safety or a specialist's explicit model/approval contract.
    live-scrape A/B, exact-object and restoration gates. Application image
    release and destructive database maintenance use separate advisory machines;
    they never share authorization or rollback. Routine review is gpt-5.6-luna
-   medium/default. Both remain invalidated and disabled; Sol research appears
-   only after `fst-live-data-loss-or-restore-conflict` or
+   medium/default. Both remain invalidated and disabled; Sol source ownership
+   does not change their status. Sol critical research appears only after
+   `fst-live-data-loss-or-restore-conflict` or
    `fst-release-public-health-or-rollback-conflict` receipts.
 
 The overall interactive model may be gpt-5.4, Sol, or another model. Exact

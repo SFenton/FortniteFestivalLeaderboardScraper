@@ -918,8 +918,10 @@ metrics. Correctness/publication differences reject regardless of speed.
 
 This tandem plan is accepted for implementation after local outbox rendering.
 
-- GPT-5.6 Sol owns every implementation, test, benchmark, deployment,
-  production probe, A/B, rollback, commit, and promotion decision.
+- The version-3 `gpt-6-sol` max/default pin owns operator-approved source
+  implementation; Luna medium/default coordinates and reviews. Neither model
+  pin authorizes live benchmarks, database work, deployment, rollback,
+  commits, merges, or promotion without their separate gates.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
