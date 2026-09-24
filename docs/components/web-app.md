@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-24
-last_verified_commit: dbbb1b82
+last_verified_commit: d5af85a2
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -89,6 +89,7 @@ sources:
   - FortniteFestivalWeb/e2e/specs/platform/publication.spec.ts
   - FortniteFestivalWeb/e2e/README.md
   - FortniteFestivalWeb/nginx.conf
+  - FortniteFestivalWeb/scripts/verify-embedded-bundle.mjs
 update_triggers:
   - Routes, providers, state ownership, publication handling, styling conventions, package boundaries, or web deployment changes.
 ---
@@ -540,6 +541,11 @@ caching, and falls back to `index.html` for client routes.
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
 
+The component gallery is a Vite development/test input, not a production build
+entry. Standalone production Nginx returns 404 for `/playwright/gallery` and
+descendants instead of serving the SPA fallback. `embedded:check` verifies
+that the committed `wwwroot` has no gallery and that both Nginx guards remain.
+
 Manual screenshots use PNG only as the authoring format under
 `FortniteFestivalWeb/manual-assets/source/screenshots`. The source captures and
 schema-v2 generation manifest are excluded from Docker and Vite deployment.
@@ -571,7 +577,8 @@ focused responsive or component tests. Real production components use
 Playwright's stories-and-gallery mount model for focus, overflow, touch,
 geometry, and constrained width/height behavior.
 
-The gallery can open a story directly with `?story=<component/path/export>`.
+The local Vite gallery can open a story directly with
+`?story=<component/path/export>`.
 The Notifications `RotationPreview` story uses local media and no API, so a
 developer can inspect the dialog in a browser without a service or worker.
 

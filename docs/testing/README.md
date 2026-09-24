@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-09-24
-last_verified_commit: dbbb1b82
+last_verified_commit: d5af85a2
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -102,6 +102,8 @@ sources:
   - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
   - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
   - FortniteFestivalWeb/playwright/gallery/main.tsx
+  - FortniteFestivalWeb/nginx.conf
+  - FortniteFestivalWeb/scripts/verify-embedded-bundle.mjs
   - FortniteFestivalWeb/src/components/notifications/MobileNotificationsModal.story.tsx
   - FortniteFestivalWeb/e2e/support/focusAppearance.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -1252,8 +1254,11 @@ WebSocket responses; the dead-end proxy target prevents an unexpected request
 from reaching the service. First Run supplies an independent
 semantic-dialog check. The gallery's
 `?story=components/notifications/MobileNotificationsModal/RotationPreview`
-opens an API-free local preview for manual review; opening the normal
-application outside Playwright still requires a mock API target. The Linux
+opens an API-free local Vite preview for manual review; opening the normal
+application outside Playwright still requires a mock API target. Production
+Nginx must return 404 for `/playwright/gallery` and every path below it,
+rather than serving the SPA fallback. `corepack yarn embedded:check` verifies
+these guards and that the built `wwwroot` contains no gallery. The Linux
 WebKit port does not expose either text-adjust property, so the test records
 that capability, asserts computed 100% where supported, and still checks
 WebKit's rendered rotation geometry. Inspect the emitted CSS separately;
