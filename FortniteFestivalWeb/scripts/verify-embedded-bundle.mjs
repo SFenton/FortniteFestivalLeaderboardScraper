@@ -15,6 +15,7 @@ const aliases = [
 
 verifyIndexAssets();
 verifyCompatibilityAliases();
+verifyGalleryNotPublished();
 verifyGitClean();
 
 console.log('[embedded] Committed bundle is current, self-contained, and compatibility-safe.');
@@ -37,6 +38,17 @@ function verifyCompatibilityAliases() {
     const source = readFileSync(resolve(outputRoot, sourceRelative));
     const alias = readFileSync(resolve(outputRoot, aliasRelative));
     if (!source.equals(alias)) fail(`${aliasRelative} does not match ${sourceRelative}.`);
+  }
+}
+
+function verifyGalleryNotPublished() {
+  if (existsSync(resolve(outputRoot, 'playwright/gallery'))) {
+    fail('The production bundle includes the development component gallery.');
+  }
+  const nginx = readFileSync(resolve(webRoot, 'nginx.conf'), 'utf8');
+  if (!/location\s*=\s*\/playwright\/gallery\s*\{\s*return\s+404;\s*\}/.test(nginx)
+    || !/location\s+\^~\s+\/playwright\/gallery\/\s*\{\s*return\s+404;\s*\}/.test(nginx)) {
+    fail('Production Nginx must return 404 for the component gallery and its descendants.');
   }
 }
 

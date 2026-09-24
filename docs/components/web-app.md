@@ -1,13 +1,17 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-19
-last_verified_commit: 1e9bade8
+last_verified: 2026-09-24
+last_verified_commit: d5af85a2
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/src/main.tsx
+  - FortniteFestivalWeb/src/index.css
+  - FortniteFestivalWeb/src/components/notifications/MobileNotificationsModal.tsx
+  - FortniteFestivalWeb/src/components/notifications/MobileNotificationsModal.story.tsx
+  - FortniteFestivalWeb/playwright/gallery/main.tsx
   - FortniteFestivalWeb/src/utils/focusAppearance.ts
   - FortniteFestivalWeb/src/styles/focusAppearance.module.css
   - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
@@ -81,9 +85,11 @@ sources:
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/e2e/specs/browser/startup-transition.spec.ts
+  - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
   - FortniteFestivalWeb/e2e/specs/platform/publication.spec.ts
   - FortniteFestivalWeb/e2e/README.md
   - FortniteFestivalWeb/nginx.conf
+  - FortniteFestivalWeb/scripts/verify-embedded-bundle.mjs
 update_triggers:
   - Routes, providers, state ownership, publication handling, styling conventions, package boundaries, or web deployment changes.
 ---
@@ -296,6 +302,15 @@ outline removal, device-width heuristics, or delayed blur. Forcing native
 `focusVisible: false` is also insufficient: engines differ when keyboard input
 reaches that same focused element, and re-focusing it does not reliably restore
 the indicator without a focus transition.
+
+All semantic modal dialogs inherit `-webkit-text-size-adjust: 100%` and
+`text-size-adjust: 100%` through `[aria-modal='true']` in `src/index.css`. This
+holds authored modal text sizes through viewport rotation without changing
+ordinary page typography or disabling viewport zoom. It applies to shared
+`ModalShell` panels and independent first-run, Paths, confirmation, and
+changelog dialogs. The rule does not remount open dialogs or change the
+keyboard-stable mobile sheet position; the notification rotation browser
+regression checks the retained panel and rendered text geometry.
 
 Decorative visual policy is centralized through `useVisualPreferences`.
 Reduced motion removes background crossfades, continuous pulse/breathe
@@ -526,6 +541,11 @@ caching, and falls back to `index.html` for client routes.
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
 
+The component gallery is a Vite development/test input, not a production build
+entry. Standalone production Nginx returns 404 for `/playwright/gallery` and
+descendants instead of serving the SPA fallback. `embedded:check` verifies
+that the committed `wwwroot` has no gallery and that both Nginx guards remain.
+
 Manual screenshots use PNG only as the authoring format under
 `FortniteFestivalWeb/manual-assets/source/screenshots`. The source captures and
 schema-v2 generation manifest are excluded from Docker and Vite deployment.
@@ -556,5 +576,10 @@ Firefox own engine-sensitive coverage, and breakpoint widths are exercised in
 focused responsive or component tests. Real production components use
 Playwright's stories-and-gallery mount model for focus, overflow, touch,
 geometry, and constrained width/height behavior.
+
+The local Vite gallery can open a story directly with
+`?story=<component/path/export>`.
+The Notifications `RotationPreview` story uses local media and no API, so a
+developer can inspect the dialog in a browser without a service or worker.
 
 Validation commands are in [Testing](../testing/README.md).
