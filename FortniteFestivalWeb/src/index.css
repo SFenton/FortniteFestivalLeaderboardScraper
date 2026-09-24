@@ -36,6 +36,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+[aria-modal='true'] {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 a {
   color: inherit;
   text-decoration: none;

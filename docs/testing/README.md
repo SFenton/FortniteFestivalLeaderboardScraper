@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-18
-last_verified_commit: c7488355
+last_verified: 2026-09-24
+last_verified_commit: dbbb1b82
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -100,6 +100,9 @@ sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
+  - FortniteFestivalWeb/playwright/gallery/main.tsx
+  - FortniteFestivalWeb/src/components/notifications/MobileNotificationsModal.story.tsx
   - FortniteFestivalWeb/e2e/support/focusAppearance.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
@@ -1232,6 +1235,30 @@ For global appearance changes, also inspect the emitted entry stylesheet and
 exercise the built `wwwroot` app through a fixture-only static preview. Vite's
 development CSS injection can pass while an unreferenced CSS Module is removed
 from the production bundle.
+
+Notification rotation has a fixture-backed browser regression:
+
+```bash
+cd FortniteFestivalWeb
+VITE_API_BASE=http://127.0.0.1:9 corepack yarn playwright test e2e/specs/browser/notification-rotation.spec.ts \
+  --project=chromium-mobile --project=webkit-mobile
+```
+
+It holds one dialog open through portrait, wide landscape, portrait, compact
+landscape, and portrait again. The test checks inherited modal text adjustment,
+authored and rendered typography, scroll/focus usability, no horizontal dialog
+overflow, and stable dialog identity. Fixture routes supply the API and
+WebSocket responses; the dead-end proxy target prevents an unexpected request
+from reaching the service. First Run supplies an independent
+semantic-dialog check. The gallery's
+`?story=components/notifications/MobileNotificationsModal/RotationPreview`
+opens an API-free local preview for manual review; opening the normal
+application outside Playwright still requires a mock API target. The Linux
+WebKit port does not expose either text-adjust property, so the test records
+that capability, asserts computed 100% where supported, and still checks
+WebKit's rendered rotation geometry. Inspect the emitted CSS separately;
+emulated rotation cannot establish physical iOS Safari or standalone-PWA
+behavior, so those environments need device validation before a web release.
 
 No-input startup cases navigate directly instead of using
 `gotoAppRoute`/`dismissObstructions`, which can inject mouse clicks.

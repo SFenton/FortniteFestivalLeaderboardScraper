@@ -48,6 +48,14 @@ window.unmount = async () => {
   document.getElementById('root')!.replaceChildren();
 };
 
+const previewStory = new URLSearchParams(window.location.search).get('story');
+if (previewStory) {
+  void window.mount({ story: previewStory }).catch((error: unknown) => {
+    console.error('Unable to load component story.', error);
+    document.getElementById('root')!.textContent = 'Unable to load component story.';
+  });
+}
+
 function resolveStory(story: string): {
   modulePath: string;
   exportName: string;
