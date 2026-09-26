@@ -93,6 +93,26 @@ public sealed class PiaRegionRotatorTests
     }
 
     [Fact]
+    public async Task RotateAsync_OnlyRateLimitedCandidates_KeepsWorkingTunnelWithoutRollback()
+    {
+        var server = new RecordingControlServer();
+        var recycler = new RecordingHealthRecycler(server);
+        var claims = new RecordingClaims();
+        claims.RateLimited.Add(IPAddress.Parse("192.0.2.10"));
+        using var client = new HttpClient(server);
+        var rotator = CreateRotator(client, recycler, new RecordingEgressProbe(server), maxAttempts: 1);
+
+        var result = await rotator.RotateAsync(
+            Request(claims, ["US Seattle"]), CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
+        Assert.Equal("US Seattle", result.Region);
+        Assert.Equal(IPAddress.Parse("192.0.2.10"), result.Egress);
+        Assert.Equal(["US Seattle"], server.PutRegions);
+        Assert.Equal(0, recycler.RestartCount);
+    }
+
+    [Fact]
     public async Task RotateAsync_RejectsUnqualifiedProviderBeforeAnyMutation()
     {
         var server = new RecordingControlServer { Provider = "airvpn" };

@@ -354,6 +354,30 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         ProxyRegionRotationRequest request,
         CancellationToken ct)
     {
+        // Candidates are often rejected only because their egress is still
+        // rate-limited; that tunnel works. Keep it instead of rolling back to
+        // an original or static region whose servers may be failing.
+        using (var keepDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            keepDeadline.CancelAfter(_attemptTimeout);
+            try
+            {
+                var current = await WaitForAcceptableEgressAsync(
+                    tunnel, runtimeRegion, request.PreviousEgress, request.Claims,
+                    allowPreviousAndRateLimited: true, keepDeadline.Token);
+                if (current is not null)
+                {
+                    _log.LogInformation(
+                        "PIA proxy {Container} kept its working {Region} tunnel after rejected candidates.",
+                        tunnel.ContainerName, runtimeRegion);
+                    return new(ProxyRegionRotationOutcome.Restored, current, runtimeRegion);
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+            }
+        }
+
         try
         {
             var reconnect = runtimeRegion.Equals(originalRegion, StringComparison.OrdinalIgnoreCase);

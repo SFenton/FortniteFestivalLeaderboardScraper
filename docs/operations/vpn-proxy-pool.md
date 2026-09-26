@@ -178,9 +178,12 @@ scoped) still reduce DOP.
 
 #### Restoration and quarantine
 
-When every candidate fails or the overall deadline expires, the worker returns
-the exit to its prior region (or reconnects it) and verifies real, peer-distinct
-egress (a rate-limited egress is acceptable here). If control rollback fails,
+When every candidate fails or the overall deadline expires, the worker first
+keeps the current tunnel if it still has real, peer-distinct egress (a
+rate-limited egress is acceptable here; candidates are often rejected only for
+that reason), because the prior or static region may itself be failing TLS.
+Otherwise it returns the exit to its prior region (or reconnects it) and
+verifies the same way. If control rollback fails,
 it restarts only that proxy container, restoring its static Compose selector,
 and verifies again. If recovery cannot be verified, that exit is quarantined
 until operator intervention or a guarded worker restart. Cancellation stops
