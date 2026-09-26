@@ -132,6 +132,30 @@ public sealed class PiaRegionRotatorTests
     }
 
     [Fact]
+    public async Task RotateAsync_SlowControlRollback_WaitsForRealEgressWithoutRestart()
+    {
+        var server = new RecordingControlServer();
+        var recycler = new RecordingHealthRecycler(server);
+        using var client = new HttpClient(server);
+        var rotator = new PiaRegionRotator(client, recycler,
+            new RecordingEgressProbe(server)
+            {
+                DuplicateNewEgress = true,
+                RestorationFailuresRemaining = 2,
+            },
+            Options(), NullLogger<PiaRegionRotator>.Instance,
+            rollbackProbeTimeout: TimeSpan.FromMilliseconds(500),
+            pollInterval: TimeSpan.FromMilliseconds(40));
+
+        var outcome = await rotator.RotateAsync(
+            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(["US Seattle", "US Las Vegas"], server.PutRegions);
+        Assert.Equal(0, recycler.RestartCount);
+    }
+
+    [Fact]
     public async Task RotateAsync_UnrecoverableExit_IsReportedUnsafe()
     {
         var server = new RecordingControlServer { CrashOnRollback = true };
@@ -290,6 +314,7 @@ public sealed class PiaRegionRotatorTests
         public bool DuplicateNewEgress { get; set; }
         public bool PeerUnavailable { get; set; }
         public bool BlockAfterCandidateUpdate { get; set; }
+        public int RestorationFailuresRemaining { get; set; }
         private readonly TaskCompletionSource _candidateProbeStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task CandidateProbeStarted => _candidateProbeStarted.Task;
@@ -301,6 +326,14 @@ public sealed class PiaRegionRotatorTests
         {
             if (proxyUri.Host == "gluetun-2" && PeerUnavailable)
                 return null;
+            if (proxyUri.Host == "gluetun-1"
+                && _server.CurrentRegion == "US Las Vegas"
+                && _server.PutRegions.Count > 0
+                && RestorationFailuresRemaining > 0)
+            {
+                RestorationFailuresRemaining--;
+                return null;
+            }
             if (proxyUri.Host == "gluetun-1"
                 && _server.CurrentRegion != "US Las Vegas"
                 && BlockAfterCandidateUpdate)

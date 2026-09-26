@@ -128,10 +128,13 @@ A `running` control response or Docker `healthy` alone does not qualify a
 new tunnel: neither detects all OpenVPN TLS failures.
 
 On failure, the worker attempts to restore the prior region and verifies the
-real proxy again. If control rollback fails, it restarts only that proxy
+real proxy again. It waits up to four minutes for that control rollback to
+establish its tunnel; a healthy PIA region can take longer than 90 seconds.
+If control rollback fails, it restarts only that proxy
 container, restoring its static Compose selector, and rechecks health and
 distinct egress. If recovery cannot be verified, that exit is quarantined
-indefinitely until operator intervention or a guarded worker restart. No
+indefinitely until operator intervention or a guarded worker restart. The
+entire rollback is capped at eight minutes. No
 other exit is rotated concurrently; an existing `Retry-After` deadline is
 never shortened. Cancellation stops queued waits and attempts restoration
 after a settings update. Check warnings/errors and the effective pool before

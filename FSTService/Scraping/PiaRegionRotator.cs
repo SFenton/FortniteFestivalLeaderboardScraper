@@ -86,8 +86,10 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
     private readonly IProxyEgressProbe _egress;
     private readonly ILogger<PiaRegionRotator> _log;
     private readonly TimeSpan _probeTimeout;
+    private readonly TimeSpan _rollbackProbeTimeout;
     private readonly TimeSpan _recoveryTimeout;
     private readonly TimeSpan _restartTimeout;
+    private readonly TimeSpan _pollInterval;
 
     public PiaRegionRotator(
         IHttpClientFactory clientFactory,
@@ -107,15 +109,19 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         ScraperOptions options,
         ILogger<PiaRegionRotator> log,
         TimeSpan? recoveryTimeout = null,
-        TimeSpan? restartTimeout = null)
+        TimeSpan? restartTimeout = null,
+        TimeSpan? rollbackProbeTimeout = null,
+        TimeSpan? pollInterval = null)
     {
         _control = control;
         _recycler = recycler;
         _egress = egress;
         _log = log;
         _probeTimeout = TimeSpan.FromSeconds(options.ProxyRegionRotationProbeTimeoutSeconds);
+        _rollbackProbeTimeout = rollbackProbeTimeout ?? TimeSpan.FromMinutes(4);
         _recoveryTimeout = recoveryTimeout ?? TimeSpan.FromMinutes(8);
         _restartTimeout = restartTimeout ?? TimeSpan.FromMinutes(5);
+        _pollInterval = pollInterval ?? TimeSpan.FromSeconds(5);
     }
 
     public async Task<ProxyRegionRotationOutcome> RotateAsync(
@@ -365,7 +371,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                     tunnel.ContainerName, ex.GetType().Name);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(_pollInterval, ct);
         }
 
         return false;
@@ -384,7 +390,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
             if (outcome.Equals("running", StringComparison.OrdinalIgnoreCase))
             {
                 using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                probeDeadline.CancelAfter(TimeSpan.FromSeconds(20));
+                probeDeadline.CancelAfter(_rollbackProbeTimeout);
                 try
                 {
                     if (await WaitForVerifiedEgressAsync(
