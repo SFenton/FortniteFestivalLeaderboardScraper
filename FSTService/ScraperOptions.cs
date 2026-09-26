@@ -194,6 +194,26 @@ public sealed class ScraperOptions
     public int ProxyContainerRestartCooldownSeconds { get; set; } = 90;
 
     /// <summary>
+    /// Worker-only, opt-in PIA region rotation after repeated per-exit HTTP 429s.
+    /// The Gluetun control API changes the actual tunnel, not just proxy selection.
+    /// </summary>
+    public bool ProxyRegionRotationEnabled { get; set; }
+
+    /// <summary>
+    /// Explicit operator-qualified PIA region candidates. Never inferred from
+    /// untested provider locations or from the current Compose selectors.
+    /// </summary>
+    public List<string> ProxyRegionRotationRegions { get; set; } = [];
+
+    public int ProxyRegionRotationRateLimitThreshold { get; set; } = 3;
+
+    public int ProxyRegionRotationMinIntervalSeconds { get; set; } = 900;
+
+    public int ProxyRegionRotationGlobalIntervalSeconds { get; set; } = 60;
+
+    public int ProxyRegionRotationProbeTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

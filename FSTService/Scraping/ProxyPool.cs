@@ -73,23 +73,42 @@ internal sealed class ProxyPool :
     private readonly bool _disableConnectionReuse;
     private readonly bool _useCurlTransport;
     private readonly string _curlTempDirectory;
+    private readonly IProxyRegionRotator? _regionRotator;
+    private readonly bool _regionRotationEnabled;
+    private readonly IReadOnlyList<string> _regionRotationRegions;
+    private readonly int _regionRotationThreshold;
+    private readonly TimeSpan _regionRotationMinInterval;
+    private readonly TimeSpan _regionRotationGlobalInterval;
+    private readonly SemaphoreSlim _regionRotationGate = new(1, 1);
+    private readonly CancellationTokenSource _regionRotationCancellation = new();
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
     private DateTimeOffset _activeSince = DateTimeOffset.UtcNow;
+    private DateTimeOffset _lastRegionRotationAttempt;
     private bool _disposed;
 
     public ProxyPool(
         IOptions<ScraperOptions> options,
         ILogger<ProxyPool> log,
-        IProxyContainerRecycler containerRecycler)
-        : this(options.Value, log, containerRecycler)
+        IProxyContainerRecycler containerRecycler,
+        IProxyRegionRotator? regionRotator = null)
+        : this(options.Value, log, containerRecycler, regionRotator)
     {
     }
 
-    internal ProxyPool(ScraperOptions options, ILogger<ProxyPool> log, IProxyContainerRecycler? containerRecycler = null)
+    internal ProxyPool(
+        ScraperOptions options,
+        ILogger<ProxyPool> log,
+        IProxyContainerRecycler? containerRecycler = null,
+        IProxyRegionRotator? regionRotator = null)
     {
         ValidateExpectedConfiguration(options);
+        if (options.ProxyRegionRotationEnabled && regionRotator is null)
+        {
+            throw new InvalidOperationException(
+                "PIA region rotation requires a worker-owned region rotator.");
+        }
 
         _log = log;
         _activeStandby = options.ProxyActiveStandby;
@@ -109,6 +128,14 @@ internal sealed class ProxyPool :
         _disableConnectionReuse = options.ProxyDisableConnectionReuse;
         _useCurlTransport = options.ProxyUseCurlTransport;
         _curlTempDirectory = options.ProxyCurlTempDirectory;
+        _regionRotator = regionRotator;
+        _regionRotationEnabled = options.ProxyRegionRotationEnabled;
+        _regionRotationRegions = options.ProxyRegionRotationRegions;
+        _regionRotationThreshold = options.ProxyRegionRotationRateLimitThreshold;
+        _regionRotationMinInterval =
+            TimeSpan.FromSeconds(options.ProxyRegionRotationMinIntervalSeconds);
+        _regionRotationGlobalInterval =
+            TimeSpan.FromSeconds(options.ProxyRegionRotationGlobalIntervalSeconds);
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
@@ -145,6 +172,17 @@ internal sealed class ProxyPool :
                         "Proxy container self-heal requires Scraper:ContainerNames aligned with Scraper:ProxyUrls; {Missing} endpoint(s) cannot be restarted.",
                         _endpoints.Count - restartable);
                 }
+            }
+
+            if (_regionRotationEnabled)
+            {
+                _log.LogInformation(
+                    "Worker PIA region rotation enabled for {Count} exits with {Regions} qualified candidate(s), threshold={Threshold} HTTP 429s, perExitMinInterval={PerExitSeconds}s, globalInterval={GlobalSeconds}s.",
+                    _endpoints.Count,
+                    _regionRotationRegions.Count,
+                    _regionRotationThreshold,
+                    _regionRotationMinInterval.TotalSeconds,
+                    _regionRotationGlobalInterval.TotalSeconds);
             }
         }
     }
@@ -211,7 +249,8 @@ internal sealed class ProxyPool :
                     lock (_lock)
                     {
                         ThrowIfDisposed();
-                        if (selected.CooldownUntil > DateTimeOffset.UtcNow)
+                        if (selected.RotationPending
+                            || selected.CooldownUntil > DateTimeOffset.UtcNow)
                         {
                             if (selected.InFlight > 0)
                                 selected.InFlight--;
@@ -253,6 +292,7 @@ internal sealed class ProxyPool :
             endpoint.ConsecutiveHttpFailures = 0;
             endpoint.ConsecutiveTransportFailures = 0;
             endpoint.RestartableCooldownFailures = 0;
+            endpoint.ConsecutiveRateLimits = 0;
             endpoint.Successes++;
         }
     }
@@ -287,6 +327,8 @@ internal sealed class ProxyPool :
             endpoint.ConsecutiveCdnBlocks = 0;
             endpoint.ConsecutiveHttpFailures = 0;
             endpoint.ConsecutiveTransportFailures = 0;
+            endpoint.ConsecutiveRateLimits++;
+            TryScheduleRegionRotation(endpoint);
 
             if (_activeStandby && endpoint.Index == _activeIndex)
                 RotateActive(DateTimeOffset.UtcNow, $"proxy {endpoint.Name} reported {ProxyFailureKind.RateLimited}");
@@ -416,10 +458,10 @@ internal sealed class ProxyPool :
     }
 
     private bool HasAvailableEndpoint(DateTimeOffset now)
-        => _endpoints.Any(e => e.CooldownUntil <= now);
+        => _endpoints.Any(e => !e.RotationPending && e.CooldownUntil <= now);
 
     private bool IsSelectable(ProxyEndpoint endpoint, DateTimeOffset now) =>
-        endpoint.CooldownUntil <= now &&
+        !endpoint.RotationPending && endpoint.CooldownUntil <= now &&
         (_perEndpointMaxConcurrentRequests <= 0 ||
          endpoint.InFlight < _perEndpointMaxConcurrentRequests);
 
@@ -473,6 +515,9 @@ internal sealed class ProxyPool :
     private void TryScheduleContainerRestart(ProxyEndpoint endpoint, ProxyFailureKind kind)
     {
         if (!_containerSelfHealEnabled || _containerRecycler is null || !IsRestartableFailure(kind))
+            return;
+
+        if (endpoint.RotationPending)
             return;
 
         if (string.IsNullOrWhiteSpace(endpoint.ContainerName))
@@ -567,6 +612,162 @@ internal sealed class ProxyPool :
     private static bool IsRestartableFailure(ProxyFailureKind kind)
         => kind is ProxyFailureKind.Transport or ProxyFailureKind.Timeout;
 
+    private void TryScheduleRegionRotation(ProxyEndpoint endpoint)
+    {
+        if (!_regionRotationEnabled
+            || endpoint.ConsecutiveRateLimits < _regionRotationThreshold
+            || endpoint.RegionRotationTask is { IsCompleted: false }
+            || endpoint.RotationPending
+            || endpoint.CooldownUntil == DateTimeOffset.MaxValue)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (endpoint.LastRegionRotationAttempt is { } lastAttempt
+            && now - lastAttempt < _regionRotationMinInterval)
+            return;
+
+        var index = endpoint.Index;
+        var successCount = endpoint.Successes;
+        endpoint.ConsecutiveRateLimits = 0;
+        endpoint.RegionRotationTask = Task.Run(() =>
+            RotateRegionAsync(index, successCount, _regionRotationCancellation.Token));
+        _log.LogWarning(
+            "PIA proxy {ProxyName} scheduled a bounded region change after {Threshold} HTTP 429s; existing Retry-After cooldown remains in force.",
+            endpoint.Name, _regionRotationThreshold);
+    }
+
+    private async Task RotateRegionAsync(
+        int endpointIndex, long successCount, CancellationToken ct)
+    {
+        bool acquired = false;
+        bool pending = false;
+        HttpMessageInvoker? oldInvoker = null;
+        try
+        {
+            await _regionRotationGate.WaitAsync(ct);
+            acquired = true;
+
+            TimeSpan globalDelay;
+            lock (_lock)
+            {
+                globalDelay = _lastRegionRotationAttempt + _regionRotationGlobalInterval
+                    - DateTimeOffset.UtcNow;
+            }
+            if (globalDelay > TimeSpan.Zero)
+                await Task.Delay(globalDelay, ct);
+
+            Task? restartTask;
+            lock (_lock)
+            {
+                restartTask = _endpoints[endpointIndex].ContainerRestartTask;
+            }
+            if (restartTask is not null)
+                await restartTask.WaitAsync(ct);
+
+            ProxyRegionTunnel tunnel;
+            List<ProxyRegionTunnel> peers;
+            int candidateOffset;
+            lock (_lock)
+            {
+                if (_disposed || _endpoints[endpointIndex].Successes != successCount)
+                    return;
+
+                var endpoint = _endpoints[endpointIndex];
+                endpoint.RotationPending = true;
+                pending = true;
+                var now = DateTimeOffset.UtcNow;
+                endpoint.LastRegionRotationAttempt = now;
+                _lastRegionRotationAttempt = now;
+                candidateOffset = (endpoint.Index + endpoint.RegionRotationAttempts++)
+                    % _regionRotationRegions.Count;
+                tunnel = new ProxyRegionTunnel(
+                    endpoint.ContainerName, endpoint.ProxyUri,
+                    new Uri(endpoint.ControlUrl));
+                peers = _endpoints
+                    .Where(e => e.Index != endpointIndex)
+                    .Select(e => new ProxyRegionTunnel(
+                        e.ContainerName, e.ProxyUri, new Uri(e.ControlUrl)))
+                    .ToList();
+            }
+
+            var drainDeadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60);
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                int inFlight;
+                lock (_lock)
+                {
+                    inFlight = _endpoints[endpointIndex].InFlight;
+                }
+                if (inFlight == 0)
+                    break;
+                if (DateTimeOffset.UtcNow >= drainDeadline)
+                {
+                    _log.LogWarning(
+                        "PIA proxy {Container} region change deferred because {InFlight} request(s) did not drain.",
+                        tunnel.ContainerName, inFlight);
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+            }
+
+            var outcome = await _regionRotator!.RotateAsync(
+                tunnel, peers, _regionRotationRegions, candidateOffset, ct);
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
+
+                var endpoint = _endpoints[endpointIndex];
+                if (outcome == ProxyRegionRotationOutcome.Unsafe)
+                {
+                    endpoint.CooldownUntil = DateTimeOffset.MaxValue;
+                    _log.LogError(
+                        "PIA proxy {Container} is quarantined: region change and automatic restoration did not verify a healthy distinct egress.",
+                        tunnel.ContainerName);
+                }
+                else
+                {
+                    endpoint.CooldownUntil = Max(
+                        endpoint.CooldownUntil,
+                        DateTimeOffset.UtcNow + _baseCooldown);
+                    if (outcome == ProxyRegionRotationOutcome.Rotated)
+                        oldInvoker = endpoint.ResetInvoker();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _log.LogInformation(
+                "PIA proxy region change canceled for endpoint {EndpointIndex}.", endpointIndex);
+        }
+        catch (Exception ex)
+        {
+            lock (_lock)
+            {
+                if (!_disposed && pending)
+                    _endpoints[endpointIndex].CooldownUntil = DateTimeOffset.MaxValue;
+            }
+            _log.LogError(
+                ex, "PIA proxy region change failed unexpectedly for endpoint {EndpointIndex}; the exit was quarantined.",
+                endpointIndex);
+        }
+        finally
+        {
+            oldInvoker?.Dispose();
+            lock (_lock)
+            {
+                if (!_disposed)
+                {
+                    _endpoints[endpointIndex].RotationPending = false;
+                    _endpoints[endpointIndex].RegionRotationTask = null;
+                }
+            }
+            if (acquired)
+                _regionRotationGate.Release();
+        }
+    }
+
     private static DateTimeOffset Max(DateTimeOffset left, DateTimeOffset right)
         => left >= right ? left : right;
 
@@ -580,7 +781,11 @@ internal sealed class ProxyPool :
 
     private TimeSpan GetDelayUntilNextEndpoint(DateTimeOffset now)
     {
-        var earliest = _endpoints.Min(e => e.CooldownUntil);
+        var earliest = _endpoints
+            .Where(e => !e.RotationPending)
+            .Select(e => e.CooldownUntil)
+            .DefaultIfEmpty(DateTimeOffset.MaxValue)
+            .Min();
         var delay = earliest - now;
         if (delay <= TimeSpan.Zero)
             return TimeSpan.FromMilliseconds(25);
@@ -637,6 +842,34 @@ internal sealed class ProxyPool :
             throw new InvalidOperationException(
                 "Scraper ExpectedProxyEndpointCount cannot be negative.");
         }
+        if (options.ProxyRegionRotationEnabled)
+        {
+            if (expected == 0
+                || !options.ProxyUseCurlTransport
+                || options.ProxyRegionRotationRegions.Count is < 1 or > 16
+                || options.ProxyRegionRotationRegions.Any(
+                    region => string.IsNullOrWhiteSpace(region)
+                        || region.Length > 80
+                        || region.Contains(',')
+                        || region.Any(char.IsControl))
+                || options.ProxyRegionRotationRegions.Distinct(
+                    StringComparer.OrdinalIgnoreCase).Count()
+                    != options.ProxyRegionRotationRegions.Count
+                || options.ProxyRegionRotationRateLimitThreshold is < 2 or > 100
+                || options.ProxyRegionRotationMinIntervalSeconds is < 300 or > 86_400
+                || options.ProxyRegionRotationGlobalIntervalSeconds is < 30 or > 3_600
+                || options.ProxyRegionRotationProbeTimeoutSeconds is < 30 or > 180
+                || !Path.IsPathFullyQualified(options.ProxyCurlTempDirectory)
+                || !Path.GetFullPath(options.ProxyCurlTempDirectory).StartsWith(
+                    Path.GetFullPath(options.DataDirectory)
+                        .TrimEnd(Path.DirectorySeparatorChar)
+                        + Path.DirectorySeparatorChar,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 1-16 distinct regions, threshold 2-100, per-exit interval 300-86400s, global interval 30-3600s, and probe timeout 30-180s.");
+            }
+        }
         if (expected == 0)
         {
             if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0 ||
@@ -659,6 +892,14 @@ internal sealed class ProxyPool :
         ValidateAlignedList(nameof(options.ControlUrls), options.ControlUrls, expected);
         ValidateAlignedList(nameof(options.VpnProviders), options.VpnProviders, expected);
         ValidateAlignedList(nameof(options.ContainerNames), options.ContainerNames, expected);
+        if (options.ProxyRegionRotationEnabled
+            && options.VpnProviders.Any(provider =>
+                !provider.Equals("PIA", StringComparison.OrdinalIgnoreCase)
+                && !provider.Equals("private internet access", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "Worker PIA region rotation requires every aligned VPN provider to be PIA.");
+        }
 
         if (options.ContainerNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != expected)
         {
@@ -713,6 +954,7 @@ internal sealed class ProxyPool :
                 return;
 
             _disposed = true;
+            _regionRotationCancellation.Cancel();
             foreach (var endpoint in _endpoints)
                 endpoint.Dispose();
         }
@@ -798,10 +1040,15 @@ internal sealed class ProxyPool :
         public int ConsecutiveCdnBlocks { get; set; }
         public int ConsecutiveHttpFailures { get; set; }
         public int ConsecutiveTransportFailures { get; set; }
+        public int ConsecutiveRateLimits { get; set; }
         public DateTimeOffset CooldownUntil { get; set; }
         public DateTimeOffset LastSelectedAt { get; set; }
         public DateTimeOffset? LastContainerRestartAttempt { get; set; }
         public Task? ContainerRestartTask { get; set; }
+        public DateTimeOffset? LastRegionRotationAttempt { get; set; }
+        public int RegionRotationAttempts { get; set; }
+        public Task? RegionRotationTask { get; set; }
+        public bool RotationPending { get; set; }
 
         public void Dispose()
         {

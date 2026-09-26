@@ -15,6 +15,7 @@ sources:
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
+  - FSTService/Scraping/PiaRegionRotator.cs
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
@@ -159,6 +160,24 @@ Canonical effective-service membership and static-pin rejection intentionally
 apply to every guard action, including checks and existing recreate flows. The
 guard also requires the `worker` profile, `on-failure:5` for continuous merges,
 and `restart: no` for run-once merges.
+
+Optional PIA region rotation is a **worker-only** behavior in the shared
+service image. A new source build does not activate it: configure an explicit
+qualified candidate list and the enabled flag in the production-owned worker
+overlay only after the immutable image and full effective-proxy guard pass at
+an approved safe scrape/publication boundary. Do not recreate the API, web,
+database, or entire Compose project for this worker-only rollout. A running
+scrape is not a safe boundary merely because its progress is slow: preserve
+the shared worker lock, native interrupted-acquisition isolation/normalization
+gates, published scrape, read freeze, health, and rollback before any stop.
+
+The in-process control update changes a PIA container's **runtime** region,
+not its production Compose environment. On container restart the static
+`SERVER_REGIONS` baseline returns; the host boot guard must still verify
+healthy, distinct effective egresses and a valid worker image before
+starting a worker. A failed dynamic update that cannot recover is
+quarantined, not masked by the Docker `healthy` flag or a control response.
+See [VPN proxy pool](vpn-proxy-pool.md) for live egress and cooldown gates.
 
 ## Networks and ports
 

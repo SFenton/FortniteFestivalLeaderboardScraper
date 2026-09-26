@@ -7,6 +7,7 @@ sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
   - FSTService/Scraping/ProxyPool.cs
+  - FSTService/Scraping/PiaRegionRotator.cs
   - FSTService/Scraping/ResilientHttpExecutor.cs
   - FSTService/Scraping/GluetunContainerRecycler.cs
   - deploy/docker-compose.yml
@@ -32,6 +33,8 @@ FST uses independent Gluetun containers as HTTP proxy endpoints so it can:
 - retry on another healthy endpoint;
 - pace and bound concurrency per endpoint;
 - restart a broken tunnel without restarting the worker;
+- optionally change a rate-limited PIA exit to a separately qualified region
+  without changing its proxy hostname or increasing Epic requests;
 - keep PostgreSQL, API serving, browser traffic, and unrelated HTTP clients off
   the VPN path.
 
@@ -48,6 +51,7 @@ flowchart LR
       --> Epic[Epic API/CDN]
     Pool --> Control[Gluetun control :8000]
     Worker[Worker-only Docker control] -. tunnel restart .-> Gluetun
+    Pool -. opt-in PIA region change .-> Control
 ```
 
 `Program.cs` installs proxy routing only for proxy-aware Epic clients. Auth,
@@ -95,6 +99,54 @@ failure counters but never shorten an active cooldown. Retry waits are
 cancellation-aware and no additional wire send is issued while all endpoints
 are cooling.
 
+### Optional PIA region changes
+
+`Scraper:ProxyRegionRotationEnabled` is **off by default**. The worker may
+enable it only with a complete aligned PIA pool, the existing curl transport
+and same-data-directory scratch, and an explicit list of operator-qualified
+PIA regions. It does not turn on legacy active/standby proxy selection.
+After the configured count of HTTP 429s for one exit, it schedules at most
+one region change for that exit; a single global gate and minimum global
+interval prevent mass tunnel reconnections. Per-exit minimum intervals bound
+retries, including unsuccessful trials. Successful requests reset the 429
+trigger count. CDN blocks and transport errors still use their existing
+separate handling.
+
+When the gate reaches an exit, the worker holds it out of selection and waits
+up to 60 seconds for in-flight leases to drain. It reads the Gluetun control
+settings **without logging the response** (which can contain VPN
+credentials), requires a single-region OpenVPN PIA selector with no competing
+city/name/country/hostname filters, and verifies its current egress and
+every peer's **real** egress through its proxy. Cached Gluetun public-IP
+metadata alone cannot establish distinctness. The worker then sends only a region-selector
+override to the internal Gluetun `PUT /v1/vpn/settings` endpoint. This changes
+the actual PIA tunnel; switching to another static proxy is not a region
+change. The single candidate must pass Docker health and a real curl proxy
+egress check that differs from its previous exit and every other effective
+exit. This canary uses the existing benign IP-echo endpoint, **not Epic**.
+A `running` control response or Docker `healthy` alone does not qualify a
+new tunnel: neither detects all OpenVPN TLS failures.
+
+On failure, the worker attempts to restore the prior region and verifies the
+real proxy again. If control rollback fails, it restarts only that proxy
+container, restoring its static Compose selector, and rechecks health and
+distinct egress. If recovery cannot be verified, that exit is quarantined
+indefinitely until operator intervention or a guarded worker restart. No
+other exit is rotated concurrently; an existing `Retry-After` deadline is
+never shortened. Cancellation stops queued waits and attempts restoration
+after a settings update. Check warnings/errors and the effective pool before
+restarting any quarantined exit.
+
+An allowlisted region is an **eligibility and safety boundary**, not evidence
+that changing cities relieves Epic's rate limits. Qualify candidates on a
+non-effective spare first; compare official-scrape progress, 429s and request
+denominators before making efficacy claims. Never add speculative Epic trial
+traffic. Gluetun control settings are ephemeral: Docker/container restart
+returns a rotated exit to the production-owned static Compose region. The
+host-side boot guard requalifies every effective exit and preserves the
+published read path before starting the worker. API/web roles cannot enable
+region changes or receive Docker control.
+
 ## Self-heal boundary
 
 Repeated tunnel-level transport failures can restart the aligned container.
@@ -104,6 +156,8 @@ Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
 `DisabledProxyContainerRecycler`, which rejects restart requests. The recycler
 normally restarts a container without rewriting provider selectors; legacy
 recreate/city-selection support exists for provider-specific workflows.
+The PIA-only control API change above never writes `SERVER_CITIES` or
+`SERVER_NAMES`, so it does not reuse AirVPN's legacy Docker recreate path.
 
 The recycler cannot repair boot before `fstworker` starts. The production
 startup contract therefore has a separate host-side boundary:

@@ -263,6 +263,107 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task RegionRotation_UsesOnlyPiaAfterThresholdAndDrainsInflight()
+    {
+        var options = CreatePiaRotationOptions();
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+
+        var lease = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(lease);
+        using var request = RequestFor(lease!);
+        pool.ReportRateLimited(request, TimeSpan.FromSeconds(4));
+        await Task.Delay(80);
+        Assert.False(rotator.Started.IsCompleted);
+
+        pool.ReportRateLimited(request, TimeSpan.FromSeconds(4));
+        await Task.Delay(80);
+        Assert.False(rotator.Started.IsCompleted);
+
+        using var alternate = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(alternate);
+        Assert.NotEqual(lease.Index, alternate!.Index);
+        lease.Dispose();
+
+        var tunnel = await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("gluetun-1", tunnel.ContainerName);
+        Assert.Equal("http://gluetun-1:8000/", tunnel.ControlUri.ToString());
+        Assert.Equal(1, rotator.PeerCount);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+
+        using var next = await pool.AcquireAsync(CancellationToken.None);
+        Assert.Equal(alternate.Index, next!.Index);
+    }
+
+    [Fact]
+    public async Task RegionRotation_FailedRestorationQuarantinesOnlyAffectedExit()
+    {
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(
+            CreatePiaRotationOptions(), _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null);
+        pool.ReportRateLimited(request, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        rotator.Complete(ProxyRegionRotationOutcome.Unsafe);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var alternate = await pool.AcquireAsync(CancellationToken.None);
+        Assert.Equal(1, alternate!.Index);
+
+        using var alternateRequest = RequestFor(1, "gluetun-2");
+        pool.ReportRateLimited(alternateRequest, TimeSpan.MaxValue);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(80));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pool.AcquireAsync(cancellation.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task RegionRotation_NeverChangesTwoContainersAtTheSameTime()
+    {
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(
+            CreatePiaRotationOptions(), _log, new RecordingRecycler(), rotator);
+        using var first = RequestFor(0, "gluetun-1");
+        using var second = RequestFor(1, "gluetun-2");
+
+        pool.ReportRateLimited(first, null);
+        pool.ReportRateLimited(first, null);
+        pool.ReportRateLimited(second, null);
+        pool.ReportRateLimited(second, null);
+
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
+        Assert.Equal(1, rotator.InvocationCount);
+        rotator.Complete(ProxyRegionRotationOutcome.Restored);
+    }
+
+    [Fact]
+    public void RegionRotation_RequiresQualifiedAlignedPiaWorkerConfiguration()
+    {
+        var options = CreatePiaRotationOptions();
+        Assert.Throws<InvalidOperationException>(() => new ProxyPool(options, _log));
+
+        options.VpnProviders[0] = "AirVPN";
+        Assert.Contains("PIA", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+        options.VpnProviders[0] = "PIA";
+
+        options.ProxyRegionRotationRegions.Add("us seattle");
+        Assert.Contains("distinct regions", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+        options.ProxyRegionRotationRegions.RemoveAt(2);
+
+        options.ProxyCurlTempDirectory = "/tmp/unowned-curl-scratch";
+        Assert.Contains("same-data-directory", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+    }
+
+    [Fact]
     public async Task TransportFailures_WhenSelfHealEnabled_RestartConfiguredContainer()
     {
         var options = CreateOptions(activeStandby: false);
@@ -434,6 +535,21 @@ public sealed class ProxyPoolTests
             ProxyCooldownSeconds = 30,
         };
 
+    private static ScraperOptions CreatePiaRotationOptions()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+        options.VpnProviders = ["PIA", "PIA"];
+        options.ProxyRegionRotationEnabled = true;
+        options.ProxyRegionRotationRegions = ["US Seattle", "DE Frankfurt"];
+        options.ProxyRegionRotationRateLimitThreshold = 2;
+        options.ProxyUseCurlTransport = true;
+        options.ProxyCurlTempDirectory =
+            Path.Combine(Path.GetFullPath(options.DataDirectory), "curl-region-test");
+        options.ProxyCooldownSeconds = 1;
+        return options;
+    }
+
     private static HttpRequestMessage RequestFor(ProxyPool.ProxyLease lease)
         => RequestFor(lease.Index, lease.Name);
 
@@ -452,7 +568,8 @@ public sealed class ProxyPoolTests
 
         public List<string> RestartedContainers { get; } = [];
 
-        public Task<bool> RestartAsync(string containerName)
+        public Task<bool> RestartAsync(
+            string containerName, CancellationToken ct = default)
         {
             lock (RestartedContainers)
             {
@@ -463,11 +580,53 @@ public sealed class ProxyPoolTests
             return Task.FromResult(true);
         }
 
+        public Task<bool> IsHealthyAsync(string containerName, CancellationToken ct)
+            => Task.FromResult(true);
+
+        public Task<string?> GetConfiguredRegionAsync(
+            string containerName, CancellationToken ct)
+            => Task.FromResult<string?>("US Las Vegas");
+
         public async Task WaitForRestartAsync(string expectedContainer)
         {
             var completed = await Task.WhenAny(_restart.Task, Task.Delay(TimeSpan.FromSeconds(2)));
             Assert.Same(_restart.Task, completed);
             Assert.Equal(expectedContainer, await _restart.Task);
         }
+    }
+
+    private sealed class RecordingRegionRotator : IProxyRegionRotator
+    {
+        private readonly TaskCompletionSource<ProxyRegionTunnel> _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<ProxyRegionRotationOutcome> _result =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _finished =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<ProxyRegionTunnel> Started => _started.Task;
+        public Task Finished => _finished.Task;
+        public int PeerCount { get; private set; }
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public async Task<ProxyRegionRotationOutcome> RotateAsync(
+            ProxyRegionTunnel tunnel,
+            IReadOnlyList<ProxyRegionTunnel> peers,
+            IReadOnlyList<string> regions,
+            int candidateOffset,
+            CancellationToken ct)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            PeerCount = peers.Count;
+            _started.TrySetResult(tunnel);
+            var outcome = await _result.Task.WaitAsync(ct);
+            _finished.TrySetResult();
+            return outcome;
+        }
+
+        public void Complete(ProxyRegionRotationOutcome outcome)
+            => _result.TrySetResult(outcome);
+
+        private int _invocationCount;
     }
 }

@@ -296,6 +296,14 @@ if (hostedWorkerMode is HostedWorkerMode.ApiOnly or HostedWorkerMode.FrontendOnl
     builder.Services.AddSingleton<IProxyContainerRecycler, DisabledProxyContainerRecycler>();
 else
     builder.Services.AddSingleton<IProxyContainerRecycler, GluetunContainerRecycler>();
+if (hostedWorkerMode == HostedWorkerMode.FullWorker)
+{
+    builder.Services.AddHttpClient(nameof(PiaRegionRotator))
+        .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(8))
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseProxy = false });
+    builder.Services.AddSingleton<IProxyEgressProbe, CurlProxyEgressProbe>();
+    builder.Services.AddSingleton<IProxyRegionRotator, PiaRegionRotator>();
+}
 builder.Services.AddSingleton<ProxyPool>();
 builder.Services.AddSingleton<IProxyHealthReporter>(sp => sp.GetRequiredService<ProxyPool>());
 

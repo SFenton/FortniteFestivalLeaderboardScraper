@@ -1,11 +1,12 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-19
+last_verified: 2026-09-26
 last_verified_commit: d15cbdf7
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
+  - FSTService/Scraping/PiaRegionRotator.cs
   - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Scraping/ItemShopService.cs
   - FSTService/StartupInitializer.cs
@@ -68,6 +69,33 @@ overrides intentionally diverge between the public service and mutation worker.
 | `Api` | API key and allowed origins |
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
+
+## Worker-only PIA region rotation
+
+Region rotation is separate from `Scraper:ProxyActiveStandby` and
+`Scraper:ProxyActiveRotationSeconds`, which only select among already-running
+proxy endpoints. All keys below apply **only** to the mutation worker;
+API/frontend and capture-only roles cannot operate VPN regions.
+
+| Key | Default | Accepted range / effect |
+|---|---:|---|
+| `Scraper:ProxyRegionRotationEnabled` | `false` | Opt-in actual PIA tunnel region changes after per-exit HTTP 429s |
+| `Scraper:ProxyRegionRotationRegions` | empty | 1–16 distinct, operator-qualified PIA region names; indexed environment entries such as `Scraper__ProxyRegionRotationRegions__0` |
+| `Scraper:ProxyRegionRotationRateLimitThreshold` | `3` | 2–100 consecutive 429s for one exit before scheduling a change |
+| `Scraper:ProxyRegionRotationMinIntervalSeconds` | `900` | 300–86,400 seconds between attempts for the same exit |
+| `Scraper:ProxyRegionRotationGlobalIntervalSeconds` | `60` | 30–3,600 seconds between globally serialized attempts |
+| `Scraper:ProxyRegionRotationProbeTimeoutSeconds` | `90` | 30–180 seconds for real proxy-egress verification after a region update |
+
+The enabled worker requires a nonzero `ExpectedProxyEndpointCount`, four
+complete aligned proxy/control/provider/container arrays with every provider
+labeled PIA, `ProxyUseCurlTransport=true`, and a fully qualified
+`ProxyCurlTempDirectory` below its `DataDirectory` (on the FST data drive).
+Invalid configurations fail startup rather than silently disabling healing.
+Configure the production-owned PIA worker overlay, not the optional AirVPN
+repository template. The static `SERVER_REGIONS` selectors in production
+Compose remain the rollback and boot-recovery baseline. See
+[VPN proxy pool](../operations/vpn-proxy-pool.md) for admission and cooldown
+semantics and [Deployment](../operations/deployment.md) for release gates.
 
 ## Snapshot-generation report-only retention
 
