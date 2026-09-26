@@ -14,11 +14,14 @@ import { setPublicationForTests } from '../../src/api/publication';
 vi.mock('../../src/api/client', () => ({
   api: {
     getSongs: vi.fn(),
+    getIncomingSongs: vi.fn(),
   },
 }));
 
 import { api } from '../../src/api/client';
+import { mergeIncomingSongs } from '../../src/contexts/FestivalContext';
 const mockGetSongs = api.getSongs as ReturnType<typeof vi.fn>;
+const mockGetIncomingSongs = api.getIncomingSongs as ReturnType<typeof vi.fn>;
 
 let testQc: QueryClient;
 
@@ -32,9 +35,46 @@ beforeEach(() => {
   clearSongsCache();
   setPublicationForTests(42, false);
   testQc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  mockGetIncomingSongs.mockResolvedValue({ count: 0, songs: [] });
+});
+
+describe('mergeIncomingSongs', () => {
+  const published = [{ songId: 'a', title: 'A published', artist: 'X' }];
+
+  it('returns the published array unchanged when nothing is incoming', () => {
+    expect(mergeIncomingSongs(published, undefined)).toBe(published);
+    expect(mergeIncomingSongs(published, [])).toBe(published);
+  });
+
+  it('appends only songs missing from the publication and marks them', () => {
+    const merged = mergeIncomingSongs(published, [
+      { songId: 'a', title: 'A live rename', artist: 'X' },
+      { songId: 'b', title: 'B', artist: 'Y' },
+    ]);
+    expect(merged.map(song => song.title)).toEqual(['A published', 'B']);
+    expect(merged[1]?.awaitingPublication).toBe(true);
+    expect(merged[0]?.awaitingPublication).toBeUndefined();
+  });
 });
 
 describe('FestivalContext', () => {
+  it('lists ingested songs immediately without waiting for publication', async () => {
+    mockGetSongs.mockResolvedValue({ count: 1, songs: [{ songId: 's1', title: 'Song 1', artist: 'A' }], currentSeason: 5 });
+    mockGetIncomingSongs.mockResolvedValue({ count: 1, songs: [{ songId: 'new', title: 'New Song', artist: 'B' }] });
+    const { result } = renderHook(() => useFestival(), { wrapper });
+    await waitFor(() => expect(result.current.state.songs).toHaveLength(2));
+    expect(result.current.state.songs[1]).toMatchObject({ songId: 'new', awaitingPublication: true });
+  });
+
+  it('keeps the published catalog when incoming songs fail to load', async () => {
+    mockGetSongs.mockResolvedValue({ count: 1, songs: [{ songId: 's1', title: 'Song 1', artist: 'A' }], currentSeason: 5 });
+    mockGetIncomingSongs.mockRejectedValue(new Error('503'));
+    const { result } = renderHook(() => useFestival(), { wrapper });
+    await waitFor(() => expect(result.current.state.isLoading).toBe(false));
+    expect(result.current.state.songs).toHaveLength(1);
+    expect(result.current.state.error).toBeNull();
+  });
+
   it('starts in loading state', () => {
     mockGetSongs.mockReturnValue(new Promise(() => {})); // never resolves
     const { result } = renderHook(() => useFestival(), { wrapper });

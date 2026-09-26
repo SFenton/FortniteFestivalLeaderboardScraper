@@ -89,7 +89,7 @@ import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQui
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
-import { useCatalogPublicationLag } from '../../hooks/data/useCatalogPublicationLag';
+import { countCatalogChangesAwaitingPublication, useCatalogPublicationLag } from '../../hooks/data/useCatalogPublicationLag';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -361,6 +361,7 @@ function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number
 export default function SongsPage() {
   const { t } = useTranslation();
   const catalogLag = useCatalogPublicationLag();
+  const pendingCatalogChanges = countCatalogChangesAwaitingPublication(catalogLag);
   const {
     state: { songs, isLoading, error },
   } = useFestival();
@@ -1245,10 +1246,9 @@ export default function SongsPage() {
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>
-        {typeof catalogLag?.awaitingPublication === 'number'
-          && catalogLag.awaitingPublication > 0 && (
+        {pendingCatalogChanges > 0 && (
           <CatalogUpdateBanner
-            count={catalogLag.awaitingPublication}
+            count={pendingCatalogChanges}
           />
         )}
         {(bannerVisible || !bannerCollapsed) && (

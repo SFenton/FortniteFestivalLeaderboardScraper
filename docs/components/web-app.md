@@ -411,12 +411,19 @@ seconds and concurrent Settings/Songs consumers deduplicate to one request.
 `useCatalogPublicationLag` subscribes to the shared application WebSocket and
 invalidates only that operational query after `songs_changed`.
 
-When exact live and published baselines differ, the page shows one passive
-aggregate status banner. It reports only the number of catalog entries added,
-removed, or changed and explains that a leaderboard publication is still
-required. It never injects unpublished songs into `FestivalContext`, creates
-dead-end song routes, previews unapproved maxima, or changes the canonical
-song count. Missing/inexact baselines and zero lag render no banner.
+`FestivalContext` also loads `/api/songs/incoming` (query key
+`['songs','incoming']`, one-minute stale time, five-minute refetch, refreshed
+on `songs_changed`) and appends songs missing from the published catalog with
+`awaitingPublication: true`, so a song ingested mid-scrape or mid-post-process
+is listed and routable immediately with empty leaderboards until publication.
+Published entries always win, so metadata changes and removals still wait for
+publication, and an incoming-list failure never blocks the published catalog.
+
+When exact live and published baselines differ by metadata changes or
+removals, the page shows one passive aggregate status banner explaining that a
+leaderboard publication is still required. Added songs are excluded from that
+count because they are already listed. The banner never previews unapproved
+maxima. Missing/inexact baselines and zero pending changes render no banner.
 
 Unit-test setup replaces Node's native WebSocket with an inert implementation,
 so page tests cannot make real `/api/ws` connections. Dedicated WebSocket

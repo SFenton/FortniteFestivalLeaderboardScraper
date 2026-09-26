@@ -197,6 +197,21 @@ internal static class SongCatalogSnapshotBuilder
         }
     }
 
+    /// <summary>
+    /// Live catalog songs whose song ID is absent from the published catalog.
+    /// Metadata changes and removals remain publication-owned.
+    /// </summary>
+    internal static IReadOnlyList<Song> ComputeAddedSongs(
+        string publishedCatalogJson,
+        string liveCatalogJson)
+    {
+        var published = ReadCatalogEntries(publishedCatalogJson);
+        return DeserializeCatalog(liveCatalogJson)
+            .Where(song => song.track?.su is { Length: > 0 } songId
+                && !published.ContainsKey(songId))
+            .ToList();
+    }
+
     internal static SongCatalogChangeSet ComputeChangeSet(
         string beforeCatalogJson,
         string afterCatalogJson)

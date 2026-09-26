@@ -68,7 +68,7 @@ definitions, but it must remain aligned with the domain endpoint groups.
 
 ## Current surface
 
-The service maps 81 HTTP routes across 14 route-bearing endpoint files plus
+The service maps 82 HTTP routes across 14 route-bearing endpoint files plus
 `/api/ws`.
 
 | Group | Main responsibility |
@@ -381,11 +381,34 @@ canonical provider entries, caches the result by live/published
 version-and-hash identity, and avoids reparsing catalog JSON on normal
 service-info polls.
 
+### Incoming songs
+
+`GET /api/songs/incoming` is operational-live, not publication-bound. It lists
+songs present in the exact live provider catalog but absent from the current
+publication's catalog snapshot:
+
+```json
+{ "count": 1, "publishedPublicationId": 344, "songs": [ { "songId": "…", "title": "…", "artist": "…", "awaitingPublication": true } ] }
+```
+
+Each song carries only catalog metadata (title, artist, album, year, tempo,
+signature, duration, album art, genres, difficulty) plus
+`awaitingPublication: true`. It never carries maxima, paths, population tiers,
+or ranking data, and it lists only additions: metadata changes and removals
+stay publication-owned in `/api/songs`. The payload is cached in-process by
+live catalog version/hash and current publication, served with an ETag and
+`Cache-Control: no-cache`, remains available during public-read freezes, and
+returns `503` with `Retry-After: 30` if the database read fails. Leaderboard and
+ranking routes for such a song return their normal empty results until a
+publication includes it. `ServerSong.awaitingPublication` and
+`IncomingSongsResponse` in `packages/core/src/api/serverTypes.ts` describe the
+shape; the web client merges these songs into its catalog.
+
 The anonymous `songs_changed` WebSocket message preserves `type`, `total`,
 `added`, and `at`, and additively exposes `removed`, `changed`,
 `publishedTotal`, and `awaitingPublication` when known. It signals clients to
-refresh operational lag state; it does not mean publication-bound
-`/api/songs`, paths, maxima, or rankings changed. Those public surfaces still
+refresh operational lag state and `/api/songs/incoming`; it does not mean
+publication-bound `/api/songs`, paths, maxima, or rankings changed. Those public surfaces still
 advance only through publication or guarded same-publication maintenance.
 
 `currentUpdate.subphaseProgress` is an optional additive object with

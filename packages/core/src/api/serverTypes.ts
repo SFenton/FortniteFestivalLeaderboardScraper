@@ -116,6 +116,12 @@ export type ServerSong = {
   pathChoptVersion?: string;
   pathChoptBinarySha256?: string;
   pathGenerationProfile?: string;
+  /**
+   * True for a song ingested into the live catalog after the current
+   * publication (from /api/songs/incoming). Metadata only: it has no
+   * published scores, paths, or ranking data yet.
+   */
+  awaitingPublication?: boolean;
   /** Population tiers per instrument for client-side filtered-total computation. */
   populationTiers?: Partial<Record<ServerInstrumentKey, PopulationTierData>> | null;
 };
@@ -158,6 +164,13 @@ export type ShopResponse = {
 
 /** Minimal song shape for display purposes (album art required). */
 export type SongDisplay = Pick<ServerSong, 'title' | 'artist' | 'year'> & { albumArt: string };
+
+/** Songs ingested after the current publication (GET /api/songs/incoming). */
+export type IncomingSongsResponse = {
+  count: number;
+  publishedPublicationId?: number | null;
+  songs: ServerSong[];
+};
 
 export type SongsResponse = {
   count: number;

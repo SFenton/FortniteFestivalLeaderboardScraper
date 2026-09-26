@@ -672,6 +672,90 @@ public sealed class SongsCacheService
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
     }
 
+    private readonly object _incomingLock = new();
+    private (long? PublicationId, long? CatalogVersion, string? ContentHash, byte[] Json, string ETag)? _incoming;
+
+    /// <summary>
+    /// Returns the cached metadata-only payload for songs ingested into the
+    /// exact live catalog after the current publication, rebuilding only when
+    /// the live catalog or current publication changes.
+    /// </summary>
+    internal (byte[] Json, string ETag) GetOrBuildIncoming(
+        CatalogAdditionsAwaitingPublication additions,
+        JsonSerializerOptions jsonOpts)
+    {
+        lock (_incomingLock)
+        {
+            if (_incoming is { } cached
+                && cached.PublicationId == additions.PublishedPublicationId
+                && cached.CatalogVersion == additions.LiveCatalogVersion
+                && cached.ContentHash == additions.LiveContentHash
+                && additions.LiveCatalogVersion is not null)
+                return (cached.Json, cached.ETag);
+        }
+
+        var json = BuildIncomingSongsJson(additions, jsonOpts);
+        var etag = ResponseCacheService.ComputeETag(json);
+        lock (_incomingLock)
+        {
+            _incoming = (
+                additions.PublishedPublicationId,
+                additions.LiveCatalogVersion,
+                additions.LiveContentHash,
+                json,
+                etag);
+        }
+        return (json, etag);
+    }
+
+    /// <summary>
+    /// Metadata-only projection of songs that are ingested but not yet in a
+    /// publication. They carry no maximum scores, paths, or population tiers,
+    /// so they never contribute published leaderboard or ranking data.
+    /// </summary>
+    internal static byte[] BuildIncomingSongsJson(
+        CatalogAdditionsAwaitingPublication additions,
+        JsonSerializerOptions jsonOpts)
+    {
+        var songs = OrderSongsForPublicResponse(
+                additions.Songs.Where(static s => s.track?.su is { Length: > 0 }))
+            .Select(static s => new
+            {
+                songId     = s.track.su,
+                title      = s.track.tt,
+                artist     = s.track.an,
+                album      = s.track.ab,
+                year       = s.track.ry,
+                tempo      = s.track.mt,
+                sig        = s.track.sig,
+                durationSeconds = s.track.dn == 0 ? (int?)null : s.track.dn,
+                albumArt   = TrimAlbumArt(s.track.au),
+                genres     = s.track.ge,
+                difficulty = s.track.@in is null ? null : new
+                {
+                    guitar     = (int?)s.track.@in.gr,
+                    bass       = (int?)s.track.@in.ba,
+                    vocals     = (int?)s.track.@in.vl,
+                    drums      = (int?)s.track.@in.ds,
+                    proGuitar  = (int?)s.track.@in.pg,
+                    proBass    = (int?)s.track.@in.pb,
+                    proDrums   = (int?)s.track.@in.pd,
+                    proCymbals = (int?)s.track.@in.pd,
+                    proVocals  = Track.HasChartedDifficulty(s.track.@in.bd) ? s.track.@in.bd : (int?)null,
+                },
+                awaitingPublication = true,
+            })
+            .ToList();
+
+        var payload = new
+        {
+            count = songs.Count,
+            publishedPublicationId = additions.PublishedPublicationId,
+            songs,
+        };
+        return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+    }
+
     internal static IReadOnlyDictionary<string, int>? BuildPublicMaxScores(
         SongMaxScores? maxScores)
     {

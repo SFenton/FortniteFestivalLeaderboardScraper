@@ -153,6 +153,7 @@ public static class ApiPublicationRouteCatalog
         Operational(HttpMethods.Get, "/api/service-info", "Reports live worker, scrape, and publication health."),
         Operational(HttpMethods.Get, "/api/status", "Reports protected live scrape and storage status."),
         Operational(HttpMethods.Get, "/api/version", "Reports immutable service build metadata."),
+        Operational(HttpMethods.Get, "/api/songs/incoming", "Lists exact live-catalog songs ingested after the current publication; metadata only, no leaderboard data."),
         Operational(HttpMethods.Post, "/api/player/{accountId}/track", "Starts or refreshes live account synchronization work."),
         Operational(HttpMethods.Get, "/api/player/{accountId}/sync-status", "Reports live account synchronization progress."),
         Operational(HttpMethods.Get, "/api/bands/{bandType}/{teamKey}/sync-status", "Reports live band synchronization progress."),
