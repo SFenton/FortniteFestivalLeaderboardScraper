@@ -7,7 +7,9 @@ namespace FSTService.Scraping;
 
 public interface IProxyContainerRecycler
 {
-    Task<bool> RestartAsync(string containerName);
+    Task<bool> RestartAsync(string containerName, CancellationToken ct = default);
+    Task<bool> IsHealthyAsync(string containerName, CancellationToken ct);
+    Task<string?> GetConfiguredRegionAsync(string containerName, CancellationToken ct);
 }
 
 public sealed class DisabledProxyContainerRecycler : IProxyContainerRecycler
@@ -19,12 +21,28 @@ public sealed class DisabledProxyContainerRecycler : IProxyContainerRecycler
         _log = log;
     }
 
-    public Task<bool> RestartAsync(string containerName)
+    public Task<bool> RestartAsync(string containerName, CancellationToken ct = default)
     {
         _log.LogWarning(
             "Proxy container restart for {Container} was rejected because this host role has no Docker control capability.",
             containerName);
         return Task.FromResult(false);
+    }
+
+    public Task<bool> IsHealthyAsync(string containerName, CancellationToken ct)
+    {
+        _log.LogWarning(
+            "Proxy container health inspection for {Container} was rejected because this host role has no Docker control capability.",
+            containerName);
+        return Task.FromResult(false);
+    }
+
+    public Task<string?> GetConfiguredRegionAsync(string containerName, CancellationToken ct)
+    {
+        _log.LogWarning(
+            "Proxy container region inspection for {Container} was rejected because this host role has no Docker control capability.",
+            containerName);
+        return Task.FromResult<string?>(null);
     }
 }
 
@@ -49,13 +67,60 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
             .CreateClient();
     }
 
+    public async Task<bool> IsHealthyAsync(string containerName, CancellationToken ct)
+    {
+        try
+        {
+            var inspect = await _docker.Containers.InspectContainerAsync(containerName, ct);
+            return inspect.State?.Running == true
+                && inspect.State.Health?.Status == "healthy";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Cannot inspect health of proxy container {Container}", containerName);
+            return false;
+        }
+    }
+
+    public async Task<string?> GetConfiguredRegionAsync(string containerName, CancellationToken ct)
+    {
+        try
+        {
+            var inspect = await _docker.Containers.InspectContainerAsync(containerName, ct);
+            var env = inspect.Config.Env ?? [];
+            if (env.Any(value =>
+                value.StartsWith("SERVER_CITIES=", StringComparison.Ordinal)
+                    && value.Length > "SERVER_CITIES=".Length
+                || value.StartsWith("SERVER_NAMES=", StringComparison.Ordinal)
+                    && value.Length > "SERVER_NAMES=".Length
+                || value.StartsWith("OPENVPN_ENDPOINT_IP=", StringComparison.Ordinal)
+                    && value.Length > "OPENVPN_ENDPOINT_IP=".Length))
+                return null;
+
+            var regions = env.Where(value =>
+                value.StartsWith("SERVER_REGIONS=", StringComparison.Ordinal)).ToList();
+            if (regions.Count != 1)
+                return null;
+
+            var region = regions[0]["SERVER_REGIONS=".Length..].Trim();
+            return region.Length > 0 && !region.Contains(',') ? region : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(
+                ex, "Cannot inspect static PIA region of proxy container {Container}",
+                containerName);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Restarts an existing proxy container without changing its configured
     /// region/server environment. This is the safe self-heal path for static
     /// proxy pools such as PIA, where the worker should not rewrite provider-
     /// specific server selectors.
     /// </summary>
-    public async Task<bool> RestartAsync(string containerName)
+    public async Task<bool> RestartAsync(string containerName, CancellationToken ct = default)
     {
         try
         {
@@ -64,7 +129,7 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
             try
             {
                 await _docker.Containers.StopContainerAsync(containerName,
-                    new ContainerStopParameters { WaitBeforeKillSeconds = StopWaitSeconds });
+                    new ContainerStopParameters { WaitBeforeKillSeconds = StopWaitSeconds }, ct);
             }
             catch (DockerContainerNotFoundException)
             {
@@ -76,7 +141,8 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
                 _log.LogInformation("Proxy container {Container} is already stopped; starting it", containerName);
             }
 
-            await _docker.Containers.StartContainerAsync(containerName, new ContainerStartParameters());
+            await _docker.Containers.StartContainerAsync(
+                containerName, new ContainerStartParameters(), ct);
 
             _log.LogInformation("Proxy container {Container} restarted", containerName);
             return true;

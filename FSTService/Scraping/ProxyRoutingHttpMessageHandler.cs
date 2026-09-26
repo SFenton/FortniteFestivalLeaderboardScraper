@@ -20,9 +20,7 @@ internal sealed class ProxyRoutingHttpMessageHandler : HttpMessageHandler
         if (lease is null)
             throw new InvalidOperationException("Proxy routing handler was used without configured proxy endpoints.");
 
-        request.Options.Set(ProxyRequestState.EndpointIndex, lease.Index);
-        request.Options.Set(ProxyRequestState.EndpointName, lease.Name);
-        request.Options.Set(ProxyRequestState.EndpointProxyUri, lease.ProxyUri);
+        lease.Apply(request);
         _pool.PrepareRequest(request);
         if (request.Options.TryGetValue(
                 ProxyRequestState.WireSendRecorder,

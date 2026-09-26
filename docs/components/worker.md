@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-19
+last_verified: 2026-09-26
 last_verified_commit: d15cbdf7
 sources:
   - FSTService/Scraping/Capture/
@@ -27,6 +27,7 @@ sources:
   - FSTService/Api/NotificationService.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/ResilientHttpExecutor.cs
+  - FSTService/Scraping/PiaRegionRotator.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
@@ -139,7 +140,18 @@ continuous worker container and a new fresh heartbeat through
 `/api/service-info`.
 
 The in-worker Gluetun recycler remains responsible for tunnel failures after
-startup; it is not the boot healer. Recovery failure keeps or returns the
+startup; it is not the boot healer. Opt-in worker-only PIA egress refreshes
+are instead triggered by HTTP 429s on one exit (or an optional request
+budget). They hold that exit out, briefly drain in-flight requests, retain any
+explicit `Retry-After`, bound concurrent refreshes, and require a healthy real
+proxy egress that differs from the previous egress, every other exit's known
+egress, and recently rate-limited egresses before reusing that exit. Reports
+from the pre-refresh tunnel are ignored. With refresh enabled, tunnel-level
+transport failures also reconnect through the control API before falling back
+to a container restart. Failed candidates are restored to the prior or static
+region; an exit that cannot recover is quarantined. This does not allocate a new scrape, mutate working
+publication data, or authorize a worker deployment while an active candidate
+is frozen. Recovery failure keeps or returns the
 worker to a stopped state only if work remains idle and public reads remain
 unfrozen. Once work or a freeze begins, the guard leaves the worker running and
 directs the operator to the no-progress watchdog instead of risking a stranded
