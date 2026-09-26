@@ -178,6 +178,91 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task RateLimitedEndpoint_CoolsImmediately_AndSuccessDoesNotReleaseCooldown()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyCooldownSeconds = 1;
+        options.ProxyHttpFailureThreshold = 5;
+        using var pool = new ProxyPool(options, _log);
+
+        using var first = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(first);
+        using var rateLimitedRequest = RequestFor(first!);
+        pool.ReportRateLimited(rateLimitedRequest, TimeSpan.FromSeconds(2));
+        first.Dispose();
+
+        using var second = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(second);
+        Assert.Equal(1, second!.Index);
+
+        using var successRequest = RequestFor(0, "gluetun-1");
+        pool.ReportSuccess(successRequest);
+        second.Dispose();
+
+        using var stillAlternate = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(stillAlternate);
+        Assert.Equal(1, stillAlternate!.Index);
+    }
+
+    [Fact]
+    public async Task RateLimitedEndpoint_CooldownWaitIsCancellable()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyUrls.RemoveAt(1);
+        options.ContainerNames.RemoveAt(1);
+        options.VpnProviders.RemoveAt(1);
+        options.ControlUrls.RemoveAt(1);
+        options.ProxyCooldownSeconds = 1;
+        using var pool = new ProxyPool(options, _log);
+
+        using var request = RequestFor(0, "gluetun-1");
+        pool.ReportRateLimited(request, TimeSpan.FromSeconds(5));
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pool.AcquireAsync(cancellation.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task RateLimitedEndpoint_LongRetryAfterSurvivesBaseAndShorterReport()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyUrls.RemoveAt(1);
+        options.ContainerNames.RemoveAt(1);
+        options.VpnProviders.RemoveAt(1);
+        options.ControlUrls.RemoveAt(1);
+        options.ProxyCooldownSeconds = 1;
+        using var pool = new ProxyPool(options, _log);
+
+        using var request = RequestFor(0, "gluetun-1");
+        pool.ReportRateLimited(request, TimeSpan.FromSeconds(3));
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        pool.ReportRateLimited(request, TimeSpan.FromMilliseconds(100));
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(1200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pool.AcquireAsync(cancellation.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task RateLimitedEndpoint_ExtremeRetryAfter_IsCancellableWithoutOverflow()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyUrls.RemoveAt(1);
+        options.ContainerNames.RemoveAt(1);
+        options.VpnProviders.RemoveAt(1);
+        options.ControlUrls.RemoveAt(1);
+        using var pool = new ProxyPool(options, _log);
+
+        using var request = RequestFor(0, "gluetun-1");
+        pool.ReportRateLimited(request, TimeSpan.MaxValue);
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pool.AcquireAsync(cancellation.Token).AsTask());
+    }
+
+    [Fact]
     public async Task TransportFailures_WhenSelfHealEnabled_RestartConfiguredContainer()
     {
         var options = CreateOptions(activeStandby: false);

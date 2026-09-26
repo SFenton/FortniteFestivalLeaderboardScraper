@@ -19,6 +19,11 @@ public interface IProxyHealthReporter
     void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind);
 }
 
+internal interface IProxyRateLimitReporter
+{
+    void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter);
+}
+
 public interface IProxyCdnBlockHandler
 {
     /// <summary>
@@ -45,7 +50,11 @@ internal static class ProxyRequestState
         new("FSTService.ProxyWireSendRecorder");
 }
 
-internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, IDisposable
+internal sealed class ProxyPool :
+    IProxyHealthReporter,
+    IProxyRateLimitReporter,
+    IProxyCdnBlockHandler,
+    IDisposable
 {
     private readonly List<ProxyEndpoint> _endpoints;
     private readonly ILogger<ProxyPool> _log;
@@ -256,6 +265,34 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         ReportFailure(index, kind);
     }
 
+    public void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter)
+    {
+        if (!TryGetEndpointIndex(request, out var index))
+            return;
+
+        lock (_lock)
+        {
+            if (!IsValidIndex(index))
+                return;
+
+            var endpoint = _endpoints[index];
+            endpoint.Failures++;
+            CoolDown(
+                endpoint,
+                ProxyFailureKind.RateLimited,
+                retryAfter is { } delay && delay > TimeSpan.Zero
+                    ? delay
+                    : null);
+
+            endpoint.ConsecutiveCdnBlocks = 0;
+            endpoint.ConsecutiveHttpFailures = 0;
+            endpoint.ConsecutiveTransportFailures = 0;
+
+            if (_activeStandby && endpoint.Index == _activeIndex)
+                RotateActive(DateTimeOffset.UtcNow, $"proxy {endpoint.Name} reported {ProxyFailureKind.RateLimited}");
+        }
+    }
+
     public ProxyCdnBlockDecision ReportCdnBlock(HttpRequestMessage request)
     {
         if (!TryGetEndpointIndex(request, out var index))
@@ -408,11 +445,19 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         }
     }
 
-    private void CoolDown(ProxyEndpoint endpoint, ProxyFailureKind kind)
+    private void CoolDown(
+        ProxyEndpoint endpoint,
+        ProxyFailureKind kind,
+        TimeSpan? minimumCooldown = null)
     {
         var now = DateTimeOffset.UtcNow;
-        var cooldown = _baseCooldown;
-        endpoint.CooldownUntil = now + cooldown;
+        var requestedCooldown = minimumCooldown ?? TimeSpan.Zero;
+        var cooldown = _baseCooldown >= requestedCooldown
+            ? _baseCooldown
+            : requestedCooldown;
+        endpoint.CooldownUntil = Max(
+            endpoint.CooldownUntil,
+            AddCooldownSafely(now, cooldown));
         endpoint.Cooldowns++;
 
         _log.LogWarning(
@@ -524,6 +569,14 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     private static DateTimeOffset Max(DateTimeOffset left, DateTimeOffset right)
         => left >= right ? left : right;
+
+    private static DateTimeOffset AddCooldownSafely(DateTimeOffset start, TimeSpan cooldown)
+    {
+        var remaining = DateTimeOffset.MaxValue - start;
+        return cooldown >= remaining
+            ? DateTimeOffset.MaxValue
+            : start + cooldown;
+    }
 
     private TimeSpan GetDelayUntilNextEndpoint(DateTimeOffset now)
     {

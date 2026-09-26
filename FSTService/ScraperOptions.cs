@@ -134,7 +134,7 @@ public sealed class ScraperOptions
     public int ProxyTimeoutFailureThreshold { get; set; } = 2;
 
     /// <summary>
-    /// Consecutive 429/5xx responses before a proxy is cooled down.
+    /// Consecutive 5xx responses before a proxy is cooled down. A 429 cools its endpoint immediately.
     /// </summary>
     public int ProxyHttpFailureThreshold { get; set; } = 5;
 

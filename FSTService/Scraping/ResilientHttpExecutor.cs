@@ -186,6 +186,7 @@ public sealed class ResilientHttpExecutor
 
     /// <summary>Base delay for exponential backoff (doubled on each retry).</summary>
     private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan MaximumCancellableDelay = TimeSpan.FromDays(1);
 
     /// <summary>
     /// Fixed backoff schedule for CDN-level 403 blocks (non-JSON responses).
@@ -1199,22 +1200,31 @@ public sealed class ResilientHttpExecutor
                 // They should NOT count toward the adaptive limiter's error rate because they
                 // don't indicate we're overloading the server — only 429 (rate limit) should.
                 bool countsAsLimiterFailure = statusCode == 429;
+                TimeSpan? retryAfter = statusCode == 429
+                    ? GetPositiveRetryAfter(res)
+                    : null;
+
+                if (statusCode == 429)
+                {
+                    ReportRateLimited(sentRequest, retryAfter);
+                }
 
                 if (retryable && statusAttempt < maxRetries)
                 {
                     RecordStatusRetry();
                     statusAttempt++;
 
-                    // Honour Retry-After header on 429
-                    if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
+                    // Honour a positive Retry-After header on 429. The endpoint
+                    // cooldown is reported above for every 429, including the
+                    // terminal response.
+                    if (statusCode == 429 && retryAfter is { } delay)
                     {
                         _log.LogWarning(
                             "Rate-limited on {Operation}, waiting {Delay:F1}s (DOP {Dop})",
-                            label ?? "request", retryAfter.TotalSeconds, limiter?.CurrentDop ?? -1);
+                            label ?? "request", delay.TotalSeconds, limiter?.CurrentDop ?? -1);
                         limiter?.ReportFailure();
-                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
                         res.Dispose();
-                        await Task.Delay(retryAfter, ct);
+                        await DelayCancellableAsync(delay, ct);
                         continue;
                     }
 
@@ -1222,9 +1232,10 @@ public sealed class ResilientHttpExecutor
                         "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts}, DOP {Dop})",
                         statusCode, label ?? "request", statusAttempt, maxRetries + 1, limiter?.CurrentDop ?? -1);
                     if (countsAsLimiterFailure) limiter?.ReportFailure();
-                    _proxyHealth?.ReportFailure(
-                        sentRequest,
-                        statusCode == 429 ? ProxyFailureKind.RateLimited : ProxyFailureKind.ServerError);
+                    if (statusCode != 429)
+                    {
+                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.ServerError);
+                    }
                     res.Dispose();
                     continue;
                 }
@@ -1236,7 +1247,6 @@ public sealed class ResilientHttpExecutor
                 if (countsAsLimiterFailure)
                 {
                     limiter?.ReportFailure();
-                    _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
                 }
 
                 return res;
@@ -1246,6 +1256,46 @@ public sealed class ResilientHttpExecutor
         {
             _inflight.TryRemove(op.OperationId, out _);
         }
+    }
+
+    private void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter)
+    {
+        if (_proxyHealth is IProxyRateLimitReporter rateLimitReporter)
+        {
+            rateLimitReporter.ReportRateLimited(request, retryAfter);
+        }
+        else
+        {
+            _proxyHealth?.ReportFailure(request, ProxyFailureKind.RateLimited);
+        }
+    }
+
+    private static TimeSpan? GetPositiveRetryAfter(HttpResponseMessage response)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+            return delta;
+
+        if (retryAfter?.Date is { } date)
+        {
+            var delay = date - DateTimeOffset.UtcNow;
+            if (delay > TimeSpan.Zero)
+                return delay;
+        }
+
+        return null;
+    }
+
+    private static async Task DelayCancellableAsync(TimeSpan delay, CancellationToken ct)
+    {
+        while (delay > MaximumCancellableDelay)
+        {
+            await Task.Delay(MaximumCancellableDelay, ct);
+            delay -= MaximumCancellableDelay;
+        }
+
+        if (delay > TimeSpan.Zero)
+            await Task.Delay(delay, ct);
     }
 
     /// <summary>

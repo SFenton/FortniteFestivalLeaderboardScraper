@@ -82,9 +82,18 @@ On a CDN block:
 3. if every proxy is cooling down, wait for pool recovery;
 4. pause globally only when the request was not associated with a known proxy.
 
-Transport, timeout, rate-limit, and server failures use separate thresholds.
+Transport, timeout, and server failures use separate thresholds; rate limits
+are handled per response.
 Curl can be the primary proxied transport so production behavior matches proxy
 qualification canaries. Same-drive scratch is required for curl bodies.
+
+Each HTTP 429 immediately cools the endpoint that returned it; it does not wait
+for the ordinary HTTP-failure threshold. The cooldown is the greater of the
+configured base cooldown and a positive `Retry-After` value (delta-seconds or
+HTTP-date), and an already later cooldown is retained. Success reports reset
+failure counters but never shorten an active cooldown. Retry waits are
+cancellation-aware and no additional wire send is issued while all endpoints
+are cooling.
 
 ## Self-heal boundary
 

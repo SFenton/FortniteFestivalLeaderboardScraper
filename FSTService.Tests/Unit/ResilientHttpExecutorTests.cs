@@ -390,6 +390,131 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(2, handler.Requests.Count);
     }
 
+    [Fact]
+    public async Task SendAsync_429WithHttpDate_WaitsAndRetries()
+    {
+        var (executor, handler) = CreateExecutor();
+        var rateLimited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        rateLimited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            DateTimeOffset.UtcNow.AddSeconds(2));
+        handler.EnqueueResponse(rateLimited);
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var response = await executor.SendAsync(
+            () => MakeRequest(), maxRetries: 1, label: "429-date-test");
+        stopwatch.Stop();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromSeconds(1.5),
+            $"HTTP-date Retry-After was not materially honored: {stopwatch.Elapsed}");
+    }
+
+    [Fact]
+    public async Task SendAsync_429WithPastHttpDate_DoesNotDelayForHeader()
+    {
+        var (executor, handler) = CreateExecutor();
+        var rateLimited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        rateLimited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            DateTimeOffset.UtcNow.AddSeconds(-1));
+        handler.EnqueueResponse(rateLimited);
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        using var response = await executor.SendAsync(
+            () => MakeRequest(), maxRetries: 1, label: "429-past-date-test");
+        stopwatch.Stop();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Unexpected past Retry-After delay: {stopwatch.Elapsed}");
+    }
+
+    [Fact]
+    public async Task SendAsync_Exhausted429_ReportsRateLimitImmediately()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.Enqueue429(TimeSpan.FromSeconds(5));
+        var reporter = new RecordingRateLimitReporter();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            reporter);
+
+        using var response = await executor.SendAsync(
+            MakeRequest, maxRetries: 0, label: "429-terminal-test");
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Single(reporter.RetryAfters);
+        Assert.Equal(TimeSpan.FromSeconds(5), reporter.RetryAfters[0]);
+    }
+
+    [Fact]
+    public async Task SendAsync_ProxyCurl429_CooldownCancellationPreventsSecondWireSend()
+    {
+        var options = new ScraperOptions
+        {
+            ProxyUrls = ["http://gluetun-1:8888"],
+            ContainerNames = ["gluetun-1"],
+            VpnProviders = ["Private Internet Access"],
+            ControlUrls = ["http://gluetun-1:8000"],
+            ProxyUseCurlTransport = true,
+            ProxyCooldownSeconds = 2,
+        };
+        using var pool = new ProxyPool(
+            options,
+            NullLogger<ProxyPool>.Instance);
+        var handler = new MockHttpMessageHandler();
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            pool);
+        var sends = 0;
+        executor.PrimaryCurlTransportOverride = (_, _, _) =>
+        {
+            Interlocked.Increment(ref sends);
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter =
+                new System.Net.Http.Headers.RetryConditionHeaderValue(
+                    TimeSpan.FromMilliseconds(50));
+            return Task.FromResult<HttpResponseMessage?>(response);
+        };
+
+        using var cancellation = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(1500));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.SendAsync(
+                MakeEpicEventsRequest,
+                maxRetries: 1,
+                label: "curl-429-cooldown",
+                ct: cancellation.Token));
+
+        Assert.Equal(1, sends);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_ExtremeHttpDateRetryAfter_IsCancellable()
+    {
+        var (executor, handler) = CreateExecutor();
+        var rateLimited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        rateLimited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            DateTimeOffset.MaxValue);
+        handler.EnqueueResponse(rateLimited);
+
+        using var cancellation = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.SendAsync(
+                MakeRequest,
+                maxRetries: 1,
+                label: "429-extreme-date",
+                ct: cancellation.Token));
+
+        Assert.Single(handler.Requests);
+    }
+
     // ─── Non-retryable status ───────────────────────────────────
 
     [Fact]
@@ -2252,6 +2377,26 @@ public sealed class ResilientHttpExecutorTests
         public int Successes { get; private set; }
         public void ReportSuccess(HttpRequestMessage request) => Successes++;
         public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
+    }
+
+    private sealed class RecordingRateLimitReporter :
+        IProxyHealthReporter,
+        IProxyRateLimitReporter
+    {
+        public List<TimeSpan?> RetryAfters { get; } = [];
+
+        public void ReportSuccess(HttpRequestMessage request)
+        {
+        }
+
+        public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"Expected specialized rate-limit reporting, got {kind}.");
+        }
+
+        public void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter)
+            => RetryAfters.Add(retryAfter);
     }
 
     private sealed class TrackingDisposable
