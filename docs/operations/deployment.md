@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: 65faa445
+last_verified_commit: fac42684
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -148,9 +148,11 @@ containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
 The 24-endpoint configuration excludes two TLS-failing exits and promotes a
 healthy Vancouver spare; its endpoint count, four arrays, and worker
-dependencies were changed together under the worker lock. The guarded
-replacement worker uses the immutable image built for `65faa445`, while the
-API and latest-master web images remain unchanged.
+dependencies were changed together under the worker lock. As of 2026-09-26
+the guarded worker runs a locally built immutable image for `fac42684`
+(branch `fix/vpn-fast-egress-refresh-20260926`) with the egress refresh
+enabled in the production-owned worker env file; the API and latest-master web
+images remain unchanged.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to
@@ -170,6 +172,16 @@ database, or entire Compose project for this worker-only rollout. A running
 scrape is not a safe boundary merely because its progress is slow: preserve
 the shared worker lock, native interrupted-acquisition isolation/normalization
 gates, published scrape, read freeze, health, and rollback before any stop.
+
+Many effective exits have static regions whose OpenVPN servers frequently
+fail TLS (for example US Las Vegas, US Salt Lake City, SE Stockholm, Denmark,
+CA Toronto, US Michigan, and US Ohio in 2026-09-26 trials). After a container
+restart such an exit can stay `starting`, which fails the pre-stop 24/24
+guard. Moving only that exit's runtime selector to a qualified region through
+its Gluetun control API (credential-free region payload, no Compose change)
+restored real egress within seconds during the 2026-09-26 cutover; a later
+container restart returns the static region. Replacing those static regions
+in the production overlay is a separate operator change.
 
 The in-process control update changes a PIA container's **runtime** region,
 not its production Compose environment. On container restart the static

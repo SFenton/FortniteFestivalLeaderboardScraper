@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: 1ba0fdb6
+last_verified_commit: fac42684
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs

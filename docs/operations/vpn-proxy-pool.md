@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: 1ba0fdb6
+last_verified_commit: fac42684
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -285,6 +285,20 @@ published 1424 remained intact and reads were unfrozen before the new worker
 started. Vancouver's tunnel and egress qualification is not evidence that
 its city avoids Epic 429s; compare bounded official-scrape outcomes before
 claiming regional relief.
+
+On 2026-09-26 the owner-authorized egress-refresh release (`fac42684`) stopped
+scrape 1430 through the same interrupted-acquisition normalization and
+official failure-isolation paths (published 1424 preserved) and started scrape
+1431. The production worker env enables refresh with the seven qualified
+regions above, reconnect-in-place, a one-429 trigger, 10-second per-exit
+interval, 1-second global spacing, eight concurrent refreshes, four
+12-second attempts within 90 seconds, a 300-second rate-limited egress window,
+and a 5-second drain. Against the prior worker's last five minutes (about 390
+successful leaderboard requests and 6–7 progress units per minute), the first
+twelve minutes of 1431 sustained about 3,700–6,000 successful requests and
+50–60 units per minute, with 3–4% HTTP 429s, refreshes averaging 6–10
+seconds, about 90–100 successes per retired egress, no quarantines, and no
+retry exhaustion.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
