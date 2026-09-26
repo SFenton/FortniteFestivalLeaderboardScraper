@@ -22,6 +22,7 @@ const mockApi = vi.hoisted(() => {
         difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 1, proGuitar: 5, proBass: 3 },
         maxScores: { Solo_Guitar: 150000, Solo_Bass: 120000, Solo_Drums: 180000, Solo_Vocals: 100000 } },
     ], count: 1, currentSeason: 5 }),
+    getIncomingSongs: fn().mockResolvedValue({ count: 0, songs: [] }),
     getAllLeaderboards: fn().mockResolvedValue({
       songId: 'song-1',
       instruments: [
@@ -105,6 +106,7 @@ beforeAll(() => {
 });
 
 function resetMocks() {
+  mockApi.getIncomingSongs.mockResolvedValue({ count: 0, songs: [] });
   mockApi.getSongs.mockResolvedValue({ songs: [
     { songId: 'song-1', title: 'Test Song', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/art.jpg',
       difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 1, proGuitar: 5, proBass: 3 },
@@ -391,6 +393,21 @@ describe('SongDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Song not found')).toBeDefined();
     });
+  });
+
+  it('renders an ingested song awaiting publication without publication-bound reads', async () => {
+    mockApi.getIncomingSongs.mockResolvedValue({
+      count: 1,
+      songs: [{ songId: 'song-new', title: 'Brand New Song', artist: 'New Artist', awaitingPublication: true }],
+    });
+    renderSongDetail('/songs/song-new');
+    await waitFor(() => {
+      expect(screen.getByText('Brand New Song')).toBeDefined();
+    });
+    expect(mockApi.getAllLeaderboards).not.toHaveBeenCalledWith('song-new', expect.anything(), expect.anything(), expect.anything());
+    expect(mockApi.getAllSongBandLeaderboards).not.toHaveBeenCalledWith('song-new', expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything());
+    expect(screen.queryByText('Song not found')).toBeNull();
+    expect(screen.queryByText('View Paths')).toBeNull();
   });
 
   it('fetches all leaderboards for the song', async () => {
