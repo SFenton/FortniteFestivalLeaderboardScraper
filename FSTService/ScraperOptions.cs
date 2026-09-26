@@ -253,6 +253,13 @@ public sealed class ScraperOptions
     public int ProxyRegionRotationDrainSeconds { get; set; } = 60;
 
     /// <summary>
+    /// Seconds before a quarantined exit gets a fully verified refresh retry
+    /// (doubling per consecutive failure, capped at one hour). Zero keeps the
+    /// exit quarantined until the worker restarts.
+    /// </summary>
+    public int ProxyRegionRotationQuarantineRetrySeconds { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

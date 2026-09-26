@@ -189,8 +189,16 @@ worker's control client allows 30 seconds and treats a control-call timeout as
 a failed step (next candidate, then container restart), never as the overall
 restoration deadline. If control rollback fails,
 it restarts only that proxy container, restoring its static Compose selector,
-and verifies again. If recovery cannot be verified, that exit is quarantined
-until operator intervention or a guarded worker restart. Cancellation stops
+and verifies again. Restoration never accepts another exit's egress; a small
+static region can reconnect to a server a peer already uses, so a working but
+duplicate restored tunnel is reconnected (up to six times) to another random
+server instead of being declared unrecoverable. If recovery cannot be
+verified, that exit is quarantined. With
+`ProxyRegionRotationQuarantineRetrySeconds` set, the census loop retries a
+full verified refresh after that delay (doubling per consecutive failure, up to
+one hour) and the exit rejoins selection only after a `Rotated` or `Restored`
+result; with the default `0` it stays quarantined until operator intervention
+or a guarded worker restart. Cancellation stops
 queued waits and attempts restoration after a tunnel change. Gluetun control
 settings are ephemeral: Docker/container restart returns a refreshed exit to
 the production-owned static Compose region. The host-side boot guard

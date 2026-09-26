@@ -407,9 +407,8 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                 probeDeadline.CancelAfter(_rollbackProbeTimeout);
                 try
                 {
-                    var address = await WaitForAcceptableEgressAsync(
-                        tunnel, originalRegion, request.PreviousEgress, request.Claims,
-                        allowPreviousAndRateLimited: true, probeDeadline.Token);
+                    var address = await WaitForRestorableEgressAsync(
+                        tunnel, originalRegion, request, probeDeadline.Token);
                     if (address is not null)
                         return new(ProxyRegionRotationOutcome.Restored, address, originalRegion);
                 }
@@ -445,9 +444,8 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         restartDeadline.CancelAfter(_restartTimeout);
         try
         {
-            var address = await WaitForAcceptableEgressAsync(
-                tunnel, staticRegion, request.PreviousEgress, request.Claims,
-                allowPreviousAndRateLimited: true, restartDeadline.Token);
+            var address = await WaitForRestorableEgressAsync(
+                tunnel, staticRegion, request, restartDeadline.Token);
             return address is null
                 ? null
                 : new ProxyRegionRotationResult(
@@ -458,6 +456,44 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
             return null;
         }
     }
+
+    /// <summary>
+    /// Restoration accepts a rate-limited egress but never another exit's. A
+    /// small static region can reconnect to a server a peer already uses, so a
+    /// working but duplicate tunnel is reconnected (another random server)
+    /// instead of being declared unrecoverable.
+    /// </summary>
+    private async Task<IPAddress?> WaitForRestorableEgressAsync(
+        ProxyRegionTunnel tunnel,
+        string region,
+        ProxyRegionRotationRequest request,
+        CancellationToken ct)
+    {
+        for (var reconnects = 0; ; reconnects++)
+        {
+            var address = await WaitForAcceptableEgressAsync(
+                tunnel, region, request.PreviousEgress, request.Claims,
+                allowPreviousAndRateLimited: true, ct);
+            if (address is not null || reconnects >= MaxRestoreReconnects)
+                return address;
+
+            _log.LogInformation(
+                "PIA proxy {Container} restored {Region} tunnel duplicates a peer egress; reconnecting ({Attempt}/{Max}).",
+                tunnel.ContainerName, region, reconnects + 1, MaxRestoreReconnects);
+            try
+            {
+                await ReconnectAsync(tunnel.ControlUri, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                _log.LogDebug(
+                    "PIA proxy {Container} restoration reconnect failed: {Reason}",
+                    tunnel.ContainerName, ex.GetType().Name);
+            }
+        }
+    }
+
+    private const int MaxRestoreReconnects = 6;
 
     /// <summary>
     /// Polls until the tunnel reports <paramref name="region"/>, Docker reports

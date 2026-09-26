@@ -132,6 +132,29 @@ public sealed class PiaRegionRotatorTests
     }
 
     [Fact]
+    public async Task RotateAsync_RestartIntoPeerDuplicate_ReconnectsInsteadOfQuarantining()
+    {
+        var server = new RecordingControlServer { CrashOnRollback = true };
+        var recycler = new RecordingHealthRecycler(server);
+        using var client = new HttpClient(server);
+        var probe = new RecordingEgressProbe(server)
+        {
+            DuplicateNewEgress = true,
+            RestoredDuplicatesRemaining = 2,
+        };
+        var rotator = CreateRotator(client, recycler, probe, maxAttempts: 1);
+
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
+        Assert.Equal(1, recycler.RestartCount);
+        Assert.Equal(2, server.Reconnects);
+        Assert.NotEqual(Peer, result.Egress);
+    }
+
+    [Fact]
     public async Task RotateAsync_RejectsUnqualifiedProviderBeforeAnyMutation()
     {
         var server = new RecordingControlServer { Provider = "airvpn" };
@@ -496,6 +519,7 @@ public sealed class PiaRegionRotatorTests
         public bool DuplicateNewEgress { get; set; }
         public bool BlockAfterCandidateUpdate { get; set; }
         public int RestorationFailuresRemaining { get; set; }
+        public int RestoredDuplicatesRemaining { get; set; }
         public HashSet<string> DeadRegions { get; } = [];
         private readonly TaskCompletionSource _candidateProbeStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -520,6 +544,15 @@ public sealed class PiaRegionRotatorTests
             {
                 _candidateProbeStarted.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+
+            if (_server.CurrentRegion == "US Las Vegas"
+                && _server.PutRegions.Count > 0
+                && RestoredDuplicatesRemaining > 0)
+            {
+                if (_server.Reconnects < RestoredDuplicatesRemaining)
+                    return Peer;
+                return IPAddress.Parse($"192.0.2.{40 + _server.Reconnects}");
             }
 
             if (_server.CurrentRegion == "US Las Vegas")
