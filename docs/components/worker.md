@@ -146,8 +146,10 @@ budget). They hold that exit out, briefly drain in-flight requests, retain any
 explicit `Retry-After`, bound concurrent refreshes, and require a healthy real
 proxy egress that differs from the previous egress, every other exit's known
 egress, and recently rate-limited egresses before reusing that exit. Reports
-from the pre-refresh tunnel are ignored. Failed candidates are restored to the
-prior or static region; an exit that cannot recover is quarantined. This does not allocate a new scrape, mutate working
+from the pre-refresh tunnel are ignored. With refresh enabled, tunnel-level
+transport failures also reconnect through the control API before falling back
+to a container restart. Failed candidates are restored to the prior or static
+region; an exit that cannot recover is quarantined. This does not allocate a new scrape, mutate working
 publication data, or authorize a worker deployment while an active candidate
 is frozen. Recovery failure keeps or returns the
 worker to a stopped state only if work remains idle and public reads remain

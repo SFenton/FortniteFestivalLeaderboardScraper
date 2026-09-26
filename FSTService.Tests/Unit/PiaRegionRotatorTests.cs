@@ -287,6 +287,8 @@ public sealed class PiaRegionRotatorTests
     [InlineData("{\"outcome\":\"running\"}", "running")]
     [InlineData(" {\"outcome\":\"stopped\"}\n", "stopped")]
     [InlineData("settings left unchanged", "settings left unchanged")]
+    [InlineData("{\"openvpn\":{\"user\":\"secret\",\"password\":\"secret\"}}", "unrecognized-json")]
+    [InlineData("user=secret password=secret\n", "unrecognized-outcome")]
     public void ParseOutcome_AcceptsPlainAndJsonGluetunResponses(string body, string expected)
         => Assert.Equal(expected, PiaRegionRotator.ParseOutcome(body));
 

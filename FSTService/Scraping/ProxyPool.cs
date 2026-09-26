@@ -229,6 +229,15 @@ internal sealed class ProxyPool :
 
     internal IReadOnlyList<string> EndpointNames => _endpoints.Select(e => e.Name).ToList();
 
+    internal bool IsRegionRotationActive(int index)
+    {
+        lock (_lock)
+        {
+            var endpoint = _endpoints[index];
+            return endpoint.RotationPending || endpoint.RegionRotationTask is not null;
+        }
+    }
+
     internal bool UseCurlTransport => _useCurlTransport;
 
     internal string CurlTempDirectory => _curlTempDirectory;
@@ -580,6 +589,19 @@ internal sealed class ProxyPool :
         if (endpoint.RestartableCooldownFailures < _containerRestartFailureThreshold)
             return;
 
+        // With egress refresh enabled, a broken tunnel is first reconnected (or
+        // moved to a qualified region) through the control API: a container
+        // restart returns to the static region, which may itself be dead. A
+        // refresh that cannot reach the control API falls back to a restart.
+        if (_regionRotationEnabled && !endpoint.PreferContainerRestart)
+        {
+            var before = endpoint.RegionRotationTask;
+            TryScheduleRegionRotation(endpoint, RegionRotationTrigger.TransportFailure);
+            if (!ReferenceEquals(before, endpoint.RegionRotationTask))
+                endpoint.RestartableCooldownFailures = 0;
+            return;
+        }
+
         var now = DateTimeOffset.UtcNow;
         if (endpoint.ContainerRestartTask is { IsCompleted: false })
             return;
@@ -637,6 +659,7 @@ internal sealed class ProxyPool :
                     endpoint.ConsecutiveTransportFailures = 0;
                     endpoint.RestartableCooldownFailures = 0;
                     endpoint.CooldownUntil = Max(endpoint.CooldownUntil, DateTimeOffset.UtcNow + _baseCooldown);
+                    endpoint.PreferContainerRestart = false;
                     endpoint.AdvanceGeneration(egress: null);
                     oldInvoker = endpoint.ResetInvoker();
                 }
@@ -671,6 +694,7 @@ internal sealed class ProxyPool :
         RateLimited,
         RequestBudget,
         DuplicateEgress,
+        TransportFailure,
     }
 
     private void TryScheduleRegionRotation(
@@ -740,6 +764,18 @@ internal sealed class ProxyPool :
             if (restartTask is not null)
                 await restartTask.WaitAsync(ct);
 
+            Uri baselineProxy;
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
+                baselineProxy = _endpoints[endpointIndex].ProxyUri;
+            }
+
+            // Establish the real current egress immediately before changing
+            // the tunnel: the census value may be missing or stale.
+            var baseline = await _regionRotator!.GetEgressAsync(baselineProxy, ct);
+
             ProxyRegionRotationRequest request;
             lock (_lock)
             {
@@ -747,6 +783,13 @@ internal sealed class ProxyPool :
                     return;
 
                 var endpoint = _endpoints[endpointIndex];
+                if (baseline is not null)
+                {
+                    endpoint.KnownEgress = baseline;
+                    endpoint.EgressObservedAt = DateTimeOffset.UtcNow;
+                    if (trigger == RegionRotationTrigger.RateLimited && _burnedEgressTtl > TimeSpan.Zero)
+                        _rateLimitedEgress[baseline] = DateTimeOffset.UtcNow;
+                }
                 endpoint.LastRegionRotationAttempt = DateTimeOffset.UtcNow;
                 var candidateOffset = _regionRotationRegions.Count == 0
                     ? 0
@@ -801,6 +844,7 @@ internal sealed class ProxyPool :
                             "PIA proxy {Container} retired an egress after {Successes} successful request(s) ({Trigger}).",
                             endpoint.Name, endpoint.GenerationSuccesses, trigger);
                         endpoint.AdvanceGeneration(result.Egress);
+                        endpoint.PreferContainerRestart = false;
                         endpoint.ConsecutiveCdnBlocks = 0;
                         endpoint.ConsecutiveHttpFailures = 0;
                         endpoint.ConsecutiveTransportFailures = 0;
@@ -815,15 +859,17 @@ internal sealed class ProxyPool :
                         break;
                     case ProxyRegionRotationOutcome.Restored:
                         _stats.Restored++;
-                        if (!Equals(result.Egress, endpoint.KnownEgress))
-                        {
-                            endpoint.AdvanceGeneration(result.Egress);
-                            oldInvoker = endpoint.ResetInvoker();
-                        }
+                        // The tunnel was changed (possibly the container
+                        // restarted) even when the egress is the same.
+                        endpoint.AdvanceGeneration(result.Egress);
+                        endpoint.PreferContainerRestart = false;
+                        oldInvoker = endpoint.ResetInvoker();
                         endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
                         break;
                     case ProxyRegionRotationOutcome.Deferred:
                         _stats.Deferred++;
+                        if (trigger == RegionRotationTrigger.TransportFailure)
+                            endpoint.PreferContainerRestart = true;
                         endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
                         break;
                     default:
@@ -976,6 +1022,20 @@ internal sealed class ProxyPool :
 
     private void RecordCensusEgress(int index, long generation, IPAddress address)
     {
+        HttpMessageInvoker? oldInvoker = null;
+        try
+        {
+            RecordCensusEgressCore(index, generation, address, ref oldInvoker);
+        }
+        finally
+        {
+            oldInvoker?.Dispose();
+        }
+    }
+
+    private void RecordCensusEgressCore(
+        int index, long generation, IPAddress address, ref HttpMessageInvoker? oldInvoker)
+    {
         lock (_lock)
         {
             if (_disposed)
@@ -990,6 +1050,7 @@ internal sealed class ProxyPool :
                     "Proxy {ProxyName} egress changed outside a worker rotation; tracking the new egress.",
                     endpoint.Name);
                 endpoint.AdvanceGeneration(address);
+                oldInvoker = endpoint.ResetInvoker();
             }
             else
             {
@@ -1423,6 +1484,7 @@ internal sealed class ProxyPool :
         public Task? RegionRotationTask { get; set; }
         public bool RotationPending { get; set; }
         public DateTimeOffset RetryAfterUntil { get; set; }
+        public bool PreferContainerRestart { get; set; }
         public long Generation { get; private set; }
         public long GenerationSuccesses { get; private set; }
         public IPAddress? KnownEgress { get; set; }

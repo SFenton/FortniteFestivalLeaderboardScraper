@@ -459,6 +459,81 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task RegionRotation_UsesFreshBaselineAndMarksItRateLimited()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        var baseline = IPAddress.Parse("198.51.100.40");
+        var rotator = new RecordingRegionRotator
+        {
+            Egress = uri => uri.Host == "gluetun-1" ? baseline : null,
+        };
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(baseline, rotator.LastRequest!.PreviousEgress);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => Task.FromResult(
+            pool.TryClaimEgress(1, baseline, allowRateLimited: false)), "rate-limited");
+        Assert.Null(pool.TryClaimEgress(1, baseline, allowRateLimited: true));
+    }
+
+    [Fact]
+    public async Task RegionRotation_RestoredResultStartsNewGenerationEvenWithSameEgress()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyCooldownSeconds = 1;
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        var lease = await pool.AcquireAsync(CancellationToken.None);
+        using var stale = new HttpRequestMessage(HttpMethod.Get, "https://example.com/");
+        lease!.Apply(stale);
+        lease.Dispose();
+
+        pool.ReportRateLimited(stale, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        rotator.Complete(ProxyRegionRotationOutcome.Restored);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [0, 1]);
+
+        pool.ReportRateLimited(stale, null);
+        Assert.Equal([0, 1], await SelectableIndexesAsync(pool, 2));
+    }
+
+    [Fact]
+    public async Task TransportFailures_WithEgressRefresh_ReconnectFirstAndRestartOnlyAfterDeferredRefresh()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyTimeoutFailureThreshold = 1;
+        options.ProxyContainerSelfHealEnabled = true;
+        options.ProxyContainerRestartCooldownSeconds = 1;
+        options.ProxyContainerRestartMinIntervalSeconds = 1;
+        var recycler = new RecordingRecycler();
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, recycler, rotator);
+
+        pool.ReportFailure(0, ProxyFailureKind.Transport);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Empty(recycler.RestartedContainers);
+
+        rotator.Complete(ProxyRegionRotationOutcome.Deferred);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => Task.FromResult(IsRotationIdle(pool, 0)), true);
+        pool.ReportFailure(0, ProxyFailureKind.Transport);
+
+        await recycler.WaitForRestartAsync("gluetun-1");
+        Assert.Equal(1, rotator.InvocationCount);
+    }
+
+    private static bool IsRotationIdle(ProxyPool pool, int index)
+        => !pool.IsRegionRotationActive(index);
+
+    [Fact]
     public async Task RegionRotation_RequestBudgetTriggersProactiveRefresh()
     {
         var options = CreatePiaRotationOptions();

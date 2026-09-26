@@ -129,7 +129,11 @@ request budget can refresh an exit proactively after a number of successes on
 one egress. A per-exit minimum interval, an optional global start spacing, and
 a bounded number of concurrent refreshes (never the same exit twice) prevent
 mass reconnection. Successful requests reset the 429 trigger count. CDN blocks
-and transport errors keep their existing separate handling.
+keep their existing separate handling. When container self-heal would restart
+an exit after tunnel-level transport failures, an enabled refresh is tried
+first (a restart returns to the static region, which may itself be dead); a
+refresh that cannot reach the control API makes the next restartable failure
+use the existing container restart.
 
 #### Refresh
 
@@ -138,8 +142,11 @@ to finish, then proceeds; every lease is stamped with a tunnel generation, and
 success/failure/429 reports from an older generation are ignored so a request
 cut by the reconnect cannot cool, burn, or restart the replacement tunnel.
 
+It first probes the exit's real current egress (the census value may be
+missing or stale) and, for a 429 trigger, records that egress as rate-limited.
 It reads the Gluetun control settings **without logging the response** (which
-can contain VPN credentials) and requires a single-region OpenVPN PIA selector
+can contain VPN credentials; only a short sanitized outcome scalar is ever
+logged) and requires a single-region OpenVPN PIA selector
 with no competing city/name/country/hostname filters. Candidates are, in
 order: an in-place reconnect of the current region (`PUT /v1/vpn/status`
 stopped, then running; Gluetun's random selection connects another server),
@@ -210,8 +217,10 @@ lists; PIA server health changes.
 
 ## Self-heal boundary
 
-Repeated tunnel-level transport failures can restart the aligned container.
-CDN blocks alone cool/fail over; they do not prove a tunnel is broken.
+Repeated tunnel-level transport failures can restart the aligned container
+(or, with the optional egress refresh enabled, first reconnect it through the
+control API). CDN blocks alone cool/fail over; they do not prove a tunnel is
+broken.
 
 Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
 `DisabledProxyContainerRecycler`, which rejects restart requests. The recycler

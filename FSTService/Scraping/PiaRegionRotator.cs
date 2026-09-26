@@ -240,7 +240,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                     _log.LogWarning(
                         "PIA {Action} for {Container} to {Region} reported {Outcome}; trying the next candidate.",
                         reconnect ? "reconnect" : "region update",
-                        tunnel.ContainerName, candidate, Truncate(outcome));
+                        tunnel.ContainerName, candidate, outcome);
                     continue;
                 }
 
@@ -545,26 +545,40 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         return ParseOutcome(await response.Content.ReadAsStringAsync(ct));
     }
 
+    /// <summary>
+    /// Extracts only Gluetun's short outcome scalar. Control responses can
+    /// contain VPN credentials, so any other body is reduced to a category and
+    /// never returned or logged verbatim.
+    /// </summary>
     internal static string ParseOutcome(string body)
     {
         var trimmed = body.Trim();
-        if (trimmed.StartsWith('{'))
+        if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
         {
             try
             {
                 using var document = JsonDocument.Parse(trimmed);
-                if (document.RootElement.TryGetProperty("outcome", out var outcome)
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("outcome", out var outcome)
                     && outcome.ValueKind == JsonValueKind.String)
-                    return outcome.GetString()!.Trim();
+                    return SafeScalar(outcome.GetString()!);
             }
             catch (JsonException)
             {
             }
+
+            return "unrecognized-json";
         }
 
-        return trimmed;
+        return SafeScalar(trimmed);
     }
 
-    private static string Truncate(string value)
-        => value.Length <= 80 ? value : value[..80];
+    private static string SafeScalar(string value)
+    {
+        value = value.Trim();
+        return value.Length is > 0 and <= 40
+            && value.All(c => char.IsAsciiLetterOrDigit(c) || c is ' ' or '-' or '_' or '.')
+                ? value
+                : "unrecognized-outcome";
+    }
 }
