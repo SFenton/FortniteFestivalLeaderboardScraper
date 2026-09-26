@@ -15,6 +15,7 @@ sources:
   - docs/database/SnapshotGenerationRetirementControlPlane.md
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - docs/database/SnapshotGenerationDropRunbook.md
+  - docs/database/SnapshotGenerationArchiveRetirementRunbook.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
@@ -37,6 +38,7 @@ evidence remain the behavioral sources of truth.
 | Operate the plan-only retirement control plane | [Snapshot generation retirement plan control plane](database/SnapshotGenerationRetirementControlPlane.md) |
 | Produce current retention evidence after an external idle stop | [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md) |
 | Execute the gated snapshot-generation DROP/restore canary | [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md) |
+| Reclaim space from unreferenced snapshot generations | [Snapshot generation archive retirement](database/SnapshotGenerationArchiveRetirementRunbook.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
@@ -74,6 +76,7 @@ again. Verify their preconditions and current code before execution.
 - [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
+- [Snapshot generation archive retirement](database/SnapshotGenerationArchiveRetirementRunbook.md)
 - [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
