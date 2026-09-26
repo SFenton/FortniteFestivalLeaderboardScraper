@@ -194,6 +194,14 @@ public sealed class ScraperOptions
     public int ProxyContainerRestartCooldownSeconds { get; set; } = 90;
 
     /// <summary>
+    /// Full-worker host shutdown budget. A cancelled scrape pass bounds its own
+    /// resource cleanup to 30 seconds and then records its phase attempt as
+    /// interrupted; the default 30-second host timeout ended the process before
+    /// that record, which made mid-acquisition cutovers unnormalizable.
+    /// </summary>
+    public int WorkerShutdownTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
     /// Worker-only, opt-in PIA region rotation after repeated per-exit HTTP 429s.
     /// The Gluetun control API changes the actual tunnel, not just proxy selection.
     /// </summary>

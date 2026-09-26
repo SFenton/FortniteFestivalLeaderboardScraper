@@ -298,6 +298,14 @@ else
     builder.Services.AddSingleton<IProxyContainerRecycler, GluetunContainerRecycler>();
 if (hostedWorkerMode == HostedWorkerMode.FullWorker)
 {
+    var workerShutdownSeconds = Math.Clamp(
+        builder.Configuration.GetValue(
+            $"{ScraperOptions.Section}:{nameof(ScraperOptions.WorkerShutdownTimeoutSeconds)}",
+            new ScraperOptions().WorkerShutdownTimeoutSeconds),
+        30,
+        600);
+    builder.Services.Configure<HostOptions>(options =>
+        options.ShutdownTimeout = TimeSpan.FromSeconds(workerShutdownSeconds));
     // Gluetun can hold a control request until an in-progress OpenVPN
     // handshake gives up (about 20 seconds against a dead server).
     builder.Services.AddHttpClient(nameof(PiaRegionRotator))

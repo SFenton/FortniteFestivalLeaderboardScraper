@@ -71,6 +71,12 @@ overrides intentionally diverge between the public service and mutation worker.
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
 
+## Worker shutdown
+
+| Key | Default | Accepted range / effect |
+|---|---:|---|
+| `Scraper:WorkerShutdownTimeoutSeconds` | `120` | Full-worker host shutdown budget, clamped to 30–600 seconds. It must exceed the scrape pass's bounded 30-second cleanup so a stopped worker records its interrupted phase attempt; Compose `stop_grace_period` must be longer still (template: 180s). |
+
 ## Worker-only PIA region rotation
 
 Region rotation is separate from `Scraper:ProxyActiveStandby` and

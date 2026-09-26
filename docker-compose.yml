@@ -180,6 +180,9 @@ services:
     <<: *fst-worker-resources
     build: *fstservice_build
     container_name: fstworker
+    # Longer than Scraper:WorkerShutdownTimeoutSeconds (120s) so a cancelled
+    # scrape pass can record its interrupted attempt before SIGKILL.
+    stop_grace_period: 180s
     # Guard-only startup: bare Compose up excludes this service; the guard
     # explicitly enables the profile for config validation and targeted starts.
     profiles: ["worker"]

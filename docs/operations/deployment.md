@@ -190,7 +190,13 @@ worker still owns a database transaction. At the higher throughput reached with
 egress refresh, 30- and 150-second stop grace periods both ended in SIGKILL
 during 2026-09-26 cutovers (the host's 30-second shutdown window is followed by
 synchronous service disposal that can wait on in-flight writes). Give the
-worker stop a long grace period (600 seconds was used afterwards). If
+worker stop a long grace period (600 seconds was used afterwards). Since
+`Scraper:WorkerShutdownTimeoutSeconds` (default 120, clamped to 30–600) the
+full-worker host waits long enough for a cancelled pass to finish its bounded
+30-second cleanup and record the interrupted attempt; the repository template
+sets `stop_grace_period: 180s` on `fstworker` so every Compose stop or
+force-recreate outlasts that budget, and the production overlay needs the same
+value. If
 normalization is rejected, the guarded rollback restarts the previous image
 and its startup cleanup marks the candidate `abandoned_staging_cleanup` before
 starting a new scrape; published data is unaffected, but the new scrape
