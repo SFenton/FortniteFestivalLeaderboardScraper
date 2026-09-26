@@ -113,6 +113,25 @@ public sealed class PiaRegionRotatorTests
     }
 
     [Fact]
+    public async Task RotateAsync_ControlTimeoutsAreFailedStepsNotRotationDeadline()
+    {
+        var server = new RecordingControlServer { TimeoutPutRegions = { "DE Frankfurt", "US Las Vegas" } };
+        var recycler = new RecordingHealthRecycler(server);
+        using var client = new HttpClient(server);
+        var probe = new RecordingEgressProbe(server) { DeadRegions = { "US Seattle" } };
+        var rotator = CreateRotator(client, recycler, probe, maxAttempts: 2,
+            attemptTimeout: TimeSpan.FromMilliseconds(200));
+
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims(), ["US Seattle", "DE Frankfurt"]),
+            CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
+        Assert.Equal(1, recycler.RestartCount);
+        Assert.Equal("US Las Vegas", server.CurrentRegion);
+    }
+
+    [Fact]
     public async Task RotateAsync_RejectsUnqualifiedProviderBeforeAnyMutation()
     {
         var server = new RecordingControlServer { Provider = "airvpn" };
@@ -393,6 +412,7 @@ public sealed class PiaRegionRotatorTests
         public string Provider { get; set; } = "private internet access";
         public bool CrashOnRollback { get; set; }
         public bool FailSettingsRead { get; set; }
+        public HashSet<string> TimeoutPutRegions { get; } = [];
         public List<string> PutRegions { get; } = [];
         public int Reconnects { get; private set; }
         public int CachedPublicIpReads { get; private set; }
@@ -430,6 +450,8 @@ public sealed class PiaRegionRotatorTests
                 var region = payload.RootElement.GetProperty("provider")
                     .GetProperty("server_selection").GetProperty("regions")[0]
                     .GetString()!;
+                if (TimeoutPutRegions.Contains(region))
+                    throw new TaskCanceledException("simulated HttpClient timeout");
                 PutRegions.Add(region);
                 CurrentRegion = region;
                 return new HttpResponseMessage(HttpStatusCode.OK)

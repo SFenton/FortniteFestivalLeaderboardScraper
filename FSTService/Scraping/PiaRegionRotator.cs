@@ -232,9 +232,26 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                 attempts++;
                 var reconnect = candidate.Equals(runtimeRegion, StringComparison.OrdinalIgnoreCase);
                 mutated = true;
-                var outcome = reconnect
-                    ? await ReconnectAsync(tunnel.ControlUri, overall.Token)
-                    : await PutRegionAsync(tunnel.ControlUri, candidate, overall.Token);
+                string outcome;
+                try
+                {
+                    outcome = reconnect
+                        ? await ReconnectAsync(tunnel.ControlUri, overall.Token)
+                        : await PutRegionAsync(tunnel.ControlUri, candidate, overall.Token);
+                }
+                catch (Exception ex) when (!overall.IsCancellationRequested)
+                {
+                    // Gluetun can hold a control request while its VPN loop is
+                    // still negotiating with a dead server; an HttpClient
+                    // timeout is a failed candidate, not the rotation deadline.
+                    _log.LogWarning(
+                        "PIA {Action} for {Container} to {Region} failed: {Reason}; trying the next candidate.",
+                        reconnect ? "reconnect" : "region update",
+                        tunnel.ContainerName, candidate, ex.GetType().Name);
+                    runtimeRegion = await TryGetRegionAsync(tunnel.ControlUri, overall.Token) ?? runtimeRegion;
+                    continue;
+                }
+
                 if (!outcome.Equals("running", StringComparison.OrdinalIgnoreCase))
                 {
                     _log.LogWarning(
@@ -404,7 +421,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                 }
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _log.LogWarning(
                 "PIA proxy {Container} control rollback failed: {Reason}; restarting its container.",
@@ -533,6 +550,19 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
 
         var region = regions[0].GetString();
         return string.IsNullOrWhiteSpace(region) ? null : region;
+    }
+
+    private async Task<string?> TryGetRegionAsync(Uri controlUri, CancellationToken ct)
+    {
+        try
+        {
+            return await GetRegionAsync(controlUri, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _log.LogDebug("PIA control settings read failed: {Reason}", ex.GetType().Name);
+            return null;
+        }
     }
 
     private async Task<string> PutRegionAsync(Uri controlUri, string region, CancellationToken ct)

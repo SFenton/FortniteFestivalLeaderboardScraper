@@ -183,7 +183,11 @@ keeps the current tunnel if it still has real, peer-distinct egress (a
 rate-limited egress is acceptable here; candidates are often rejected only for
 that reason), because the prior or static region may itself be failing TLS.
 Otherwise it returns the exit to its prior region (or reconnects it) and
-verifies the same way. If control rollback fails,
+verifies the same way. Gluetun can hold a control request until an in-progress
+OpenVPN handshake with a dead server gives up (about 20 seconds), so the
+worker's control client allows 30 seconds and treats a control-call timeout as
+a failed step (next candidate, then container restart), never as the overall
+restoration deadline. If control rollback fails,
 it restarts only that proxy container, restoring its static Compose selector,
 and verifies again. If recovery cannot be verified, that exit is quarantined
 until operator intervention or a guarded worker restart. Cancellation stops
