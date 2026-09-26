@@ -2395,7 +2395,7 @@ public sealed class ResilientHttpExecutorTests
                 $"Expected specialized rate-limit reporting, got {kind}.");
         }
 
-        public void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter)
+        public void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter, string? mediaType = null)
             => RetryAfters.Add(retryAfter);
     }
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -288,7 +289,7 @@ public sealed class ProxyPoolTests
         var tunnel = await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal("gluetun-1", tunnel.ContainerName);
         Assert.Equal("http://gluetun-1:8000/", tunnel.ControlUri.ToString());
-        Assert.Equal(1, rotator.PeerCount);
+        Assert.Equal(["US Seattle", "DE Frankfurt"], rotator.LastRequest!.Regions);
         rotator.Complete(ProxyRegionRotationOutcome.Rotated);
 
         using var next = await pool.AcquireAsync(CancellationToken.None);
@@ -361,6 +362,181 @@ public sealed class ProxyPoolTests
         Assert.Contains("same-data-directory", Assert.Throws<InvalidOperationException>(
             () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
             .Message);
+    }
+
+    [Fact]
+    public async Task RegionRotation_SingleRateLimitHoldsExitOutAndRotatesToImmediatelyUsableEgress()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyCooldownSeconds = 30;
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null, "text/html");
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        using (var during = await pool.AcquireAsync(CancellationToken.None))
+            Assert.Equal(1, during!.Index);
+
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [0, 1]);
+    }
+
+    [Fact]
+    public async Task RegionRotation_RotatesUpToConfiguredConcurrency()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyRegionRotationMaxConcurrent = 2;
+        options.ProxyRegionRotationGlobalIntervalSeconds = 0;
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var first = RequestFor(0, "gluetun-1");
+        using var second = RequestFor(1, "gluetun-2");
+
+        pool.ReportRateLimited(first, null);
+        pool.ReportRateLimited(second, null);
+
+        await WaitUntilAsync(() => Task.FromResult(rotator.InvocationCount), 2);
+        Assert.Equal(2, rotator.MaxObservedConcurrency);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+    }
+
+    [Fact]
+    public async Task RegionRotation_ReportsFromPreviousTunnelGenerationAreIgnored()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyTimeoutFailureThreshold = 1;
+        options.ProxyCooldownSeconds = 30;
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+
+        var lease = await pool.AcquireAsync(CancellationToken.None);
+        using var stale = new HttpRequestMessage(HttpMethod.Get, "https://example.com/");
+        lease!.Apply(stale);
+        var index = lease.Index;
+        lease.Dispose();
+        pool.ReportRateLimited(stale, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [0, 1]);
+
+        pool.ReportRateLimited(stale, null);
+        pool.ReportFailure(stale, ProxyFailureKind.Transport);
+
+        Assert.Equal([0, 1], await SelectableIndexesAsync(pool, 2));
+        Assert.Equal(1, rotator.InvocationCount);
+        Assert.InRange(index, 0, 1);
+    }
+
+    [Fact]
+    public async Task RegionRotation_ClaimRejectsPeerEgressAndRecentlyRateLimitedEgress()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        var egress = IPAddress.Parse("198.51.100.20");
+        var rotator = new RecordingRegionRotator { RotatedEgress = egress };
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var first = RequestFor(0, "gluetun-1");
+        pool.ReportRateLimited(first, null);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [0, 1]);
+
+        Assert.Equal("peer-duplicate", pool.TryClaimEgress(1, egress, allowRateLimited: true));
+        var other = IPAddress.Parse("198.51.100.30");
+        Assert.Null(pool.TryClaimEgress(1, other, allowRateLimited: false));
+        Assert.Equal("peer-duplicate", pool.TryClaimEgress(0, other, allowRateLimited: false));
+
+        pool.ReportRateLimited(first, null);
+        Assert.Equal("rate-limited", pool.TryClaimEgress(0, egress, allowRateLimited: false));
+        Assert.Null(pool.TryClaimEgress(0, egress, allowRateLimited: true));
+        Assert.Equal(1, rotator.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegionRotation_RequestBudgetTriggersProactiveRefresh()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRequestBudget = 10;
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+
+        for (var i = 0; i < 9; i++)
+            pool.ReportSuccess(request);
+        await Task.Delay(80);
+        Assert.False(rotator.Started.IsCompleted);
+
+        pool.ReportSuccess(request);
+        var tunnel = await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("gluetun-1", tunnel.ContainerName);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+    }
+
+    [Fact]
+    public void RegionRotation_ReconnectInPlaceAllowsEmptyRegionList()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRegions = [];
+        Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()));
+
+        options.ProxyRegionRotationReconnectInPlace = true;
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator());
+        Assert.Equal(2, pool.EndpointCount);
+
+        options.ProxyRegionRotationMaxConcurrent = 3;
+        Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()));
+    }
+
+    private static async Task<List<int>> SelectableIndexesAsync(ProxyPool pool, int count)
+    {
+        var leases = new List<ProxyPool.ProxyLease>();
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(60));
+                try
+                {
+                    var lease = await pool.AcquireAsync(cancellation.Token);
+                    if (lease is not null)
+                        leases.Add(lease);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            return leases.Select(lease => lease.Index).Distinct().Order().ToList();
+        }
+        finally
+        {
+            foreach (var lease in leases)
+                lease.Dispose();
+        }
+    }
+
+    private static async Task WaitUntilAsync<T>(Func<Task<T>> probe, T expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        T last = await probe();
+        while (!Equals(last, expected) && !(last is System.Collections.IEnumerable a
+            && expected is System.Collections.IEnumerable b
+            && a.Cast<object>().SequenceEqual(b.Cast<object>())))
+        {
+            if (DateTime.UtcNow > deadline)
+                Assert.Fail($"Condition not reached; last value {last}.");
+            await Task.Delay(20);
+            last = await probe();
+        }
     }
 
     [Fact]
@@ -547,6 +723,9 @@ public sealed class ProxyPoolTests
         options.ProxyCurlTempDirectory =
             Path.Combine(Path.GetFullPath(options.DataDirectory), "curl-region-test");
         options.ProxyCooldownSeconds = 1;
+        options.ProxyRegionRotationMinIntervalSeconds = 5;
+        options.ProxyRegionRotationGlobalIntervalSeconds = 0;
+        options.ProxyRegionRotationDrainSeconds = 60;
         return options;
     }
 
@@ -603,30 +782,48 @@ public sealed class ProxyPoolTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _finished =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _concurrent;
+        private int _maxConcurrent;
+        private int _invocationCount;
 
         public Task<ProxyRegionTunnel> Started => _started.Task;
         public Task Finished => _finished.Task;
-        public int PeerCount { get; private set; }
+        public ProxyRegionRotationRequest? LastRequest { get; private set; }
         public int InvocationCount => Volatile.Read(ref _invocationCount);
+        public int MaxObservedConcurrency => Volatile.Read(ref _maxConcurrent);
+        public IPAddress? RotatedEgress { get; set; } = IPAddress.Parse("198.51.100.7");
+        public Func<Uri, IPAddress?> Egress { get; set; } = _ => null;
 
-        public async Task<ProxyRegionRotationOutcome> RotateAsync(
-            ProxyRegionTunnel tunnel,
-            IReadOnlyList<ProxyRegionTunnel> peers,
-            IReadOnlyList<string> regions,
-            int candidateOffset,
+        public async Task<ProxyRegionRotationResult> RotateAsync(
+            ProxyRegionRotationRequest request,
             CancellationToken ct)
         {
             Interlocked.Increment(ref _invocationCount);
-            PeerCount = peers.Count;
-            _started.TrySetResult(tunnel);
-            var outcome = await _result.Task.WaitAsync(ct);
-            _finished.TrySetResult();
-            return outcome;
+            var now = Interlocked.Increment(ref _concurrent);
+            int seen;
+            while (now > (seen = Volatile.Read(ref _maxConcurrent))
+                && Interlocked.CompareExchange(ref _maxConcurrent, now, seen) != seen)
+            {
+            }
+            LastRequest = request;
+            _started.TrySetResult(request.Tunnel);
+            try
+            {
+                var outcome = await _result.Task.WaitAsync(ct);
+                _finished.TrySetResult();
+                return new(outcome,
+                    outcome == ProxyRegionRotationOutcome.Rotated ? RotatedEgress : null);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _concurrent);
+            }
         }
+
+        public Task<IPAddress?> GetEgressAsync(Uri proxyUri, CancellationToken ct)
+            => Task.FromResult(Egress(proxyUri));
 
         public void Complete(ProxyRegionRotationOutcome outcome)
             => _result.TrySetResult(outcome);
-
-        private int _invocationCount;
     }
 }

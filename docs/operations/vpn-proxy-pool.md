@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: 65faa445
+last_verified_commit: 1ba0fdb6
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -99,56 +99,114 @@ failure counters but never shorten an active cooldown. Retry waits are
 cancellation-aware and no additional wire send is issued while all endpoints
 are cooling.
 
-### Optional PIA region changes
+### Optional PIA egress refresh (region rotation)
 
 `Scraper:ProxyRegionRotationEnabled` is **off by default**. The worker may
 enable it only with a complete aligned PIA pool, the existing curl transport
-and same-data-directory scratch, and an explicit list of operator-qualified
-PIA regions. It does not turn on legacy active/standby proxy selection.
-After the configured count of HTTP 429s for one exit, it schedules at most
-one region change for that exit; a single global gate and minimum global
-interval prevent mass tunnel reconnections. Per-exit minimum intervals bound
-retries, including unsuccessful trials. Successful requests reset the 429
-trigger count. CDN blocks and transport errors still use their existing
-separate handling.
+and same-data-directory scratch, and either an explicit list of
+operator-qualified PIA regions or reconnect-in-place. It does not turn on
+legacy active/standby proxy selection.
 
-When the gate reaches an exit, the worker holds it out of selection and waits
-up to 60 seconds for in-flight leases to drain. It reads the Gluetun control
-settings **without logging the response** (which can contain VPN
-credentials), requires a single-region OpenVPN PIA selector with no competing
-city/name/country/hostname filters, and verifies its current egress and
-every peer's **real** egress through its proxy. Cached Gluetun public-IP
-metadata alone cannot establish distinctness. The worker then sends only a region-selector
-override to the internal Gluetun `PUT /v1/vpn/settings` endpoint. This changes
-the actual PIA tunnel; switching to another static proxy is not a region
-change. The single candidate must pass Docker health and a real curl proxy
-egress check that differs from its previous exit and every other effective
-exit. This canary uses the existing benign IP-echo endpoint, **not Epic**.
-A `running` control response or Docker `healthy` alone does not qualify a
-new tunnel: neither detects all OpenVPN TLS failures.
+#### Why it exists: per-IP edge rate limits
 
-On failure, the worker attempts to restore the prior region and verifies the
-real proxy again. It waits up to four minutes for that control rollback to
-establish its tunnel; a healthy PIA region can take longer than 90 seconds.
-If control rollback fails, it restarts only that proxy
-container, restoring its static Compose selector, and rechecks health and
-distinct egress. If recovery cannot be verified, that exit is quarantined
-indefinitely until operator intervention or a guarded worker restart. The
-entire rollback is capped at eight minutes. No
-other exit is rotated concurrently; an existing `Retry-After` deadline is
-never shortened. Cancellation stops queued waits and attempts restoration
-after a settings update. Check warnings/errors and the effective pool before
-restarting any quarantined exit.
+Since September 2026 Epic's leaderboard edge returns HTTP 429 with an HTML
+"Rate limited — you are visiting our service too frequently" page (not the
+JSON `errors.com.epicgames.common.throttled` body). The limit is per egress IP
+and behaves like a token bucket: a fresh egress served roughly 50–150
+requests before its first 429, while an exhausted egress returned 429 within
+about one second of every 45-second cooldown, leaking only about 0.3
+successful requests per second. With 24 static exits that capped leaderboard
+acquisition near 7–10 successful requests per second, with each exit cooled
+about 95% of the time. Changing the region label alone does not help; what
+matters is a **new, rested egress IP**.
 
-An allowlisted region is an **eligibility and safety boundary**, not evidence
-that changing cities relieves Epic's rate limits. Qualify candidates on a
-non-effective spare first; compare official-scrape progress, 429s and request
-denominators before making efficacy claims. Never add speculative Epic trial
-traffic. Gluetun control settings are ephemeral: Docker/container restart
-returns a rotated exit to the production-owned static Compose region. The
-host-side boot guard requalifies every effective exit and preserves the
-published read path before starting the worker. API/web roles cannot enable
-region changes or receive Docker control.
+#### Trigger and scheduling
+
+After the configured count of consecutive HTTP 429s for one exit (production
+uses 1), the pool records that exit's known egress as rate-limited, holds the
+exit out of selection immediately, and schedules one refresh. An optional
+request budget can refresh an exit proactively after a number of successes on
+one egress. A per-exit minimum interval, an optional global start spacing, and
+a bounded number of concurrent refreshes (never the same exit twice) prevent
+mass reconnection. Successful requests reset the 429 trigger count. CDN blocks
+and transport errors keep their existing separate handling.
+
+#### Refresh
+
+The worker waits up to `ProxyRegionRotationDrainSeconds` for in-flight leases
+to finish, then proceeds; every lease is stamped with a tunnel generation, and
+success/failure/429 reports from an older generation are ignored so a request
+cut by the reconnect cannot cool, burn, or restart the replacement tunnel.
+
+It reads the Gluetun control settings **without logging the response** (which
+can contain VPN credentials) and requires a single-region OpenVPN PIA selector
+with no competing city/name/country/hostname filters. Candidates are, in
+order: an in-place reconnect of the current region (`PUT /v1/vpn/status`
+stopped, then running; Gluetun's random selection connects another server),
+followed by the qualified region list rotated per exit and attempt (`PUT
+/v1/vpn/settings` with only a region selector). A healthy PIA reconnect
+produces real egress in about 3 seconds; a dead server fails its OpenVPN TLS
+handshake after about 20 seconds, so each candidate has a short verification
+window and the rotator moves to the next candidate instead of waiting.
+
+A candidate is accepted only when a real curl IP-echo probe through that exit's
+proxy (the existing benign endpoint, **not Epic**) returns an egress that:
+
+- differs from the exit's previous egress;
+- is not another exit's known or pending egress (claimed atomically by the
+  pool, so concurrent refreshes cannot land on the same egress);
+- has not returned HTTP 429 within `ProxyRegionRotationBurnedEgressTtlSeconds`;
+
+and the control API reports the candidate region and Docker reports the
+container healthy. A reachable but unacceptable egress moves to the next
+candidate after a short settle. Neither a `running` control response, Docker
+`healthy`, nor cached Gluetun public-IP metadata alone qualifies a tunnel.
+
+A rotated exit is immediately selectable (its old cooldown belonged to the
+spent egress); an explicit `Retry-After` is still honored.
+
+#### Restoration and quarantine
+
+When every candidate fails or the overall deadline expires, the worker returns
+the exit to its prior region (or reconnects it) and verifies real, peer-distinct
+egress (a rate-limited egress is acceptable here). If control rollback fails,
+it restarts only that proxy container, restoring its static Compose selector,
+and verifies again. If recovery cannot be verified, that exit is quarantined
+until operator intervention or a guarded worker restart. Cancellation stops
+queued waits and attempts restoration after a tunnel change. Gluetun control
+settings are ephemeral: Docker/container restart returns a refreshed exit to
+the production-owned static Compose region. The host-side boot guard
+requalifies every effective exit before starting the worker. API/web roles
+cannot enable refreshes or receive Docker control.
+
+#### Egress census and telemetry
+
+Because the pool no longer probes every peer on each refresh, it keeps each
+exit's egress current with a background census: at most one IP-echo probe per
+exit every five minutes, two at a time, skipping refreshing or quarantined
+exits. An out-of-band change (for example Gluetun's own health restart) starts
+a new generation; two exits sharing an egress schedule a refresh.
+
+Once a minute the pool logs `Proxy pool summary` with successful and
+rate-limited responses (and how many 429s were HTML edge pages), stale
+reports, refreshes scheduled/started/rotated/restored/deferred/unsafe, mean
+refresh duration, mean successes per retired egress, and exit states
+(selectable, cooling, refreshing, quarantined, known egress, rate-limited
+egress set size). Use these denominators, not raw 429 counts, to judge
+throughput changes.
+
+#### Qualifying regions
+
+An allowlisted region is an **eligibility and safety boundary**. Qualify it on
+a non-effective spare first with repeated control-API region changes and
+reconnects plus real IP-echo egress, never Epic traffic. On 2026-09-26 spare
+trials, US New York, US Denver, CA Montreal, US Florida, US California,
+Netherlands, and CA Vancouver reconnected in about 1–9 seconds on every
+attempt. US Texas, US Seattle, US Chicago, US Atlanta, US Silicon Valley, US
+East Streaming Optimized, UK London, DE Frankfurt, and US Washington DC failed
+every OpenVPN TLS handshake; CA Toronto, US Ohio, US Salt Lake City,
+Switzerland, and France were intermittent. Requalify before relying on these
+lists; PIA server health changes.
 
 ## Self-heal boundary
 

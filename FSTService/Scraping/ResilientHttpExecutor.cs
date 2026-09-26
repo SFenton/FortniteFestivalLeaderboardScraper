@@ -948,9 +948,7 @@ public sealed class ResilientHttpExecutor
                         using var proxyLease = await proxyPool.AcquireAsync(sendCts.Token)
                             ?? throw new InvalidOperationException(
                                 "Curl proxy transport requires at least one configured endpoint.");
-                        sentRequest.Options.Set(ProxyRequestState.EndpointIndex, proxyLease.Index);
-                        sentRequest.Options.Set(ProxyRequestState.EndpointName, proxyLease.Name);
-                        sentRequest.Options.Set(ProxyRequestState.EndpointProxyUri, proxyLease.ProxyUri);
+                        proxyLease.Apply(sentRequest);
                         proxyPool.PrepareRequest(sentRequest);
                         RecordHttpSend();
 
@@ -1206,7 +1204,10 @@ public sealed class ResilientHttpExecutor
 
                 if (statusCode == 429)
                 {
-                    ReportRateLimited(sentRequest, retryAfter);
+                    ReportRateLimited(
+                        sentRequest,
+                        retryAfter,
+                        res.Content.Headers.ContentType?.MediaType);
                 }
 
                 if (retryable && statusAttempt < maxRetries)
@@ -1258,11 +1259,14 @@ public sealed class ResilientHttpExecutor
         }
     }
 
-    private void ReportRateLimited(HttpRequestMessage request, TimeSpan? retryAfter)
+    private void ReportRateLimited(
+        HttpRequestMessage request,
+        TimeSpan? retryAfter,
+        string? mediaType)
     {
         if (_proxyHealth is IProxyRateLimitReporter rateLimitReporter)
         {
-            rateLimitReporter.ReportRateLimited(request, retryAfter);
+            rateLimitReporter.ReportRateLimited(request, retryAfter, mediaType);
         }
         else
         {

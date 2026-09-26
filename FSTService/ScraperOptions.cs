@@ -211,7 +211,46 @@ public sealed class ScraperOptions
 
     public int ProxyRegionRotationGlobalIntervalSeconds { get; set; } = 60;
 
+    /// <summary>
+    /// Overall cap for finding a verified replacement egress across all
+    /// candidate attempts of one rotation (before restoration begins).
+    /// </summary>
     public int ProxyRegionRotationProbeTimeoutSeconds { get; set; } = 240;
+
+    /// <summary>
+    /// Per-candidate verification window. A dead PIA server usually fails its
+    /// OpenVPN TLS handshake after about 20 seconds, while a healthy reconnect
+    /// produces real egress in a few seconds, so a short window lets the
+    /// rotator move to another random server instead of waiting on a dead one.
+    /// </summary>
+    public int ProxyRegionRotationAttemptTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>Maximum candidate reconnects/region changes per rotation.</summary>
+    public int ProxyRegionRotationMaxAttempts { get; set; } = 2;
+
+    /// <summary>Exits that may reconnect concurrently (never the same exit twice).</summary>
+    public int ProxyRegionRotationMaxConcurrent { get; set; } = 1;
+
+    /// <summary>
+    /// When true, the first candidate reconnects the exit's current region
+    /// (Gluetun picks another random server) before trying listed regions.
+    /// </summary>
+    public bool ProxyRegionRotationReconnectInPlace { get; set; }
+
+    /// <summary>
+    /// How long an egress IP that returned HTTP 429 is considered rate-limited;
+    /// a rotation rejects a replacement egress that is still inside this window.
+    /// </summary>
+    public int ProxyRegionRotationBurnedEgressTtlSeconds { get; set; } = 900;
+
+    /// <summary>
+    /// Optional proactive refresh after this many successful requests on one
+    /// egress. Zero disables proactive refresh (429-triggered only).
+    /// </summary>
+    public int ProxyRegionRotationRequestBudget { get; set; }
+
+    /// <summary>Maximum wait for in-flight leases to drain before reconnecting.</summary>
+    public int ProxyRegionRotationDrainSeconds { get; set; } = 60;
 
     /// <summary>
     /// Which instruments to query.

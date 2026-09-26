@@ -11,28 +11,85 @@ public sealed class PiaRegionRotatorTests
     private static readonly ProxyRegionTunnel Target =
         new("gluetun-1", new Uri("http://gluetun-1:8888"),
             new Uri("http://gluetun-1:8000"));
-    private static readonly ProxyRegionTunnel Peer =
-        new("gluetun-2", new Uri("http://gluetun-2:8888"),
-            new Uri("http://gluetun-2:8000"));
+    private static readonly IPAddress Original = IPAddress.Parse("192.0.2.1");
+    private static readonly IPAddress Peer = IPAddress.Parse("192.0.2.2");
 
     [Fact]
     public async Task RotateAsync_ChangesOnlyPiaRegion_AndVerifiesNewDistinctProxyEgress()
     {
         var server = new RecordingControlServer();
         var recycler = new RecordingHealthRecycler(server);
+        var claims = new RecordingClaims();
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
-            new RecordingEgressProbe(server), Options(),
-            NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, recycler, new RecordingEgressProbe(server));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle", "DE Frankfurt"], 0,
-            CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(claims, ["US Seattle", "DE Frankfurt"]), CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Rotated, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Rotated, result.Outcome);
+        Assert.Equal("US Seattle", result.Region);
+        Assert.Equal(IPAddress.Parse("192.0.2.10"), result.Egress);
         Assert.Equal("US Seattle", server.CurrentRegion);
         Assert.Equal(["US Seattle"], server.PutRegions);
+        Assert.Equal(0, server.Reconnects);
         Assert.Equal(0, recycler.RestartCount);
+        Assert.Equal(result.Egress, claims.LastClaimed);
+    }
+
+    [Fact]
+    public async Task RotateAsync_ReconnectInPlace_KeepsRegionAndAcceptsNewServerEgress()
+    {
+        var server = new RecordingControlServer();
+        using var client = new HttpClient(server);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server));
+
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims(), [], reconnectInPlace: true),
+            CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Rotated, result.Outcome);
+        Assert.Equal("US Las Vegas", result.Region);
+        Assert.Equal(1, server.Reconnects);
+        Assert.Empty(server.PutRegions);
+        Assert.NotEqual(Original, result.Egress);
+    }
+
+    [Fact]
+    public async Task RotateAsync_ReconnectToRateLimitedEgress_TriesAnotherServer()
+    {
+        var server = new RecordingControlServer();
+        var claims = new RecordingClaims();
+        claims.RateLimited.Add(IPAddress.Parse("192.0.2.21"));
+        using var client = new HttpClient(server);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server), maxAttempts: 3);
+
+        var result = await rotator.RotateAsync(
+            Request(claims, [], reconnectInPlace: true), CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Rotated, result.Outcome);
+        Assert.Equal(IPAddress.Parse("192.0.2.22"), result.Egress);
+        Assert.Equal(2, server.Reconnects);
+        Assert.Equal(2, result.Attempts);
+    }
+
+    [Fact]
+    public async Task RotateAsync_DeadCandidate_FallsBackToNextRegionWithoutWaitingForOverallDeadline()
+    {
+        var server = new RecordingControlServer();
+        using var client = new HttpClient(server);
+        var probe = new RecordingEgressProbe(server) { DeadRegions = { "US Seattle" } };
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server), probe,
+            maxAttempts: 2, attemptTimeout: TimeSpan.FromMilliseconds(250));
+
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims(), ["US Seattle", "DE Frankfurt"]),
+            CancellationToken.None);
+
+        Assert.Equal(ProxyRegionRotationOutcome.Rotated, result.Outcome);
+        Assert.Equal("DE Frankfurt", result.Region);
+        Assert.Equal(["US Seattle", "DE Frankfurt"], server.PutRegions);
     }
 
     [Fact]
@@ -40,16 +97,15 @@ public sealed class PiaRegionRotatorTests
     {
         var server = new RecordingControlServer { Provider = "airvpn" };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client,
-            new RecordingHealthRecycler(server),
-            new RecordingEgressProbe(server), Options(),
-            NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims(), ["US Seattle"]), CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Deferred, result.Outcome);
         Assert.Empty(server.PutRegions);
+        Assert.Equal(0, server.Reconnects);
     }
 
     [Fact]
@@ -57,15 +113,15 @@ public sealed class PiaRegionRotatorTests
     {
         var server = new RecordingControlServer();
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client,
-            new RecordingHealthRecycler(server),
-            new RecordingEgressProbe(server) { DuplicateNewEgress = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server) { DuplicateNewEgress = true }, maxAttempts: 1);
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
+        Assert.Equal(Original, result.Egress);
         Assert.Equal("US Las Vegas", server.CurrentRegion);
         Assert.Equal(["US Seattle", "US Las Vegas"], server.PutRegions);
         Assert.Equal(0, server.CachedPublicIpReads);
@@ -80,36 +136,32 @@ public sealed class PiaRegionRotatorTests
             BlockAfterCandidateUpdate = true,
         };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client,
-            new RecordingHealthRecycler(server), probe, Options(),
-            NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server), probe);
         using var cancellation = new CancellationTokenSource();
 
         var rotation = rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, cancellation.Token);
+            Request(new RecordingClaims(), ["US Seattle"]), cancellation.Token);
         await probe.CandidateProbeStarted.WaitAsync(TimeSpan.FromSeconds(2));
         cancellation.Cancel();
-        var outcome = await rotation.WaitAsync(TimeSpan.FromSeconds(3));
+        var result = await rotation.WaitAsync(TimeSpan.FromSeconds(3));
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
         Assert.Equal("US Las Vegas", server.CurrentRegion);
         Assert.Equal(["US Seattle", "US Las Vegas"], server.PutRegions);
     }
 
     [Fact]
-    public async Task RotateAsync_MissingPeerProxyEgress_NeverChangesTunnel()
+    public async Task RotateAsync_ControlReadFailure_NeverChangesTunnel()
     {
-        var server = new RecordingControlServer();
+        var server = new RecordingControlServer { FailSettingsRead = true };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client,
-            new RecordingHealthRecycler(server),
-            new RecordingEgressProbe(server) { PeerUnavailable = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims(), ["US Seattle"]), CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Deferred, result.Outcome);
         Assert.Empty(server.PutRegions);
     }
 
@@ -119,14 +171,14 @@ public sealed class PiaRegionRotatorTests
         var server = new RecordingControlServer { CrashOnRollback = true };
         var recycler = new RecordingHealthRecycler(server);
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
-            new RecordingEgressProbe(server) { DuplicateNewEgress = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, recycler,
+            new RecordingEgressProbe(server) { DuplicateNewEgress = true }, maxAttempts: 1);
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
         Assert.Equal("US Las Vegas", server.CurrentRegion);
         Assert.Equal(1, recycler.RestartCount);
     }
@@ -137,20 +189,20 @@ public sealed class PiaRegionRotatorTests
         var server = new RecordingControlServer();
         var recycler = new RecordingHealthRecycler(server);
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
+        var rotator = CreateRotator(client, recycler,
             new RecordingEgressProbe(server)
             {
                 DuplicateNewEgress = true,
                 RestorationFailuresRemaining = 2,
             },
-            Options(), NullLogger<PiaRegionRotator>.Instance,
-            rollbackProbeTimeout: TimeSpan.FromMilliseconds(500),
-            pollInterval: TimeSpan.FromMilliseconds(40));
+            maxAttempts: 1,
+            rollbackProbeTimeout: TimeSpan.FromMilliseconds(500));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Restored, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Restored, result.Outcome);
         Assert.Equal(["US Seattle", "US Las Vegas"], server.PutRegions);
         Assert.Equal(0, recycler.RestartCount);
     }
@@ -161,14 +213,14 @@ public sealed class PiaRegionRotatorTests
         var server = new RecordingControlServer { CrashOnRollback = true };
         var recycler = new RecordingHealthRecycler(server) { RestartSucceeds = false };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
-            new RecordingEgressProbe(server) { DuplicateNewEgress = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance);
+        var rotator = CreateRotator(client, recycler,
+            new RecordingEgressProbe(server) { DuplicateNewEgress = true }, maxAttempts: 1);
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, result.Outcome);
         Assert.Equal(1, recycler.RestartCount);
     }
 
@@ -178,16 +230,16 @@ public sealed class PiaRegionRotatorTests
         var server = new RecordingControlServer { CrashOnRollback = true };
         var recycler = new RecordingHealthRecycler(server) { HangOnRestart = true };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
-            new RecordingEgressProbe(server) { DuplicateNewEgress = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance,
+        var rotator = CreateRotator(client, recycler,
+            new RecordingEgressProbe(server) { DuplicateNewEgress = true }, maxAttempts: 1,
             recoveryTimeout: TimeSpan.FromMilliseconds(200));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None)
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(3));
 
-        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, result.Outcome);
         Assert.Equal(1, recycler.RestartCount);
     }
 
@@ -200,17 +252,43 @@ public sealed class PiaRegionRotatorTests
             RestartSelectsWrongRegion = true,
         };
         using var client = new HttpClient(server);
-        var rotator = new PiaRegionRotator(client, recycler,
-            new RecordingEgressProbe(server) { DuplicateNewEgress = true },
-            Options(), NullLogger<PiaRegionRotator>.Instance,
+        var rotator = CreateRotator(client, recycler,
+            new RecordingEgressProbe(server) { DuplicateNewEgress = true }, maxAttempts: 1,
             restartTimeout: TimeSpan.FromMilliseconds(200));
 
-        var outcome = await rotator.RotateAsync(
-            Target, [Peer], ["US Seattle"], 0, CancellationToken.None);
+        var result = await rotator.RotateAsync(
+            Request(new RecordingClaims { Peers = { Peer } }, ["US Seattle"]),
+            CancellationToken.None);
 
-        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, outcome);
+        Assert.Equal(ProxyRegionRotationOutcome.Unsafe, result.Outcome);
         Assert.Equal("US Seattle", server.CurrentRegion);
     }
+
+    [Fact]
+    public void BuildCandidates_ReconnectInPlaceThenRotatesListedRegionsFromOffset()
+    {
+        var server = new RecordingControlServer();
+        using var client = new HttpClient(server);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server), maxAttempts: 4);
+
+        var candidates = rotator.BuildCandidates(
+            "US Las Vegas",
+            Request(new RecordingClaims(), ["CA Vancouver", "US Las Vegas", "US Denver"],
+                reconnectInPlace: true, offset: 2));
+
+        Assert.Equal(
+            ["US Las Vegas", "US Denver", "CA Vancouver", "US Las Vegas"],
+            candidates);
+    }
+
+    [Theory]
+    [InlineData("running", "running")]
+    [InlineData("{\"outcome\":\"running\"}", "running")]
+    [InlineData(" {\"outcome\":\"stopped\"}\n", "stopped")]
+    [InlineData("settings left unchanged", "settings left unchanged")]
+    public void ParseOutcome_AcceptsPlainAndJsonGluetunResponses(string body, string expected)
+        => Assert.Equal(expected, PiaRegionRotator.ParseOutcome(body));
 
     [Fact]
     public async Task CurlEgressProbe_UsesSpecifiedProxyAndAcceptsOnlyRealIpResponse()
@@ -239,15 +317,62 @@ public sealed class PiaRegionRotatorTests
         Assert.Equal(2, called);
     }
 
+    private static ProxyRegionRotationRequest Request(
+        RecordingClaims claims,
+        IReadOnlyList<string> regions,
+        bool reconnectInPlace = false,
+        int offset = 0)
+        => new(Target, Original, claims, regions, offset, reconnectInPlace);
+
+    private static PiaRegionRotator CreateRotator(
+        HttpClient client,
+        IProxyContainerRecycler recycler,
+        IProxyEgressProbe probe,
+        int maxAttempts = 2,
+        TimeSpan? attemptTimeout = null,
+        TimeSpan? rollbackProbeTimeout = null,
+        TimeSpan? recoveryTimeout = null,
+        TimeSpan? restartTimeout = null)
+    {
+        var options = Options();
+        options.ProxyRegionRotationMaxAttempts = maxAttempts;
+        return new PiaRegionRotator(client, recycler, probe, options,
+            NullLogger<PiaRegionRotator>.Instance,
+            recoveryTimeout: recoveryTimeout,
+            restartTimeout: restartTimeout,
+            rollbackProbeTimeout: rollbackProbeTimeout,
+            pollInterval: TimeSpan.FromMilliseconds(20),
+            attemptTimeout: attemptTimeout ?? TimeSpan.FromMilliseconds(500));
+    }
+
     private static ScraperOptions Options()
-        => new() { ProxyRegionRotationProbeTimeoutSeconds = 1 };
+        => new() { ProxyRegionRotationProbeTimeoutSeconds = 2 };
+
+    private sealed class RecordingClaims : IProxyEgressClaims
+    {
+        public HashSet<IPAddress> Peers { get; } = [];
+        public HashSet<IPAddress> RateLimited { get; } = [];
+        public IPAddress? LastClaimed { get; private set; }
+
+        public string? TryClaim(IPAddress address, bool allowRateLimited)
+        {
+            if (Peers.Contains(address))
+                return "peer-duplicate";
+            if (!allowRateLimited && RateLimited.Contains(address))
+                return "rate-limited";
+            LastClaimed = address;
+            return null;
+        }
+    }
 
     private sealed class RecordingControlServer : HttpMessageHandler
     {
         public string CurrentRegion { get; set; } = "US Las Vegas";
         public string Provider { get; set; } = "private internet access";
         public bool CrashOnRollback { get; set; }
+        public bool FailSettingsRead { get; set; }
         public List<string> PutRegions { get; } = [];
+        public int Reconnects { get; private set; }
         public int CachedPublicIpReads { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -257,6 +382,8 @@ public sealed class PiaRegionRotatorTests
             {
                 if (request.Method == HttpMethod.Get)
                 {
+                    if (FailSettingsRead)
+                        return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
                     return Json(new
                     {
                         type = "openvpn",
@@ -291,6 +418,17 @@ public sealed class PiaRegionRotatorTests
                 };
             }
 
+            if (request.RequestUri.AbsolutePath == "/v1/vpn/status"
+                && request.Method == HttpMethod.Put)
+            {
+                using var payload = JsonDocument.Parse(
+                    await request.Content!.ReadAsStringAsync(cancellationToken));
+                var status = payload.RootElement.GetProperty("status").GetString()!;
+                if (status == "running")
+                    Reconnects++;
+                return Json(new { outcome = status });
+            }
+
             if (request.RequestUri.AbsolutePath == "/v1/publicip/ip")
             {
                 CachedPublicIpReads++;
@@ -312,9 +450,9 @@ public sealed class PiaRegionRotatorTests
     {
         private readonly RecordingControlServer _server;
         public bool DuplicateNewEgress { get; set; }
-        public bool PeerUnavailable { get; set; }
         public bool BlockAfterCandidateUpdate { get; set; }
         public int RestorationFailuresRemaining { get; set; }
+        public HashSet<string> DeadRegions { get; } = [];
         private readonly TaskCompletionSource _candidateProbeStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task CandidateProbeStarted => _candidateProbeStarted.Task;
@@ -324,30 +462,33 @@ public sealed class PiaRegionRotatorTests
 
         public async Task<IPAddress?> GetAddressAsync(Uri proxyUri, CancellationToken ct)
         {
-            if (proxyUri.Host == "gluetun-2" && PeerUnavailable)
+            if (DeadRegions.Contains(_server.CurrentRegion))
                 return null;
-            if (proxyUri.Host == "gluetun-1"
-                && _server.CurrentRegion == "US Las Vegas"
+            if (_server.CurrentRegion == "US Las Vegas"
                 && _server.PutRegions.Count > 0
                 && RestorationFailuresRemaining > 0)
             {
                 RestorationFailuresRemaining--;
                 return null;
             }
-            if (proxyUri.Host == "gluetun-1"
-                && _server.CurrentRegion != "US Las Vegas"
+            if (_server.CurrentRegion != "US Las Vegas"
                 && BlockAfterCandidateUpdate)
             {
                 _candidateProbeStarted.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             }
 
-            var address = proxyUri.Host == "gluetun-2"
-                ? "192.0.2.2"
-                : _server.CurrentRegion == "US Las Vegas"
-                    ? "192.0.2.1"
-                    : DuplicateNewEgress ? "192.0.2.2" : "192.0.2.3";
-            return IPAddress.Parse(address);
+            if (_server.CurrentRegion == "US Las Vegas")
+            {
+                return _server.Reconnects == 0 || _server.PutRegions.Count > 0
+                    ? Original
+                    : IPAddress.Parse($"192.0.2.{20 + _server.Reconnects}");
+            }
+
+            if (DuplicateNewEgress)
+                return Peer;
+            return IPAddress.Parse(
+                $"192.0.2.{10 + _server.PutRegions.Count - 1 + _server.Reconnects}");
         }
     }
 
