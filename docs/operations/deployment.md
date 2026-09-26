@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: fac42684
+last_verified_commit: 0e06e61e
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -149,7 +149,7 @@ provider keys into the repository.
 The 24-endpoint configuration excludes two TLS-failing exits and promotes a
 healthy Vancouver spare; its endpoint count, four arrays, and worker
 dependencies were changed together under the worker lock. As of 2026-09-26
-the guarded worker runs a locally built immutable image for `fac42684`
+the guarded worker runs a locally built immutable image for `0e06e61e`
 (branch `fix/vpn-fast-egress-refresh-20260926`) with the egress refresh
 enabled in the production-owned worker env file; the API and latest-master web
 images remain unchanged.
@@ -182,6 +182,19 @@ its Gluetun control API (credential-free region payload, no Compose change)
 restored real egress within seconds during the 2026-09-26 cutover; a later
 container restart returns the static region. Replacing those static regions
 in the production overlay is a separate operator change.
+
+A worker stopped for a mid-acquisition cutover must exit gracefully so it can
+record its phase attempt as `interrupted`; native interrupted-acquisition
+normalization rejects a candidate whose attempt is still `running` or whose
+worker still owns a database transaction. At the higher throughput reached with
+egress refresh, 30- and 150-second stop grace periods both ended in SIGKILL
+during 2026-09-26 cutovers (the host's 30-second shutdown window is followed by
+synchronous service disposal that can wait on in-flight writes). Give the
+worker stop a long grace period (600 seconds was used afterwards). If
+normalization is rejected, the guarded rollback restarts the previous image
+and its startup cleanup marks the candidate `abandoned_staging_cleanup` before
+starting a new scrape; published data is unaffected, but the new scrape
+resumes with less completed work.
 
 The in-process control update changes a PIA container's **runtime** region,
 not its production Compose environment. On container restart the static

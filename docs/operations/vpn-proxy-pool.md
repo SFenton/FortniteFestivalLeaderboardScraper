@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-26
-last_verified_commit: fac42684
+last_verified_commit: 0e06e61e
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -297,19 +297,30 @@ started. Vancouver's tunnel and egress qualification is not evidence that
 its city avoids Epic 429s; compare bounded official-scrape outcomes before
 claiming regional relief.
 
-On 2026-09-26 the owner-authorized egress-refresh release (`fac42684`) stopped
-scrape 1430 through the same interrupted-acquisition normalization and
-official failure-isolation paths (published 1424 preserved) and started scrape
-1431. The production worker env enables refresh with the seven qualified
-regions above, reconnect-in-place, a one-429 trigger, 10-second per-exit
-interval, 1-second global spacing, eight concurrent refreshes, four
+On 2026-09-26 the owner-authorized egress-refresh release stopped scrape 1430
+through the interrupted-acquisition normalization and official
+failure-isolation paths (published 1424 preserved) and started scrape 1431 on
+`fac42684`. Follow-up builds (`c18f0f48`, then `0e06e61e`) kept per-exit edge
+429s out of the adaptive limiter, kept working tunnels during restoration, and
+stopped misreading Gluetun control timeouts as the restoration deadline.
+Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
+workers could not record an interrupted attempt within the shutdown window
+(see [Deployment](deployment.md)); publication pointers were unchanged
+throughout. The production worker env now enables refresh with the seven
+qualified regions above, reconnect-in-place, a one-429 trigger, 10-second
+per-exit interval, 1-second global spacing, twelve concurrent refreshes, four
 12-second attempts within 90 seconds, a 300-second rate-limited egress window,
-and a 5-second drain. Against the prior worker's last five minutes (about 390
-successful leaderboard requests and 6–7 progress units per minute), the first
-twelve minutes of 1431 sustained about 3,700–6,000 successful requests and
-50–60 units per minute, with 3–4% HTTP 429s, refreshes averaging 6–10
-seconds, about 90–100 successes per retired egress, no quarantines, and no
-retry exhaustion.
+and a 5-second drain.
+
+Against the prior worker's last five minutes (about 390 successful
+leaderboard requests and 6–7 progress units per minute), the refresh builds
+sustained about 3,700–4,400 successful requests and 50–60 units per minute,
+with 3–5% HTTP 429s (all HTML edge pages), refreshes averaging 6–9 seconds,
+about 70–95 successes per retired egress, no retry exhaustion, and (on
+`0e06e61e`) no quarantines. Remaining capacity is bounded by exit
+availability: at any moment roughly 6–11 of 24 exits are refreshing, mostly
+because about half of first candidates return an egress still inside the
+rate-limited window.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
