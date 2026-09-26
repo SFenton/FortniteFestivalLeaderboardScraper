@@ -1197,6 +1197,20 @@ public sealed class ServiceRuntimeState
     public CatalogPublicationLagState CatalogLag { get; init; } = new();
 }
 
+/// <summary>
+/// Songs present in the exact live provider catalog but absent from the
+/// current publication's catalog snapshot: ingested, not yet published.
+/// </summary>
+public sealed record CatalogAdditionsAwaitingPublication(
+    long? PublishedPublicationId,
+    long? LiveCatalogVersion,
+    string? LiveContentHash,
+    IReadOnlyList<FortniteFestival.Core.Song> Songs)
+{
+    public static CatalogAdditionsAwaitingPublication Empty { get; } =
+        new(null, null, null, Array.Empty<FortniteFestival.Core.Song>());
+}
+
 public sealed class CatalogPublicationLagState
 {
     public long? LiveCatalogVersion { get; init; }

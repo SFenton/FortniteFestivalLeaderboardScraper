@@ -218,7 +218,7 @@ See [Path generation](path-generation.md).
 The path route validates the eight generated solo instruments, including the
 two plastic-drums scoring modes backed by Epic's shared `pd` chart.
 
-The current source contains 81 HTTP mappings across 14 route-bearing endpoint
+The current source contains 82 HTTP mappings across 14 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:
 
 - `PublicationBound`
@@ -378,8 +378,11 @@ live/published/working catalog identities, nullable live-versus-published
 change counts, and path-generation pending/review totals. The count comparison
 is memoized by catalog version/hash and is unknown when either exact baseline
 is absent. `songs_changed` broadcasts additions, removals, and metadata
-changes, but clients refresh service-info rather than treating the message as
-permission to expose unpublished songs.
+changes; clients refresh service-info and `/api/songs/incoming`. The
+operational-live `/api/songs/incoming` route lists only songs added after the
+current publication, metadata only (no maxima, paths, or ranking data), cached
+by live catalog version/hash and publication; publication-bound `/api/songs`
+is unchanged.
 
 The phase plan also identifies subphase catalog version
 `fst.subphase-plan.v1`. `currentUpdate.subphaseProgress` is optional and

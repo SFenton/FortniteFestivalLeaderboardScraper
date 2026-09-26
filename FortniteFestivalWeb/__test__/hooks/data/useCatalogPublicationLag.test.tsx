@@ -111,3 +111,14 @@ describe('useCatalogPublicationLag', () => {
     expect(mocks.unsubscribe).toHaveBeenCalledOnce();
   });
 });
+
+describe('countCatalogChangesAwaitingPublication', () => {
+  it('excludes added songs because they are listed immediately', async () => {
+    const { countCatalogChangesAwaitingPublication } = await import('../../../src/hooks/data/useCatalogPublicationLag');
+    expect(countCatalogChangesAwaitingPublication(null)).toBe(0);
+    expect(countCatalogChangesAwaitingPublication({ awaitingPublication: 2, addedAwaitingPublication: 2, changedAwaitingPublication: 0, removedAwaitingPublication: 0 })).toBe(0);
+    expect(countCatalogChangesAwaitingPublication({ awaitingPublication: 3, addedAwaitingPublication: 1, changedAwaitingPublication: 1, removedAwaitingPublication: 1 })).toBe(2);
+    expect(countCatalogChangesAwaitingPublication({ awaitingPublication: 3, addedAwaitingPublication: 1 })).toBe(2);
+    expect(countCatalogChangesAwaitingPublication({ awaitingPublication: null })).toBe(0);
+  });
+});

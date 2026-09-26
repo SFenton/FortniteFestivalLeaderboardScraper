@@ -404,6 +404,7 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Get, "/api/service-info"),
         new(HttpMethods.Get, "/api/status"),
         new(HttpMethods.Get, "/api/version"),
+        new(HttpMethods.Get, "/api/songs/incoming"),
         new(HttpMethods.Post, "/api/player/{accountId}/track"),
         new(HttpMethods.Get, "/api/player/{accountId}/sync-status"),
         new(HttpMethods.Get, "/api/bands/{bandType}/{teamKey}/sync-status"),

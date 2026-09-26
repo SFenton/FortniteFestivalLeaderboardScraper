@@ -1,5 +1,6 @@
 import type {
   SongsResponse,
+  IncomingSongsResponse,
   MemberScoreFilterResponse,
   LeaderboardResponse,
   LeaderboardRankOffsetsResponse,
@@ -62,6 +63,7 @@ import {
   isSongsResponse,
   readSongsCache,
   writeSongsCache,
+  isIncomingSongsResponse,
 } from './songsCache';
 import {
   ensurePublication,
@@ -258,6 +260,18 @@ export const api = {
     ) {
       writeSongsCache(data, res.headers.get('etag'), responsePublicationId);
     }
+    return data;
+  },
+
+  /**
+   * Songs ingested into the live catalog after the current publication.
+   * Not publication-bound; merged into the song list so new songs are visible
+   * immediately, before their leaderboards publish.
+   */
+  getIncomingSongs: async (options?: ApiRequestOptions): Promise<IncomingSongsResponse> => {
+    const data = await get<unknown>('/api/songs/incoming', options);
+    if (!isIncomingSongsResponse(data)) throw new Error('Invalid incoming songs response');
+    expandAlbumArt(data.songs);
     return data;
   },
 

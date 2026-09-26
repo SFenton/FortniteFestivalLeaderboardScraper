@@ -193,6 +193,46 @@ public static partial class ApiEndpoints
         .WithTags("Songs")
         .RequireRateLimiting("public");
 
+        // Songs ingested into the exact live catalog after the current
+        // publication. Metadata only and never publication-bound: leaderboard,
+        // ranking, and path data for these songs appear only through a later
+        // publication, while the song itself is visible immediately.
+        app.MapGet("/api/songs/incoming", (
+            HttpContext httpContext,
+            IMetaDatabase metaDb,
+            SongsCacheService songsCache,
+            ILoggerFactory loggerFactory) =>
+        {
+            CatalogAdditionsAwaitingPublication additions;
+            try
+            {
+                additions = metaDb.GetCatalogAdditionsAwaitingPublication(
+                    commandTimeoutSeconds: 5);
+            }
+            catch (Exception ex)
+            {
+                loggerFactory
+                    .CreateLogger("FSTService.Api.SongEndpoints")
+                    .LogWarning(ex, "Failed to read songs awaiting publication.");
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Incoming songs unavailable",
+                    detail: "Newly ingested songs could not be read. Retry shortly.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var entry = songsCache.GetOrBuildIncoming(additions, jsonOpts);
+            httpContext.Response.Headers.CacheControl = "no-cache";
+            httpContext.Response.ContentType = "application/json; charset=utf-8";
+            return CacheHelper.ServeIfCached(httpContext, entry)!;
+        })
+        .WithTags("Songs")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/songs/member-score-filter", (
             HttpContext httpContext,
             string? has,

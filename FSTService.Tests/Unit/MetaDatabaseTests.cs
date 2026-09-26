@@ -311,6 +311,53 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task Catalog_additions_list_only_songs_ingested_after_the_current_publication()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var scrapeId = Db.StartScrapeRun(token);
+        Db.CompleteScrapeRun(scrapeId, 2, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        var publicationId = Db.GetPublicationPointerState().CurrentPublicationId;
+
+        Assert.Empty(Db.GetCatalogAdditionsAwaitingPublication().Songs);
+
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha changed"),
+            CreateCatalogSong("song-c", "Gamma"),
+        ]);
+
+        var additions = Db.GetCatalogAdditionsAwaitingPublication();
+
+        Assert.Equal(publicationId, additions.PublishedPublicationId);
+        Assert.NotNull(additions.LiveCatalogVersion);
+        var added = Assert.Single(additions.Songs);
+        Assert.Equal("song-c", added.track.su);
+        Assert.Equal("Gamma", added.track.tt);
+        Assert.Same(additions, Db.GetCatalogAdditionsAwaitingPublication());
+    }
+
+    [Fact]
+    public async Task Catalog_additions_are_empty_without_an_exact_published_baseline()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+
+        var additions = Db.GetCatalogAdditionsAwaitingPublication();
+
+        Assert.Empty(additions.Songs);
+        Assert.Null(additions.PublishedPublicationId);
+    }
+
+    [Fact]
     public async Task Catalog_lag_is_unknown_without_an_exact_published_baseline()
     {
         var persistence = new FestivalPersistence(DataSource);

@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ServerSong as Song, SongsResponse } from '@festival/core/api';
+import type { IncomingSongsResponse, ServerSong as Song, SongsResponse } from '@festival/core/api';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { readSongsCache } from '../api/songsCache';
@@ -29,6 +29,21 @@ type FestivalContextValue = {
 
 export const FestivalContext = createContext<FestivalContextValue | null>(null);
 
+const EMPTY_SONGS: Song[] = [];
+
+/**
+ * Appends ingested-but-unpublished songs to the published catalog. Published
+ * entries always win, so a song's metadata never changes before publication.
+ */
+export function mergeIncomingSongs(published: Song[], incoming: Song[] | undefined): Song[] {
+  if (!incoming || incoming.length === 0) return published;
+  const publishedIds = new Set(published.map(song => song.songId));
+  const additions = incoming
+    .filter(song => !publishedIds.has(song.songId))
+    .map(song => ({ ...song, awaitingPublication: true }));
+  return additions.length === 0 ? published : [...published, ...additions];
+}
+
 export function FestivalProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const cachedResponse = useMemo(() => readSongsCache()?.data, []);
@@ -41,19 +56,38 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
     gcTime: 10 * 60 * 1000,
   });
 
+  // Songs ingested after the current publication. Failures never block the
+  // published catalog; they only defer showing the new songs.
+  const { data: incoming } = useQuery<IncomingSongsResponse>({
+    queryKey: queryKeys.incomingSongs(),
+    queryFn: ({ signal }) => api.getIncomingSongs({ signal }),
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    retry: 1,
+  });
+
   const refresh = useCallback(async () => {
-    await qc.invalidateQueries({ queryKey: queryKeys.songs() });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.songs() }),
+      qc.invalidateQueries({ queryKey: queryKeys.incomingSongs() }),
+    ]);
   }, [qc]);
+
+  const publishedSongs = data?.songs ?? cachedResponse?.songs;
+  const songs = useMemo(
+    () => mergeIncomingSongs(publishedSongs ?? EMPTY_SONGS, incoming?.songs),
+    [publishedSongs, incoming?.songs],
+  );
 
   const value = useMemo<FestivalContextValue>(() => ({
     state: {
-      songs: data?.songs ?? cachedResponse?.songs ?? [],
+      songs,
       currentSeason: data?.currentSeason ?? cachedResponse?.currentSeason ?? 0,
       isLoading,
       error: error ? (error instanceof Error ? error.message : 'Failed to load songs') : null,
     },
     actions: { refresh },
-  }), [data, cachedResponse, isLoading, error, refresh]);
+  }), [songs, data, cachedResponse, isLoading, error, refresh]);
 
   return (
     <FestivalContext.Provider value={value}>

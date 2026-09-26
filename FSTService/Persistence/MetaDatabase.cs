@@ -57,6 +57,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         _maxScoreMaintenanceCommandTimeoutSeconds;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private readonly object _catalogPublicationLagCacheLock = new();
+    private readonly object _catalogAdditionsCacheLock = new();
+    private (CatalogPublicationLagCacheKey Key, CatalogAdditionsAwaitingPublication Value)? _catalogAdditionsCache;
     private CatalogPublicationLagCacheEntry?
         _catalogPublicationLagCache;
     private bool _bandRankHistoryPollingSchemaEnsured;
@@ -2686,6 +2688,118 @@ public sealed partial class MetaDatabase : IMetaDatabase
             PathGenerationReviewRequired =
                 pathGenerationReviewRequired,
         };
+    }
+
+    public CatalogAdditionsAwaitingPublication GetCatalogAdditionsAwaitingPublication(
+        int commandTimeoutSeconds = 0)
+    {
+        using var conn = _ds.OpenConnection();
+        CatalogPublicationLagCacheKey key;
+        using (var cmd = conn.CreateCommand())
+        {
+            if (commandTimeoutSeconds > 0)
+                cmd.CommandTimeout = commandTimeoutSeconds;
+            cmd.CommandText = """
+                SELECT live.catalog_version,
+                       live.content_hash,
+                       published.publication_id,
+                       published.catalog_version,
+                       published.content_hash
+                FROM live_song_catalog live
+                CROSS JOIN scrape_publication_state state
+                JOIN publication_song_catalog published
+                  ON published.publication_id = state.current_publication_id
+                 AND published.is_exact
+                 AND published.source_kind = 'provider_exact'
+                 AND published.schema_version = @schemaVersion
+                WHERE live.id = TRUE
+                  AND state.id = TRUE
+                  AND live.is_exact
+                  AND live.source_kind = 'provider_exact'
+                  AND live.schema_version = @schemaVersion
+                """;
+            cmd.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return CatalogAdditionsAwaitingPublication.Empty;
+            key = new CatalogPublicationLagCacheKey(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
+                reader.GetString(4));
+        }
+
+        lock (_catalogAdditionsCacheLock)
+        {
+            if (_catalogAdditionsCache is { } cached && cached.Key == key)
+                return cached.Value;
+        }
+
+        if (string.Equals(
+                key.LiveContentHash,
+                key.PublishedContentHash,
+                StringComparison.Ordinal))
+        {
+            return CacheAdditions(key, Array.Empty<FortniteFestival.Core.Song>());
+        }
+
+        using var jsonCmd = conn.CreateCommand();
+        if (commandTimeoutSeconds > 0)
+            jsonCmd.CommandTimeout = commandTimeoutSeconds;
+        jsonCmd.CommandText = """
+            SELECT live.catalog_json::text,
+                   published.catalog_json::text
+            FROM live_song_catalog live
+            JOIN publication_song_catalog published
+              ON published.publication_id = @publishedPublicationId
+            WHERE live.id = TRUE
+              AND live.catalog_version = @liveCatalogVersion
+              AND live.content_hash = @liveContentHash
+              AND published.catalog_version = @publishedCatalogVersion
+              AND published.content_hash = @publishedContentHash
+              AND live.schema_version = @schemaVersion
+              AND published.schema_version = @schemaVersion
+            """;
+        jsonCmd.Parameters.AddWithValue("publishedPublicationId", key.PublishedPublicationId);
+        jsonCmd.Parameters.AddWithValue("liveCatalogVersion", key.LiveCatalogVersion);
+        jsonCmd.Parameters.AddWithValue("liveContentHash", key.LiveContentHash);
+        jsonCmd.Parameters.AddWithValue("publishedCatalogVersion", key.PublishedCatalogVersion);
+        jsonCmd.Parameters.AddWithValue("publishedContentHash", key.PublishedContentHash);
+        jsonCmd.Parameters.AddWithValue("schemaVersion", SongCatalogSnapshotBuilder.SchemaVersion);
+        using var jsonReader = jsonCmd.ExecuteReader();
+        if (!jsonReader.Read())
+        {
+            // The live catalog or publication moved between reads; the next
+            // request observes the new versions.
+            return CatalogAdditionsAwaitingPublication.Empty with
+            {
+                PublishedPublicationId = key.PublishedPublicationId,
+            };
+        }
+
+        var added = SongCatalogSnapshotBuilder.ComputeAddedSongs(
+            jsonReader.GetString(1),
+            jsonReader.GetString(0));
+        return CacheAdditions(key, added);
+
+        CatalogAdditionsAwaitingPublication CacheAdditions(
+            CatalogPublicationLagCacheKey cacheKey,
+            IReadOnlyList<FortniteFestival.Core.Song> songs)
+        {
+            var value = new CatalogAdditionsAwaitingPublication(
+                cacheKey.PublishedPublicationId,
+                cacheKey.LiveCatalogVersion,
+                cacheKey.LiveContentHash,
+                songs);
+            lock (_catalogAdditionsCacheLock)
+            {
+                _catalogAdditionsCache = (cacheKey, value);
+            }
+            return value;
+        }
     }
 
     private SongCatalogChangeSet?

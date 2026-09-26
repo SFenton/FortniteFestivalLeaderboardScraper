@@ -689,6 +689,58 @@ public class SongsCacheServiceTests
                 .GetString());
     }
 
+    [Fact]
+    public void BuildIncomingSongsJson_is_metadata_only_and_marks_awaiting_publication()
+    {
+        var additions = new CatalogAdditionsAwaitingPublication(
+            PublishedPublicationId: 7,
+            LiveCatalogVersion: 3,
+            LiveContentHash: "hash",
+            Songs:
+            [
+                new Song { track = new Track { su = "song-z", tt = "Z", an = "Artist", ry = 2026 } },
+                new Song { track = new Track { su = null!, tt = "Invalid" } },
+                new Song { track = new Track { su = "song-y", tt = "Y", an = "Artist" } },
+            ]);
+        var options = new System.Text.Json.JsonSerializerOptions(
+            System.Text.Json.JsonSerializerDefaults.Web)
+        {
+            DefaultIgnoreCondition =
+                System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
+
+        using var document = System.Text.Json.JsonDocument.Parse(
+            SongsCacheService.BuildIncomingSongsJson(additions, options));
+
+        Assert.Equal(2, document.RootElement.GetProperty("count").GetInt32());
+        Assert.Equal(7, document.RootElement.GetProperty("publishedPublicationId").GetInt64());
+        var songs = document.RootElement.GetProperty("songs").EnumerateArray().ToArray();
+        Assert.Equal(["song-y", "song-z"], songs.Select(s => s.GetProperty("songId").GetString()!).ToArray());
+        foreach (var song in songs)
+        {
+            Assert.True(song.GetProperty("awaitingPublication").GetBoolean());
+            Assert.False(song.TryGetProperty("maxScores", out _));
+            Assert.False(song.TryGetProperty("populationTiers", out _));
+            Assert.False(song.TryGetProperty("pathsGeneratedAt", out _));
+        }
+    }
+
+    [Fact]
+    public void GetOrBuildIncoming_reuses_payload_until_catalog_or_publication_changes()
+    {
+        var cache = new SongsCacheService();
+        var options = new System.Text.Json.JsonSerializerOptions(
+            System.Text.Json.JsonSerializerDefaults.Web);
+        var first = new CatalogAdditionsAwaitingPublication(
+            1, 10, "a", [new Song { track = new Track { su = "song-a", tt = "A" } }]);
+
+        var built = cache.GetOrBuildIncoming(first, options);
+        Assert.Same(built.Json, cache.GetOrBuildIncoming(first with { Songs = [] }, options).Json);
+
+        var republished = cache.GetOrBuildIncoming(first with { PublishedPublicationId = 2, Songs = [] }, options);
+        Assert.NotEqual(built.ETag, republished.ETag);
+    }
+
     private static void SetPublicationBoundEndpoint(
         DefaultHttpContext context)
     {
