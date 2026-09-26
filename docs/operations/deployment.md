@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-27
-last_verified_commit: c35b7f47
+last_verified: 2026-09-26
+last_verified_commit: 1ba0fdb6
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -125,8 +125,11 @@ live provider inventory.
 Sanitized configuration inspection on 2026-08-11 found:
 
 - a base project with the four core services and 28 numbered Gluetun services;
-- `docker-compose.pia-30.yml` with 30 canonical PIA services and 25 effective
-  aligned proxy/control/provider/container mappings;
+- `docker-compose.pia-30.yml` with 30 canonical PIA services and 24 effective
+  aligned proxy/control/provider/container mappings. The supervised worker
+  release on 2026-09-26 enabled worker-only proxy-region rotation with the
+  explicit allowlist `CA Vancouver` and `CA Toronto`; API, web, and PostgreSQL
+  containers remained unchanged.
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
 

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-09-26
+last_verified_commit: 1ba0fdb6
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -130,7 +130,7 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 30 canonical services, currently 25 effective aligned endpoints |
+| Standard PIA overlay | 30 canonical services, currently 24 effective aligned endpoints |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml`,
@@ -138,6 +138,20 @@ canonical count 30, effective count no greater than 30, exact service names,
 aligned arrays, PIA provider labels, and matching worker dependencies. The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
+
+## Current supervised worker state
+
+As of 2026-09-26, the production worker is running locally built revision
+`1ba0fdb6` with opt-in worker-only proxy-region rotation enabled. Its explicit
+rotation allowlist is `CA Vancouver` and `CA Toronto`; API, web, and
+PostgreSQL routing is unchanged. The standard effective pool is 24 aligned PIA
+endpoints, and the canonical guard must prove 24 healthy, distinct real
+egresses before a worker cutover.
+
+The previously qualified non-effective `pia-gluetun-14` Vancouver spare was not
+promoted. Effective `pia-gluetun-16` recovered through its existing self-heal
+path before the cutover, so the standard roster and rollback identity were
+preserved.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
