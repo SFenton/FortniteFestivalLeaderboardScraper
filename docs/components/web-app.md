@@ -416,6 +416,10 @@ invalidates only that operational query after `songs_changed`.
 on `songs_changed`) and appends songs missing from the published catalog with
 `awaitingPublication: true`, so a song ingested mid-scrape or mid-post-process
 is listed and routable immediately with empty leaderboards until publication.
+The song detail page skips publication-bound leaderboard, band, member-score,
+and score-history reads for such a song (during a scrape freeze those routes
+would otherwise return `503` because the song is absent from the publication
+cache) and renders empty cards without blocking page readiness.
 Published entries always win, so metadata changes and removals still wait for
 publication, and an incoming-list failure never blocks the published catalog.
 
