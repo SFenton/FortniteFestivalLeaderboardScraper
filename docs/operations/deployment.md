@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-19
-last_verified_commit: c35b7f47
+last_verified: 2026-09-26
+last_verified_commit: 65faa445
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -19,6 +19,7 @@ sources:
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.yml
+  - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml
 update_triggers:
   - Compose services, images, roles, volumes, ports, networks, health checks, or production ownership change.
   - Role startup ordering or startup readiness gates change.
@@ -133,10 +134,10 @@ live provider inventory.
 
 ## Production-owned overlays
 
-Sanitized configuration inspection on 2026-08-11 found:
+Sanitized configuration inspection on 2026-09-26 found:
 
 - a base project with the four core services and 28 numbered Gluetun services;
-- `docker-compose.pia-30.yml` with 30 canonical PIA services and 25 effective
+- `docker-compose.pia-30.yml` with 30 canonical PIA services and 24 effective
   aligned proxy/control/provider/container mappings;
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
@@ -144,6 +145,11 @@ Sanitized configuration inspection on 2026-08-11 found:
 This describes configured files, not a claim about currently running
 containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
+The 24-endpoint configuration excludes two TLS-failing exits and promotes a
+healthy Vancouver spare; its endpoint count, four arrays, and worker
+dependencies were changed together under the worker lock. The guarded
+replacement worker uses the immutable image built for `65faa445`, while the
+API and latest-master web images remain unchanged.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to

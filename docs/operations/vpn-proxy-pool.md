@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-09-26
+last_verified_commit: 65faa445
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -139,7 +139,7 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 30 canonical services, currently 25 effective aligned endpoints |
+| Standard PIA overlay | 30 canonical services, 24 effective aligned endpoints as of 2026-09-26 |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml`,
@@ -147,6 +147,20 @@ canonical count 30, effective count no greater than 30, exact service names,
 aligned arrays, PIA provider labels, and matching worker dependencies. The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
+
+The operator-approved September 2026 handoff replaced TLS-failing
+`pia-gluetun-4` with the previously qualified Vancouver `pia-gluetun-3`,
+excluded TLS-failing `pia-gluetun-19`, and retained healthy
+`pia-gluetun-20`. The production-owned `.env` count, overlay default, four
+indexed arrays, and worker dependencies now agree at 24. The full worker
+guard verified 24 healthy, distinct exits and unchanged `800/32/4`
+aggregate/per-exit/concurrency ceilings before stopping the slow candidate
+and again before the guarded worker-only restart. Scrape 1427 failed through
+the exact interrupted-acquisition and official failure-isolation paths;
+published 1424 remained intact and reads were unfrozen before the new worker
+started. Vancouver's tunnel and egress qualification is not evidence that
+its city avoids Epic 429s; compare bounded official-scrape outcomes before
+claiming regional relief.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
