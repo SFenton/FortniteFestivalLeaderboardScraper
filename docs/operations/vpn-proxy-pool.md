@@ -170,7 +170,11 @@ candidate after a short settle. Neither a `running` control response, Docker
 `healthy`, nor cached Gluetun public-IP metadata alone qualifies a tunnel.
 
 A rotated exit is immediately selectable (its old cooldown belonged to the
-spent egress); an explicit `Retry-After` is still honored.
+spent egress); an explicit `Retry-After` is still honored. While refresh is
+enabled, an HTML edge 429 on a proxied request is handled per exit and is not
+reported to the adaptive concurrency limiter; otherwise the expected ~3% of
+per-IP 429s pins global DOP at its floor. JSON 429s (which may be account
+scoped) still reduce DOP.
 
 #### Restoration and quarantine
 

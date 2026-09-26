@@ -494,6 +494,74 @@ public sealed class ResilientHttpExecutorTests
         Assert.Empty(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("text/html", 1)]
+    [InlineData("application/json", 2)]
+    public async Task SendAsync_RefreshEnabledPool_EdgeHtml429DoesNotShrinkGlobalLimiter(
+        string mediaType, long expectedLimiterSamples)
+    {
+        var options = new ScraperOptions
+        {
+            ExpectedProxyEndpointCount = 2,
+            ProxyUrls = ["http://gluetun-1:8888", "http://gluetun-2:8888"],
+            ContainerNames = ["gluetun-1", "gluetun-2"],
+            VpnProviders = ["PIA", "PIA"],
+            ControlUrls = ["http://gluetun-1:8000", "http://gluetun-2:8000"],
+            ProxyUseCurlTransport = true,
+            ProxyCooldownSeconds = 30,
+            ProxyRegionRotationEnabled = true,
+            ProxyRegionRotationReconnectInPlace = true,
+            ProxyRegionRotationRateLimitThreshold = 1,
+            ProxyRegionRotationMinIntervalSeconds = 5,
+            ProxyRegionRotationGlobalIntervalSeconds = 0,
+        };
+        options.ProxyCurlTempDirectory =
+            Path.Combine(Path.GetFullPath(options.DataDirectory), "curl-limiter-test");
+        using var pool = new ProxyPool(
+            options, NullLogger<ProxyPool>.Instance, regionRotator: new DeferringRotator());
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(new MockHttpMessageHandler()), _log, pool);
+        var sends = 0;
+        executor.PrimaryCurlTransportOverride = (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref sends) == 1)
+            {
+                var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                {
+                    Content = new StringContent("<html>Rate limited</html>"),
+                };
+                limited.Content.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+                return Task.FromResult<HttpResponseMessage?>(limited);
+            }
+
+            return Task.FromResult<HttpResponseMessage?>(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"result":"ok"}""", System.Text.Encoding.UTF8, "application/json"),
+            });
+        };
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 10, minDop: 1, maxDop: 100,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        using var response = await executor.SendAsync(
+            MakeEpicEventsRequest, limiter: limiter, maxRetries: 2, label: "edge-429-limiter");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, sends);
+        Assert.Equal(expectedLimiterSamples, limiter.TotalRequests);
+    }
+
+    private sealed class DeferringRotator : IProxyRegionRotator
+    {
+        public Task<ProxyRegionRotationResult> RotateAsync(
+            ProxyRegionRotationRequest request, CancellationToken ct)
+            => Task.FromResult(new ProxyRegionRotationResult(ProxyRegionRotationOutcome.Deferred));
+
+        public Task<System.Net.IPAddress?> GetEgressAsync(Uri proxyUri, CancellationToken ct)
+            => Task.FromResult<System.Net.IPAddress?>(null);
+    }
+
     [Fact]
     public async Task SendAsync_ExtremeHttpDateRetryAfter_IsCancellable()
     {

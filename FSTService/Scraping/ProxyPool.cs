@@ -240,6 +240,9 @@ internal sealed class ProxyPool :
 
     internal bool UseCurlTransport => _useCurlTransport;
 
+    /// <summary>True when per-exit 429s are answered by refreshing that exit's egress.</summary>
+    internal bool RefreshesRateLimitedExits => _regionRotationEnabled && _endpoints.Count > 0;
+
     internal string CurlTempDirectory => _curlTempDirectory;
 
     internal void PrepareRequest(HttpRequestMessage request)

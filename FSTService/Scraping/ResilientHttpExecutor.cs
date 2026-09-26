@@ -1197,7 +1197,14 @@ public sealed class ResilientHttpExecutor
                 // 500s are server-side errors (e.g. Epic's backend timeout on specific pages).
                 // They should NOT count toward the adaptive limiter's error rate because they
                 // don't indicate we're overloading the server — only 429 (rate limit) should.
-                bool countsAsLimiterFailure = statusCode == 429;
+                // An HTML edge 429 on a proxied request is a per-egress-IP limit
+                // that a refresh-enabled pool handles by replacing that exit's
+                // egress; it is not evidence of aggregate overload, so it must
+                // not shrink global concurrency. JSON (possibly account-level)
+                // throttles still count.
+                bool perExitEdgeRateLimit = statusCode == 429
+                    && IsPerExitEdgeRateLimit(sentRequest, res);
+                bool countsAsLimiterFailure = statusCode == 429 && !perExitEdgeRateLimit;
                 TimeSpan? retryAfter = statusCode == 429
                     ? GetPositiveRetryAfter(res)
                     : null;
@@ -1223,7 +1230,7 @@ public sealed class ResilientHttpExecutor
                         _log.LogWarning(
                             "Rate-limited on {Operation}, waiting {Delay:F1}s (DOP {Dop})",
                             label ?? "request", delay.TotalSeconds, limiter?.CurrentDop ?? -1);
-                        limiter?.ReportFailure();
+                        if (countsAsLimiterFailure) limiter?.ReportFailure();
                         res.Dispose();
                         await DelayCancellableAsync(delay, ct);
                         continue;
@@ -1258,6 +1265,12 @@ public sealed class ResilientHttpExecutor
             _inflight.TryRemove(op.OperationId, out _);
         }
     }
+
+    private bool IsPerExitEdgeRateLimit(HttpRequestMessage request, HttpResponseMessage response)
+        => _proxyHealth is ProxyPool { RefreshesRateLimitedExits: true }
+            && request.Options.TryGetValue(ProxyRequestState.EndpointIndex, out _)
+            && response.Content.Headers.ContentType?.MediaType is { } mediaType
+            && mediaType.Contains("html", StringComparison.OrdinalIgnoreCase);
 
     private void ReportRateLimited(
         HttpRequestMessage request,
