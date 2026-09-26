@@ -114,8 +114,8 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         _egress = egress;
         _log = log;
         _probeTimeout = TimeSpan.FromSeconds(options.ProxyRegionRotationProbeTimeoutSeconds);
-        _recoveryTimeout = recoveryTimeout ?? TimeSpan.FromMinutes(3);
-        _restartTimeout = restartTimeout ?? TimeSpan.FromSeconds(130);
+        _recoveryTimeout = recoveryTimeout ?? TimeSpan.FromMinutes(8);
+        _restartTimeout = restartTimeout ?? TimeSpan.FromMinutes(5);
     }
 
     public async Task<ProxyRegionRotationOutcome> RotateAsync(

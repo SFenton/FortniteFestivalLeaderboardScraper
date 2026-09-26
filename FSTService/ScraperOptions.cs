@@ -211,7 +211,7 @@ public sealed class ScraperOptions
 
     public int ProxyRegionRotationGlobalIntervalSeconds { get; set; } = 60;
 
-    public int ProxyRegionRotationProbeTimeoutSeconds { get; set; } = 90;
+    public int ProxyRegionRotationProbeTimeoutSeconds { get; set; } = 240;
 
     /// <summary>
     /// Which instruments to query.

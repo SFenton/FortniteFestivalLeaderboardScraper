@@ -858,7 +858,7 @@ internal sealed class ProxyPool :
                 || options.ProxyRegionRotationRateLimitThreshold is < 2 or > 100
                 || options.ProxyRegionRotationMinIntervalSeconds is < 300 or > 86_400
                 || options.ProxyRegionRotationGlobalIntervalSeconds is < 30 or > 3_600
-                || options.ProxyRegionRotationProbeTimeoutSeconds is < 30 or > 180
+                || options.ProxyRegionRotationProbeTimeoutSeconds is < 60 or > 360
                 || !Path.IsPathFullyQualified(options.ProxyCurlTempDirectory)
                 || !Path.GetFullPath(options.ProxyCurlTempDirectory).StartsWith(
                     Path.GetFullPath(options.DataDirectory)
@@ -867,7 +867,7 @@ internal sealed class ProxyPool :
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 1-16 distinct regions, threshold 2-100, per-exit interval 300-86400s, global interval 30-3600s, and probe timeout 30-180s.");
+                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 1-16 distinct regions, threshold 2-100, per-exit interval 300-86400s, global interval 30-3600s, and probe timeout 60-360s.");
             }
         }
         if (expected == 0)

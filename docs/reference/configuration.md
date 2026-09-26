@@ -84,7 +84,7 @@ API/frontend and capture-only roles cannot operate VPN regions.
 | `Scraper:ProxyRegionRotationRateLimitThreshold` | `3` | 2–100 consecutive 429s for one exit before scheduling a change |
 | `Scraper:ProxyRegionRotationMinIntervalSeconds` | `900` | 300–86,400 seconds between attempts for the same exit |
 | `Scraper:ProxyRegionRotationGlobalIntervalSeconds` | `60` | 30–3,600 seconds between globally serialized attempts |
-| `Scraper:ProxyRegionRotationProbeTimeoutSeconds` | `90` | 30–180 seconds for real proxy-egress verification after a region update |
+| `Scraper:ProxyRegionRotationProbeTimeoutSeconds` | `240` | 60–360 seconds for real proxy-egress verification after a region update; bounded spare trials showed a good region can take longer than 90 seconds to connect |
 
 The enabled worker requires a nonzero `ExpectedProxyEndpointCount`, four
 complete aligned proxy/control/provider/container arrays with every provider
