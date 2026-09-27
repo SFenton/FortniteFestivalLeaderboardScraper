@@ -593,6 +593,14 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public void FormatPercentiles_ReportsNearestRankPercentiles()
+    {
+        Assert.Equal("n=0", ProxyPool.FormatPercentiles([]));
+        var samples = Enumerable.Range(1, 100).Reverse().ToList();
+        Assert.Equal("n=100 p50=51 p90=91 p99=100 max=100", ProxyPool.FormatPercentiles(samples));
+    }
+
+    [Fact]
     public async Task RegionRotation_RequestBudgetTriggersProactiveRefresh()
     {
         var options = CreatePiaRotationOptions();

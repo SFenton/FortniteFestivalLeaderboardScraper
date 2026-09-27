@@ -202,6 +202,13 @@ public sealed class ScraperOptions
     public int WorkerShutdownTimeoutSeconds { get; set; } = 120;
 
     /// <summary>
+    /// Per-attempt timeout for proxied curl sends, started after an exit lease
+    /// is acquired (queueing for an exit never counts). Zero keeps the
+    /// executor's 30-second default.
+    /// </summary>
+    public int ProxyRequestTimeoutSeconds { get; set; }
+
+    /// <summary>
     /// Worker-only, opt-in PIA region rotation after repeated per-exit HTTP 429s.
     /// The Gluetun control API changes the actual tunnel, not just proxy selection.
     /// </summary>

@@ -213,6 +213,14 @@ exit every five minutes, two at a time, skipping refreshing or quarantined
 exits. An out-of-band change (for example Gluetun's own health restart) starts
 a new generation; two exits sharing an egress schedule a refresh.
 
+Proxied curl sends start their per-attempt timeout only after an exit lease
+is held (`Scraper:ProxyRequestTimeoutSeconds`, default the executor's 30
+seconds). Waiting for an exit is pool back-pressure: before this, requests
+queued behind 96 exit slots at DOP 200 timed out uniformly across songs and
+pages, were retried, and counted as adaptive-limiter failures without ever
+reaching an exit. A second per-minute line, `Proxy send latency`, reports send
+and lease-wait p50/p90/p99/max milliseconds and genuine send timeouts.
+
 Once a minute the pool logs `Proxy pool summary` with successful and
 rate-limited responses (and how many 429s were HTML edge pages), stale
 reports, refreshes scheduled/started/rotated/restored/deferred/unsafe, mean

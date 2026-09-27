@@ -939,35 +939,61 @@ public sealed class ResilientHttpExecutor
                 // is caught below (ct.IsCancellationRequested is false) and counted as a transient
                 // network error, so the retry loop continues until real success or service error.
                 using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                sendCts.CancelAfter(_sendWallClockTimeout);
+                var curlProxyPool = _proxyHealth as ProxyPool is { UseCurlTransport: true } curlPool
+                    ? curlPool
+                    : null;
+                if (curlProxyPool is null)
+                    sendCts.CancelAfter(_sendWallClockTimeout);
                 try
                 {
                     op.SetState(InflightState.Sending);
-                    if (_proxyHealth is ProxyPool { UseCurlTransport: true } proxyPool)
+                    if (curlProxyPool is { } proxyPool)
                     {
-                        using var proxyLease = await proxyPool.AcquireAsync(sendCts.Token)
+                        // Waiting for an exit is pool back-pressure, not a slow
+                        // send: the per-attempt wall clock starts only once a
+                        // lease is held, so queued requests are never timed out
+                        // (and retried, and counted as limiter failures) before
+                        // they reach an exit.
+                        var leaseStarted = Stopwatch.GetTimestamp();
+                        using var proxyLease = await proxyPool.AcquireAsync(ct)
                             ?? throw new InvalidOperationException(
                                 "Curl proxy transport requires at least one configured endpoint.");
+                        var sendTimeout = proxyPool.RequestTimeout ?? _sendWallClockTimeout;
+                        sendCts.CancelAfter(sendTimeout);
                         proxyLease.Apply(sentRequest);
                         proxyPool.PrepareRequest(sentRequest);
                         RecordHttpSend();
-
-                        res = PrimaryCurlTransportOverride is not null
-                            ? await PrimaryCurlTransportOverride(sentRequest, label, sendCts.Token)
-                                ?? throw new HttpRequestException("curl primary transport returned no response")
-                            : await CurlHttpFallback.SendAsync(
-                                sentRequest,
-                                label,
-                                _sendWallClockTimeout,
-                                _log,
-                                sendCts.Token,
-                                proxyPool.CurlTempDirectory,
-                                primaryTransport: true,
-                                maximumResponseBytes:
-                                    CurlResponseMaximumBytes,
-                                scratchValidator:
-                                    CurlScratchValidator)
-                                ?? throw new HttpRequestException("curl primary transport returned no response");
+                        var sendStarted = Stopwatch.GetTimestamp();
+                        var sendCompleted = false;
+                        try
+                        {
+                            res = PrimaryCurlTransportOverride is not null
+                                ? await PrimaryCurlTransportOverride(sentRequest, label, sendCts.Token)
+                                    ?? throw new HttpRequestException("curl primary transport returned no response")
+                                : await CurlHttpFallback.SendAsync(
+                                    sentRequest,
+                                    label,
+                                    sendTimeout,
+                                    _log,
+                                    sendCts.Token,
+                                    proxyPool.CurlTempDirectory,
+                                    primaryTransport: true,
+                                    maximumResponseBytes:
+                                        CurlResponseMaximumBytes,
+                                    scratchValidator:
+                                        CurlScratchValidator)
+                                    ?? throw new HttpRequestException("curl primary transport returned no response");
+                            sendCompleted = true;
+                        }
+                        finally
+                        {
+                            proxyPool.RecordSend(
+                                Stopwatch.GetElapsedTime(leaseStarted, sendStarted),
+                                Stopwatch.GetElapsedTime(sendStarted),
+                                timedOut: !sendCompleted
+                                    && sendCts.IsCancellationRequested
+                                    && !ct.IsCancellationRequested);
+                        }
                     }
                     else
                     {

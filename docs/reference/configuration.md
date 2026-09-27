@@ -75,6 +75,7 @@ overrides intentionally diverge between the public service and mutation worker.
 
 | Key | Default | Accepted range / effect |
 |---|---:|---|
+| `Scraper:ProxyRequestTimeoutSeconds` | `0` | Per-attempt timeout for proxied curl sends, started after an exit lease is acquired; `0` keeps the executor's 30-second default |
 | `Scraper:WorkerShutdownTimeoutSeconds` | `120` | Full-worker host shutdown budget, clamped to 30–600 seconds. It must exceed the scrape pass's bounded 30-second cleanup so a stopped worker records its interrupted phase attempt; Compose `stop_grace_period` must be longer still (template: 180s). |
 
 ## Worker-only PIA region rotation

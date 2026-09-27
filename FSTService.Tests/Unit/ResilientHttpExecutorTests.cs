@@ -563,6 +563,45 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_ProxyCurlLeaseWait_DoesNotCountTowardSendTimeout()
+    {
+        var options = new ScraperOptions
+        {
+            ProxyUrls = ["http://gluetun-1:8888"],
+            ContainerNames = ["gluetun-1"],
+            VpnProviders = ["Private Internet Access"],
+            ControlUrls = ["http://gluetun-1:8000"],
+            ProxyUseCurlTransport = true,
+            ProxyMaxConcurrentRequestsPerEndpoint = 1,
+        };
+        using var pool = new ProxyPool(options, NullLogger<ProxyPool>.Instance);
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(new MockHttpMessageHandler()), _log,
+            probeSendTimeout: null,
+            sendWallClockTimeout: TimeSpan.FromMilliseconds(150),
+            executorLifetime: default,
+            proxyHealth: pool);
+        var sends = 0;
+        executor.PrimaryCurlTransportOverride = (_, _, _) =>
+        {
+            Interlocked.Increment(ref sends);
+            return Task.FromResult<HttpResponseMessage?>(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"result":"ok"}""", System.Text.Encoding.UTF8, "application/json"),
+            });
+        };
+
+        var held = await pool.AcquireAsync(CancellationToken.None);
+        var release = Task.Run(async () => { await Task.Delay(500); held!.Dispose(); });
+        using var response = await executor.SendAsync(
+            MakeEpicEventsRequest, maxRetries: 0, label: "lease-wait");
+        await release;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, sends);
+    }
+
+    [Fact]
     public async Task SendAsync_ExtremeHttpDateRetryAfter_IsCancellable()
     {
         var (executor, handler) = CreateExecutor();

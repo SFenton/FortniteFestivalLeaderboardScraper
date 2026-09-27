@@ -166,6 +166,9 @@ internal sealed class ProxyPool :
         _regionRotationRequestBudget = Math.Max(0, options.ProxyRegionRotationRequestBudget);
         _regionRotationDrain = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationDrainSeconds));
         _quarantineRetry = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationQuarantineRetrySeconds));
+        RequestTimeout = options.ProxyRequestTimeoutSeconds > 0
+            ? TimeSpan.FromSeconds(options.ProxyRequestTimeoutSeconds)
+            : null;
         _regionRotationGate = new SemaphoreSlim(_regionRotationMaxConcurrent, _regionRotationMaxConcurrent);
 
         _endpoints = BuildEndpoints(options).ToList();
@@ -243,6 +246,38 @@ internal sealed class ProxyPool :
     }
 
     internal bool UseCurlTransport => _useCurlTransport;
+
+    /// <summary>Per-attempt timeout for proxied curl sends, measured from lease acquisition.</summary>
+    internal TimeSpan? RequestTimeout { get; }
+
+    private readonly object _latencyLock = new();
+    private List<int> _sendLatencyMs = new();
+    private List<int> _leaseWaitMs = new();
+    private long _sendTimeouts;
+    private const int MaxLatencySamples = 50_000;
+
+    /// <summary>Records one proxied send for the per-minute summary percentiles.</summary>
+    internal void RecordSend(TimeSpan leaseWait, TimeSpan send, bool timedOut)
+    {
+        lock (_latencyLock)
+        {
+            if (_sendLatencyMs.Count < MaxLatencySamples)
+                _sendLatencyMs.Add((int)Math.Min(int.MaxValue, send.TotalMilliseconds));
+            if (_leaseWaitMs.Count < MaxLatencySamples)
+                _leaseWaitMs.Add((int)Math.Min(int.MaxValue, leaseWait.TotalMilliseconds));
+            if (timedOut)
+                _sendTimeouts++;
+        }
+    }
+
+    internal static string FormatPercentiles(List<int> samples)
+    {
+        if (samples.Count == 0)
+            return "n=0";
+        samples.Sort();
+        int At(double q) => samples[Math.Min(samples.Count - 1, (int)(q * samples.Count))];
+        return $"n={samples.Count} p50={At(0.50)} p90={At(0.90)} p99={At(0.99)} max={samples[^1]}";
+    }
 
     /// <summary>True when per-exit 429s are answered by refreshing that exit's egress.</summary>
     internal bool RefreshesRateLimitedExits => _regionRotationEnabled && _endpoints.Count > 0;
@@ -1179,8 +1214,31 @@ internal sealed class ProxyPool :
             burned = _rateLimitedEgress.Count;
         }
 
-        if (stats.Successes == 0 && stats.RateLimited == 0 && stats.RotationsStarted == 0)
+        List<int> sendLatency, leaseWait;
+        long sendTimeouts;
+        lock (_latencyLock)
+        {
+            sendLatency = _sendLatencyMs;
+            leaseWait = _leaseWaitMs;
+            sendTimeouts = _sendTimeouts;
+            _sendLatencyMs = new();
+            _leaseWaitMs = new();
+            _sendTimeouts = 0;
+        }
+
+        if (stats.Successes == 0 && stats.RateLimited == 0 && stats.RotationsStarted == 0
+            && sendLatency.Count == 0)
             return;
+
+        if (sendLatency.Count > 0)
+        {
+            _log.LogInformation(
+                "Proxy send latency ({WindowSeconds:F0}s): send ms {Send}; lease wait ms {LeaseWait}; send timeouts={Timeouts}.",
+                window.TotalSeconds,
+                FormatPercentiles(sendLatency),
+                FormatPercentiles(leaseWait),
+                sendTimeouts);
+        }
 
         var finished = stats.Rotated + stats.Restored + stats.Deferred + stats.Unsafe;
         _log.LogInformation(
