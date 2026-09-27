@@ -40,9 +40,12 @@ def main() -> int:
     ap.add_argument("--baseline-rev", required=True)
     ap.add_argument("--candidate-rev", default="HEAD")
     ap.add_argument("--songs", type=int, default=40)
+    ap.add_argument("--aggregates", action="store_true",
+                    help="compare every requested scope's projected_rows and max_source_updated_at "
+                         "instead of only the refresh selection (meaningful when all scopes are fresh)")
     args = ap.parse_args()
     rows = json.loads(psql(f"""BEGIN READ ONLY;
-        WITH songs AS (SELECT DISTINCT song_id FROM band_current_projection_scope ORDER BY md5(song_id) LIMIT {int(args.songs)})
+        WITH songs AS (SELECT song_id FROM (SELECT DISTINCT song_id FROM band_current_projection_scope) d ORDER BY md5(song_id) LIMIT {int(args.songs)})
         SELECT coalesce(json_agg(json_build_array(s.song_id, s.band_type, s.ranking_scope, s.scope_combo_id)), '[]')
         FROM band_current_projection_scope s JOIN songs USING (song_id); COMMIT;"""))
     q = lambda v: "'" + v.replace("'", "''") + "'"
@@ -53,6 +56,12 @@ def main() -> int:
             "_band_current_refresh_scopes",
             "requested_input")
         sql = re.sub(r"^\s*WITH\s+", "", sql, count=1)
+        if args.aggregates:
+            final = sql.rindex("SELECT source_scope.song_id")
+            sql = (sql[:final] + "SELECT source_scope.song_id || '|' || source_scope.band_type || '|' || "
+                   "source_scope.ranking_scope || '|' || source_scope.scope_combo_id || '|' || "
+                   "source_scope.projected_rows || '|' || coalesce(source_scope.max_source_updated_at::text, '') "
+                   "FROM source_scope")
         wrapped = (f"BEGIN READ ONLY; SET LOCAL statement_timeout = '60min';\n"
                    f"WITH requested_input(song_id, band_type, ranking_scope, scope_combo_id) AS (VALUES {values}),\n{sql};\nCOMMIT;")
         started = time.monotonic()
