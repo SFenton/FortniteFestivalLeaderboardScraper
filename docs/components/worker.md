@@ -689,6 +689,16 @@ explicitly labeled `derived`; they are formulas from the current query and
 transaction structure, not runtime instrumentation. Setting the switch back
 to `false` is the code-path rollback.
 
+By default the refresh runs one sequential worker per band type, at most two
+band types at once, so the third band type waits for the first to finish and
+one band type's tail runs alone. `Scraper:BandCurrentProjectionMaxParallelScopes`
+(default `0`, clamped to `16`) instead runs up to that many scope transactions
+at once, interleaving band types. Scope transactions write disjoint
+`current_band_leaderboard_entries` and `band_current_projection_scope` keys,
+and isolated PostgreSQL tests keep sequential and parallel projection and
+state hashes identical for both member-stat query shapes. Promotion needs a
+one-variable full-scrape A/B.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and

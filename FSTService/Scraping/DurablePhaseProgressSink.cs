@@ -170,6 +170,7 @@ public sealed class DurablePhaseProgressSink
         "Features:WritePublishedScopeSources",
         "Features:SkipUnchangedPhysicalLeaderboardSnapshots",
         "Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation",
+        "Scraper:BandCurrentProjectionMaxParallelScopes",
         "BandRankHistory:Mode",
         "BandRankHistory:WriteMode",
         "BandTeamRankings:WriteMode",

@@ -272,6 +272,7 @@ invalid/non-positive values prevent startup.
 | Key | Default | Purpose |
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
+| `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
 
 The Compose form is
 `Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
@@ -282,6 +283,13 @@ and therefore remains off. Set it back to `false` for immediate code-path
 rollback. Enabling it in production requires a capacity-safe matched full
 scrape A/B and exact publication/data parity; isolated replay timing is not
 promotion evidence.
+
+`Scraper__BandCurrentProjectionMaxParallelScopes` (template variable
+`BAND_CURRENT_PROJECTION_MAX_PARALLEL_SCOPES`) changes only how many selected
+scopes rebuild concurrently. Each scope keeps its own transaction and writes
+disjoint projection and scope-state keys; filtering, query shape, publication,
+cleanup, and failure accounting are unchanged. Both switches are part of the
+durable phase configuration identity. Set it back to `0` for rollback.
 
 ## Registered-band remaining-work grace
 
