@@ -75,6 +75,11 @@ update_triggers:
 
 ## Current capability
 
+Bulk retirement of cycle candidates is an operator procedure outside the
+service: see [Snapshot generation archive retirement](SnapshotGenerationArchiveRetirementRunbook.md)
+and [ADR 0010](../decisions/0010-snapshot-archive-retirement.md). The service
+slice below remains report-only.
+
 The service-owned automatic snapshot-generation pruning slice remains
 **default-off and report-only**. It can observe exact physical children and
 persist immutable evidence. It cannot archive, detach, rename, drop, truncate,
