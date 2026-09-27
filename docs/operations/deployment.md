@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-26
-last_verified_commit: 0e06e61e
+last_verified: 2026-09-27
+last_verified_commit: 954ca0bd
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -148,11 +148,16 @@ containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
 The 24-endpoint configuration excludes two TLS-failing exits and promotes a
 healthy Vancouver spare; its endpoint count, four arrays, and worker
-dependencies were changed together under the worker lock. As of 2026-09-26
-the guarded worker runs a locally built immutable image for `0e06e61e`
-(branch `fix/vpn-fast-egress-refresh-20260926`) with the egress refresh
-enabled in the production-owned worker env file; the API and latest-master web
-images remain unchanged.
+dependencies were changed together under the worker lock. Since
+2026-09-27T08:21Z the API and worker run one locally built immutable image
+for `954ca0bd` (integration branch `deploy/loop-bundle-b-f5-20260927`: open
+PRs #116, #117, #119, #120, and #121 on top of master) and the web runs the
+matching #117 build. The production-owned worker env enables the egress
+refresh plus `Scraper__BandCurrentProjectionMaxParallelScopes=6`,
+`BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`, and
+`Scraper__PrepareSoloCurrentProjectionBeforeRivals=true`; the production
+`.env` enables `BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION`.
+These are canaries under evaluation in scrape `1438`, not accepted defaults.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to
@@ -182,6 +187,24 @@ its Gluetun control API (credential-free region payload, no Compose change)
 restored real egress within seconds during the 2026-09-26 cutover; a later
 container restart returns the static region. Replacing those static regions
 in the production overlay is a separate operator change.
+
+On 2026-09-27 an idle-boundary attempt changed eight effective exits' static
+regions to qualified ones and recreated all eight at once; some did not become
+healthy within ten minutes (one logged a transient PIA `AUTH_FAILED`), so the
+deploy rolled back every file and service. Recreating them with their old
+static regions left six stuck in TLS failures, which blocked the rollback
+guard until each was moved at runtime. A settings PUT that answers
+`already crashed` changes the selector but leaves the VPN loop down; a
+`/v1/vpn/status` `stopped` then `running` cycle reconnects it. Change static
+regions one exit at a time with a health check between them, or add already
+healthy qualified spares to the worker arrays without recreating effective
+exits.
+
+A pre-stop guard check during a live scrape can fail repeatedly on transient
+duplicate egress or a probe failure while the running worker refreshes
+exits; the mid-acquisition cutover retries until one check passes. After the
+worker stops, a stale exit left mid-refresh (for example `unhealthy` after
+control-loop timeouts) blocks the recreate guard until it is reconnected.
 
 A worker stopped for a mid-acquisition cutover must exit gracefully so it can
 record its phase attempt as `interrupted`; native interrupted-acquisition

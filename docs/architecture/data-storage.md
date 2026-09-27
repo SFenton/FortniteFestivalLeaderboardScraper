@@ -4,6 +4,7 @@ owner: data
 last_verified: 2026-09-19
 last_verified_commit: d15cbdf7
 sources:
+  - tools/postgres-snapshot-archive-retire.py
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
   - FSTService/Scraping/Replay/CaptureEntryContracts.cs
@@ -240,6 +241,14 @@ This control plane is metadata-only. It has no worker/API registration, no
 archive or Docker execution, no source-table mutation, and no effect on
 publication reads. See
 [Snapshot generation retirement plan control plane](../database/SnapshotGenerationRetirementControlPlane.md).
+
+Retired candidate children are removed by the operator-only
+[archive retirement procedure](../database/SnapshotGenerationArchiveRetirementRunbook.md),
+which archives each child as a zstd `pg_dump` on the FST drive under
+`fst-data/archives/snapshot-generations/cycle-<id>/` with a `manifest.jsonl`
+(identity, row count, content fingerprint, archive SHA-256) before a
+lock-bounded detach and non-cascading drop. Those archives are the retained
+copy of retired generations; `restore` re-creates and re-attaches a child.
 
 ### Freeze-safe publication API cache
 
