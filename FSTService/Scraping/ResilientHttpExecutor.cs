@@ -186,6 +186,7 @@ public sealed class ResilientHttpExecutor
 
     /// <summary>Base delay for exponential backoff (doubled on each retry).</summary>
     private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan MaximumCancellableDelay = TimeSpan.FromDays(1);
 
     /// <summary>
     /// Fixed backoff schedule for CDN-level 403 blocks (non-JSON responses).
@@ -947,9 +948,7 @@ public sealed class ResilientHttpExecutor
                         using var proxyLease = await proxyPool.AcquireAsync(sendCts.Token)
                             ?? throw new InvalidOperationException(
                                 "Curl proxy transport requires at least one configured endpoint.");
-                        sentRequest.Options.Set(ProxyRequestState.EndpointIndex, proxyLease.Index);
-                        sentRequest.Options.Set(ProxyRequestState.EndpointName, proxyLease.Name);
-                        sentRequest.Options.Set(ProxyRequestState.EndpointProxyUri, proxyLease.ProxyUri);
+                        proxyLease.Apply(sentRequest);
                         proxyPool.PrepareRequest(sentRequest);
                         RecordHttpSend();
 
@@ -1198,23 +1197,42 @@ public sealed class ResilientHttpExecutor
                 // 500s are server-side errors (e.g. Epic's backend timeout on specific pages).
                 // They should NOT count toward the adaptive limiter's error rate because they
                 // don't indicate we're overloading the server — only 429 (rate limit) should.
-                bool countsAsLimiterFailure = statusCode == 429;
+                // An HTML edge 429 on a proxied request is a per-egress-IP limit
+                // that a refresh-enabled pool handles by replacing that exit's
+                // egress; it is not evidence of aggregate overload, so it must
+                // not shrink global concurrency. JSON (possibly account-level)
+                // throttles still count.
+                bool perExitEdgeRateLimit = statusCode == 429
+                    && IsPerExitEdgeRateLimit(sentRequest, res);
+                bool countsAsLimiterFailure = statusCode == 429 && !perExitEdgeRateLimit;
+                TimeSpan? retryAfter = statusCode == 429
+                    ? GetPositiveRetryAfter(res)
+                    : null;
+
+                if (statusCode == 429)
+                {
+                    ReportRateLimited(
+                        sentRequest,
+                        retryAfter,
+                        res.Content.Headers.ContentType?.MediaType);
+                }
 
                 if (retryable && statusAttempt < maxRetries)
                 {
                     RecordStatusRetry();
                     statusAttempt++;
 
-                    // Honour Retry-After header on 429
-                    if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
+                    // Honour a positive Retry-After header on 429. The endpoint
+                    // cooldown is reported above for every 429, including the
+                    // terminal response.
+                    if (statusCode == 429 && retryAfter is { } delay)
                     {
                         _log.LogWarning(
                             "Rate-limited on {Operation}, waiting {Delay:F1}s (DOP {Dop})",
-                            label ?? "request", retryAfter.TotalSeconds, limiter?.CurrentDop ?? -1);
-                        limiter?.ReportFailure();
-                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
+                            label ?? "request", delay.TotalSeconds, limiter?.CurrentDop ?? -1);
+                        if (countsAsLimiterFailure) limiter?.ReportFailure();
                         res.Dispose();
-                        await Task.Delay(retryAfter, ct);
+                        await DelayCancellableAsync(delay, ct);
                         continue;
                     }
 
@@ -1222,9 +1240,10 @@ public sealed class ResilientHttpExecutor
                         "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts}, DOP {Dop})",
                         statusCode, label ?? "request", statusAttempt, maxRetries + 1, limiter?.CurrentDop ?? -1);
                     if (countsAsLimiterFailure) limiter?.ReportFailure();
-                    _proxyHealth?.ReportFailure(
-                        sentRequest,
-                        statusCode == 429 ? ProxyFailureKind.RateLimited : ProxyFailureKind.ServerError);
+                    if (statusCode != 429)
+                    {
+                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.ServerError);
+                    }
                     res.Dispose();
                     continue;
                 }
@@ -1236,7 +1255,6 @@ public sealed class ResilientHttpExecutor
                 if (countsAsLimiterFailure)
                 {
                     limiter?.ReportFailure();
-                    _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
                 }
 
                 return res;
@@ -1246,6 +1264,55 @@ public sealed class ResilientHttpExecutor
         {
             _inflight.TryRemove(op.OperationId, out _);
         }
+    }
+
+    private bool IsPerExitEdgeRateLimit(HttpRequestMessage request, HttpResponseMessage response)
+        => _proxyHealth is ProxyPool { RefreshesRateLimitedExits: true }
+            && request.Options.TryGetValue(ProxyRequestState.EndpointIndex, out _)
+            && response.Content.Headers.ContentType?.MediaType is { } mediaType
+            && mediaType.Contains("html", StringComparison.OrdinalIgnoreCase);
+
+    private void ReportRateLimited(
+        HttpRequestMessage request,
+        TimeSpan? retryAfter,
+        string? mediaType)
+    {
+        if (_proxyHealth is IProxyRateLimitReporter rateLimitReporter)
+        {
+            rateLimitReporter.ReportRateLimited(request, retryAfter, mediaType);
+        }
+        else
+        {
+            _proxyHealth?.ReportFailure(request, ProxyFailureKind.RateLimited);
+        }
+    }
+
+    private static TimeSpan? GetPositiveRetryAfter(HttpResponseMessage response)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+            return delta;
+
+        if (retryAfter?.Date is { } date)
+        {
+            var delay = date - DateTimeOffset.UtcNow;
+            if (delay > TimeSpan.Zero)
+                return delay;
+        }
+
+        return null;
+    }
+
+    private static async Task DelayCancellableAsync(TimeSpan delay, CancellationToken ct)
+    {
+        while (delay > MaximumCancellableDelay)
+        {
+            await Task.Delay(MaximumCancellableDelay, ct);
+            delay -= MaximumCancellableDelay;
+        }
+
+        if (delay > TimeSpan.Zero)
+            await Task.Delay(delay, ct);
     }
 
     /// <summary>

@@ -296,6 +296,16 @@ if (hostedWorkerMode is HostedWorkerMode.ApiOnly or HostedWorkerMode.FrontendOnl
     builder.Services.AddSingleton<IProxyContainerRecycler, DisabledProxyContainerRecycler>();
 else
     builder.Services.AddSingleton<IProxyContainerRecycler, GluetunContainerRecycler>();
+if (hostedWorkerMode == HostedWorkerMode.FullWorker)
+{
+    // Gluetun can hold a control request until an in-progress OpenVPN
+    // handshake gives up (about 20 seconds against a dead server).
+    builder.Services.AddHttpClient(nameof(PiaRegionRotator))
+        .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(30))
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseProxy = false });
+    builder.Services.AddSingleton<IProxyEgressProbe, CurlProxyEgressProbe>();
+    builder.Services.AddSingleton<IProxyRegionRotator, PiaRegionRotator>();
+}
 builder.Services.AddSingleton<ProxyPool>();
 builder.Services.AddSingleton<IProxyHealthReporter>(sp => sp.GetRequiredService<ProxyPool>());
 
