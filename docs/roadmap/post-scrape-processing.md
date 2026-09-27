@@ -413,7 +413,7 @@ Exact catalog selection
 | `RegisteredBandTargetedProcessing` | Targeted orchestrator | Registered teams, Epic | Targeted team rows/scopes | Best effort |
 | `BandMaintenance` | Band persistence/projection builders | Band entries/members and impacted teams/scopes | Pruned band state plus search and current projections | Publication-critical |
 | `ComputeRankings` | `RankingsCalculator` | Current solo/band state, populations, max scores | Solo/composite/family/combo/band rankings and histories | Publication-critical |
-| `PrepareSoloCurrentProjectionForDerived` | `SoloCurrentProjectionBuilder` | Snapshots and overlays | Validated current projection | Publication-critical, currently flag-dependent |
+| `PrepareSoloCurrentProjectionForDerived` | `SoloCurrentProjectionBuilder` | Snapshots and overlays | Validated current projection (overlay readers) or best-effort stale refresh (legacy readers with `Scraper:PrepareSoloCurrentProjectionBeforeRivals`) | Publication-critical with overlay readers; legacy warm-up is best-effort and cleanup revalidates; candidate targets Rivals fallback reads (scrape `1436` Rivals about 3-6 minutes per account) |
 | `Rivals` | `RivalsOrchestrator` | Current scores/ranks and dirty fingerprints | Song-rival rows/samples | Publication-critical |
 | `LeaderboardRivals` | `LeaderboardRivalsCalculator` | Rankings and player scores | Ranking-neighbor rival rows/samples | Publication-critical |
 | `PlayerStatsTiers` | Post-scrape orchestrator | Player profiles, max scores, populations | Stats-tier rows | Publication-critical |

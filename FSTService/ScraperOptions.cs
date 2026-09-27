@@ -309,6 +309,16 @@ public sealed class ScraperOptions
     public bool RefreshSoloProjectionDuringCleanup { get; set; } = true;
 
     /// <summary>
+    /// With legacy worker readers, refresh stale solo current projection
+    /// scopes before rivals and player stats so their current-state reads use
+    /// the ready projection instead of re-ranking live and snapshot rows per
+    /// song. Best-effort; publication cleanup still refreshes and revalidates.
+    /// Snapshot/overlay worker readers always prepare the projection.
+    /// Set via <c>Scraper__PrepareSoloCurrentProjectionBeforeRivals</c>.
+    /// </summary>
+    public bool PrepareSoloCurrentProjectionBeforeRivals { get; set; }
+
+    /// <summary>
     /// Maximum number of solo current projection scopes refreshed concurrently during cleanup.
     /// </summary>
     public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;

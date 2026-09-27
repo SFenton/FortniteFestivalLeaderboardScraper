@@ -1045,7 +1045,8 @@ public sealed class PostScrapeOrchestrator
     }
 
     private bool ShouldPrepareSoloProjectionBeforeDerived(ScrapePhase resolvedPhases) =>
-        _persistence.UseSnapshotOverlayWorkerReaders
+        (_persistence.UseSnapshotOverlayWorkerReaders
+            || _options.Value.PrepareSoloCurrentProjectionBeforeRivals)
         && _soloCurrentProjectionBuilder is not null
         && (
             resolvedPhases.HasFlag(ScrapePhase.SoloRivals)
@@ -1069,6 +1070,12 @@ public sealed class PostScrapeOrchestrator
                 1,
                 options.SoloProjectionCleanupMaxDegreeOfParallelism),
         };
+
+        if (!_persistence.UseSnapshotOverlayWorkerReaders)
+        {
+            await RefreshStaleSoloProjectionBeforeRivalsAsync(builder, rebuildOptions, ct);
+            return;
+        }
 
         await builder.EnsureSchemaAsync(ct);
         await builder.PruneOrphanedScopesAsync(rebuildOptions, ct);
@@ -1109,6 +1116,57 @@ public sealed class PostScrapeOrchestrator
         _log.LogInformation(
             "Validated solo current projection for snapshot/overlay derived readers ({ScopeCount:N0} refreshed scope(s)).",
             scopes.Length);
+    }
+
+    /// <summary>
+    /// Legacy-reader warm-up: current-state readers used by rivals and player
+    /// stats read the solo projection only where a scope is ready for its active
+    /// source, and otherwise re-rank live and snapshot rows per song. Refreshing
+    /// stale scopes here moves cleanup's work ahead of those readers. It is
+    /// best-effort and records nothing on the pass context, so publication
+    /// cleanup still re-evaluates staleness (including scopes re-dirtied by later
+    /// snapshot activation) and remains the publication-critical refresh.
+    /// </summary>
+    private async Task RefreshStaleSoloProjectionBeforeRivalsAsync(
+        SoloCurrentProjectionBuilder builder,
+        SoloCurrentProjectionRebuildOptions rebuildOptions,
+        CancellationToken ct)
+    {
+        try
+        {
+            await builder.EnsureSchemaAsync(ct);
+            var scopes = await builder.LoadStaleScopesAsync(ct);
+            if (scopes.Count == 0)
+            {
+                _log.LogInformation(
+                    "Solo current projection is already fresh before rivals/player stats.");
+                return;
+            }
+
+            _log.LogInformation(
+                "Refreshing {ScopeCount:N0} stale solo projection scope(s) before rivals/player stats; publication cleanup still revalidates.",
+                scopes.Count);
+            var result = await builder.RefreshScopesAsync(scopes, rebuildOptions, ct);
+            if (result.FailedScopeCount > 0)
+            {
+                _log.LogWarning(
+                    "Early solo projection refresh left {FailedScopeCount:N0}/{ScopeCount:N0} scope(s) stale; readers fall back for them and cleanup retries.",
+                    result.FailedScopeCount,
+                    result.ScopeCount);
+                return;
+            }
+
+            _log.LogInformation(
+                "Refreshed {ScopeCount:N0} solo projection scope(s) before rivals/player stats in {ElapsedMs:N0} ms.",
+                result.SucceededScopeCount,
+                result.TotalElapsedMs);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(
+                ex,
+                "Early solo projection refresh before rivals/player stats failed; cleanup will refresh stale scopes.");
+        }
     }
 
     private async Task CleanupRankHistoryRetentionAsync(CancellationToken ct)

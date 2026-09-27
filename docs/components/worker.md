@@ -553,6 +553,15 @@ account completion against the final target-account denominator. Direct
 single-user and backfill recomputation remain on-demand and do not allocate a
 global preload.
 
+Rival song counts and neighborhoods use the solo current projection only for
+scopes that are ready for their active source. With legacy worker readers the
+projection is otherwise refreshed only in publication cleanup, so songs with a
+new snapshot fall back to per-song live-plus-snapshot ranking during Rivals.
+`Scraper:PrepareSoloCurrentProjectionBeforeRivals` (default `false`) runs the
+existing `PrepareSoloCurrentProjectionForDerived` phase as a best-effort stale
+refresh before Rivals and player stats; publication cleanup still revalidates
+and refreshes. See [configuration](../reference/configuration.md#player-rivals).
+
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
 parity passed, but dense 50-, 379-, and 707-song cases regressed by
