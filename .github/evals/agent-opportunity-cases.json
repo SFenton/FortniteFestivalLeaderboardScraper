@@ -162,16 +162,6 @@
               "file": "packages/core/src/__tests__/concurrency.test.ts",
               "start": 5,
               "end": 52
-            },
-            {
-              "file": ".github/skills/fst-budget-workflow/SKILL.md",
-              "start": 25,
-              "end": 34
-            },
-            {
-              "file": ".github/skills/fst-budget-workflow/SKILL.md",
-              "start": 41,
-              "end": 49
             }
           ],
           "criteria": [
@@ -319,11 +309,6 @@
               "file": "docs/architecture/data-storage.md",
               "start": 146,
               "end": 173
-            },
-            {
-              "file": ".github/skills/fst-budget-workflow/SKILL.md",
-              "start": 41,
-              "end": 46
             }
           ],
           "criteria": [
@@ -357,16 +342,6 @@
               "file": ".github/skills/database-evaluation/SKILL.md",
               "start": 22,
               "end": 24
-            },
-            {
-              "file": ".github/skills/fst-budget-workflow/SKILL.md",
-              "start": 41,
-              "end": 46
-            },
-            {
-              "file": ".github/skills/fst-budget-workflow/SKILL.md",
-              "start": 49,
-              "end": 50
             }
           ],
           "criteria": [

@@ -3,6 +3,29 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { inspectOpportunity } from './agent-opportunity-preflight.mjs';
 
+test('repository instructions and opportunities do not require the retired budget workflow', () => {
+  for (const file of [
+    '.github/agent-budget.json',
+    '.github/hooks/budget-reads.json',
+    '.github/skills/fst-budget-workflow/SKILL.md',
+  ]) {
+    assert.equal(fs.existsSync(file), false, file);
+  }
+  for (const file of [
+    'AGENTS.md',
+    '.github/copilot-instructions.md',
+    '.github/agent-learning.json',
+    '.github/agent-opportunities.json',
+    '.github/evals/agent-opportunity-cases.json',
+  ]) {
+    assert.doesNotMatch(
+      fs.readFileSync(file, 'utf8'),
+      /fst-budget-workflow|agent-budget\.json|budget-reads\.json/,
+      file,
+    );
+  }
+});
+
 for (const opportunity of [
   'publication',
   'provenance',
