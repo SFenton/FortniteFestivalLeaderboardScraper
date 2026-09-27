@@ -552,6 +552,66 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(expectedLimiterSamples, limiter.TotalRequests);
     }
 
+    [Theory]
+    [InlineData("text/html", 5, HttpStatusCode.OK, 6)]
+    [InlineData("application/json", 5, HttpStatusCode.TooManyRequests, 3)]
+    [InlineData("text/html", 20, HttpStatusCode.TooManyRequests, 6)]
+    public async Task SendAsync_RefreshEnabledPool_EdgeHtml429sUseSeparateRetryBudget(
+        string mediaType, int rateLimitedSends, HttpStatusCode expectedStatus, int expectedSends)
+    {
+        const int exits = 8;
+        var options = new ScraperOptions
+        {
+            ExpectedProxyEndpointCount = exits,
+            ProxyUrls = [.. Enumerable.Range(1, exits).Select(i => $"http://gluetun-{i}:8888")],
+            ContainerNames = [.. Enumerable.Range(1, exits).Select(i => $"gluetun-{i}")],
+            VpnProviders = [.. Enumerable.Repeat("PIA", exits)],
+            ControlUrls = [.. Enumerable.Range(1, exits).Select(i => $"http://gluetun-{i}:8000")],
+            ProxyUseCurlTransport = true,
+            ProxyCooldownSeconds = 30,
+            ProxyRegionRotationEnabled = true,
+            ProxyRegionRotationReconnectInPlace = true,
+            ProxyRegionRotationRateLimitThreshold = 1,
+            ProxyRegionRotationMinIntervalSeconds = 5,
+            ProxyRegionRotationGlobalIntervalSeconds = 0,
+        };
+        options.ProxyCurlTempDirectory =
+            Path.Combine(Path.GetFullPath(options.DataDirectory), "curl-edge-budget-test");
+        using var pool = new ProxyPool(
+            options, NullLogger<ProxyPool>.Instance, regionRotator: new DeferringRotator());
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(new MockHttpMessageHandler()), _log, pool)
+        {
+            MaxEdgeRateLimitRetries = 3,
+        };
+        var sends = 0;
+        executor.PrimaryCurlTransportOverride = (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref sends) <= rateLimitedSends)
+            {
+                var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                {
+                    Content = new StringContent("<html>Rate limited</html>"),
+                };
+                limited.Content.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+                return Task.FromResult<HttpResponseMessage?>(limited);
+            }
+
+            return Task.FromResult<HttpResponseMessage?>(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"result":"ok"}""", System.Text.Encoding.UTF8, "application/json"),
+            });
+        };
+
+        using var response = await executor.SendAsync(
+            MakeEpicEventsRequest, maxRetries: 2, label: "edge-429-budget")
+            .WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(expectedStatus, response.StatusCode);
+        Assert.Equal(expectedSends, sends);
+    }
+
     private sealed class DeferringRotator : IProxyRegionRotator
     {
         public Task<ProxyRegionRotationResult> RotateAsync(
