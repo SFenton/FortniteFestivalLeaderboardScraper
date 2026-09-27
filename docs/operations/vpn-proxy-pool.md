@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-26
+last_verified: 2026-09-27
 last_verified_commit: 0e06e61e
 sources:
   - FSTService/Program.cs
@@ -233,6 +233,15 @@ East Streaming Optimized, UK London, DE Frankfurt, and US Washington DC failed
 every OpenVPN TLS handshake; CA Toronto, US Ohio, US Salt Lake City,
 Switzerland, and France were intermittent. Requalify before relying on these
 lists; PIA server health changes.
+
+The failures are not explained by Gluetun's embedded PIA server list. On
+2026-09-27 the list shipped in the running Gluetun image was 52 days old and
+kept none of US Las Vegas's 86 or CA Toronto's 74 addresses, but loading a
+fresh list (the image's `update -providers "private internet access"` command
+run on the host network, 536 servers) into a spare and restarting it did not
+make US Las Vegas, CA Toronto, or Switzerland connect: OpenVPN TLS key
+negotiation still failed. The in-tunnel updater also times out reaching PIA's
+server list.
 
 ## Self-heal boundary
 
