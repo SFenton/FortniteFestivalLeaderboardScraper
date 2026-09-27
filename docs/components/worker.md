@@ -689,6 +689,19 @@ explicitly labeled `derived`; they are formulas from the current query and
 transaction structure, not runtime instrumentation. Setting the switch back
 to `false` is the code-path rollback.
 
+Only scopes in a scrape's impacted set (band extraction plus prune) are
+considered for refresh, so scopes whose sources change through other paths
+drift. A read-only check after scrape `1436` found about 28% of 122,000 scope
+rows stale, including 229 overall song leaderboards (most rebuilt more than 30
+days earlier) while projection reads serve the published generation without a
+freshness check. `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes`
+(default `0`) adds up to that many stale non-impacted scopes, chosen by the
+same filter over all source and projection scope keys; the fast filter makes
+the full-table pass take about two minutes. The filter treats a ready scope
+with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
+converge instead of being selected every scrape, and counts only full-size
+combos, matching the rebuild.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and
