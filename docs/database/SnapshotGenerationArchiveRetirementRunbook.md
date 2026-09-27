@@ -125,3 +125,15 @@ re-retirement because its physical identity changed. API responses for
 current/previous/working publication pointers (344/342/357), were identical
 before and after. The batch then proceeded during scrape `1436` acquisition
 with zero lock waits.
+
+Cycle `95` is complete. Batches ran only in network-bound windows (scrape
+`1436` acquisition from 2026-09-26T23:31Z, stopped before its band flush, and
+scrape `1438` acquisition, finishing 2026-09-27T09:17Z). 993 children were
+archived, verified, and dropped: 2,437,512,533 rows, 1,129.2 GiB on disk
+(493.7 GiB heap) reclaimed, with 87.7 GiB of archives under
+`archives/snapshot-generations/cycle-95/` on the FST drive. The FST drive
+went from 68% to 41% used. The final read-only `plan` reports every candidate
+`missing` except the two intended exclusions: the restored Solo Bass `1377`
+canary (`oid-or-relfilenode-changed`) and Pro Cymbals `1314`
+(`retention-hold-history`). A later report cycle must reclassify them; cycle
+`95` has no further work.
