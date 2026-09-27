@@ -1,6 +1,7 @@
 import { test, expect } from '../../fixtures/test';
 import { createPopulatedScenario } from '../../fixtures/scenarios';
 import { gotoAppRoute } from '../../support/drivers/app';
+import { readStartupSplashNodes, recordStartupSplashNodes } from '../../support/startupSplash';
 
 test.use({ scenario: createPopulatedScenario() });
 
@@ -18,6 +19,7 @@ test('publication bootstrap uses an accessible purple splash without visible sta
     await publicationReady;
     await route.fulfill({ json: api.current().publication });
   });
+  await recordStartupSplashNodes(page);
 
   await page.goto('/#/songs', { waitUntil: 'domcontentloaded' });
 
@@ -36,6 +38,7 @@ test('publication bootstrap uses an accessible purple splash without visible sta
 
   await expect(splash).toHaveCount(0);
   await expect(page.getByText('Deterministic Song 2', { exact: true })).toBeVisible();
+  expect(await readStartupSplashNodes(page)).toEqual({ splashes: 1, spinners: 1, currentIsFirst: false });
 });
 
 test('publication change refreshes pinned requests, caches, and WebSocket ownership', async ({

@@ -23,13 +23,16 @@ const mockApi = vi.hoisted(() => {
 import App from '../../src/App';
 import type { SelectedBandProfile } from '../../src/hooks/data/useSelectedProfile';
 import { queryClient } from '../../src/api/queryClient';
+import { StartupSplashProvider } from '../../src/contexts/StartupSplashContext';
 import { seedAllFirstRunSeen } from '../helpers/firstRunState';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
 function render(ui: ReactElement) {
   return renderWithTestingLibrary(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    <QueryClientProvider client={queryClient}>
+      <StartupSplashProvider>{ui}</StartupSplashProvider>
+    </QueryClientProvider>,
   );
 }
 

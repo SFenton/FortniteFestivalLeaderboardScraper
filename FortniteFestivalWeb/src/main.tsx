@@ -7,6 +7,7 @@ import ErrorBoundary from './components/page/ErrorBoundary';
 import { queryClient } from './api/queryClient';
 import BackendAvailabilityGate from './components/maintenance/BackendAvailabilityGate';
 import PublicationBoundary from './contexts/PublicationBoundary';
+import { StartupSplashProvider } from './contexts/StartupSplashContext';
 import {
   DISABLE_SCROLL_FADE_QUERY_PARAM,
   DISABLE_SCROLL_FADE_STORAGE_KEY,
@@ -60,13 +61,15 @@ async function bootstrap() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <PublicationBoundary>
-          <BackendAvailabilityGate>
-            <Suspense fallback={null}>
-              <App />
-            </Suspense>
-          </BackendAvailabilityGate>
-        </PublicationBoundary>
+        <StartupSplashProvider>
+          <PublicationBoundary>
+            <BackendAvailabilityGate>
+              <Suspense fallback={null}>
+                <App />
+              </Suspense>
+            </BackendAvailabilityGate>
+          </PublicationBoundary>
+        </StartupSplashProvider>
         {showReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
       </QueryClientProvider>
     </StrictMode>,

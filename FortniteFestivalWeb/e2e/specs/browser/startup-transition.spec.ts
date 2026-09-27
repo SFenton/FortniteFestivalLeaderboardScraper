@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/test';
 import { createPopulatedScenario } from '../../fixtures/scenarios';
+import { readStartupSplashNodes, recordStartupSplashNodes } from '../../support/startupSplash';
 
 test.use({ scenario: createPopulatedScenario() });
 
@@ -45,11 +46,12 @@ function createReleaseGate() {
   return { promise, release };
 }
 
-test('keeps one centered purple spinner through availability and app readiness, then reveals the shell underneath', async ({
+test('keeps one persistent centered purple spinner through availability and app readiness, then reveals the shell underneath', async ({
   page,
   api,
 }) => {
   const scenario = api.current();
+  await recordStartupSplashNodes(page);
   const availabilityGate = createReleaseGate();
   const songsGate = createReleaseGate();
   await page.route('**/api/service-info*', async route => {
@@ -73,6 +75,7 @@ test('keeps one centered purple spinner through availability and app readiness, 
   await expect(page.getByText('Checking Festival Score Tracker status...')).toHaveCount(0);
   await expectCentered(splash, page);
   expect(await visibleSpinnerCount(page)).toBe(1);
+  expect(await readStartupSplashNodes(page)).toEqual({ splashes: 1, spinners: 1, currentIsFirst: true });
 
   availabilityGate.release();
   const shell = page.getByTestId('app-shell');
@@ -82,9 +85,11 @@ test('keeps one centered purple spinner through availability and app readiness, 
   await expect(shell).toHaveCSS('opacity', '0');
   await expectCentered(splash, page);
   expect(await visibleSpinnerCount(page)).toBe(1);
+  expect(await readStartupSplashNodes(page)).toEqual({ splashes: 1, spinners: 1, currentIsFirst: true });
 
   songsGate.release();
   await expect(splash).toHaveAttribute('data-phase', 'revealing', { timeout: 5_000 });
+  expect(await readStartupSplashNodes(page)).toEqual({ splashes: 1, spinners: 1, currentIsFirst: true });
   await expect(splash).toHaveCSS('pointer-events', 'auto');
   await expect(shell).toHaveCSS('opacity', '1');
   await expect(shell).toHaveAttribute('inert', '');
@@ -94,6 +99,7 @@ test('keeps one centered purple spinner through availability and app readiness, 
   await expect(shell).not.toHaveAttribute('inert');
   await expect(shell).not.toHaveAttribute('aria-hidden');
   await expect(page.getByText('Deterministic Song 2', { exact: true })).toBeVisible();
+  expect(await readStartupSplashNodes(page)).toEqual({ splashes: 1, spinners: 1, currentIsFirst: false });
 });
 
 test('holds body portals until entry and gives First Run priority over the changelog', async ({

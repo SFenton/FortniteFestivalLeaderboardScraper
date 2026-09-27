@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicationBoundary from '../../src/contexts/PublicationBoundary';
+import { StartupSplashProvider } from '../../src/contexts/StartupSplashContext';
 import {
   PUBLICATION_CHANGED_EVENT,
   resetPublicationForTests,
@@ -18,19 +19,71 @@ describe('PublicationBoundary', () => {
     vi.useRealTimers();
   });
 
-  it('shows the accessible purple startup splash while publication is unresolved', () => {
+  it('makes the shared startup splash the accessible announcement while publication is unresolved', () => {
     global.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
 
     render(
+      <StartupSplashProvider>
+        <PublicationBoundary>
+          <div>Published app</div>
+        </PublicationBoundary>
+      </StartupSplashProvider>,
+    );
+
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getAllByTestId('startup-splash')).toHaveLength(1);
+    expect(screen.queryByText('Loading published data...')).not.toBeInTheDocument();
+    expect(screen.queryByText('Published app')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing of its own while unresolved so the provider owns the only splash', () => {
+    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    const { container } = render(
       <PublicationBoundary>
         <div>Published app</div>
       </PublicationBoundary>,
     );
 
-    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByTestId('startup-splash')).toBeInTheDocument();
-    expect(screen.queryByText('Loading published data...')).not.toBeInTheDocument();
-    expect(screen.queryByText('Published app')).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('keeps the same splash node and silences it once publication resolves', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        contractVersion: 1,
+        publicationId: 42,
+        previousPublicationId: null,
+        publishedScrapeId: 1271,
+        publishedAt: '2026-07-30T19:35:02Z',
+        readyForPinning: false,
+        pinningEnabled: false,
+        unreadySurfaces: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    render(
+      <StartupSplashProvider>
+        <PublicationBoundary>
+          <div>Published app</div>
+        </PublicationBoundary>
+      </StartupSplashProvider>,
+    );
+    const splash = screen.getByTestId('startup-splash');
+    expect(splash).toHaveAttribute('role', 'status');
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Published app')).toBeInTheDocument();
+    expect(screen.getByTestId('startup-splash')).toBe(splash);
+    expect(splash).not.toHaveAttribute('role');
+    expect(splash).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('shows service unavailable while retrying a transient bootstrap failure', async () => {
@@ -51,9 +104,11 @@ describe('PublicationBoundary', () => {
       }));
 
     render(
-      <PublicationBoundary>
-        <div>Published app</div>
-      </PublicationBoundary>,
+      <StartupSplashProvider>
+        <PublicationBoundary>
+          <div>Published app</div>
+        </PublicationBoundary>
+      </StartupSplashProvider>,
     );
 
     await act(async () => {
@@ -62,6 +117,7 @@ describe('PublicationBoundary', () => {
     });
     expect(screen.getByText(/currently down for maintenance/i)).toBeInTheDocument();
     expect(screen.queryByText('Published app')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument();
 
     await act(async () => {
       vi.advanceTimersByTime(2_000);
@@ -70,6 +126,7 @@ describe('PublicationBoundary', () => {
     });
 
     expect(screen.getByText('Published app')).toBeInTheDocument();
+    expect(screen.getByTestId('startup-splash')).toHaveAttribute('aria-hidden', 'true');
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 

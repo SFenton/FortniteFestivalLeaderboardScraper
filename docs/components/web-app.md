@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-24
-last_verified_commit: d5af85a2
+last_verified: 2026-09-27
+last_verified_commit: b898b6cb
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -22,6 +22,7 @@ sources:
   - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
   - FortniteFestivalWeb/src/components/leaderboard/PaginatedLeaderboard.tsx
   - FortniteFestivalWeb/src/components/maintenance/BackendAvailabilityGate.tsx
+  - FortniteFestivalWeb/src/components/maintenance/MaintenanceApp.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.module.css
   - FortniteFestivalWeb/src/components/page/PageQuickLinks.tsx
@@ -43,6 +44,7 @@ sources:
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
   - FortniteFestivalWeb/src/contexts/PageReadyContext.tsx
   - FortniteFestivalWeb/src/contexts/StartupEntranceContext.tsx
+  - FortniteFestivalWeb/src/contexts/StartupSplashContext.tsx
   - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
@@ -85,6 +87,7 @@ sources:
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/e2e/specs/browser/startup-transition.spec.ts
+  - FortniteFestivalWeb/e2e/support/startupSplash.ts
   - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
   - FortniteFestivalWeb/e2e/specs/platform/publication.spec.ts
   - FortniteFestivalWeb/e2e/README.md
@@ -106,9 +109,10 @@ i18next for localization, and Yarn 4 as its package manager.
 renders:
 
 1. `QueryClientProvider`
-2. `PublicationBoundary`
-3. `BackendAvailabilityGate`
-4. the application or a diagnostic fixture
+2. `StartupSplashProvider`
+3. `PublicationBoundary`
+4. `BackendAvailabilityGate`
+5. the application or a diagnostic fixture
 
 Diagnostic fixtures, persisted scroll-fade test mode, tap-diagnostics runtime,
 and notification sample data stay outside the normal entry graph. They load
@@ -126,23 +130,34 @@ removed together rather than retained to inflate coverage.
 
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
-WebSocket, and remounts the app with the new publication ID. Unresolved
-publication and backend-availability checks use the same full-viewport,
-solid-`--color-bg-app` startup surface with one centered `ArcSpinner`; they do
-not expose the maintenance title, status copy, or logo treatment. The
-publication boundary owns the one visually hidden polite loading announcement,
-while later bootstrap stages are accessibility-silent. Actual publication or
-availability failures still render the full maintenance experience.
+WebSocket, and remounts the app with the new publication ID.
+
+`StartupSplashProvider` owns the only startup splash: a full-viewport,
+solid-`--color-bg-app` surface with one centered `ArcSpinner`, mounted once at
+boot and kept until application entry. Unresolved publication and
+backend-availability stages render nothing of their own, and the application
+drives the same element's reveal, so the spinner is never remounted between
+stages. A remount restarts the spinner's rotation from a render-time phase;
+on phone-class CPUs the slow application mount made the arc visibly snap back.
+The splash does not expose the maintenance title, status copy, or logo
+treatment. While the publication is unresolved, the same element is the one
+visually hidden polite loading announcement; later stages leave it
+accessibility-silent. Actual publication or availability failures still render
+the full maintenance experience, which removes the splash while mounted;
+recovery restores the covered splash.
 
 After the application mounts, `PageReadyProvider` starts each route as not
-ready. The shell remains `opacity: 0`, `inert`, and `aria-hidden` behind an
-app-owned startup splash while the active page and lazy animated background
-prepare. When the page publishes its terminal content-ready state, the shell
+ready. The shell remains `opacity: 0`, `inert`, and `aria-hidden` behind the
+shared startup splash while the active page and lazy animated background
+prepare; the application reports its reveal phase to `StartupSplashProvider`.
+When the page publishes its terminal content-ready state, the shell
 becomes opaque underneath the still-covered splash and only the splash fades
 for the shared 300 ms transition. Completion accepts the splash's own opacity
 `transitionend` and has a 100 ms safety fallback; reduced-motion users enter
 without the fade. Entry is latched for the lifetime of the mounted app, so
-normal route readiness resets never replay the startup surface.
+normal route readiness resets never replay the startup surface. Unmounting the
+application, such as the publication-change remount, restores the covered
+splash for the next mount.
 
 Songs publishes readiness at `LoadPhase.ContentIn`; route-error fallbacks
 publish terminal readiness immediately, while unsupported URLs redirect to

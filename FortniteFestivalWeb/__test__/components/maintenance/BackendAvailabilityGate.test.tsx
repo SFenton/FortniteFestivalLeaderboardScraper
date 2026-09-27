@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultScheduler, notifyManager } from '@tanstack/query-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BackendAvailabilityGate from '../../../src/components/maintenance/BackendAvailabilityGate';
+import { StartupSplashProvider } from '../../../src/contexts/StartupSplashContext';
 import { queryKeys } from '../../../src/api/queryKeys';
 
 beforeEach(() => {
@@ -30,9 +31,11 @@ function renderGate(queryClient = createClient()) {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <BackendAvailabilityGate>
-          <div>App content</div>
-        </BackendAvailabilityGate>
+        <StartupSplashProvider>
+          <BackendAvailabilityGate>
+            <div>App content</div>
+          </BackendAvailabilityGate>
+        </StartupSplashProvider>
       </QueryClientProvider>,
     ),
   };
@@ -51,16 +54,30 @@ function mockServiceInfo(workerStatus: string, currentUpdateStatus = 'idle') {
 }
 
 describe('BackendAvailabilityGate', () => {
-  it('shows an accessibility-silent startup splash while the backend check is pending', () => {
+  it('leaves the shared startup splash covering and accessibility-silent while the backend check is pending', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
 
     renderGate();
 
     expect(screen.getByTestId('startup-splash')).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByTestId('arc-spinner')).toBeInTheDocument();
+    expect(screen.getAllByTestId('arc-spinner')).toHaveLength(1);
     expect(screen.queryByText('Checking Festival Score Tracker status...')).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(screen.queryByText('App content')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing of its own while pending so the provider owns the only splash', () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+
+    const { container } = render(
+      <QueryClientProvider client={createClient()}>
+        <BackendAvailabilityGate>
+          <div>App content</div>
+        </BackendAvailabilityGate>
+      </QueryClientProvider>,
+    );
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it.each([
@@ -87,6 +104,7 @@ describe('BackendAvailabilityGate', () => {
 
     await waitFor(() => expect(screen.getByText(/currently down for maintenance/i)).toBeInTheDocument());
     expect(screen.queryByText('App content')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument();
   });
 
   it('renders maintenance mode when service-info rejects', async () => {
