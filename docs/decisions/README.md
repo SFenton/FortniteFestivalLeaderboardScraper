@@ -22,6 +22,7 @@ update_triggers:
 | [0007](0007-snapshot-generation-drop-and-logical-restore.md) | Isolate exact-child DROP from quarantine and restore logically |
 | [0008](0008-snapshot-generation-retirement-plan-control-plane.md) | Start recurring retirement with a host-owned plan-only control plane |
 | [0009](0009-offline-retention-report-admission.md) | Produce genuine report-only retention evidence after an external idle stop |
+| [0010](0010-snapshot-archive-retirement.md) | Retire report-only candidates through verified archives |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.
