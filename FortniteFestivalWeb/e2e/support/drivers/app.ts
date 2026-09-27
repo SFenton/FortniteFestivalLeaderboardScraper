@@ -50,7 +50,9 @@ async function dismissControl(locator: Locator): Promise<boolean> {
   try {
     await locator.click({ force: true, timeout: OVERLAY_ACTION_TIMEOUT_MS });
   } catch (error) {
-    if (!(error instanceof errors.TimeoutError)) throw error;
+    // The overlay can finish closing between the visibility probe and the click.
+    if (!(error instanceof errors.TimeoutError)
+      && (await locator.isVisible().catch(() => false))) throw error;
     return true;
   }
 
