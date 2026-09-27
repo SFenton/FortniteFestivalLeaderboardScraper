@@ -58,6 +58,15 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void SoloProjectionBeforeRivalsChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigIdForValue("Scraper:PrepareSoloCurrentProjectionBeforeRivals", "");
+        var candidate = CaptureConfigIdForValue("Scraper:PrepareSoloCurrentProjectionBeforeRivals", "true");
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
     public void Reattaching_same_scrape_and_instance_is_idempotent()
     {
         var (sink, metaDb, _) = CreateSink();

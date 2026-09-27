@@ -1852,6 +1852,91 @@ public class PostScrapeOrchestratorTests : IDisposable
                 entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_LegacyReadersRefreshStaleProjectionBeforeRivalsOnlyWhenEnabled(
+        bool enabled)
+    {
+        const string songId = "song_projection_warm";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_projection_warm";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                EnforcePublicationCriticalPhases = true,
+            }));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, accountId, 120_000);
+        InsertProjectionScope(songId, instrument, sourceSnapshotId: 41);
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                PrepareSoloCurrentProjectionBeforeRivals = enabled,
+            },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext();
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals,
+            CancellationToken.None);
+
+        var logs = _log.Entries.ToList();
+        var projectionIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal));
+        var rivalsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        Assert.True(rivalsIndex >= 0, "Expected rivals to run.");
+        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.False(ctx.SoloCurrentProjectionRefreshedForPublication);
+        Assert.Empty(ctx.RefreshedProjectionScopes);
+        if (!enabled)
+        {
+            Assert.Equal(-1, projectionIndex);
+            Assert.Equal(41, GetProjectionScopeSourceSnapshot(songId, instrument));
+            return;
+        }
+
+        Assert.True(projectionIndex >= 0 && projectionIndex < rivalsIndex,
+            "Expected the stale projection refresh before rivals.");
+        Assert.Equal(42, GetProjectionScopeSourceSnapshot(songId, instrument));
+        Assert.Equal(120_000, GetProjectedScore(songId, instrument, accountId));
+
+        // A later activation re-dirties the warmed scope; cleanup must still see it.
+        InsertSnapshotState(songId, instrument, 45);
+        InsertSnapshotEntry(45, songId, instrument, accountId, 130_000);
+
+        await sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        Assert.Equal(45, GetProjectionScopeSourceSnapshot(songId, instrument));
+        Assert.Equal(130_000, GetProjectedScore(songId, instrument, accountId));
+    }
+
     [Fact]
     public void BandExtraction_DoesNotActivateSoloSnapshots()
     {

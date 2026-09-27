@@ -314,6 +314,7 @@ configuration rollback is independently setting each enable flag to `false`.
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
 | `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
+| `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
@@ -328,6 +329,24 @@ account can execute many neighborhood reads and fingerprint queries. The
 setting changes scheduling only; rival eligibility, methods, directions,
 samples, persistence, publication criticality, and result ordering are
 unchanged.
+
+Rival song counts and neighborhoods read the solo current projection only when
+a scope is ready for its song's active source, and song counts use it only
+when every scope of the instrument is ready. Otherwise each neighborhood
+re-ranks live and snapshot rows for the song. Because the projection is
+normally refreshed later in `Cleanup.SoloCurrentProjection`, songs that
+received a new snapshot in the current scrape take that fallback (scrape
+`1436`: 72-517 of 729 scopes ready per instrument; Rivals `4.6`-`38.5`
+minutes across scrapes `1416`-`1424`). With
+`Scraper__PrepareSoloCurrentProjectionBeforeRivals=true` and legacy worker
+readers, the existing `PrepareSoloCurrentProjectionForDerived` phase refreshes
+stale scopes first. It is best-effort and records nothing on the pass
+context: publication cleanup still reloads stale scopes (including scopes
+re-dirtied by later snapshot activation) and remains the publication-critical
+refresh. Public reads are frozen for all of post-processing, so the earlier
+refresh exposes nothing. Snapshot/overlay worker readers always prepare and
+validate the projection instead. The switch is part of the durable phase
+configuration identity; set it back to `false` for rollback.
 
 ## Leaderboard rivals
 
