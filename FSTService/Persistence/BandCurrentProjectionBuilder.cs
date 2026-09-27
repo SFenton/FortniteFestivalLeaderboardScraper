@@ -9,6 +9,7 @@ namespace FSTService.Persistence;
 public sealed class BandCurrentProjectionBuilder
 {
     internal const int LegacyMemberStatsAggregateSubqueriesPerRow = 7;
+    internal const int MaxParallelScopesLimit = 16;
     public const string ProjectionTable = "current_band_leaderboard_entries";
     public const string StateTable = "band_current_projection_state";
     public const string ScopeTable = "band_current_projection_scope";
@@ -350,40 +351,57 @@ public sealed class BandCurrentProjectionBuilder
         var results = new ConcurrentBag<BandCurrentProjectionScopeResult>();
         var failedScopes = 0;
         var maxParallelBandTypes = Math.Clamp(options.MaxParallelBandTypes, 1, BandInstrumentMapping.AllBandTypes.Count);
-        var bandTypeGroups = scopesToRefresh
-            .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(static group => group.ToArray())
-            .ToArray();
+        var maxParallelScopes = Math.Clamp(options.MaxParallelScopes, 0, MaxParallelScopesLimit);
 
-        await Parallel.ForEachAsync(
-            bandTypeGroups,
-            new ParallelOptions { MaxDegreeOfParallelism = maxParallelBandTypes, CancellationToken = ct },
-            async (group, innerCt) =>
+        async ValueTask RefreshScopeAsync(BandCurrentProjectionScopeKey scope, CancellationToken innerCt)
+        {
+            innerCt.ThrowIfCancellationRequested();
+            BandCurrentProjectionScopeResult scopeResult;
+            try
             {
-                foreach (var scope in group)
-                {
-                    innerCt.ThrowIfCancellationRequested();
-                    BandCurrentProjectionScopeResult scopeResult;
-                    try
-                    {
-                        scopeResult = await RebuildScopeAsync(
-                            scope,
-                            options,
-                            generation,
-                            updateGlobalState: false,
-                            innerCt);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        Interlocked.Increment(ref failedScopes);
-                        continue;
-                    }
+                scopeResult = await RebuildScopeAsync(
+                    scope,
+                    options,
+                    generation,
+                    updateGlobalState: false,
+                    innerCt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Interlocked.Increment(ref failedScopes);
+                return;
+            }
 
-                    results.Add(scopeResult);
-                    onScopeCompleted?.Invoke(scope);
-                }
-            });
+            results.Add(scopeResult);
+            onScopeCompleted?.Invoke(scope);
+        }
+
+        if (maxParallelScopes > 0)
+        {
+            // Scope transactions write disjoint projection and scope-state keys,
+            // so any band type can run beside any other.
+            await Parallel.ForEachAsync(
+                InterleaveByBandType(scopesToRefresh),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelScopes, CancellationToken = ct },
+                RefreshScopeAsync);
+        }
+        else
+        {
+            var bandTypeGroups = scopesToRefresh
+                .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => group.ToArray())
+                .ToArray();
+
+            await Parallel.ForEachAsync(
+                bandTypeGroups,
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelBandTypes, CancellationToken = ct },
+                async (group, innerCt) =>
+                {
+                    foreach (var scope in group)
+                        await RefreshScopeAsync(scope, innerCt);
+                });
+        }
 
         var orderedResults = results
             .OrderBy(static result => result.BandType, StringComparer.OrdinalIgnoreCase)
@@ -410,10 +428,11 @@ public sealed class BandCurrentProjectionBuilder
                 orderedResults,
                 options);
         _log.LogInformation(
-            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, maxParallelScopes={MaxParallelScopes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
             scopesToRefresh.Length,
             normalizedScopes.Length,
             maxParallelBandTypes,
+            maxParallelScopes,
             options.UseBatchedMemberStatsAggregation,
             operationMetrics.SuccessfulScopeTransactions,
             operationMetrics.DerivedSuccessfulScopeCommandExecutions,
@@ -1643,6 +1662,25 @@ public sealed class BandCurrentProjectionBuilder
         cmd.Parameters.AddWithValue("scopeComboId", scope.ScopeComboId);
     }
 
+    internal static BandCurrentProjectionScopeKey[] InterleaveByBandType(
+        IReadOnlyList<BandCurrentProjectionScopeKey> scopes)
+    {
+        var queues = scopes
+            .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => new Queue<BandCurrentProjectionScopeKey>(group))
+            .ToList();
+        var ordered = new List<BandCurrentProjectionScopeKey>(scopes.Count);
+        while (queues.Count > 0)
+        {
+            for (var i = 0; i < queues.Count; i++)
+                ordered.Add(queues[i].Dequeue());
+            queues.RemoveAll(static queue => queue.Count == 0);
+        }
+
+        return [.. ordered];
+    }
+
     private static BandCurrentProjectionScopeKey NormalizeScope(BandCurrentProjectionScopeKey scope)
     {
         if (string.IsNullOrWhiteSpace(scope.SongId))
@@ -2147,6 +2185,13 @@ public sealed class BandCurrentProjectionRebuildOptions
     public bool SkipUnchangedScopes { get; init; } = true;
     public bool UseBatchedMemberStatsAggregation { get; init; }
     public int MaxParallelBandTypes { get; init; } = 2;
+
+    /// <summary>
+    /// Zero keeps one sequential worker per band type (bounded by
+    /// <see cref="MaxParallelBandTypes"/>). A positive value runs up to that
+    /// many independent scope transactions at once across all band types.
+    /// </summary>
+    public int MaxParallelScopes { get; init; }
     public int CandidateCleanupBatchSize { get; init; } = 100_000;
     public int CandidateCleanupMaxBatches { get; init; } = 100;
     public bool ClearExisting { get; init; }

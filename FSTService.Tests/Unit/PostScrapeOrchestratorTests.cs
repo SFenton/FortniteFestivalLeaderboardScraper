@@ -287,6 +287,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.True(rebuildOptions.SkipUnchangedScopes);
         Assert.True(rebuildOptions.DisableSynchronousCommit);
         Assert.Equal(2, rebuildOptions.MaxParallelBandTypes);
+        Assert.Equal(0, rebuildOptions.MaxParallelScopes);
+    }
+
+    [Fact]
+    public void CurrentProjectionScopeParallelismIsForwarded()
+    {
+        var rebuildOptions =
+            PostScrapeOrchestrator
+                .CreateBandCurrentProjectionRebuildOptions(
+                    new ScraperOptions
+                    {
+                        BandCurrentProjectionMaxParallelScopes = 6,
+                    });
+
+        Assert.Equal(6, rebuildOptions.MaxParallelScopes);
+        Assert.Equal(2, rebuildOptions.MaxParallelBandTypes);
     }
 
     private static async Task<IReadOnlyList<Persistence.SeasonWindowInfo>> WaitUntilCancelledSeasonWindowsAsync(CancellationToken ct)

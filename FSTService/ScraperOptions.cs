@@ -926,6 +926,14 @@ public sealed class ScraperOptions
     public bool BandCurrentProjectionUseBatchedMemberStatsAggregation { get; set; }
 
     /// <summary>
+    /// Maximum concurrent band current-projection scope transactions across
+    /// all band types. Zero keeps the default of one sequential worker per band
+    /// type with at most two band types at once. Values above 16 are clamped.
+    /// Set via <c>Scraper__BandCurrentProjectionMaxParallelScopes</c>.
+    /// </summary>
+    public int BandCurrentProjectionMaxParallelScopes { get; set; }
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>
