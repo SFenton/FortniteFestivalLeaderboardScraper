@@ -99,10 +99,13 @@ must reclassify it.
 
 ## Live-safety windows
 
-Run during scrape acquisition or an idle interval. Post-processing phases read
-current snapshots for long periods; a detach then exhausts its retries and the
-run stops rather than queueing. Stop runs before planned worker cutovers.
-Archives stay on the 4 TB FST drive.
+Run only while the scrape is network-bound (solo or band page fetching) or
+during an idle interval. Measured on scrape `1436`, a concurrent run slowed the
+band spool flush (`flushing_band`) from 393 to 167 chunks per minute, so stop
+runs (create the stop file) before any flush subphase or post-processing.
+Post-processing phases also read current snapshots for long periods; a detach
+then exhausts its retries and the run stops rather than queueing. Stop runs
+before planned worker cutovers. Archives stay on the 4 TB FST drive.
 
 ## 2026-09-26 cycle 95 evidence
 
