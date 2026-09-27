@@ -665,23 +665,62 @@ public sealed class BandCurrentProjectionBuilder
         cmd.Transaction = tx;
         cmd.CommandTimeout = 0;
         cmd.CommandText = $"""
-            WITH source_scope AS (
+            WITH requested_sources AS (
+                SELECT DISTINCT song_id, band_type
+                FROM _band_current_refresh_scopes
+            ), entry_combos AS (
+                -- Evaluate the combo expression once per source entry instead
+                -- of once per requested combo scope that joins the entry.
+                SELECT be.song_id,
+                       be.band_type,
+                       be.team_key,
+                       be.last_updated_at,
+                       ({BandSongComboIdExpression}) AS combo_id
+                FROM band_entries be
+                JOIN requested_sources rs
+                  ON rs.song_id = be.song_id
+                 AND rs.band_type = be.band_type
+                WHERE NOT be.is_over_threshold
+            ), overall_scope AS (
+                SELECT song_id,
+                       band_type,
+                       COUNT(DISTINCT team_key)::BIGINT AS projected_rows,
+                       MAX(last_updated_at) AS max_source_updated_at
+                FROM entry_combos
+                GROUP BY song_id, band_type
+            ), combo_scope AS (
+                SELECT song_id,
+                       band_type,
+                       combo_id,
+                       COUNT(DISTINCT team_key)::BIGINT AS projected_rows,
+                       MAX(last_updated_at) AS max_source_updated_at
+                FROM entry_combos
+                GROUP BY song_id, band_type, combo_id
+            ), source_scope AS (
                 SELECT requested.song_id,
                        requested.band_type,
                        requested.ranking_scope,
                        requested.scope_combo_id,
-                       COUNT(DISTINCT be.team_key)::BIGINT AS projected_rows,
-                       MAX(be.last_updated_at) AS max_source_updated_at
+                       COALESCE(
+                           CASE WHEN requested.ranking_scope = 'overall'
+                                THEN overall_scope.projected_rows
+                                ELSE combo_scope.projected_rows
+                           END,
+                           0)::BIGINT AS projected_rows,
+                       CASE WHEN requested.ranking_scope = 'overall'
+                            THEN overall_scope.max_source_updated_at
+                            ELSE combo_scope.max_source_updated_at
+                       END AS max_source_updated_at
                 FROM _band_current_refresh_scopes requested
-                LEFT JOIN band_entries be
-                  ON be.song_id = requested.song_id
-                 AND be.band_type = requested.band_type
-                 AND NOT be.is_over_threshold
-                 AND (
-                     requested.ranking_scope = 'overall'
-                     OR ({BandSongComboIdExpression}) = requested.scope_combo_id
-                 )
-                GROUP BY requested.song_id, requested.band_type, requested.ranking_scope, requested.scope_combo_id
+                LEFT JOIN overall_scope
+                  ON requested.ranking_scope = 'overall'
+                 AND overall_scope.song_id = requested.song_id
+                 AND overall_scope.band_type = requested.band_type
+                LEFT JOIN combo_scope
+                  ON requested.ranking_scope <> 'overall'
+                 AND combo_scope.song_id = requested.song_id
+                 AND combo_scope.band_type = requested.band_type
+                 AND combo_scope.combo_id = requested.scope_combo_id
             )
             SELECT source_scope.song_id,
                    source_scope.band_type,
