@@ -1524,11 +1524,50 @@ public sealed class PostScrapeOrchestrator
                         ScopeCount: 0));
                 }
 
-                return RefreshBandCurrentProjectionScopesAsync(
+                return RefreshBandCurrentProjectionScopesWithStaleSweepAsync(
                     impactedCurrentProjectionScopes,
                     ct);
             },
             static metrics => metrics);
+    }
+
+    private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesWithStaleSweepAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impactedScopes,
+        CancellationToken ct)
+    {
+        var sweepMax = _options.Value.BandCurrentProjectionStaleScopeSweepMaxScopes;
+        if (sweepMax <= 0 || _bandCurrentProjectionBuilder is null)
+            return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
+
+        var scopes = impactedScopes;
+        try
+        {
+            var impacted = impactedScopes.ToHashSet();
+            var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
+                .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
+                .Where(scope => !impacted.Contains(scope))
+                .Distinct()
+                .ToArray();
+            var stale = await _bandCurrentProjectionBuilder.SelectScopesNeedingRefreshAsync(
+                candidates,
+                sweepMax,
+                ct);
+            _log.LogInformation(
+                "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}).",
+                stale.Count,
+                candidates.Length,
+                sweepMax);
+            if (stale.Count > 0)
+                scopes = MergeCurrentProjectionScopes(impactedScopes, stale);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(
+                ex,
+                "Band current projection stale sweep failed; refreshing only the impacted scopes.");
+        }
+
+        return await RefreshBandCurrentProjectionScopesAsync(scopes, ct);
     }
 
     internal Task RunBandMaintenanceForTestAsync(

@@ -10,6 +10,14 @@ public sealed class BandCurrentProjectionBuilder
 {
     internal const int LegacyMemberStatsAggregateSubqueriesPerRow = 7;
     internal const int MaxParallelScopesLimit = 16;
+    private const string ExpectedMemberCountSql = """
+        CASE band_type
+            WHEN 'Band_Duets' THEN 2
+            WHEN 'Band_Trios' THEN 3
+            WHEN 'Band_Quad' THEN 4
+            ELSE 0
+        END
+        """;
     public const string ProjectionTable = "current_band_leaderboard_entries";
     public const string StateTable = "band_current_projection_state";
     public const string ScopeTable = "band_current_projection_scope";
@@ -624,6 +632,53 @@ public sealed class BandCurrentProjectionBuilder
                 options));
     }
 
+    /// <summary>
+    /// Returns every scope key that already has projection state, including
+    /// scopes whose source rows have since disappeared.
+    /// </summary>
+    public async Task<IReadOnlyList<BandCurrentProjectionScopeKey>> LoadProjectionScopeKeysAsync(
+        CancellationToken ct = default)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = $"SELECT song_id, band_type, ranking_scope, scope_combo_id FROM {ScopeTable}";
+        var keys = new List<BandCurrentProjectionScopeKey>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            keys.Add(new BandCurrentProjectionScopeKey(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// Applies the unchanged-scope filter to <paramref name="candidates"/> and
+    /// returns at most <paramref name="maxScopes"/> scopes that need a rebuild
+    /// (all of them when <paramref name="maxScopes"/> is not positive), in the
+    /// filter's deterministic order.
+    /// </summary>
+    public async Task<IReadOnlyList<BandCurrentProjectionScopeKey>> SelectScopesNeedingRefreshAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> candidates,
+        int maxScopes,
+        CancellationToken ct = default)
+    {
+        var normalized = candidates
+            .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
+            .OfType<BandCurrentProjectionScopeKey>()
+            .Distinct()
+            .ToArray();
+        if (normalized.Length == 0)
+            return [];
+
+        var selected = await FilterScopesNeedingRefreshAsync(normalized, ct);
+        return maxScopes > 0 && selected.Length > maxScopes
+            ? selected[..maxScopes]
+            : selected;
+    }
+
     private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
@@ -689,12 +744,15 @@ public sealed class BandCurrentProjectionBuilder
                 FROM entry_combos
                 GROUP BY song_id, band_type
             ), combo_scope AS (
+                -- Match the rebuild: combo scopes contain only full-size combos.
                 SELECT song_id,
                        band_type,
                        combo_id,
                        COUNT(DISTINCT team_key)::BIGINT AS projected_rows,
                        MAX(last_updated_at) AS max_source_updated_at
                 FROM entry_combos
+                WHERE combo_id <> ''
+                  AND array_length(string_to_array(combo_id, '+'), 1) = {ExpectedMemberCountSql}
                 GROUP BY song_id, band_type, combo_id
             ), source_scope AS (
                 SELECT requested.song_id,
@@ -732,7 +790,9 @@ public sealed class BandCurrentProjectionBuilder
              AND existing.band_type = source_scope.band_type
              AND existing.ranking_scope = source_scope.ranking_scope
              AND existing.scope_combo_id = source_scope.scope_combo_id
-            WHERE (source_scope.projected_rows = 0 AND existing.song_id IS NOT NULL)
+            WHERE (source_scope.projected_rows = 0
+                   AND existing.song_id IS NOT NULL
+                   AND (existing.status <> 'ready' OR existing.row_count <> 0))
                OR (source_scope.projected_rows > 0 AND (
                     existing.song_id IS NULL
                     OR existing.status <> 'ready'
@@ -1718,6 +1778,22 @@ public sealed class BandCurrentProjectionBuilder
         }
 
         return [.. ordered];
+    }
+
+    private static bool TryNormalizeScope(
+        BandCurrentProjectionScopeKey scope,
+        out BandCurrentProjectionScopeKey normalized)
+    {
+        try
+        {
+            normalized = NormalizeScope(scope);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            normalized = scope;
+            return false;
+        }
     }
 
     private static BandCurrentProjectionScopeKey NormalizeScope(BandCurrentProjectionScopeKey scope)

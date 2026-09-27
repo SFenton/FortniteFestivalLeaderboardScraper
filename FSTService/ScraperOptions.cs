@@ -944,6 +944,15 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionMaxParallelScopes { get; set; }
 
     /// <summary>
+    /// When positive, BandMaintenance also rebuilds up to this many stale band
+    /// current-projection scopes outside the scrape's impacted set, selected by
+    /// the unchanged-scope filter over every source and projection scope. Zero
+    /// disables the sweep. Set via
+    /// <c>Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes</c>.
+    /// </summary>
+    public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

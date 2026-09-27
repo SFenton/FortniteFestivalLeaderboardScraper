@@ -415,7 +415,8 @@ public class PostScrapeOrchestratorTests : IDisposable
         SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
-        DatabaseMaintenanceOptions? databaseMaintenanceOptions = null)
+        DatabaseMaintenanceOptions? databaseMaintenanceOptions = null,
+        BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null)
     {
         var activePersistence = persistence ?? _persistence;
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
@@ -497,6 +498,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _log,
             _registrationMutations,
             null,
+            bandCurrentProjectionBuilder: bandCurrentProjectionBuilder,
             soloCurrentProjectionBuilder:
                 soloCurrentProjectionBuilder ?? _soloCurrentProjectionBuilder,
             databaseMaintenanceOptions: Options.Create(
@@ -2224,6 +2226,69 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(3, current?.WorkItems?.Completed);
         Assert.Equal(3, current?.WorkItems?.Total);
         Assert.True(current?.WorkItemsTotalFinal);
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(0)]
+    public async Task BandMaintenance_stale_sweep_rebuilds_drifted_non_impacted_scopes_only_when_enabled(
+        int sweepMaxScopes)
+    {
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        void SeedBand(string songId, int teams) => bandPersistence.UpsertBandEntries(
+            songId,
+            "Band_Duets",
+            Enumerable.Range(0, teams).Select(team => new BandLeaderboardEntry
+            {
+                TeamKey = $"{songId}-{team}-a:{songId}-{team}-b",
+                TeamMembers = [$"{songId}-{team}-a", $"{songId}-{team}-b"],
+                InstrumentCombo = "0:1",
+                Score = 900_000 - team,
+                Accuracy = 950_000,
+                Stars = 5,
+                Difficulty = 3,
+                Season = 1,
+                Rank = team + 1,
+                EndTime = "2026-08-16T00:00:00Z",
+                Source = "test",
+            }).ToArray());
+        SeedBand("sweep-a", 2);
+        SeedBand("sweep-b", 2);
+        var builder = new BandCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandCurrentProjectionBuilder>>());
+        var impacted = new BandCurrentProjectionScopeKey("sweep-a", "Band_Duets", "overall", "");
+        var drifted = new BandCurrentProjectionScopeKey("sweep-b", "Band_Duets", "overall", "");
+        await builder.RefreshScopesAsync(await builder.LoadCurrentScopesAsync());
+        await Task.Delay(20);
+        SeedBand("sweep-b", 5);
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                BandCurrentProjectionStaleScopeSweepMaxScopes = sweepMaxScopes,
+            },
+            bandCurrentProjectionBuilder: builder);
+
+        await sut.RunBandMaintenanceForTestAsync(
+            CreateContext(scrapeId: 90_021),
+            new BandExtractionResult(
+                0,
+                0,
+                0,
+                new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+                [impacted]),
+            runFullMaintenance: false,
+            CancellationToken.None);
+
+        var stale = await builder.SelectScopesNeedingRefreshAsync([drifted], 0);
+        if (sweepMaxScopes > 0)
+            Assert.Empty(stale);
+        else
+            Assert.Equal([drifted], stale);
     }
 
     [Fact]

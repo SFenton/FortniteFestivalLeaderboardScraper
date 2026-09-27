@@ -281,6 +281,7 @@ invalid/non-positive values prevent startup.
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
 | `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
+| `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
 
 The Compose form is
 `Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
@@ -298,6 +299,15 @@ scopes rebuild concurrently. Each scope keeps its own transaction and writes
 disjoint projection and scope-state keys; filtering, query shape, publication,
 cleanup, and failure accounting are unchanged. Both switches are part of the
 durable phase configuration identity. Set it back to `0` for rollback.
+
+`Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes` (template variable
+`BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES`) adds a best-effort
+sweep to BandMaintenance's current-projection subphase. It loads every source
+scope and every existing projection scope key, runs the same unchanged-scope
+filter over the non-impacted ones, and adds up to the cap (in the filter's
+deterministic order) to the impacted set. A sweep failure is logged and the
+refresh continues with the impacted scopes. The switch is part of the durable
+phase configuration identity; `0` disables it.
 
 ## Registered-band remaining-work grace
 
