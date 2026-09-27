@@ -19,6 +19,14 @@ public interface IProxyHealthReporter
     void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind);
 }
 
+internal interface IProxyRateLimitReporter
+{
+    void ReportRateLimited(
+        HttpRequestMessage request,
+        TimeSpan? retryAfter,
+        string? mediaType = null);
+}
+
 public interface IProxyCdnBlockHandler
 {
     /// <summary>
@@ -41,11 +49,21 @@ internal static class ProxyRequestState
     public static readonly HttpRequestOptionsKey<int> EndpointIndex = new("FSTService.ProxyEndpointIndex");
     public static readonly HttpRequestOptionsKey<string> EndpointName = new("FSTService.ProxyEndpointName");
     public static readonly HttpRequestOptionsKey<Uri> EndpointProxyUri = new("FSTService.ProxyEndpointProxyUri");
+    /// <summary>
+    /// Tunnel generation of the lease. Reports from an older generation (a
+    /// request sent before a reconnect or restart) are ignored so they cannot
+    /// cool, burn, or restart the replacement tunnel.
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<long> EndpointGeneration = new("FSTService.ProxyEndpointGeneration");
     public static readonly HttpRequestOptionsKey<Action<bool>> WireSendRecorder =
         new("FSTService.ProxyWireSendRecorder");
 }
 
-internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, IDisposable
+internal sealed class ProxyPool :
+    IProxyHealthReporter,
+    IProxyRateLimitReporter,
+    IProxyCdnBlockHandler,
+    IDisposable
 {
     private readonly List<ProxyEndpoint> _endpoints;
     private readonly ILogger<ProxyPool> _log;
@@ -64,23 +82,54 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private readonly bool _disableConnectionReuse;
     private readonly bool _useCurlTransport;
     private readonly string _curlTempDirectory;
+    private readonly IProxyRegionRotator? _regionRotator;
+    private readonly bool _regionRotationEnabled;
+    private readonly IReadOnlyList<string> _regionRotationRegions;
+    private readonly int _regionRotationThreshold;
+    private readonly TimeSpan _regionRotationMinInterval;
+    private readonly TimeSpan _regionRotationGlobalInterval;
+    private readonly int _regionRotationMaxConcurrent;
+    private readonly bool _regionRotationReconnectInPlace;
+    private readonly TimeSpan _burnedEgressTtl;
+    private readonly int _regionRotationRequestBudget;
+    private readonly TimeSpan _regionRotationDrain;
+    private readonly SemaphoreSlim _regionRotationGate;
+    private readonly CancellationTokenSource _regionRotationCancellation = new();
+    private readonly Dictionary<IPAddress, DateTimeOffset> _rateLimitedEgress = new();
+    private readonly Timer? _summaryTimer;
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
     private DateTimeOffset _activeSince = DateTimeOffset.UtcNow;
+    private DateTimeOffset _nextRegionRotationStart;
+    private PoolWindowStats _stats;
+    private DateTimeOffset _statsSince = DateTimeOffset.UtcNow;
     private bool _disposed;
+
+    internal static readonly TimeSpan SummaryInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan EgressCensusMaxAge = TimeSpan.FromMinutes(5);
 
     public ProxyPool(
         IOptions<ScraperOptions> options,
         ILogger<ProxyPool> log,
-        IProxyContainerRecycler containerRecycler)
-        : this(options.Value, log, containerRecycler)
+        IProxyContainerRecycler containerRecycler,
+        IProxyRegionRotator? regionRotator = null)
+        : this(options.Value, log, containerRecycler, regionRotator)
     {
     }
 
-    internal ProxyPool(ScraperOptions options, ILogger<ProxyPool> log, IProxyContainerRecycler? containerRecycler = null)
+    internal ProxyPool(
+        ScraperOptions options,
+        ILogger<ProxyPool> log,
+        IProxyContainerRecycler? containerRecycler = null,
+        IProxyRegionRotator? regionRotator = null)
     {
         ValidateExpectedConfiguration(options);
+        if (options.ProxyRegionRotationEnabled && regionRotator is null)
+        {
+            throw new InvalidOperationException(
+                "PIA region rotation requires a worker-owned region rotator.");
+        }
 
         _log = log;
         _activeStandby = options.ProxyActiveStandby;
@@ -100,6 +149,20 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         _disableConnectionReuse = options.ProxyDisableConnectionReuse;
         _useCurlTransport = options.ProxyUseCurlTransport;
         _curlTempDirectory = options.ProxyCurlTempDirectory;
+        _regionRotator = regionRotator;
+        _regionRotationEnabled = options.ProxyRegionRotationEnabled;
+        _regionRotationRegions = options.ProxyRegionRotationRegions;
+        _regionRotationThreshold = options.ProxyRegionRotationRateLimitThreshold;
+        _regionRotationMinInterval =
+            TimeSpan.FromSeconds(options.ProxyRegionRotationMinIntervalSeconds);
+        _regionRotationGlobalInterval =
+            TimeSpan.FromSeconds(options.ProxyRegionRotationGlobalIntervalSeconds);
+        _regionRotationMaxConcurrent = Math.Max(1, options.ProxyRegionRotationMaxConcurrent);
+        _regionRotationReconnectInPlace = options.ProxyRegionRotationReconnectInPlace;
+        _burnedEgressTtl = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationBurnedEgressTtlSeconds));
+        _regionRotationRequestBudget = Math.Max(0, options.ProxyRegionRotationRequestBudget);
+        _regionRotationDrain = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationDrainSeconds));
+        _regionRotationGate = new SemaphoreSlim(_regionRotationMaxConcurrent, _regionRotationMaxConcurrent);
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
@@ -137,6 +200,26 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                         _endpoints.Count - restartable);
                 }
             }
+
+            if (_regionRotationEnabled)
+            {
+                _log.LogInformation(
+                    "Worker PIA region rotation enabled for {Count} exits with {Regions} qualified candidate(s), reconnectInPlace={ReconnectInPlace}, threshold={Threshold} HTTP 429s, requestBudget={Budget}, maxConcurrent={MaxConcurrent}, perExitMinInterval={PerExitSeconds}s, globalInterval={GlobalSeconds}s, rateLimitedEgressTtl={TtlSeconds}s.",
+                    _endpoints.Count,
+                    _regionRotationRegions.Count,
+                    _regionRotationReconnectInPlace,
+                    _regionRotationThreshold,
+                    _regionRotationRequestBudget,
+                    _regionRotationMaxConcurrent,
+                    _regionRotationMinInterval.TotalSeconds,
+                    _regionRotationGlobalInterval.TotalSeconds,
+                    _burnedEgressTtl.TotalSeconds);
+                _ = Task.Run(() => EgressCensusLoopAsync(_regionRotationCancellation.Token));
+            }
+
+            _summaryTimer = new Timer(
+                static state => ((ProxyPool)state!).LogSummary(),
+                this, SummaryInterval, SummaryInterval);
         }
     }
 
@@ -146,7 +229,19 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     internal IReadOnlyList<string> EndpointNames => _endpoints.Select(e => e.Name).ToList();
 
+    internal bool IsRegionRotationActive(int index)
+    {
+        lock (_lock)
+        {
+            var endpoint = _endpoints[index];
+            return endpoint.RotationPending || endpoint.RegionRotationTask is not null;
+        }
+    }
+
     internal bool UseCurlTransport => _useCurlTransport;
+
+    /// <summary>True when per-exit 429s are answered by refreshing that exit's egress.</summary>
+    internal bool RefreshesRateLimitedExits => _regionRotationEnabled && _endpoints.Count > 0;
 
     internal string CurlTempDirectory => _curlTempDirectory;
 
@@ -202,7 +297,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                     lock (_lock)
                     {
                         ThrowIfDisposed();
-                        if (selected.CooldownUntil > DateTimeOffset.UtcNow)
+                        if (selected.RotationPending
+                            || selected.CooldownUntil > DateTimeOffset.UtcNow)
                         {
                             if (selected.InFlight > 0)
                                 selected.InFlight--;
@@ -215,7 +311,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                             selected.Index,
                             selected.Name,
                             selected.ProxyUri,
-                            selected.Invoker);
+                            selected.Invoker,
+                            selected.Generation);
                     }
                 }
                 catch
@@ -231,42 +328,89 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     public void ReportSuccess(HttpRequestMessage request)
     {
-        if (!TryGetEndpointIndex(request, out var index))
-            return;
-
         lock (_lock)
         {
-            if (!IsValidIndex(index))
+            if (!TryGetCurrentEndpoint(request, out var endpoint))
                 return;
 
-            var endpoint = _endpoints[index];
             endpoint.ConsecutiveCdnBlocks = 0;
             endpoint.ConsecutiveHttpFailures = 0;
             endpoint.ConsecutiveTransportFailures = 0;
             endpoint.RestartableCooldownFailures = 0;
+            endpoint.ConsecutiveRateLimits = 0;
             endpoint.Successes++;
+            endpoint.CountGenerationSuccess();
+            _stats.Successes++;
+            if (_regionRotationRequestBudget > 0
+                && endpoint.GenerationSuccesses >= _regionRotationRequestBudget)
+            {
+                TryScheduleRegionRotation(endpoint, RegionRotationTrigger.RequestBudget);
+            }
         }
     }
 
     public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind)
     {
-        if (!TryGetEndpointIndex(request, out var index))
-            return;
+        lock (_lock)
+        {
+            if (!TryGetCurrentEndpoint(request, out var endpoint))
+                return;
 
-        ReportFailure(index, kind);
+            ReportFailureCore(endpoint.Index, kind);
+        }
+    }
+
+    public void ReportRateLimited(
+        HttpRequestMessage request,
+        TimeSpan? retryAfter,
+        string? mediaType = null)
+    {
+        lock (_lock)
+        {
+            if (!TryGetCurrentEndpoint(request, out var endpoint))
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+            endpoint.Failures++;
+            _stats.RateLimited++;
+            if (mediaType is not null
+                && mediaType.Contains("html", StringComparison.OrdinalIgnoreCase))
+                _stats.RateLimitedHtml++;
+            if (retryAfter is { } positive && positive > TimeSpan.Zero)
+                endpoint.RetryAfterUntil = Max(endpoint.RetryAfterUntil, AddCooldownSafely(now, positive));
+            if (endpoint.KnownEgress is { } egress && _burnedEgressTtl > TimeSpan.Zero)
+                _rateLimitedEgress[egress] = now;
+            CoolDown(
+                endpoint,
+                ProxyFailureKind.RateLimited,
+                retryAfter is { } delay && delay > TimeSpan.Zero
+                    ? delay
+                    : null);
+
+            endpoint.ConsecutiveCdnBlocks = 0;
+            endpoint.ConsecutiveHttpFailures = 0;
+            endpoint.ConsecutiveTransportFailures = 0;
+            endpoint.ConsecutiveRateLimits++;
+            if (endpoint.ConsecutiveRateLimits >= _regionRotationThreshold)
+                TryScheduleRegionRotation(endpoint, RegionRotationTrigger.RateLimited);
+
+            if (_activeStandby && endpoint.Index == _activeIndex)
+                RotateActive(now, $"proxy {endpoint.Name} reported {ProxyFailureKind.RateLimited}");
+        }
     }
 
     public ProxyCdnBlockDecision ReportCdnBlock(HttpRequestMessage request)
     {
-        if (!TryGetEndpointIndex(request, out var index))
+        if (!TryGetEndpointIndex(request, out _))
             return ProxyCdnBlockDecision.PauseGlobally;
 
         lock (_lock)
         {
-            if (!IsValidIndex(index))
+            if (!TryGetEndpointIndex(request, out var index) || !IsValidIndex(index))
                 return ProxyCdnBlockDecision.PauseGlobally;
 
-            ReportFailureCore(index, ProxyFailureKind.CdnBlock);
+            if (TryGetCurrentEndpoint(request, out _))
+                ReportFailureCore(index, ProxyFailureKind.CdnBlock);
             return HasAvailableEndpoint(DateTimeOffset.UtcNow)
                 ? ProxyCdnBlockDecision.RetryOnAlternateProxy
                 : ProxyCdnBlockDecision.WaitForProxyCooldown;
@@ -379,10 +523,10 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     }
 
     private bool HasAvailableEndpoint(DateTimeOffset now)
-        => _endpoints.Any(e => e.CooldownUntil <= now);
+        => _endpoints.Any(e => !e.RotationPending && e.CooldownUntil <= now);
 
     private bool IsSelectable(ProxyEndpoint endpoint, DateTimeOffset now) =>
-        endpoint.CooldownUntil <= now &&
+        !endpoint.RotationPending && endpoint.CooldownUntil <= now &&
         (_perEndpointMaxConcurrentRequests <= 0 ||
          endpoint.InFlight < _perEndpointMaxConcurrentRequests);
 
@@ -408,11 +552,19 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         }
     }
 
-    private void CoolDown(ProxyEndpoint endpoint, ProxyFailureKind kind)
+    private void CoolDown(
+        ProxyEndpoint endpoint,
+        ProxyFailureKind kind,
+        TimeSpan? minimumCooldown = null)
     {
         var now = DateTimeOffset.UtcNow;
-        var cooldown = _baseCooldown;
-        endpoint.CooldownUntil = now + cooldown;
+        var requestedCooldown = minimumCooldown ?? TimeSpan.Zero;
+        var cooldown = _baseCooldown >= requestedCooldown
+            ? _baseCooldown
+            : requestedCooldown;
+        endpoint.CooldownUntil = Max(
+            endpoint.CooldownUntil,
+            AddCooldownSafely(now, cooldown));
         endpoint.Cooldowns++;
 
         _log.LogWarning(
@@ -430,12 +582,28 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         if (!_containerSelfHealEnabled || _containerRecycler is null || !IsRestartableFailure(kind))
             return;
 
+        if (endpoint.RotationPending)
+            return;
+
         if (string.IsNullOrWhiteSpace(endpoint.ContainerName))
             return;
 
         endpoint.RestartableCooldownFailures++;
         if (endpoint.RestartableCooldownFailures < _containerRestartFailureThreshold)
             return;
+
+        // With egress refresh enabled, a broken tunnel is first reconnected (or
+        // moved to a qualified region) through the control API: a container
+        // restart returns to the static region, which may itself be dead. A
+        // refresh that cannot reach the control API falls back to a restart.
+        if (_regionRotationEnabled && !endpoint.PreferContainerRestart)
+        {
+            var before = endpoint.RegionRotationTask;
+            TryScheduleRegionRotation(endpoint, RegionRotationTrigger.TransportFailure);
+            if (!ReferenceEquals(before, endpoint.RegionRotationTask))
+                endpoint.RestartableCooldownFailures = 0;
+            return;
+        }
 
         var now = DateTimeOffset.UtcNow;
         if (endpoint.ContainerRestartTask is { IsCompleted: false })
@@ -494,6 +662,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                     endpoint.ConsecutiveTransportFailures = 0;
                     endpoint.RestartableCooldownFailures = 0;
                     endpoint.CooldownUntil = Max(endpoint.CooldownUntil, DateTimeOffset.UtcNow + _baseCooldown);
+                    endpoint.PreferContainerRestart = false;
+                    endpoint.AdvanceGeneration(egress: null);
                     oldInvoker = endpoint.ResetInvoker();
                 }
             }
@@ -522,12 +692,489 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private static bool IsRestartableFailure(ProxyFailureKind kind)
         => kind is ProxyFailureKind.Transport or ProxyFailureKind.Timeout;
 
+    private enum RegionRotationTrigger
+    {
+        RateLimited,
+        RequestBudget,
+        DuplicateEgress,
+        TransportFailure,
+    }
+
+    private void TryScheduleRegionRotation(
+        ProxyEndpoint endpoint, RegionRotationTrigger trigger)
+    {
+        if (!_regionRotationEnabled
+            || _disposed
+            || endpoint.RegionRotationTask is { IsCompleted: false }
+            || endpoint.RotationPending
+            || endpoint.CooldownUntil == DateTimeOffset.MaxValue)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (endpoint.LastRegionRotationAttempt is { } lastAttempt
+            && now - lastAttempt < _regionRotationMinInterval)
+            return;
+
+        // Hold the exit out immediately: after a rate limit its egress is
+        // spent, and every further request would only extend the block.
+        endpoint.RotationPending = true;
+        endpoint.ConsecutiveRateLimits = 0;
+        _stats.RotationsScheduled++;
+        var index = endpoint.Index;
+        endpoint.RegionRotationTask = Task.Run(() =>
+            RotateRegionAsync(index, trigger, _regionRotationCancellation.Token));
+        if (trigger == RegionRotationTrigger.RateLimited && _regionRotationThreshold > 1)
+        {
+            _log.LogWarning(
+                "PIA proxy {ProxyName} scheduled a bounded region change after {Threshold} HTTP 429s; existing Retry-After cooldown remains in force.",
+                endpoint.Name, _regionRotationThreshold);
+        }
+        else
+        {
+            _log.LogDebug(
+                "PIA proxy {ProxyName} scheduled an egress refresh ({Trigger}) after {Successes} successful request(s) on its current egress.",
+                endpoint.Name, trigger, endpoint.GenerationSuccesses);
+        }
+    }
+
+    private async Task RotateRegionAsync(
+        int endpointIndex, RegionRotationTrigger trigger, CancellationToken ct)
+    {
+        bool acquired = false;
+        HttpMessageInvoker? oldInvoker = null;
+        long startedAt = 0;
+        try
+        {
+            await _regionRotationGate.WaitAsync(ct);
+            acquired = true;
+
+            TimeSpan globalDelay;
+            lock (_lock)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var startAt = Max(now, _nextRegionRotationStart);
+                _nextRegionRotationStart = startAt + _regionRotationGlobalInterval;
+                globalDelay = startAt - now;
+            }
+            if (globalDelay > TimeSpan.Zero)
+                await Task.Delay(globalDelay, ct);
+
+            Task? restartTask;
+            lock (_lock)
+            {
+                restartTask = _endpoints[endpointIndex].ContainerRestartTask;
+            }
+            if (restartTask is not null)
+                await restartTask.WaitAsync(ct);
+
+            Uri baselineProxy;
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
+                baselineProxy = _endpoints[endpointIndex].ProxyUri;
+            }
+
+            // Establish the real current egress immediately before changing
+            // the tunnel: the census value may be missing or stale.
+            var baseline = await _regionRotator!.GetEgressAsync(baselineProxy, ct);
+
+            ProxyRegionRotationRequest request;
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
+
+                var endpoint = _endpoints[endpointIndex];
+                if (baseline is not null)
+                {
+                    endpoint.KnownEgress = baseline;
+                    endpoint.EgressObservedAt = DateTimeOffset.UtcNow;
+                    if (trigger == RegionRotationTrigger.RateLimited && _burnedEgressTtl > TimeSpan.Zero)
+                        _rateLimitedEgress[baseline] = DateTimeOffset.UtcNow;
+                }
+                endpoint.LastRegionRotationAttempt = DateTimeOffset.UtcNow;
+                var candidateOffset = _regionRotationRegions.Count == 0
+                    ? 0
+                    : (endpoint.Index + endpoint.RegionRotationAttempts++)
+                        % _regionRotationRegions.Count;
+                endpoint.PendingEgress = null;
+                request = new ProxyRegionRotationRequest(
+                    new ProxyRegionTunnel(
+                        endpoint.ContainerName, endpoint.ProxyUri,
+                        new Uri(endpoint.ControlUrl)),
+                    endpoint.KnownEgress,
+                    new EndpointEgressClaims(this, endpointIndex),
+                    _regionRotationRegions,
+                    candidateOffset,
+                    _regionRotationReconnectInPlace);
+                _stats.RotationsStarted++;
+            }
+
+            var drainDeadline = DateTimeOffset.UtcNow + _regionRotationDrain;
+            while (DateTimeOffset.UtcNow < drainDeadline)
+            {
+                ct.ThrowIfCancellationRequested();
+                int inFlight;
+                lock (_lock)
+                {
+                    inFlight = _endpoints[endpointIndex].InFlight;
+                }
+                if (inFlight == 0)
+                    break;
+                await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+            }
+
+            startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = await _regionRotator!.RotateAsync(request, ct);
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
+
+                var endpoint = _endpoints[endpointIndex];
+                endpoint.PendingEgress = null;
+                var now = DateTimeOffset.UtcNow;
+                _stats.RotationMilliseconds += (long)elapsed.TotalMilliseconds;
+                switch (result.Outcome)
+                {
+                    case ProxyRegionRotationOutcome.Rotated:
+                        _stats.Rotated++;
+                        _stats.RetiredEgress++;
+                        _stats.RetiredEgressSuccesses += endpoint.GenerationSuccesses;
+                        _log.LogDebug(
+                            "PIA proxy {Container} retired an egress after {Successes} successful request(s) ({Trigger}).",
+                            endpoint.Name, endpoint.GenerationSuccesses, trigger);
+                        endpoint.AdvanceGeneration(result.Egress);
+                        endpoint.PreferContainerRestart = false;
+                        endpoint.ConsecutiveCdnBlocks = 0;
+                        endpoint.ConsecutiveHttpFailures = 0;
+                        endpoint.ConsecutiveTransportFailures = 0;
+                        endpoint.ConsecutiveRateLimits = 0;
+                        endpoint.RestartableCooldownFailures = 0;
+                        // A fresh egress is not subject to the previous exit's
+                        // cooldown; an explicit Retry-After is still honored.
+                        endpoint.CooldownUntil = endpoint.RetryAfterUntil > now
+                            ? endpoint.RetryAfterUntil
+                            : now;
+                        oldInvoker = endpoint.ResetInvoker();
+                        break;
+                    case ProxyRegionRotationOutcome.Restored:
+                        _stats.Restored++;
+                        // The tunnel was changed (possibly the container
+                        // restarted) even when the egress is the same.
+                        endpoint.AdvanceGeneration(result.Egress);
+                        endpoint.PreferContainerRestart = false;
+                        oldInvoker = endpoint.ResetInvoker();
+                        endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
+                        break;
+                    case ProxyRegionRotationOutcome.Deferred:
+                        _stats.Deferred++;
+                        if (trigger == RegionRotationTrigger.TransportFailure)
+                            endpoint.PreferContainerRestart = true;
+                        endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
+                        break;
+                    default:
+                        _stats.Unsafe++;
+                        endpoint.AdvanceGeneration(egress: null);
+                        endpoint.CooldownUntil = DateTimeOffset.MaxValue;
+                        _log.LogError(
+                            "PIA proxy {Container} is quarantined: region change and automatic restoration did not verify a healthy distinct egress.",
+                            endpoint.Name);
+                        break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _log.LogInformation(
+                "PIA proxy region change canceled for endpoint {EndpointIndex}.", endpointIndex);
+        }
+        catch (Exception ex)
+        {
+            lock (_lock)
+            {
+                if (!_disposed && startedAt != 0)
+                {
+                    _stats.Unsafe++;
+                    _endpoints[endpointIndex].AdvanceGeneration(egress: null);
+                    _endpoints[endpointIndex].CooldownUntil = DateTimeOffset.MaxValue;
+                }
+            }
+            _log.LogError(
+                ex, "PIA proxy region change failed unexpectedly for endpoint {EndpointIndex}; the exit was quarantined.",
+                endpointIndex);
+        }
+        finally
+        {
+            oldInvoker?.Dispose();
+            lock (_lock)
+            {
+                if (!_disposed)
+                {
+                    _endpoints[endpointIndex].RotationPending = false;
+                    _endpoints[endpointIndex].PendingEgress = null;
+                    _endpoints[endpointIndex].RegionRotationTask = null;
+                }
+            }
+            if (acquired)
+                _regionRotationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Atomically rejects an egress that another exit already uses (or is
+    /// about to use), or that returned HTTP 429 within the configured window,
+    /// and otherwise records it as the rotating exit's pending egress.
+    /// </summary>
+    internal string? TryClaimEgress(int endpointIndex, IPAddress address, bool allowRateLimited)
+    {
+        lock (_lock)
+        {
+            if (_disposed || !IsValidIndex(endpointIndex))
+                return "disposed";
+
+            foreach (var other in _endpoints)
+            {
+                if (other.Index != endpointIndex
+                    && (address.Equals(other.KnownEgress) || address.Equals(other.PendingEgress)))
+                    return "peer-duplicate";
+            }
+
+            if (!allowRateLimited
+                && _rateLimitedEgress.TryGetValue(address, out var limitedAt)
+                && DateTimeOffset.UtcNow - limitedAt < _burnedEgressTtl)
+                return "rate-limited";
+
+            _endpoints[endpointIndex].PendingEgress = address;
+            return null;
+        }
+    }
+
+    private sealed class EndpointEgressClaims : IProxyEgressClaims
+    {
+        private readonly ProxyPool _pool;
+        private readonly int _index;
+
+        public EndpointEgressClaims(ProxyPool pool, int index)
+        {
+            _pool = pool;
+            _index = index;
+        }
+
+        public string? TryClaim(IPAddress address, bool allowRateLimited)
+            => _pool.TryClaimEgress(_index, address, allowRateLimited);
+    }
+
+    /// <summary>
+    /// Keeps each exit's real egress known (so rotations can enforce distinct
+    /// egress without probing every peer) and detects out-of-band changes or
+    /// duplicates, e.g. after Gluetun's own health restart. One benign IP-echo
+    /// probe per exit at most every five minutes; never Epic traffic.
+    /// </summary>
+    private async Task EgressCensusLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            using var gate = new SemaphoreSlim(2, 2);
+            while (!ct.IsCancellationRequested)
+            {
+                List<(int Index, long Generation, Uri ProxyUri)> due;
+                lock (_lock)
+                {
+                    if (_disposed)
+                        return;
+                    var now = DateTimeOffset.UtcNow;
+                    due = _endpoints
+                        .Where(e => !e.RotationPending
+                            && e.CooldownUntil != DateTimeOffset.MaxValue
+                            && e.ContainerRestartTask is null
+                            && (e.KnownEgress is null || now - e.EgressObservedAt >= EgressCensusMaxAge))
+                        .Select(e => (e.Index, e.Generation, e.ProxyUri))
+                        .ToList();
+                }
+
+                await Task.WhenAll(due.Select(async item =>
+                {
+                    await gate.WaitAsync(ct);
+                    try
+                    {
+                        var address = await _regionRotator!.GetEgressAsync(item.ProxyUri, ct);
+                        if (address is not null)
+                            RecordCensusEgress(item.Index, item.Generation, address);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }));
+
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Proxy egress census stopped unexpectedly.");
+        }
+    }
+
+    private void RecordCensusEgress(int index, long generation, IPAddress address)
+    {
+        HttpMessageInvoker? oldInvoker = null;
+        try
+        {
+            RecordCensusEgressCore(index, generation, address, ref oldInvoker);
+        }
+        finally
+        {
+            oldInvoker?.Dispose();
+        }
+    }
+
+    private void RecordCensusEgressCore(
+        int index, long generation, IPAddress address, ref HttpMessageInvoker? oldInvoker)
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+            var endpoint = _endpoints[index];
+            if (endpoint.Generation != generation || endpoint.RotationPending)
+                return;
+
+            if (endpoint.KnownEgress is { } known && !known.Equals(address))
+            {
+                _log.LogInformation(
+                    "Proxy {ProxyName} egress changed outside a worker rotation; tracking the new egress.",
+                    endpoint.Name);
+                endpoint.AdvanceGeneration(address);
+                oldInvoker = endpoint.ResetInvoker();
+            }
+            else
+            {
+                endpoint.KnownEgress = address;
+                endpoint.EgressObservedAt = DateTimeOffset.UtcNow;
+            }
+
+            var duplicate = _endpoints.FirstOrDefault(e =>
+                e.Index != index && address.Equals(e.KnownEgress));
+            if (duplicate is not null)
+            {
+                _log.LogWarning(
+                    "Proxy {ProxyName} shares its egress with {PeerName}; scheduling an egress refresh.",
+                    endpoint.Name, duplicate.Name);
+                TryScheduleRegionRotation(endpoint, RegionRotationTrigger.DuplicateEgress);
+            }
+        }
+    }
+
+    private void LogSummary()
+    {
+        PoolWindowStats stats;
+        TimeSpan window;
+        int selectable = 0, cooling = 0, rotating = 0, quarantined = 0, known = 0, burned;
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+            var now = DateTimeOffset.UtcNow;
+            stats = _stats;
+            _stats = default;
+            window = now - _statsSince;
+            _statsSince = now;
+            foreach (var endpoint in _endpoints)
+            {
+                if (endpoint.KnownEgress is not null)
+                    known++;
+                if (endpoint.CooldownUntil == DateTimeOffset.MaxValue)
+                    quarantined++;
+                else if (endpoint.RotationPending)
+                    rotating++;
+                else if (endpoint.CooldownUntil > now)
+                    cooling++;
+                else
+                    selectable++;
+            }
+
+            if (_burnedEgressTtl > TimeSpan.Zero)
+            {
+                foreach (var stale in _rateLimitedEgress
+                    .Where(pair => now - pair.Value >= _burnedEgressTtl)
+                    .Select(pair => pair.Key)
+                    .ToList())
+                    _rateLimitedEgress.Remove(stale);
+            }
+            burned = _rateLimitedEgress.Count;
+        }
+
+        if (stats.Successes == 0 && stats.RateLimited == 0 && stats.RotationsStarted == 0)
+            return;
+
+        var finished = stats.Rotated + stats.Restored + stats.Deferred + stats.Unsafe;
+        _log.LogInformation(
+            "Proxy pool summary ({WindowSeconds:F0}s): ok={Successes} rateLimited={RateLimited} (html={RateLimitedHtml}) staleReports={Stale}; rotations scheduled={Scheduled} started={Started} rotated={Rotated} restored={Restored} deferred={Deferred} unsafe={Unsafe} avgMs={AvgMs} okPerRetiredEgress={OkPerEgress}; exits selectable={Selectable} cooling={Cooling} rotating={Rotating} quarantined={Quarantined} knownEgress={Known}/{Total} rateLimitedEgress={Burned}.",
+            window.TotalSeconds,
+            stats.Successes,
+            stats.RateLimited,
+            stats.RateLimitedHtml,
+            stats.StaleReports,
+            stats.RotationsScheduled,
+            stats.RotationsStarted,
+            stats.Rotated,
+            stats.Restored,
+            stats.Deferred,
+            stats.Unsafe,
+            finished == 0 ? 0 : stats.RotationMilliseconds / finished,
+            stats.RetiredEgress == 0 ? 0 : stats.RetiredEgressSuccesses / stats.RetiredEgress,
+            selectable,
+            cooling,
+            rotating,
+            quarantined,
+            known,
+            _endpoints.Count,
+            burned);
+    }
+
+    private struct PoolWindowStats
+    {
+        public long Successes;
+        public long RateLimited;
+        public long RateLimitedHtml;
+        public long StaleReports;
+        public long RotationsScheduled;
+        public long RotationsStarted;
+        public long Rotated;
+        public long Restored;
+        public long Deferred;
+        public long Unsafe;
+        public long RotationMilliseconds;
+        public long RetiredEgress;
+        public long RetiredEgressSuccesses;
+    }
+
     private static DateTimeOffset Max(DateTimeOffset left, DateTimeOffset right)
         => left >= right ? left : right;
 
+    private static DateTimeOffset AddCooldownSafely(DateTimeOffset start, TimeSpan cooldown)
+    {
+        var remaining = DateTimeOffset.MaxValue - start;
+        return cooldown >= remaining
+            ? DateTimeOffset.MaxValue
+            : start + cooldown;
+    }
+
     private TimeSpan GetDelayUntilNextEndpoint(DateTimeOffset now)
     {
-        var earliest = _endpoints.Min(e => e.CooldownUntil);
+        var earliest = _endpoints
+            .Where(e => !e.RotationPending)
+            .Select(e => e.CooldownUntil)
+            .DefaultIfEmpty(DateTimeOffset.MaxValue)
+            .Min();
         var delay = earliest - now;
         if (delay <= TimeSpan.Zero)
             return TimeSpan.FromMilliseconds(25);
@@ -536,6 +1183,26 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     private static bool TryGetEndpointIndex(HttpRequestMessage request, out int index)
         => request.Options.TryGetValue(ProxyRequestState.EndpointIndex, out index);
+
+    private bool TryGetCurrentEndpoint(
+        HttpRequestMessage request,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ProxyEndpoint? endpoint)
+    {
+        endpoint = null;
+        if (!TryGetEndpointIndex(request, out var index) || !IsValidIndex(index))
+            return false;
+
+        var candidate = _endpoints[index];
+        if (request.Options.TryGetValue(ProxyRequestState.EndpointGeneration, out var generation)
+            && generation != candidate.Generation)
+        {
+            _stats.StaleReports++;
+            return false;
+        }
+
+        endpoint = candidate;
+        return true;
+    }
 
     private bool IsValidIndex(int index) => index >= 0 && index < _endpoints.Count;
 
@@ -584,6 +1251,44 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
             throw new InvalidOperationException(
                 "Scraper ExpectedProxyEndpointCount cannot be negative.");
         }
+        if (options.ProxyRegionRotationEnabled)
+        {
+            var regionCount = options.ProxyRegionRotationRegions.Count;
+            if (expected == 0
+                || !options.ProxyUseCurlTransport
+                || regionCount > 64
+                || (regionCount == 0 && !options.ProxyRegionRotationReconnectInPlace)
+                || options.ProxyRegionRotationRegions.Any(
+                    region => string.IsNullOrWhiteSpace(region)
+                        || region.Length > 80
+                        || region.Contains(',')
+                        || region.Any(char.IsControl))
+                || options.ProxyRegionRotationRegions.Distinct(
+                    StringComparer.OrdinalIgnoreCase).Count()
+                    != regionCount
+                || options.ProxyRegionRotationRateLimitThreshold is < 1 or > 100
+                || options.ProxyRegionRotationMinIntervalSeconds is < 5 or > 86_400
+                || options.ProxyRegionRotationGlobalIntervalSeconds is < 0 or > 3_600
+                || options.ProxyRegionRotationProbeTimeoutSeconds is < 10 or > 360
+                || options.ProxyRegionRotationAttemptTimeoutSeconds is < 5 or > 360
+                || options.ProxyRegionRotationMaxAttempts is < 1 or > 16
+                || options.ProxyRegionRotationMaxConcurrent < 1
+                || options.ProxyRegionRotationMaxConcurrent > Math.Max(1, expected)
+                || options.ProxyRegionRotationBurnedEgressTtlSeconds is < 0 or > 86_400
+                || options.ProxyRegionRotationRequestBudget is < 0 or > 1_000_000
+                || (options.ProxyRegionRotationRequestBudget is > 0 and < 10)
+                || options.ProxyRegionRotationDrainSeconds is < 0 or > 300
+                || !Path.IsPathFullyQualified(options.ProxyCurlTempDirectory)
+                || !Path.GetFullPath(options.ProxyCurlTempDirectory).StartsWith(
+                    Path.GetFullPath(options.DataDirectory)
+                        .TrimEnd(Path.DirectorySeparatorChar)
+                        + Path.DirectorySeparatorChar,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 0-64 distinct regions (0 only with reconnect-in-place), threshold 1-100, per-exit interval 5-86400s, global interval 0-3600s, probe timeout 10-360s, attempt timeout 5-360s, 1-16 attempts, 1..exit-count concurrent rotations, rate-limited egress TTL 0-86400s, request budget 0 or 10-1000000, and drain 0-300s.");
+            }
+        }
         if (expected == 0)
         {
             if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0 ||
@@ -606,6 +1311,14 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         ValidateAlignedList(nameof(options.ControlUrls), options.ControlUrls, expected);
         ValidateAlignedList(nameof(options.VpnProviders), options.VpnProviders, expected);
         ValidateAlignedList(nameof(options.ContainerNames), options.ContainerNames, expected);
+        if (options.ProxyRegionRotationEnabled
+            && options.VpnProviders.Any(provider =>
+                !provider.Equals("PIA", StringComparison.OrdinalIgnoreCase)
+                && !provider.Equals("private internet access", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "Worker PIA region rotation requires every aligned VPN provider to be PIA.");
+        }
 
         if (options.ContainerNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != expected)
         {
@@ -660,6 +1373,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                 return;
 
             _disposed = true;
+            _summaryTimer?.Dispose();
+            _regionRotationCancellation.Cancel();
             foreach (var endpoint in _endpoints)
                 endpoint.Dispose();
         }
@@ -670,19 +1385,36 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         private readonly ProxyPool _pool;
         private int _disposed;
 
-        internal ProxyLease(ProxyPool pool, int index, string name, Uri proxyUri, HttpMessageInvoker invoker)
+        internal ProxyLease(
+            ProxyPool pool,
+            int index,
+            string name,
+            Uri proxyUri,
+            HttpMessageInvoker invoker,
+            long generation = 0)
         {
             _pool = pool;
             Index = index;
             Name = name;
             ProxyUri = proxyUri;
             Invoker = invoker;
+            Generation = generation;
         }
 
         public int Index { get; }
         public string Name { get; }
         public Uri ProxyUri { get; }
         public HttpMessageInvoker Invoker { get; }
+        public long Generation { get; }
+
+        /// <summary>Stamps endpoint identity and tunnel generation onto a request.</summary>
+        public void Apply(HttpRequestMessage request)
+        {
+            request.Options.Set(ProxyRequestState.EndpointIndex, Index);
+            request.Options.Set(ProxyRequestState.EndpointName, Name);
+            request.Options.Set(ProxyRequestState.EndpointProxyUri, ProxyUri);
+            request.Options.Set(ProxyRequestState.EndpointGeneration, Generation);
+        }
 
         public void Dispose()
         {
@@ -745,10 +1477,37 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         public int ConsecutiveCdnBlocks { get; set; }
         public int ConsecutiveHttpFailures { get; set; }
         public int ConsecutiveTransportFailures { get; set; }
+        public int ConsecutiveRateLimits { get; set; }
         public DateTimeOffset CooldownUntil { get; set; }
         public DateTimeOffset LastSelectedAt { get; set; }
         public DateTimeOffset? LastContainerRestartAttempt { get; set; }
         public Task? ContainerRestartTask { get; set; }
+        public DateTimeOffset? LastRegionRotationAttempt { get; set; }
+        public int RegionRotationAttempts { get; set; }
+        public Task? RegionRotationTask { get; set; }
+        public bool RotationPending { get; set; }
+        public DateTimeOffset RetryAfterUntil { get; set; }
+        public bool PreferContainerRestart { get; set; }
+        public long Generation { get; private set; }
+        public long GenerationSuccesses { get; private set; }
+        public IPAddress? KnownEgress { get; set; }
+        public IPAddress? PendingEgress { get; set; }
+        public DateTimeOffset EgressObservedAt { get; set; }
+
+        public void CountGenerationSuccess() => GenerationSuccesses++;
+
+        /// <summary>
+        /// Starts a new tunnel generation after a reconnect, region change, or
+        /// container restart. Reports stamped with an older generation are
+        /// ignored from now on.
+        /// </summary>
+        public void AdvanceGeneration(IPAddress? egress)
+        {
+            Generation++;
+            GenerationSuccesses = 0;
+            KnownEgress = egress;
+            EgressObservedAt = DateTimeOffset.UtcNow;
+        }
 
         public void Dispose()
         {

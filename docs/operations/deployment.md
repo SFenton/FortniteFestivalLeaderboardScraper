@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-19
-last_verified_commit: c35b7f47
+last_verified: 2026-09-26
+last_verified_commit: 0e06e61e
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -15,10 +15,12 @@ sources:
   - FSTService/Persistence/PublicationPathArtifactReleaseGate.cs
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
+  - FSTService/Scraping/PiaRegionRotator.cs
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.yml
+  - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml
 update_triggers:
   - Compose services, images, roles, volumes, ports, networks, health checks, or production ownership change.
   - Role startup ordering or startup readiness gates change.
@@ -133,10 +135,10 @@ live provider inventory.
 
 ## Production-owned overlays
 
-Sanitized configuration inspection on 2026-08-11 found:
+Sanitized configuration inspection on 2026-09-26 found:
 
 - a base project with the four core services and 28 numbered Gluetun services;
-- `docker-compose.pia-30.yml` with 30 canonical PIA services and 25 effective
+- `docker-compose.pia-30.yml` with 30 canonical PIA services and 24 effective
   aligned proxy/control/provider/container mappings;
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
@@ -144,6 +146,13 @@ Sanitized configuration inspection on 2026-08-11 found:
 This describes configured files, not a claim about currently running
 containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
+The 24-endpoint configuration excludes two TLS-failing exits and promotes a
+healthy Vancouver spare; its endpoint count, four arrays, and worker
+dependencies were changed together under the worker lock. As of 2026-09-26
+the guarded worker runs a locally built immutable image for `0e06e61e`
+(branch `fix/vpn-fast-egress-refresh-20260926`) with the egress refresh
+enabled in the production-owned worker env file; the API and latest-master web
+images remain unchanged.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to
@@ -153,6 +162,47 @@ Canonical effective-service membership and static-pin rejection intentionally
 apply to every guard action, including checks and existing recreate flows. The
 guard also requires the `worker` profile, `on-failure:5` for continuous merges,
 and `restart: no` for run-once merges.
+
+Optional PIA region rotation is a **worker-only** behavior in the shared
+service image. A new source build does not activate it: configure an explicit
+qualified candidate list and the enabled flag in the production-owned worker
+overlay only after the immutable image and full effective-proxy guard pass at
+an approved safe scrape/publication boundary. Do not recreate the API, web,
+database, or entire Compose project for this worker-only rollout. A running
+scrape is not a safe boundary merely because its progress is slow: preserve
+the shared worker lock, native interrupted-acquisition isolation/normalization
+gates, published scrape, read freeze, health, and rollback before any stop.
+
+Many effective exits have static regions whose OpenVPN servers frequently
+fail TLS (for example US Las Vegas, US Salt Lake City, SE Stockholm, Denmark,
+CA Toronto, US Michigan, and US Ohio in 2026-09-26 trials). After a container
+restart such an exit can stay `starting`, which fails the pre-stop 24/24
+guard. Moving only that exit's runtime selector to a qualified region through
+its Gluetun control API (credential-free region payload, no Compose change)
+restored real egress within seconds during the 2026-09-26 cutover; a later
+container restart returns the static region. Replacing those static regions
+in the production overlay is a separate operator change.
+
+A worker stopped for a mid-acquisition cutover must exit gracefully so it can
+record its phase attempt as `interrupted`; native interrupted-acquisition
+normalization rejects a candidate whose attempt is still `running` or whose
+worker still owns a database transaction. At the higher throughput reached with
+egress refresh, 30- and 150-second stop grace periods both ended in SIGKILL
+during 2026-09-26 cutovers (the host's 30-second shutdown window is followed by
+synchronous service disposal that can wait on in-flight writes). Give the
+worker stop a long grace period (600 seconds was used afterwards). If
+normalization is rejected, the guarded rollback restarts the previous image
+and its startup cleanup marks the candidate `abandoned_staging_cleanup` before
+starting a new scrape; published data is unaffected, but the new scrape
+resumes with less completed work.
+
+The in-process control update changes a PIA container's **runtime** region,
+not its production Compose environment. On container restart the static
+`SERVER_REGIONS` baseline returns; the host boot guard must still verify
+healthy, distinct effective egresses and a valid worker image before
+starting a worker. A failed dynamic update that cannot recover is
+quarantined, not masked by the Docker `healthy` flag or a control response.
+See [VPN proxy pool](vpn-proxy-pool.md) for live egress and cooldown gates.
 
 ## Networks and ports
 
