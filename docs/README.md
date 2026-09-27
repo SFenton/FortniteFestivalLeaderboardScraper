@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-27
-last_verified_commit: 21d7193c
+last_verified: 2026-09-27
+last_verified_commit: b898b6cb
 sources:
   - README.md
   - AGENTS.md
@@ -57,7 +57,6 @@ evidence remain the behavioral sources of truth.
 | Find active future work | [Roadmap](roadmap/README.md) |
 | Understand why a boundary exists | [Architecture decisions](decisions/README.md) |
 | Change documentation safely | [Documentation governance](governance/documentation.md) |
-| Route agent work within a budget | [Budget-aware agents](governance/agent-budget.md) |
 
 ## Database safety
 

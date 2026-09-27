@@ -56,9 +56,7 @@
       "enabled": true,
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
-      "skills": [
-        "fst-budget-workflow"
-      ],
+      "skills": [],
       "team": {
         "id": "fst-focused-tests-team",
         "topology": "medium-owner-cheap-worker-medium-review",
@@ -348,7 +346,6 @@
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
       "skills": [
-        "fst-budget-workflow",
         "database-management"
       ],
       "team": {
@@ -511,8 +508,7 @@
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
       "skills": [
-        "database-evaluation",
-        "fst-budget-workflow"
+        "database-evaluation"
       ],
       "team": {
         "id": "fst-performance-team",
@@ -793,9 +789,7 @@
       "enabled": true,
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
-      "skills": [
-        "fst-budget-workflow"
-      ],
+      "skills": [],
       "team": {
         "id": "fst-publication-team",
         "topology": "medium-owner-only",
@@ -960,9 +954,7 @@
       "enabled": true,
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
-      "skills": [
-        "fst-budget-workflow"
-      ],
+      "skills": [],
       "team": {
         "id": "fst-provenance-team",
         "topology": "medium-owner-only",
@@ -1127,9 +1119,7 @@
       "enabled": true,
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
-      "skills": [
-        "fst-budget-workflow"
-      ],
+      "skills": [],
       "team": {
         "id": "fst-cross-contract-team",
         "topology": "medium-owner-only",
@@ -1278,7 +1268,6 @@
       "evaluationStatus": "provisional-three-cases",
       "casePacketStatus": "provisional-three-cases",
       "skills": [
-        "fst-budget-workflow",
         "database-probing-monitoring"
       ],
       "team": {
