@@ -176,6 +176,14 @@ reported to the adaptive concurrency limiter; otherwise the expected ~3% of
 per-IP 429s pins global DOP at its floor. JSON 429s (which may be account
 scoped) still reduce DOP.
 
+Those per-exit edge 429s also have their own retry budget (12 retries, each
+routed to another exit) before they consume the caller's status-retry budget.
+Leaderboard pages allow four status attempts; at a 3–5% edge-429 rate, four
+consecutive 429s on one page is roughly a once-per-scrape event across
+hundreds of thousands of pages, and the scope-completeness gate then fails
+the whole scrape (scrape `1438`: two pages, `incomplete=2`). JSON 429s and 5xx
+responses keep the original budget.
+
 #### Restoration and quarantine
 
 When every candidate fails or the overall deadline expires, the worker first
