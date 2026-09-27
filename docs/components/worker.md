@@ -699,8 +699,18 @@ round trips while reducing derived logical member-stat aggregate passes from
 `14,336` to `2,048` (`-85.714%`). Independent PostgreSQL `EXPLAIN` evidence
 still measures seven baseline scans versus one candidate scan. Local elapsed
 reductions are diagnostic only; no production improvement is accepted. A
-matched full-scrape A/B remains blocked until the FST capacity guard again has
-at least one `60.4 GB` scrape window, preferably two (`120.8 GB`).
+matched full-scrape A/B was blocked until the FST capacity guard again had
+at least one `60.4 GB` scrape window, preferably two (`120.8 GB`); snapshot
+archive retirement restored far more than that on 2026-09-26.
+
+`tools/band-projection-parity-probe.py --since <BandMaintenance start>` is the
+same-input acceptance check. It samples scopes rebuilt since that time,
+recomputes each with the legacy seven-subquery SQL extracted verbatim from
+`BandCurrentProjectionBuilder.cs` as a read-only `SELECT`, and compares row
+counts plus an ordered row hash with the stored
+`current_band_leaderboard_entries` generation. Band inputs are not written
+between BandMaintenance and the next scrape, so any mismatch after a
+batched-flag refresh is a correctness failure (restore the flag to `false`).
 
 ## Durable phase progress
 
