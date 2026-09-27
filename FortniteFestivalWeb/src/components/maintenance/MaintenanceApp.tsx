@@ -1,4 +1,5 @@
 import EmptyState from '../common/EmptyState';
+import { useStartupSplashSuppression } from '../../contexts/StartupSplashContext';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import styles from './MaintenanceApp.module.css';
 
@@ -8,6 +9,7 @@ const MAINTENANCE_TITLE_STYLE = { fontSize: 'calc(var(--font-xl) * 1.5)' };
 const MAINTENANCE_SUBTITLE_STYLE = { fontSize: 'calc(var(--font-md) * 1.5)' };
 
 export default function MaintenanceApp() {
+  useStartupSplashSuppression();
   return (
     <main className={styles.page} aria-label={TITLE} aria-live="polite">
       <EmptyState

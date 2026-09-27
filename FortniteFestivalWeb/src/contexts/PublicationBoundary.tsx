@@ -8,8 +8,8 @@ import {
 } from '../api/publication';
 import { clearSongsCache } from '../api/songsCache';
 import MaintenanceApp from '../components/maintenance/MaintenanceApp';
-import StartupSplash from '../components/common/StartupSplash';
 import { resetAppWebSocketForPublicationChange } from '../hooks/data/useAppWebSocket';
+import { useStartupSplashAnnouncement } from './StartupSplashContext';
 
 export default function PublicationBoundary({
   children,
@@ -19,6 +19,7 @@ export default function PublicationBoundary({
   const [publication, setPublication] = useState<PublicationResponse | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  useStartupSplashAnnouncement(!publication && !error);
 
   useEffect(() => {
     activatePublicationBootstrap();
@@ -61,8 +62,9 @@ export default function PublicationBoundary({
   if (error) {
     return <MaintenanceApp />;
   }
+  // StartupSplashProvider keeps the shared splash covering this stage.
   if (!publication) {
-    return <StartupSplash announce />;
+    return null;
   }
 
   return <div key={`${publication.publicationId}:${refreshRevision}`}>{children}</div>;

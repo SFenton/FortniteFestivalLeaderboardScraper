@@ -146,13 +146,13 @@ import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { PageReadyProvider, usePageReady } from './contexts/PageReadyContext';
 import { StartupEntranceProvider } from './contexts/StartupEntranceContext';
+import { useStartupSplashReveal } from './contexts/StartupSplashContext';
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { FabVisibilityProvider } from './contexts/FabVisibilityContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useShopState } from './hooks/data/useShopState';
 import { useInitialAppReveal } from './hooks/ui/useInitialAppReveal';
-import StartupSplash from './components/common/StartupSplash';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
@@ -457,6 +457,7 @@ function AppShell() {
   const { t } = useTranslation();
   const pageReady = usePageReady();
   const startupReveal = useInitialAppReveal(pageReady);
+  useStartupSplashReveal(startupReveal.phase, startupReveal.complete);
   const { profile: selectedProfile, player, clearPlayer } = useTrackedPlayer();
   useSelectedProfileNameRefresh(selectedProfile);
   const { state: { songs } } = useFestival();
@@ -1502,12 +1503,6 @@ function AppShell() {
         )}
       </LazyModalBoundary>
     </div>
-    {startupReveal.phase !== 'entered' && (
-      <StartupSplash
-        phase={startupReveal.phase === 'revealing' ? 'revealing' : 'covered'}
-        onExitComplete={startupReveal.complete}
-      />
-    )}
     </>
     </FabVisibilityProvider>
     </PlayerDataProvider>
