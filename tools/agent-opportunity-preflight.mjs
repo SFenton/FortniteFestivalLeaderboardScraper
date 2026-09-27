@@ -140,7 +140,7 @@ export function inspectOpportunity(root, opportunityId) {
     };
   } else if (opportunityId === 'provenance') {
     const agent = read('AGENTS.md');
-    const docs = read('docs/governance/agent-budget.md');
+    const docs = read('docs/operations/live-safety.md');
     const schema = read('FSTService/Persistence/PublicationPathArtifactSchema.cs');
     assert(/provenance/i.test(agent) && /historical correctness/i.test(agent),
       'canonical agent contract must preserve provenance and historical correctness');
@@ -148,7 +148,7 @@ export function inspectOpportunity(root, opportunityId) {
       phase.kind === 'deterministic' &&
       phase.tool === 'preflight-provenance'),
       'provenance opportunity must require the registered provenance manifest preflight');
-    assert(/provenance/i.test(docs), 'budget governance must retain provenance routing');
+    assert(/provenance/i.test(docs), 'live-safety guidance must retain provenance protection');
     for (const value of [
       'ContractVersion',
       'ManifestVersion',
