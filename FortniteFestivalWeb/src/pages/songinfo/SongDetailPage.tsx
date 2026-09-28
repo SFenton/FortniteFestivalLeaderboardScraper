@@ -139,6 +139,9 @@ export default function SongDetailPage() {
   const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
   const { settings } = useSettings();
   const song = songs.find((s) => s.songId === songId);
+  // Ingested after the current publication: no published leaderboard data
+  // exists yet, so publication-bound reads are skipped and render empty.
+  const awaitingPublication = song?.awaitingPublication === true;
   const configuredInstruments = visibleInstruments(settings);
   const activeInstruments = useMemo(
     () => song ? configuredInstruments.filter((instrument) => serverSongSupportsInstrument(song, instrument)) : configuredInstruments,
@@ -161,7 +164,7 @@ export default function SongDetailPage() {
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   const activePathInstruments = visiblePathInstruments(settings);
-  const canViewPaths = activePathInstruments.length > 0;
+  const canViewPaths = activePathInstruments.length > 0 && !awaitingPublication;
   const fabSearch = useFabSearch();
   const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
   const [pathsOpen, setPathsOpen] = useState(false);
@@ -179,12 +182,12 @@ export default function SongDetailPage() {
   const cached = songId ? songDetailCache.get(songId) : undefined;
   const scoreHistoryQuery = useQuery({
     ...playerHistoryQueryOptions(selectedAccountId ?? '', songId ?? ''),
-    enabled: !!selectedAccountId && !!songId,
+    enabled: !!selectedAccountId && !!songId && !awaitingPublication,
   });
   const leaderboardsQuery = useQuery<Awaited<ReturnType<typeof api.getAllLeaderboards>>>({
     queryKey: queryKeys.allLeaderboards(songId ?? '', 10, leewayParam),
     queryFn: ({ signal }) => api.getAllLeaderboards(songId!, 10, leewayParam, { signal }),
-    enabled: !!songId,
+    enabled: !!songId && !awaitingPublication,
     placeholderData: keepPreviousSongLeaderboards(songId ?? ''),
     ...remoteDataQueryPolicy,
   });
@@ -202,7 +205,7 @@ export default function SongDetailPage() {
       leewayParam,
       { signal },
     ),
-    enabled: !!songId && selectedBandMemberAccountIds.length > 0 && activeInstruments.length > 0,
+    enabled: !!songId && !awaitingPublication && selectedBandMemberAccountIds.length > 0 && activeInstruments.length > 0,
     ...remoteDataQueryPolicy,
   });
   const bandLeaderboardsQuery = useQuery({
@@ -223,19 +226,19 @@ export default function SongDetailPage() {
       activeBandComboId,
       { signal },
     ),
-    enabled: !!songId,
+    enabled: !!songId && !awaitingPublication,
     ...remoteDataQueryPolicy,
   });
 
   const scoreHistory = scoreHistoryQuery.data ?? [];
-  const scoreHistoryReady = !selectedAccountId || !scoreHistoryQuery.isPending;
+  const scoreHistoryReady = !selectedAccountId || awaitingPublication || !scoreHistoryQuery.isPending;
   const instrumentData = useMemo<Record<InstrumentKey, InstrumentData>>(() => {
     const error = queryErrorMessage(leaderboardsQuery.error);
     const nextData = Object.fromEntries(
       INSTRUMENT_KEYS.map((key) => [key, {
         entries: [],
-        loading: leaderboardsQuery.isPending,
-        error,
+        loading: leaderboardsQuery.isPending && !awaitingPublication,
+        error: awaitingPublication ? null : error,
       }]),
     ) as unknown as Record<InstrumentKey, InstrumentData>;
 
@@ -252,10 +255,13 @@ export default function SongDetailPage() {
       }
     }
     return nextData;
-  }, [leaderboardsQuery.data, leaderboardsQuery.error, leaderboardsQuery.isPending]);
+  }, [leaderboardsQuery.data, leaderboardsQuery.error, leaderboardsQuery.isPending, awaitingPublication]);
   const bandData = useMemo<Record<PlayerBandType, SongBandData>>(() => {
     const error = queryErrorMessage(bandLeaderboardsQuery.error);
-    const nextData = createSongBandData(bandLeaderboardsQuery.isPending, error);
+    const nextData = createSongBandData(
+      bandLeaderboardsQuery.isPending && !awaitingPublication,
+      awaitingPublication ? null : error,
+    );
     for (const band of bandLeaderboardsQuery.data?.bands ?? []) {
       const bandType = band.bandType as PlayerBandType;
       if (bandType in nextData) {
@@ -271,12 +277,13 @@ export default function SongDetailPage() {
       }
     }
     return nextData;
-  }, [bandLeaderboardsQuery.data, bandLeaderboardsQuery.error, bandLeaderboardsQuery.isPending]);
+  }, [bandLeaderboardsQuery.data, bandLeaderboardsQuery.error, bandLeaderboardsQuery.isPending, awaitingPublication]);
   const showLeaderboardEntryTotals = leaderboardsQuery.data?.showLeaderboardEntryTotals === true
     || bandLeaderboardsQuery.data?.showLeaderboardEntryTotals === true;
   const selectedMemberScores: SelectedMemberSongScore[] = selectedMemberScoresQuery.data?.scores ?? [];
   const selectedMemberScoresReady = selectedBandMemberAccountIds.length === 0
     || activeInstruments.length === 0
+    || awaitingPublication
     || !selectedMemberScoresQuery.isPending;
   const mountedWithRemoteDataRef = useRef(
     !!leaderboardsQuery.data

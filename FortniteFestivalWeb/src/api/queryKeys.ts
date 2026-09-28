@@ -8,6 +8,8 @@ export const queryKeys = {
   features: () => ['features'] as const,
   // Songs and Shop are backed by profile-invariant service caches and ETags.
   songs: () => ['songs', 'public'] as const,
+  // Live-catalog songs not yet in the current publication; not publication-bound.
+  incomingSongs: () => ['songs', 'incoming'] as const,
   shop: () => ['shop', 'public'] as const,
   playerScope: (accountId: string) => ['player', accountId] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>

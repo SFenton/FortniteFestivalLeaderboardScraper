@@ -148,6 +148,7 @@ async function handleRoute(
     }
     return fulfill(route, scenario, scenario.songs, 200, { ETag: scenario.songsEtag });
   }
+  if (path === '/api/songs/incoming') return fulfill(route, scenario, scenario.incomingSongs);
   if (path === '/api/shop') return fulfill(route, scenario, scenario.shop);
   if (path === '/api/songs/member-score-filter') {
     return fulfill(route, scenario, {

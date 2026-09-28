@@ -142,6 +142,8 @@ public interface IMetaDatabase : IDisposable
         int commandTimeoutSeconds = 0);
     CatalogPublicationLagState GetCatalogPublicationLagState(
         int commandTimeoutSeconds = 0);
+    CatalogAdditionsAwaitingPublication GetCatalogAdditionsAwaitingPublication(
+        int commandTimeoutSeconds = 0);
     int InterruptOrphanedScrapePhaseAttempts(
         string workerInstanceId,
         DateTime interruptedAtUtc,

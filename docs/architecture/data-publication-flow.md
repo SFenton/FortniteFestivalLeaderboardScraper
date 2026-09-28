@@ -335,9 +335,14 @@ captured candidate or current publication.
 songs, path maxima, ranking denominators, and publication caches. Service-info
 reports aggregate live-versus-published additions, removals, and changed
 provider entries; `songs_changed` asks clients to refresh that operational
-telemetry. No unpublished song list or maximum preview is exposed. Missing
-exact baselines produce unknown lag, and full JSON comparison is memoized by
-catalog version/hash so health polling stays bounded.
+telemetry. Songs added to the live catalog after the current publication are
+exposed immediately, metadata only, through operational-live
+`/api/songs/incoming`, so an ingestion during a scrape or post-process does
+not wait for publication to appear. That list never includes maxima, paths,
+ranking denominators, metadata changes, or removals, and it does not alter the
+publication-bound `/api/songs` payload or its caches. Missing exact baselines
+produce unknown lag and an empty incoming list, and full JSON comparison is
+memoized by catalog version/hash so health polling stays bounded.
 
 Matched control scrape `1299` and candidate scrape `1300` accepted the retired
 post-scrape path cleanup. Their manifest and published-source key sets were

@@ -1,4 +1,4 @@
-import type { ServerSong, SongsResponse } from '@festival/core/api';
+import type { IncomingSongsResponse, ServerSong, SongsResponse } from '@festival/core/api';
 import { getCurrentPublicationId } from './publication';
 
 export const SONGS_CACHE_KEY = 'fst_songs_cache';
@@ -91,6 +91,14 @@ function isServerSong(value: unknown): value is ServerSong {
   return value.populationTiers === undefined
     || value.populationTiers === null
     || isPopulationTierRecord(value.populationTiers);
+}
+
+export function isIncomingSongsResponse(value: unknown): value is IncomingSongsResponse {
+  return isRecord(value)
+    && Array.isArray(value.songs)
+    && value.songs.every(isServerSong)
+    && isFiniteNumber(value.count)
+    && value.count >= 0;
 }
 
 export function isSongsResponse(value: unknown): value is SongsResponse {
