@@ -141,7 +141,7 @@ live provider inventory.
 Sanitized configuration inspection on 2026-09-26 found:
 
 - a base project with the four core services and 28 numbered Gluetun services;
-- `docker-compose.pia-30.yml` with 30 canonical PIA services and 24 effective
+- `docker-compose.pia-30.yml` with 30 canonical PIA services and 30 effective
   aligned proxy/control/provider/container mappings;
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
@@ -149,18 +149,27 @@ Sanitized configuration inspection on 2026-09-26 found:
 This describes configured files, not a claim about currently running
 containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
-The 24-endpoint configuration excludes two TLS-failing exits and promotes a
-healthy Vancouver spare; its endpoint count, four arrays, and worker
-dependencies were changed together under the worker lock. Since
-2026-09-27T08:21Z the API and worker run one locally built immutable image
-for `954ca0bd` (integration branch `deploy/loop-bundle-b-f5-20260927`: open
-PRs #116, #117, #119, #120, and #121 on top of master) and the web runs the
-matching #117 build. The production-owned worker env enables the egress
+Service/worker releases use one immutable image built from merged `master`,
+with the GHCR digest, local image ID and exact OCI source revision retained
+through deployment and guarded worker startup. The master release retains
+the shutdown, egress retry and projection changes previously qualified in the
+local integration bundle. A service/worker-only rollout preserves the
+separately pinned web image and container until an explicit web deployment.
+The production-owned worker env enables the egress
 refresh plus `Scraper__BandCurrentProjectionMaxParallelScopes=6`,
 `BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`, and
 `Scraper__PrepareSoloCurrentProjectionBeforeRivals=true`; the production
 `.env` enables `BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION`.
-These are canaries under evaluation in scrape `1438`, not accepted defaults.
+These remain production canaries, not accepted defaults.
+
+The operator-authorized frozen acquisition recovery on 2026-09-29 failed
+scrape `1448` and candidate publication `379` through the qualified native
+command, preserving publication `377` / published scrape `1447` and retained
+publication `375`. It released the acquisition freeze and working pointer;
+there is no remaining recovery or publication obligation for that failed
+candidate. Published/retained data and worker fingerprints and the public
+songs response matched before/after recovery. All candidate staging and
+artifacts were retained, so this fact grants no cleanup or deletion authority.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to
