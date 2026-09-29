@@ -52,4 +52,11 @@ public sealed class FrozenAcquisitionAbandonmentCommandTests
             Assert.Throws<ArgumentException>(() => FrozenAcquisitionAbandonmentCommand.Parse(
                 CommandArguments().Where(x => !x.StartsWith(flag, StringComparison.Ordinal)).ToArray()));
     }
+
+    [Theory]
+    [InlineData("--frozen-acquisition-abandonment", "--frozen-acquisition-normalization")]
+    [InlineData("--frozen-acquisition-abandonment-check", "--frozen-acquisition-normalization-check")]
+    public void Rejects_implicit_intent_and_undocumented_mode_aliases(string flag, string replacement)
+        => Assert.Throws<ArgumentException>(() => FrozenAcquisitionAbandonmentCommand.Parse(
+            CommandArguments().Select(x => x == flag ? replacement : x).ToArray()));
 }

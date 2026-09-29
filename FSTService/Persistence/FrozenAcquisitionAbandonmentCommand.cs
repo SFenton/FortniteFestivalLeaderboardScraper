@@ -9,6 +9,19 @@ public sealed record FrozenAcquisitionAbandonmentCommand(
     public const string Flag = "--frozen-acquisition-abandonment";
     public const string AttemptWorkerFlag = "--frozen-acquisition-attempt-worker-instance-id";
     public const string MessageFlag = "--frozen-acquisition-failure-message";
+    private static readonly IReadOnlyDictionary<string, string> IdentityFlags =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["--frozen-acquisition-scrape-id"] = InterruptedAcquisitionNormalizationCommand.ScrapeIdFlag,
+            ["--frozen-acquisition-published-scrape-id"] = InterruptedAcquisitionNormalizationCommand.PublishedScrapeIdFlag,
+            ["--frozen-acquisition-current-publication-id"] = InterruptedAcquisitionNormalizationCommand.CurrentPublicationIdFlag,
+            ["--frozen-acquisition-previous-publication-id"] = InterruptedAcquisitionNormalizationCommand.PreviousPublicationIdFlag,
+            ["--frozen-acquisition-working-publication-id"] = InterruptedAcquisitionNormalizationCommand.WorkingPublicationIdFlag,
+            ["--frozen-acquisition-worker-instance-id"] = InterruptedAcquisitionNormalizationCommand.WorkerInstanceIdFlag,
+            ["--frozen-acquisition-worker-freshness-utc"] = InterruptedAcquisitionNormalizationCommand.WorkerFreshnessFlag,
+            ["--frozen-acquisition-phase-id"] = InterruptedAcquisitionNormalizationCommand.PhaseIdFlag,
+            ["--frozen-acquisition-attempt"] = InterruptedAcquisitionNormalizationCommand.AttemptFlag,
+        };
 
     public static bool IsRequested(IReadOnlyList<string> args) =>
         args.Any(x => x.Equals(Flag, StringComparison.OrdinalIgnoreCase));
@@ -17,6 +30,8 @@ public sealed record FrozenAcquisitionAbandonmentCommand(
     {
         if (!args.Any(x => x.StartsWith("--frozen-acquisition-", StringComparison.OrdinalIgnoreCase)))
             return null;
+        if (!IsRequested(args))
+            throw new ArgumentException($"{Flag} is required.");
         var translated = new List<string>();
         string? attemptWorker = null, message = null;
         for (var i = 0; i < args.Count; i++)
@@ -48,8 +63,7 @@ public sealed record FrozenAcquisitionAbandonmentCommand(
                 Flag => InterruptedAcquisitionNormalizationCommand.MaintenanceFlag,
                 "--frozen-acquisition-abandonment-check" => InterruptedAcquisitionNormalizationCommand.CheckFlag,
                 "--frozen-acquisition-abandonment-execute" => InterruptedAcquisitionNormalizationCommand.ExecuteFlag,
-                _ when flag.StartsWith("--frozen-acquisition-", StringComparison.OrdinalIgnoreCase)
-                    => "--interrupted-acquisition-" + flag["--frozen-acquisition-".Length..],
+                _ when IdentityFlags.TryGetValue(flag, out var identityFlag) => identityFlag,
                 _ => flag,
             };
             translated.Add(translatedFlag + arg[flag.Length..]);
