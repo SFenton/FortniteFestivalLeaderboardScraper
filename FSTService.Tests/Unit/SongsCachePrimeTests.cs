@@ -17,6 +17,30 @@ namespace FSTService.Tests.Unit;
 
 public sealed class SongsCachePrimeTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void BuildSongsJson_exposes_nullable_chart_support(bool? supported)
+    {
+        var json = SongsCacheService.BuildSongsJson(
+            [new Song { track = new Track { su = "song-a", tt = "Song A", @in = new In() } }],
+            new Dictionary<string, SongMaxScores>
+            {
+                ["song-a"] = new() { DoubleBassSupported = supported },
+            },
+            1,
+            null,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var document = JsonDocument.Parse(json);
+        var support = document.RootElement.GetProperty("songs")[0]
+            .GetProperty("doubleBassSupported");
+        if (supported.HasValue)
+            Assert.Equal(supported.Value, support.GetBoolean());
+        else
+            Assert.Equal(JsonValueKind.Null, support.ValueKind);
+    }
+
     [Fact]
     public void Set_ThenGet_ReturnsCachedData()
     {

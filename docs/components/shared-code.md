@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -113,6 +113,9 @@ All additive members remain optional for mixed-version service/web rollout.
 
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.
+`ServerSong.doubleBassSupported` is optional and nullable for mixed-version
+responses: true and false represent inspected plastic-drum chart support,
+while null or absence represents an unclassified generation.
 
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.

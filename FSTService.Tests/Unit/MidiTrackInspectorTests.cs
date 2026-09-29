@@ -83,6 +83,38 @@ public sealed class MidiTrackInspectorTests
     private static byte[] PositiveNote()
         => [0x00, 0x90, 60, 100];
 
+    [Theory]
+    [InlineData("PLASTIC DRUMS", 95)]
+    [InlineData("PLASTIC DRUMS", 83)]
+    [InlineData("PLASTIC DRUMS", 71)]
+    [InlineData("PLASTIC DRUMS", 59)]
+    [InlineData("PLASTIC DRUM", 95)]
+    public void Detects_double_kick_in_each_plastic_drum_difficulty(string track, byte pitch)
+    {
+        Assert.True(MidiTrackInspector.HasDoubleBassSupport(
+            BuildMidi(Track(track, [0x00, 0x90, pitch, 100]))));
+    }
+
+    [Theory]
+    [InlineData("PLASTIC DRUMS", 96, 100)]
+    [InlineData("PLASTIC DRUMS", 95, 0)]
+    [InlineData("PART DRUMS", 95, 100)]
+    [InlineData("PLASTIC GUITAR", 95, 100)]
+    public void Ignores_regular_kick_zero_velocity_and_other_tracks(string track, byte pitch, byte velocity)
+    {
+        Assert.False(MidiTrackInspector.HasDoubleBassSupport(
+            BuildMidi(Track(track, [0x00, 0x90, pitch, velocity]))));
+    }
+
+    [Fact]
+    public void Detects_double_kick_with_running_status_but_ignores_note_off()
+    {
+        Assert.True(MidiTrackInspector.HasDoubleBassSupport(BuildMidi(
+            Track("PLASTIC DRUMS", [0x00, 0x90, 96, 100, 0x10, 95, 100]))));
+        Assert.False(MidiTrackInspector.HasDoubleBassSupport(BuildMidi(
+            Track("PLASTIC DRUMS", [0x00, 0x80, 95, 100]))));
+    }
+
     private static MidiTrackSpec Track(
         string name,
         byte[]? events = null)

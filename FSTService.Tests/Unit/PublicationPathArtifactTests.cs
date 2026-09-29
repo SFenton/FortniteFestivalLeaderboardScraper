@@ -613,6 +613,60 @@ public sealed class PublicationPathArtifactTests : IDisposable
             () => store.GetPathGenerationStates());
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(null, true)]
+    public async Task Double_bass_support_uses_the_bound_generation(bool? publishedSupport, bool liveSupport)
+    {
+        await SeedCatalogAsync("song-a");
+        SetGeneratedPaths("song-a");
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+
+        ExecuteNonQuery(
+            """
+            UPDATE songs SET path_artifact_generation_id = 'gen-song-a-v2',
+                path_generation_revision = path_generation_revision + 1
+            WHERE song_id = 'song-a'
+            """,
+            static _ => { });
+
+        var directory = Path.Combine(
+            Directory.GetCurrentDirectory(), ".test-temp", $"double-bass-{Guid.NewGuid():N}");
+        try
+        {
+            WriteSupportManifest("gen-song-a", publishedSupport);
+            WriteSupportManifest("gen-song-a-v2", liveSupport);
+            var store = new PathDataStore(DataSource, options: Options.Create(new ScraperOptions
+            {
+                DataDirectory = directory,
+                UsePublicationPathArtifacts = true,
+            }));
+            Assert.Equal(publishedSupport, store.GetAllMaxScores()["song-a"].DoubleBassSupported);
+            Assert.Equal(liveSupport, store.GetLiveAllMaxScores()["song-a"].DoubleBassSupported);
+
+            void WriteSupportManifest(string generationId, bool? support)
+            {
+                var generation = PathArtifactResolver.GetGenerationDirectory(directory, "song-a", generationId);
+                Directory.CreateDirectory(generation);
+                var manifest = new PathArtifactManifest(
+                    generationId, "song-a", "dat-hash", null, "1.16.4", "binary-hash",
+                    PathGenerationProfiles.PlasticDrumsV4, ["Solo_Guitar"],
+                    new Dictionary<string, int> { ["Solo_Guitar"] = 1000 },
+                    DateTime.UtcNow, support);
+                File.WriteAllText(Path.Combine(generation, PathArtifactResolver.ManifestFileName),
+                    JsonSerializer.Serialize(manifest, PathArtifactManifest.JsonOptions));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Concurrent_publication_scopes_stay_isolated()
     {

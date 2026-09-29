@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text.Json;
 
 namespace FSTService.Scraping;
 
@@ -415,6 +416,9 @@ public sealed class PathDataStore : IPathDataStore
                         r.IsDBNull(13) ? null : r.GetString(13),
                     ExpectedInstruments =
                         r.GetFieldValue<string[]>(14),
+                    DoubleBassSupported = ReadDoubleBassSupport(
+                        r.GetString(0),
+                        r.IsDBNull(13) ? null : r.GetString(13)),
                 };
             }
 
@@ -534,6 +538,9 @@ public sealed class PathDataStore : IPathDataStore
         {
             if (!HasAnyMaxScore(state.MaxScores))
                 continue;
+            state.MaxScores.DoubleBassSupported = ReadDoubleBassSupport(
+                state.SongId,
+                state.ArtifactGenerationId);
             scores[state.SongId] = state.MaxScores;
         }
 
@@ -545,6 +552,30 @@ public sealed class PathDataStore : IPathDataStore
         }
 
         return scores;
+    }
+
+    private bool? ReadDoubleBassSupport(string songId, string? generationId)
+    {
+        if (generationId is null || _options is null)
+            return null;
+
+        try
+        {
+            return PathArtifactResolver.ReadDoubleBassSupport(
+                _options.Value.DataDirectory,
+                songId,
+                generationId);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or JsonException or InvalidOperationException)
+        {
+            _log?.LogWarning(
+                ex,
+                "Could not read double bass support for {SongId} generation {GenerationId}.",
+                songId,
+                generationId);
+            return null;
+        }
     }
 
     private void PruneStalePublicationCaches()

@@ -641,6 +641,7 @@ public sealed class SongsCacheService
                     durationSeconds = s.track.dn == 0 ? (int?)null : s.track.dn,
                     albumArt   = TrimAlbumArt(s.track.au),
                     genres     = s.track.ge,
+                    doubleBassSupported = ms?.DoubleBassSupported,
                     // Difficulty per instrument. proDrums and proCymbals share the same
                     // spark-track value (@in.pd) — Epic stores a single plastic-drums difficulty.
                     // proVocals is mic-mode difficulty (@in.bd); 99 means the song has no Karaoke chart.

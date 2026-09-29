@@ -1,9 +1,12 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-28
-last_verified_commit: e952ab21
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
+  - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
+  - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
+  - FortniteFestivalWeb/src/utils/songSettings.ts
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
@@ -394,6 +397,20 @@ The request implementation lives in `src/api/client.ts`. Shared response and
 domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
+
+### Song filters
+
+The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
+persisted in browser song settings. The General section precedes Global Score
+& FC Toggles and applies across solo and selected-band views. Its Double Bass
+accordion contains mutually exclusive Double Bass Support and No Double Bass
+Support toggles; leaving both off applies no chart filter. The active General
+filter combines with the existing search, shop, score, and instrument filters.
+
+Support comes from `ServerSong.doubleBassSupported`: only explicit `true`
+matches support and explicit `false` matches no support. Missing or null
+metadata, including incoming songs and older path generations, matches neither
+option while a filter is enabled. Both off includes those songs normally.
 
 ### Settings service progress
 

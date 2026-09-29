@@ -7,7 +7,10 @@ internal static class MidiTrackInspector
 {
     public static string[] GetNonEmptyInstruments(ReadOnlySpan<byte> midiData)
     {
-        var trackNames = GetNonEmptyTrackNames(midiData);
+        var trackNames = InspectTracks(midiData)
+            .Where(track => track.HasNotes && track.Name is not null)
+            .Select(track => track.Name!)
+            .ToHashSet(StringComparer.Ordinal);
         return PathGenerationInstruments.Definitions
             .Where(definition =>
                 trackNames.Contains(definition.MidiTrackName)
@@ -18,7 +21,12 @@ internal static class MidiTrackInspector
             .ToArray();
     }
 
-    private static HashSet<string> GetNonEmptyTrackNames(
+    public static bool HasDoubleBassSupport(ReadOnlySpan<byte> midiData)
+        => InspectTracks(midiData).Any(track =>
+            track.Name is "PLASTIC DRUM" or "PLASTIC DRUMS"
+            && track.HasDoubleKickNotes);
+
+    private static List<MidiTrackInspection> InspectTracks(
         ReadOnlySpan<byte> midiData)
     {
         if (midiData.Length < 14 ||
@@ -39,8 +47,7 @@ internal static class MidiTrackInspector
             midiData.Slice(10, 2));
         var position = checked(8 + headerLength);
         var tracksRead = 0;
-        var nonEmptyTrackNames = new HashSet<string>(
-            StringComparer.Ordinal);
+        var tracks = new List<MidiTrackInspection>(trackCount);
 
         while (tracksRead < trackCount)
         {
@@ -64,15 +71,14 @@ internal static class MidiTrackInspector
             {
                 var track = InspectTrack(
                     midiData.Slice(chunkStart, chunkEnd - chunkStart));
-                if (track.HasNotes && track.Name is not null)
-                    nonEmptyTrackNames.Add(track.Name);
+                tracks.Add(track);
                 tracksRead++;
             }
 
             position = chunkEnd;
         }
 
-        return nonEmptyTrackNames;
+        return tracks;
     }
 
     private static MidiTrackInspection InspectTrack(
@@ -82,6 +88,7 @@ internal static class MidiTrackInspector
         byte runningStatus = 0;
         string? trackName = null;
         var hasNotes = false;
+        var hasDoubleKickNotes = false;
 
         while (position < trackData.Length)
         {
@@ -164,28 +171,21 @@ internal static class MidiTrackInspector
 
             var channelType = (byte)(status & 0xF0);
             var dataLength = channelType is 0xC0 or 0xD0 ? 1 : 2;
-            if (usesRunningStatus)
-            {
-                position++;
-            }
-            else
-            {
-                EnsureDataBytes(trackData, position, 1);
-                position++;
-            }
-
-            byte secondData = 0;
-            if (dataLength == 2)
-            {
-                EnsureDataBytes(trackData, position, 1);
-                secondData = trackData[position++];
-            }
+            EnsureDataBytes(trackData, position, dataLength);
+            var firstData = trackData[position++];
+            var secondData = dataLength == 2 ? trackData[position++] : (byte)0;
 
             if (channelType == 0x90 && secondData > 0)
+            {
                 hasNotes = true;
+                // SightRead's drum MIDI mapping: double kick at the start of
+                // each difficulty range (easy, medium, hard, expert).
+                if (firstData is 59 or 71 or 83 or 95)
+                    hasDoubleKickNotes = true;
+            }
         }
 
-        return new MidiTrackInspection(trackName, hasNotes);
+        return new MidiTrackInspection(trackName, hasNotes, hasDoubleKickNotes);
     }
 
     private static int ReadChunkLength(
@@ -254,5 +254,6 @@ internal static class MidiTrackInspector
 
     private sealed record MidiTrackInspection(
         string? Name,
-        bool HasNotes);
+        bool HasNotes,
+        bool HasDoubleKickNotes);
 }
