@@ -43,10 +43,16 @@ public sealed record FrozenAcquisitionAbandonmentCommand(
                 }
                 continue;
             }
-            translated.Add(arg.StartsWith("--frozen-acquisition-", StringComparison.OrdinalIgnoreCase)
-                ? "--interrupted-acquisition-" + arg["--frozen-acquisition-".Length..]
-                    .Replace("abandonment", "normalization", StringComparison.OrdinalIgnoreCase)
-                : arg);
+            var translatedFlag = flag.ToLowerInvariant() switch
+            {
+                Flag => InterruptedAcquisitionNormalizationCommand.MaintenanceFlag,
+                "--frozen-acquisition-abandonment-check" => InterruptedAcquisitionNormalizationCommand.CheckFlag,
+                "--frozen-acquisition-abandonment-execute" => InterruptedAcquisitionNormalizationCommand.ExecuteFlag,
+                _ when flag.StartsWith("--frozen-acquisition-", StringComparison.OrdinalIgnoreCase)
+                    => "--interrupted-acquisition-" + flag["--frozen-acquisition-".Length..],
+                _ => flag,
+            };
+            translated.Add(translatedFlag + arg[flag.Length..]);
         }
         var identity = InterruptedAcquisitionNormalizationCommand.Parse(translated)
             ?? throw new ArgumentException("Missing frozen acquisition identity.");

@@ -13,6 +13,17 @@ public sealed class FrozenAcquisitionAbandonmentCommandTests
             .ToArray();
 
     [Fact]
+    public void Flag_translation_preserves_literal_worker_identity_values()
+    {
+        var args = CommandArguments().Select(x =>
+            x.StartsWith("--frozen-acquisition-worker-instance-id=", StringComparison.Ordinal)
+                ? "--frozen-acquisition-worker-instance-id=worker-abandonment"
+                : x).ToArray();
+        Assert.Equal("worker-abandonment",
+            FrozenAcquisitionAbandonmentCommand.Parse(args)!.Identity.ExpectedWorkerInstanceId);
+    }
+
+    [Fact]
     public void Parses_all_explicit_identities_and_check_mode()
     {
         var command = FrozenAcquisitionAbandonmentCommand.Parse(CommandArguments());
