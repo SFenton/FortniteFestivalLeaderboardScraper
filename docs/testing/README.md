@@ -1,9 +1,10 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-24
-last_verified_commit: d5af85a2
+last_verified: 2026-09-29
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService.Tests/Unit/FrozenAcquisitionAbandonmentCommandTests.cs
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
   - FortniteFestivalWeb/__test__/hooks/ui/useWheelHandoff.test.tsx
@@ -201,6 +202,16 @@ newer attempts introduced between exact-state and official-readiness proof
 fail closed for both first execution and an already-normalized retry. The
 entrypoint test also proves one JSON document on stdout and no schema or
 hosted-service initialization.
+
+The same suite also covers the separate frozen-acquisition abandonment path:
+an exact obsolete acquisition phase plus an offline replacement worker,
+unchanged published rows/worker/catalog/bindings, atomic phase/scrape/generation
+failure and freeze release, retained candidate artifacts, refusal of repeated
+execution, phase/freeze/worker/pointer/generation drift, publication-fence
+contention, raced worker replacement and rollback on failed terminal proof.
+Include `FullyQualifiedName~FrozenAcquisition` for the strict command-parser
+tests. Both real entrypoints prove a single stdout JSON object and no schema
+or hosted-service initialization on a missing-schema refusal.
 
 Focused snapshot-retention policy validation:
 

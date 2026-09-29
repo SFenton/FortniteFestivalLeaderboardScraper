@@ -2,8 +2,9 @@
 status: canonical
 owner: operations
 last_verified: 2026-09-29
-last_verified_commit: fbc32a64
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - docker-compose.yml
   - deploy/docker-compose.yml
   - deploy/config/fstservice-role.env
@@ -233,8 +234,11 @@ does not guarantee cleanup: startup notification recovery rejects frozen
 reads before a new scrape can reach the abandonment boundary. A replacement
 worker also makes the old running attempt foreign to the current worker
 identity. If this occurs, retain the stopped worker, published pointer,
-working candidate and freeze evidence; hold deployment for a qualified exact
-state recovery path. Do not manually clear the freeze, change the attempt or
+working candidate and freeze evidence. The explicit
+[frozen acquisition abandonment command](../reference/cli.md#frozen-acquisition-abandonment)
+can recover the qualified stopped/uncheckpointed state under the host worker
+lock and exclusive publication fence, retaining all candidate artifacts.
+Hold deployment if its exact-state check fails. Do not manually clear the freeze, change the attempt or
 worker identity, or repeatedly recreate workers to force startup cleanup.
 
 The in-process control update changes a PIA container's **runtime** region,

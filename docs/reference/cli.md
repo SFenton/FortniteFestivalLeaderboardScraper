@@ -2,8 +2,9 @@
 status: canonical
 owner: service
 last_verified: 2026-09-29
-last_verified_commit: 2f299474
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - FSTService/Scraping/PathMetadataBackfillCommand.cs
   - FSTService/Program.cs
   - FSTService/Persistence/InterruptedAcquisitionNormalizationCommand.cs
@@ -254,6 +255,7 @@ legacy fetch.
 | `--initialize-snapshot-retention-schema-only` | Apply only the bounded snapshot-retention schema step and exit, without a host | Exactly one argument; all other flags/selectors are rejected |
 | `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
 | `--interrupted-acquisition-normalization` | Read-only exact-state check or atomic normalization of one interrupted acquisition attempt before official failure isolation | Requires exactly one of `--interrupted-acquisition-normalization-check` or `--interrupted-acquisition-normalization-execute` plus every namespaced identity flag described below |
+| `--frozen-acquisition-abandonment` | Explicitly abandon one stopped, frozen acquisition without a checkpoint; preserve all published data and failed-candidate artifacts | Requires exactly one check/execute flag and every frozen-acquisition identity and message flag described below |
 | `--active-scrape-failure-isolation` | Read-only readiness/check report or explicit failure-isolation execution for one exact frozen active candidate | Required `--active-scrape-id`, `--published-scrape-id`, and exactly one of `--active-scrape-failure-isolation-check` or `--active-scrape-failure-isolation-execute`; execute mode also requires `--active-scrape-failure-phase` and `--active-scrape-failure-message` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
@@ -401,6 +403,55 @@ ID without either owning command are startup errors. The shared option does not
 activate max-score parsing by itself.
 
 ### Interrupted acquisition normalization
+
+### Frozen acquisition abandonment
+
+`--frozen-acquisition-abandonment` is a separate operator-only recovery path
+for an acquisition whose worker stopped without terminalizing its running
+phase or releasing its `scrape` freeze. It never starts hosted services or
+initializes schema. Ordinary failure isolation and interrupted-acquisition
+normalization keep their existing admission rules.
+
+Supply `--frozen-acquisition-abandonment` and exactly one of
+`--frozen-acquisition-abandonment-check` or
+`--frozen-acquisition-abandonment-execute`, plus all of:
+
+```text
+--frozen-acquisition-scrape-id <active-id>
+--frozen-acquisition-published-scrape-id <preserved-id>
+--frozen-acquisition-current-publication-id <current-id>
+--frozen-acquisition-previous-publication-id <previous-id>
+--frozen-acquisition-working-publication-id <candidate-id>
+--frozen-acquisition-worker-instance-id <stopped-current-worker-instance>
+--frozen-acquisition-worker-freshness-utc <UTC-microsecond-timestamp>
+--frozen-acquisition-phase-id scrape.leaderboards
+--frozen-acquisition-attempt <attempt>
+--frozen-acquisition-attempt-worker-instance-id <original-phase-worker-instance>
+--frozen-acquisition-failure-message <operator-reason>
+```
+
+Externally prove the worker stopped and retain the canonical host worker lock
+through check, execute and deployment. The current offline worker may differ
+from the original phase owner after a failed rollback restart; both identities
+must be independently pinned. Its current operation must be empty, all three
+worker freshness timestamps must match, and the old phase must not have
+progressed after that replacement worker started.
+
+Check uses a read-only transaction and shared publication fence. Execute uses
+the exclusive fence, locks and revalidates the exact rows, and atomically
+fails only the pinned running phase, active scrape and building generation,
+releases only that working pointer and acquisition freeze, and proves the
+terminal state before commit and again under a read-only fence. It requires
+no checkpoint or partial checkpoint payload, newer/other running scrape,
+candidate published-scope mappings, worker query/transaction, waiting or
+foreign advisory locks, maintenance, commit intent or max-score mutation
+gate. Current/previous publication identities and the published scrape remain
+unchanged. Phase counters, worker row, catalog, scores, caches, staging and
+artifacts are preserved; this command does not delete or sweep anything.
+
+Both modes write one JSON object to stdout, logs to stderr, and exit `2` when
+proof fails. An already terminal candidate is rejected without mutation;
+verify its exact terminal state rather than retrying a wider action.
 
 `--interrupted-acquisition-normalization` is a narrower, one-shot handoff into
 the unchanged official active-scrape failure-isolation command. It does not

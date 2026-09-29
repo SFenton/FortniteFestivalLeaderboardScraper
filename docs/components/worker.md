@@ -2,8 +2,9 @@
 status: canonical
 owner: worker
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
   - FSTService/Scraping/LeaderboardPaginationPlanner.cs
@@ -380,6 +381,13 @@ metadata follows the immutable generation through staged publication and is
 exposed on songs. Existing generations can be classified through the file-only
 metadata backfill without rebuilding CHOpt outputs or changing scores. Adding
 the filter does not schedule a catalog migration.
+
+An explicit operator-only frozen-acquisition abandonment command handles a
+stopped worker whose acquisition phase and freeze were not terminalized.
+It requires exact publication/worker/phase pins and quiescence under the
+publication fence, preserving published history and all candidate artifacts.
+It is separate from normal interrupted-acquisition normalization and does not
+start hosted workers. See [CLI reference](../reference/cli.md#frozen-acquisition-abandonment).
 
 Scrape allocation additionally captures the publication-bound path artifact
 snapshot for the new working publication, and publication preparation re-emits

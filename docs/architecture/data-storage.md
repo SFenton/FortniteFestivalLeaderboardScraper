@@ -1,9 +1,10 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-19
-last_verified_commit: d15cbdf7
+last_verified: 2026-09-29
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - tools/postgres-snapshot-archive-retire.py
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
@@ -1877,6 +1878,13 @@ source-of-truth or restore targets.
   [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 - Schema initialization is idempotent but is not a substitute for a bounded
   maintenance command.
+- Explicit frozen-acquisition abandonment changes only the pinned running
+  phase, active scrape/building generation disposition, working pointer and
+  acquisition freeze under the exclusive publication fence. It preserves
+  current/previous publications, historical source rows, worker metadata,
+  scores, cache rows and all failed-candidate staging/artifacts. No schema or
+  cleanup operation is part of that recovery command. See
+  [frozen acquisition abandonment](../reference/cli.md#frozen-acquisition-abandonment).
 - Preserve Epic/provider provenance, historical leaderboard correctness,
   publication state, and replay evidence.
 

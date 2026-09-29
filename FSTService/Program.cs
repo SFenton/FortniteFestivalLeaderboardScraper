@@ -66,7 +66,8 @@ var interruptedAcquisitionNormalizationRequested =
     InterruptedAcquisitionNormalizationCommand.IsRequested(args);
 var machineReadableIsolationCommandRequested =
     activeScrapeFailureIsolationRequested
-    || interruptedAcquisitionNormalizationRequested;
+    || interruptedAcquisitionNormalizationRequested
+    || FrozenAcquisitionAbandonmentCommand.IsRequested(args);
 
 var builder = WebApplication.CreateBuilder(args);
 if (machineReadableIsolationCommandRequested)
@@ -139,6 +140,11 @@ var maxScoreMaintenanceCommand =
         publishedScrapeIdArgument);
 var interruptedAcquisitionNormalizationCommand =
     InterruptedAcquisitionNormalizationCommand.Parse(args);
+var frozenAcquisitionAbandonmentCommand =
+    FrozenAcquisitionAbandonmentCommand.Parse(args);
+var acquisitionRecoveryCommandRequested =
+    interruptedAcquisitionNormalizationCommand is not null
+    || frozenAcquisitionAbandonmentCommand is not null;
 var activeScrapeFailureIsolationCommand =
     ActiveScrapeFailureIsolationCommand.Parse(
         args,
@@ -170,7 +176,7 @@ if (rolloutReadOnlyStartupRequested
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
-        || interruptedAcquisitionNormalizationCommand is not null
+        || acquisitionRecoveryCommandRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -182,7 +188,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
-        || interruptedAcquisitionNormalizationCommand is not null
+        || acquisitionRecoveryCommandRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -194,7 +200,7 @@ if (soloFamilyRankingBackfillCommand is not null
     && (improvementNotificationRecoveryRequested
         || leaderboardRivalsRecomputeCommand is not null
         || maxScoreMaintenanceCommand is not null
-        || interruptedAcquisitionNormalizationCommand is not null
+        || acquisitionRecoveryCommandRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -205,7 +211,7 @@ if (soloFamilyRankingBackfillCommand is not null
 if (leaderboardRivalsRecomputeCommand is not null
     && (improvementNotificationRecoveryRequested
         || maxScoreMaintenanceCommand is not null
-        || interruptedAcquisitionNormalizationCommand is not null
+        || acquisitionRecoveryCommandRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
@@ -215,14 +221,14 @@ if (leaderboardRivalsRecomputeCommand is not null
 }
 if (maxScoreMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
-        || interruptedAcquisitionNormalizationCommand is not null
+        || acquisitionRecoveryCommandRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
         "Max-score maintenance cannot run with another one-shot schema or notification command.");
 }
-if (interruptedAcquisitionNormalizationCommand is not null
+if (acquisitionRecoveryCommandRequested
     && (improvementNotificationRecoveryRequested
         || activeScrapeFailureIsolationCommand is not null
         || initializeSchemaOnlyRequested))
@@ -245,7 +251,7 @@ var apiOnlyRequested = improvementNotificationRecoveryRequested
     || soloFamilyRankingBackfillCommand is not null
     || leaderboardRivalsRecomputeCommand is not null
     || maxScoreMaintenanceCommand is not null
-    || interruptedAcquisitionNormalizationCommand is not null
+    || acquisitionRecoveryCommandRequested
     || activeScrapeFailureIsolationCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
@@ -274,7 +280,7 @@ var strictOneShotWithoutHostedServices =
         leaderboardRivalsRecomputeCommand is not null,
         maxScoreMaintenanceCommand is not null,
         activeScrapeFailureIsolationCommand is not null)
-    || interruptedAcquisitionNormalizationCommand is not null;
+    || acquisitionRecoveryCommandRequested;
 
 builder.Services.AddSingleton<
     IValidateOptions<ScraperOptions>,
@@ -513,7 +519,9 @@ builder.Services.AddSingleton<TokenManager>();
 // ─── Persistence (PostgreSQL) ───────────────────────────────
 
 var pgApplicationName =
-        interruptedAcquisitionNormalizationCommand is not null
+        frozenAcquisitionAbandonmentCommand is not null
+        ? "fst-frozen-acquisition-abandonment"
+        : acquisitionRecoveryCommandRequested
         ? "fst-interrupted-acquisition-normalization"
         : maxScoreMaintenanceCommand?.Action
             == MaxScoreMaintenanceAction.Rollback
@@ -1018,7 +1026,12 @@ else if (maxScoreMaintenanceCommand is not null)
     app.Logger.LogInformation(
         "Max-score maintenance one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
 }
-else if (interruptedAcquisitionNormalizationCommand is not null)
+else if (frozenAcquisitionAbandonmentCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Frozen-acquisition abandonment one-shot mode enabled; no hosted services or schema initialization.");
+}
+else if (acquisitionRecoveryCommandRequested)
 {
     app.Logger.LogInformation(
         "Interrupted-acquisition normalization one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
@@ -1269,6 +1282,19 @@ if (maxScoreMaintenanceCommand is not null)
     {
         Environment.ExitCode = 2;
     }
+    return;
+}
+
+if (frozenAcquisitionAbandonmentCommand is not null)
+{
+    var metaDb = app.Services.GetRequiredService<FSTService.Persistence.MetaDatabase>();
+    object report = frozenAcquisitionAbandonmentCommand.Identity.Execute
+        ? metaDb.ExecuteFrozenAcquisitionAbandonment(frozenAcquisitionAbandonmentCommand)
+        : metaDb.GetFrozenAcquisitionAbandonmentReadiness(frozenAcquisitionAbandonmentCommand);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
+    if (report is FrozenAcquisitionAbandonmentReadiness { CanExecute: false }
+        or FrozenAcquisitionAbandonmentExecutionResult { Succeeded: false })
+        Environment.ExitCode = 2;
     return;
 }
 
