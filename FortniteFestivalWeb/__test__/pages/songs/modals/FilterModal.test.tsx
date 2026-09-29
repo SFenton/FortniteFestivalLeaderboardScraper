@@ -110,6 +110,34 @@ describe('FilterModal', () => {
     expect(screen.getByText('Filter Songs')).toBeDefined();
   });
 
+  it('places the general double bass filter before score filters', () => {
+    renderModal();
+    const general = screen.getByText('General');
+    const global = screen.getByText('Global Score & FC Toggles');
+    expect(general.compareDocumentPosition(global) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('General filters that apply to all songs.')).toBeDefined();
+    fireEvent.click(screen.getByText('Double Bass'));
+    expect(screen.getByText('Filter songs that have or don\'t have double bass charts for Pro Drums.')).toBeDefined();
+    expect(screen.getByText('Double Bass Support')).toBeDefined();
+    expect(screen.getByText('No Double Bass Support')).toBeDefined();
+  });
+
+  it('allows neither double bass toggle or exactly one toggle to be selected', () => {
+    const props = defaultProps();
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText('Double Bass'));
+    fireEvent.click(screen.getByText('Double Bass Support'));
+    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('supported');
+
+    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'supported' }} /></TestProviders>);
+    fireEvent.click(screen.getByText('No Double Bass Support'));
+    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('unsupported');
+
+    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'unsupported' }} /></TestProviders>);
+    fireEvent.click(screen.getByText('No Double Bass Support'));
+    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBeNull();
+  });
+
   /* ── Global toggles section ── */
 
   it('shows global toggle accordion', () => {
@@ -286,6 +314,7 @@ describe('FilterModal', () => {
   it('hides solo-only controls and shows selected band score filters in selected band mode', () => {
     renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo' });
 
+    expect(screen.getByText('General')).toBeDefined();
     expect(screen.getByText('Selected Band Scores')).toBeDefined();
     expect(screen.getByText('Has Selected Band Score')).toBeDefined();
     expect(screen.getByText('Missing Selected Band Score')).toBeDefined();

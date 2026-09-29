@@ -1,9 +1,12 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-09-24
-last_verified_commit: d5af85a2
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
+  - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
+  - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
+  - FortniteFestivalWeb/src/utils/songSettings.ts
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/Dockerfile
@@ -22,6 +25,7 @@ sources:
   - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
   - FortniteFestivalWeb/src/components/leaderboard/PaginatedLeaderboard.tsx
   - FortniteFestivalWeb/src/components/maintenance/BackendAvailabilityGate.tsx
+  - FortniteFestivalWeb/src/components/maintenance/MaintenanceApp.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.tsx
   - FortniteFestivalWeb/src/components/shell/desktop/PinnedSidebar.module.css
   - FortniteFestivalWeb/src/components/page/PageQuickLinks.tsx
@@ -43,6 +47,7 @@ sources:
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
   - FortniteFestivalWeb/src/contexts/PageReadyContext.tsx
   - FortniteFestivalWeb/src/contexts/StartupEntranceContext.tsx
+  - FortniteFestivalWeb/src/contexts/StartupSplashContext.tsx
   - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
@@ -51,8 +56,7 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
   - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
-  - FortniteFestivalWeb/src/hooks/data/useCatalogPublicationLag.ts
-  - FortniteFestivalWeb/src/components/page/CatalogUpdateBanner.tsx
+  - FortniteFestivalWeb/src/hooks/data/useIncomingSongsRefresh.ts
   - FortniteFestivalWeb/src/pages/songs/SongsPage.tsx
   - FortniteFestivalWeb/src/hooks/ui/useScrollUpdateScheduler.ts
   - FortniteFestivalWeb/src/hooks/ui/useVirtualListScrollMargin.ts
@@ -85,6 +89,7 @@ sources:
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
   - FortniteFestivalWeb/e2e/specs/browser/startup-transition.spec.ts
+  - FortniteFestivalWeb/e2e/support/startupSplash.ts
   - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
   - FortniteFestivalWeb/e2e/specs/platform/publication.spec.ts
   - FortniteFestivalWeb/e2e/README.md
@@ -106,9 +111,10 @@ i18next for localization, and Yarn 4 as its package manager.
 renders:
 
 1. `QueryClientProvider`
-2. `PublicationBoundary`
-3. `BackendAvailabilityGate`
-4. the application or a diagnostic fixture
+2. `StartupSplashProvider`
+3. `PublicationBoundary`
+4. `BackendAvailabilityGate`
+5. the application or a diagnostic fixture
 
 Diagnostic fixtures, persisted scroll-fade test mode, tap-diagnostics runtime,
 and notification sample data stay outside the normal entry graph. They load
@@ -126,23 +132,34 @@ removed together rather than retained to inflate coverage.
 
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
-WebSocket, and remounts the app with the new publication ID. Unresolved
-publication and backend-availability checks use the same full-viewport,
-solid-`--color-bg-app` startup surface with one centered `ArcSpinner`; they do
-not expose the maintenance title, status copy, or logo treatment. The
-publication boundary owns the one visually hidden polite loading announcement,
-while later bootstrap stages are accessibility-silent. Actual publication or
-availability failures still render the full maintenance experience.
+WebSocket, and remounts the app with the new publication ID.
+
+`StartupSplashProvider` owns the only startup splash: a full-viewport,
+solid-`--color-bg-app` surface with one centered `ArcSpinner`, mounted once at
+boot and kept until application entry. Unresolved publication and
+backend-availability stages render nothing of their own, and the application
+drives the same element's reveal, so the spinner is never remounted between
+stages. A remount restarts the spinner's rotation from a render-time phase;
+on phone-class CPUs the slow application mount made the arc visibly snap back.
+The splash does not expose the maintenance title, status copy, or logo
+treatment. While the publication is unresolved, the same element is the one
+visually hidden polite loading announcement; later stages leave it
+accessibility-silent. Actual publication or availability failures still render
+the full maintenance experience, which removes the splash while mounted;
+recovery restores the covered splash.
 
 After the application mounts, `PageReadyProvider` starts each route as not
-ready. The shell remains `opacity: 0`, `inert`, and `aria-hidden` behind an
-app-owned startup splash while the active page and lazy animated background
-prepare. When the page publishes its terminal content-ready state, the shell
+ready. The shell remains `opacity: 0`, `inert`, and `aria-hidden` behind the
+shared startup splash while the active page and lazy animated background
+prepare; the application reports its reveal phase to `StartupSplashProvider`.
+When the page publishes its terminal content-ready state, the shell
 becomes opaque underneath the still-covered splash and only the splash fades
 for the shared 300 ms transition. Completion accepts the splash's own opacity
 `transitionend` and has a 100 ms safety fallback; reduced-motion users enter
 without the fade. Entry is latched for the lifetime of the mounted app, so
-normal route readiness resets never replay the startup surface.
+normal route readiness resets never replay the startup surface. Unmounting the
+application, such as the publication-change remount, restores the covered
+splash for the next mount.
 
 Songs publishes readiness at `LoadPhase.ContentIn`; route-error fallbacks
 publish terminal readiness immediately, while unsupported URLs redirect to
@@ -381,6 +398,20 @@ domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
+### Song filters
+
+The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
+persisted in browser song settings. The General section precedes Global Score
+& FC Toggles and applies across solo and selected-band views. Its Double Bass
+accordion contains mutually exclusive Double Bass Support and No Double Bass
+Support toggles; leaving both off applies no chart filter. The active General
+filter combines with the existing search, shop, score, and instrument filters.
+
+Support comes from `ServerSong.doubleBassSupported`: only explicit `true`
+matches support and explicit `false` matches no support. Missing or null
+metadata, including incoming songs and older path generations, matches neither
+option while a filter is enabled. Both off includes those songs normally.
+
 ### Settings service progress
 
 Settings keeps `useServiceInfo('settings')` as its sole request owner on the
@@ -388,19 +419,15 @@ shared React Query key. Visible Settings polling is five seconds; hidden-page
 polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
 is added, and publication-boundary cache/reset ownership is unchanged.
 
-### Catalog publication lag
-
-The Songs page reuses the same `serviceInfo` React Query key through
-`useServiceInfo('availability')`, so healthy background polling remains 30
-seconds and concurrent Settings/Songs consumers deduplicate to one request.
-`useCatalogPublicationLag` subscribes to the shared application WebSocket and
-invalidates only that operational query after `songs_changed`.
+### Incoming songs
 
 `FestivalContext` also loads `/api/songs/incoming` (query key
-`['songs','incoming']`, one-minute stale time, five-minute refetch, refreshed
-on `songs_changed`) and appends songs missing from the published catalog with
-`awaitingPublication: true`, so a song ingested mid-scrape or mid-post-process
-is listed and routable immediately with empty leaderboards until publication.
+`['songs','incoming']`, one-minute stale time, five-minute refetch) and appends
+songs missing from the published catalog with `awaitingPublication: true`, so a
+song ingested mid-scrape or mid-post-process is listed and routable immediately
+with empty leaderboards until publication. On the Songs page,
+`useIncomingSongsRefresh` subscribes to the shared application WebSocket and
+invalidates only that query after `songs_changed`.
 The song detail page skips publication-bound leaderboard, band, member-score,
 and score-history reads for such a song (during a scrape freeze those routes
 would otherwise return `503` because the song is absent from the publication
@@ -408,11 +435,10 @@ cache) and renders empty cards without blocking page readiness.
 Published entries always win, so metadata changes and removals still wait for
 publication, and an incoming-list failure never blocks the published catalog.
 
-When exact live and published baselines differ by metadata changes or
-removals, the page shows one passive aggregate status banner explaining that a
-leaderboard publication is still required. Added songs are excluded from that
-count because they are already listed. The banner never previews unapproved
-maxima. Missing/inexact baselines and zero pending changes render no banner.
+Catalog publication lag (`serviceInfo.catalog`) is operational state only. The
+Songs page does not show a catalog-update banner or any count of changes
+awaiting publication; `e2e/specs/pages/songs/catalog-lag.spec.ts` keeps that
+true with pending added, changed, and removed songs.
 
 Unit-test setup replaces Node's native WebSocket with an inert implementation,
 so page tests cannot make real `/api/ws` connections. Dedicated WebSocket

@@ -97,6 +97,9 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     const next = !draft.selectedBandMissingScore;
     onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
+  const toggleDoubleBass = (value: 'supported' | 'unsupported') => {
+    onChange({ ...draft, doubleBass: draft.doubleBass === value ? null : value });
+  };
   const toggleIndividualBandMemberHasScore = (accountId: string) => {
     const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
     const next = !(current.hasScore ?? false);
@@ -180,6 +183,21 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       {showBandComboSection ? (
         <BandInstrumentFilterPicker controller={bandComboController} compact />
       ) : null}
+
+      <ModalSection title={t('filter.general')} hint={t('filter.generalHint')}>
+        <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
+          <ToggleRow
+            label={t('filter.doubleBassSupport')}
+            checked={draft.doubleBass === 'supported'}
+            onToggle={() => toggleDoubleBass('supported')}
+          />
+          <ToggleRow
+            label={t('filter.noDoubleBassSupport')}
+            checked={draft.doubleBass === 'unsupported'}
+            onToggle={() => toggleDoubleBass('unsupported')}
+          />
+        </Accordion>
+      </ModalSection>
 
       {selectedBandMode ? (
         <ModalSection title={t('filter.selectedBandScores')} hint={t('filter.selectedBandScoresHint', { band: selectedBandName ?? t('band.title') })}>

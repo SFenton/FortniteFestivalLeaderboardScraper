@@ -73,8 +73,14 @@ together as an immutable generation.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
    payloads. This accommodates the longest current Festival charts.
-6. A manifest records the song identity, `.dat` hash, CHOpt version and binary
-   SHA-256, generation profile, expected instruments, and expert maxima.
+6. FST inspects the original decrypted MIDI for double-kick notes in
+   `PLASTIC DRUM` or `PLASTIC DRUMS`. The pinned CHOpt/SightRead parser maps
+   pitches 59, 71, 83, and 95 to double kick across the four difficulties.
+   Only positive-velocity Note On events count, including running status.
+   Pad drums and other instrument tracks do not qualify. This adds no CHOpt
+   invocations. A manifest records the song identity, `.dat` hash, CHOpt version
+   and binary SHA-256, generation profile, expected instruments, expert maxima,
+   and `doubleBassSupported`.
 7. The complete directory is moved into
    `paths/<songId>/generations/<generationId>/` and promoted with a
    compare-and-swap update. Partial or conflicted attempts never replace the
@@ -86,6 +92,19 @@ to a complete, non-pending immutable generation whose current song ID and
 catalog `lastModified` identity still match the selected provider catalog.
 Provider JSON remains unchanged and authoritative for catalog provenance; a
 stale or identity-mismatched path generation cannot widen scrape scope.
+
+The optional manifest `doubleBassSupported` value is explicit true or false
+for new generations. Older manifests omit it and deserialize as unknown; null
+is omitted when serializing to preserve their existing representation.
+`PathDataStore` reads support from the generation named by the live row or
+publication snapshot when refreshing its max-score cache. An unavailable,
+invalid, or identity-mismatched manifest produces unknown support.
+The API exposes the value on `/api/songs`.
+
+This additive metadata does not change scoring arguments or the generation
+profile and does not force regeneration of existing complete generations.
+Populating older songs requires the existing guarded regeneration workflow;
+published artifacts and durable publication payloads are not rewritten in place.
 
 The generation profile is a semantic identity, not a display label. Change it
 whenever CHOpt arguments or the artifact contract change. A version, binary

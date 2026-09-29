@@ -45,6 +45,7 @@ e2e/
   support/
     drivers/            Reusable user actions, not assertions or mock data
     projects.ts         Engine/project classification
+    startupSplash.ts    Startup splash/spinner node-identity probe
   specs/
     accessibility/      Real-route axe, focus, reduced motion
     architecture/       Lazy boundaries and bundle loading contracts

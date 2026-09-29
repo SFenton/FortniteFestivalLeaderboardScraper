@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { useServiceInfo } from '../../hooks/data/useServiceInfo';
-import StartupSplash from '../common/StartupSplash';
 import MaintenanceApp from './MaintenanceApp';
 
 type BackendAvailabilityGateProps = {
@@ -11,6 +10,7 @@ export default function BackendAvailabilityGate({ children }: BackendAvailabilit
   const serviceInfo = useServiceInfo('availability');
 
   if (serviceInfo.isSuccess) return <>{children}</>;
-  if (serviceInfo.isPending) return <StartupSplash />;
+  // StartupSplashProvider keeps the shared splash covering this stage.
+  if (serviceInfo.isPending) return null;
   return <MaintenanceApp />;
 }

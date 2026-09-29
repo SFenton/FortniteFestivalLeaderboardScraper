@@ -37,8 +37,7 @@ sources:
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
-  - FortniteFestivalWeb/src/hooks/data/useCatalogPublicationLag.ts
-  - FortniteFestivalWeb/src/components/page/CatalogUpdateBanner.tsx
+  - FortniteFestivalWeb/src/hooks/data/useIncomingSongsRefresh.ts
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs

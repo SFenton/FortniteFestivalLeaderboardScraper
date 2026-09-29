@@ -14,6 +14,7 @@ import type {
   CompositePageResponse,
   FeatureFlagsResponse,
   ImprovementNotificationsEnvelope,
+  IncomingSongsResponse,
   LeaderboardNeighborhoodResponse,
   LeaderboardRankOffsetsResponse,
   LeaderboardResponse,
@@ -89,6 +90,7 @@ export type AppScenario = {
   serviceInfo: ServiceInfoResponse;
   songs: SongsResponse;
   songsEtag: string;
+  incomingSongs: IncomingSongsResponse;
   shop: ShopResponse;
   player: PlayerResponse;
   syncStatus: SyncStatusResponse;
@@ -369,6 +371,7 @@ export function createPopulatedScenario(): AppScenario {
     serviceInfo: createServiceInfo(),
     songs: { count: songs.length, currentSeason: 5, songs },
     songsEtag: '"e2e-songs-v1"',
+    incomingSongs: { count: 0, publishedPublicationId: 1, songs: [] },
     shop: {
       songs: [
         {

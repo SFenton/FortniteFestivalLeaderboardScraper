@@ -18,7 +18,7 @@ Current architecture and ownership are indexed in `docs/README.md`.
 
 - Work autonomously through approved repository tasks while safe work remains.
 - Stop for required operator input, credentials, privileged access,
-  provider/budget decisions, ambiguous user-owned changes, or an uncleared
+  provider spending decisions, ambiguous user-owned changes, or an uncleared
   live-safety/parity gate.
 - Preserve unrelated worktree changes.
 - Keep task state and documentation accurate.
@@ -27,19 +27,8 @@ Current architecture and ownership are indexed in `docs/README.md`.
 - Enable or preserve auto-merge only on pull requests authored by `SFenton`;
   every other author's pull request requires a manual merge.
 - Prefer read-only evidence before mutation; never fabricate measurements.
-- Use `.github/agent-budget.json` and `fst-budget-workflow` for bounded generic
-  research and delivery. Tandem and autonomous-plan execution are explicit-only.
-  A budget route never changes the live-safety or specialist contract.
-- The overall interactive model may be Sol, HydraFusion, or another model.
-  Identity never bypasses deterministic version 3 routing or exact project
-  pins. Unqualified models may orchestrate/read but gain no semantic,
-  repository-apply, database, production, release, or destructive authority.
-- Enabled source opportunities pin `gpt-6-sol` max/default for
-  operator-approved source implementation after Luna medium/default
-  coordination; live operations and release/destructive variants do not.
-  This pin is not repository-apply, database, production, or release authority.
-  Automated repository application remains disabled; explicit operator-approved
-  source changes still use normal CLI permissions and required validation.
+- Follow relevant specialist guidance; research does not authorize production
+  mutation, release, or a bypass of live-scrape parity.
 - The installed continuous-improvement observer follows
   `.github/agent-learning.json`, stores sanitized metadata only, and silently
   no-ops when no reusable pattern qualifies. Automatic build requests are

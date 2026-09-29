@@ -85,6 +85,7 @@ function migrateMetadataOrder(saved: string[]): string[] {
 /* ── Filter ── */
 
 export type SongFilters = {
+  doubleBass: 'supported' | 'unsupported' | null;
   missingScores: Record<string, boolean>;
   missingFCs: Record<string, boolean>;
   hasScores: Record<string, boolean>;
@@ -107,6 +108,7 @@ export type IndividualBandMemberScoreFilter = {
 };
 
 export const defaultSongFilters = (): SongFilters => ({
+  doubleBass: null,
   missingScores: {},
   missingFCs: {},
   hasScores: {},
@@ -153,6 +155,7 @@ export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | und
 };
 
 export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null, selectedBandMode = false): boolean => {
+  if (f.doubleBass === 'supported' || f.doubleBass === 'unsupported') return true;
   if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
   if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore || hasIndividualBandMemberScoreFilters(f);
   const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
