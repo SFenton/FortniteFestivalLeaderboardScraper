@@ -43,6 +43,39 @@ const songs = [
 ];
 
 describe('useFilteredSongs', () => {
+  it.each([['supported', ['s1']], ['unsupported', ['s2']], [null, ['s1', 's2', 's3', 's4']]] as const)(
+    'filters double bass %s without classifying unknown songs', (doubleBass, expected) => {
+      const { result } = renderHook(() => useFilteredSongs({
+        songs: [
+          { ...songs[0]!, doubleBassSupported: true },
+          { ...songs[1]!, doubleBassSupported: false },
+          { ...songs[2]!, doubleBassSupported: null },
+          song('s4', 'Unknown', 'Artist D'),
+        ],
+        search: '', sortMode: 'title', sortAscending: true,
+        filters: { ...defaultSongFilters(), doubleBass }, instrument: null,
+        scoreMap: new Map(), allScoreMap: new Map(),
+      }));
+      expect(result.current.map(s => s.songId)).toEqual(expected);
+    },
+  );
+
+  it.each([false, true])('combines double bass with score, search and shop filters (band: %s)', selectedBandMode => {
+    const scores = new Map([['s1', score('s1')], ['s2', score('s2')]]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songs.map(s => ({ ...s, doubleBassSupported: true })),
+      search: 'Artist', sortMode: 'title', sortAscending: true,
+      filters: {
+        ...defaultSongFilters(), doubleBass: 'supported', shopInShop: true,
+        ...(selectedBandMode ? { selectedBandHasScore: true } : { hasScores: { Solo_Guitar: true } }),
+      },
+      instrument: null, scoreMap: scores,
+      allScoreMap: new Map(Array.from(scores, ([id, value]) => [id, new Map([['Solo_Guitar' as InstrumentKey, value]])])),
+      shopVisible: true, shopSongIds: new Set(['s2', 's3']), selectedBandMode,
+    }));
+    expect(result.current.map(s => s.songId)).toEqual(['s2']);
+  });
+
   it('returns all songs with no filters', () => {
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,

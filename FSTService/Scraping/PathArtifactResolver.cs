@@ -190,6 +190,31 @@ public sealed class PathArtifactResolver
         return generationDirectory;
     }
 
+    internal static bool? ReadDoubleBassSupport(
+        string dataDirectory,
+        string songId,
+        string generationId)
+    {
+        var directory = GetGenerationDirectory(dataDirectory, songId, generationId);
+        var path = Path.Combine(directory, ManifestFileName);
+        if (!File.Exists(path))
+            return null;
+
+        EnsureNoReparsePoints(Path.GetFullPath(dataDirectory), path);
+        var file = GetRegularFile(path, "generation manifest");
+        if (file.Length <= 0 || file.Length > MaximumManifestBytes)
+            throw new InvalidOperationException("Path generation manifest size is invalid.");
+
+        using var stream = File.OpenRead(path);
+        var manifest = JsonSerializer.Deserialize<PathArtifactManifest>(
+            stream,
+            PathArtifactManifest.JsonOptions);
+        if (manifest is null || manifest.SongId != songId || manifest.GenerationId != generationId)
+            throw new InvalidOperationException("Path generation manifest identity does not match.");
+
+        return manifest.DoubleBassSupported;
+    }
+
     internal static bool IsGenerationComplete(
         string dataDirectory,
         PathGenerationState state)
@@ -340,6 +365,7 @@ public sealed class PathArtifactResolver
             GenerationProfile = manifest.GenerationProfile,
             ArtifactGenerationId = manifest.GenerationId,
             ExpectedInstruments = expected,
+            DoubleBassSupported = manifest.DoubleBassSupported,
         };
         foreach (var instrument in expected)
         {
@@ -636,7 +662,9 @@ internal sealed record PathArtifactManifest(
     string GenerationProfile,
     string[] ExpectedInstruments,
     Dictionary<string, int> ExpertMaxScores,
-    DateTime GeneratedAtUtc)
+    DateTime GeneratedAtUtc,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    bool? DoubleBassSupported = null)
 {
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

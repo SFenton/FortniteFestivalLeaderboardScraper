@@ -1036,6 +1036,12 @@
     "songCount_other": "{{count}} songs"
   },
   "filter": {
+    "general": "General",
+    "generalHint": "General filters that apply to all songs.",
+    "doubleBassTitle": "Double Bass",
+    "doubleBassHint": "Filter songs that have or don't have double bass charts for Pro Drums.",
+    "doubleBassSupport": "Double Bass Support",
+    "noDoubleBassSupport": "No Double Bass Support",
     "resetLabel": "Reset Filter Settings",
     "resetHint": "Restore all filter options to their defaults.",
     "applyLabel": "Apply Filter Changes",

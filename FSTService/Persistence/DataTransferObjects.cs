@@ -1244,6 +1244,7 @@ public sealed class SongMaxScores
     public int? MaxProBassScore { get; set; }
     public int? MaxProCymbalsScore { get; set; }
     public int? MaxProDrumsScore { get; set; }
+    public bool? DoubleBassSupported { get; set; }
     public string? GeneratedAt { get; set; }
     public string? CHOptVersion { get; set; }
     public string? CHOptBinarySha256 { get; set; }

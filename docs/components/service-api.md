@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-19
-last_verified_commit: 0b07fff0
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
   - FSTService/Program.cs
   - FSTService/StartupPublicationReadOnlyState.cs
@@ -235,6 +235,12 @@ same 100-request, one-second, per-client policy outside the test environment.
 Do not copy older minute-based limits from deleted historical guidance.
 
 ## Caching and publication
+
+The songs serializer exposes nullable `doubleBassSupported` chart metadata
+from `PathDataStore`. The store reads it from the selected immutable generation
+manifest during max-score cache refresh, preserving publication binding and
+returning unknown for older or unreadable manifests. See the
+[API contract](../reference/api-contract.md#song-chart-support).
 
 Response caches expose ETag/Cache-Control behavior and are coordinated with the
 scrape lifecycle. Publication-bound routes declare the generation surfaces they

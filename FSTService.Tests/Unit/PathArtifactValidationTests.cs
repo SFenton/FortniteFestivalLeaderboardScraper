@@ -9,6 +9,23 @@ namespace FSTService.Tests.Unit;
 
 public sealed class PathArtifactValidationTests
 {
+    [Fact]
+    public void Legacy_manifest_serialization_preserves_absent_support_and_false_is_explicit()
+    {
+        var legacy = new PathArtifactManifest(
+            "generation-a", "song-a", "dat-hash", null, "1.16.4", "binary-hash",
+            PathGenerationProfiles.PlasticDrumsV4, ["Solo_Guitar"],
+            new Dictionary<string, int> { ["Solo_Guitar"] = 1000 }, DateTime.UtcNow);
+        var json = JsonSerializer.Serialize(legacy, PathArtifactManifest.JsonOptions);
+        Assert.DoesNotContain("doubleBassSupported", json);
+        Assert.Null(JsonSerializer.Deserialize<PathArtifactManifest>(
+            json, PathArtifactManifest.JsonOptions)!.DoubleBassSupported);
+        var unsupported = JsonSerializer.Serialize(
+            legacy with { DoubleBassSupported = false }, PathArtifactManifest.JsonOptions);
+        using var document = JsonDocument.Parse(unsupported);
+        Assert.False(document.RootElement.GetProperty("doubleBassSupported").GetBoolean());
+    }
+
     private const string RichPathJson =
         """
         {

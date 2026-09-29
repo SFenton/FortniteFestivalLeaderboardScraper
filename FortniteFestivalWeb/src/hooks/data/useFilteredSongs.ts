@@ -110,6 +110,8 @@ export function useFilteredSongs({
 
     const list = songs.filter(s => {
       if (!songMatchesSearch(s, search)) return false;
+      if (f.doubleBass === 'supported' && s.doubleBassSupported !== true) return false;
+      if (f.doubleBass === 'unsupported' && s.doubleBassSupported !== false) return false;
 
       // Item Shop filters (independent of player data)
       // AND logic: both must pass when both enabled; leaving tomorrow ⊂ in shop

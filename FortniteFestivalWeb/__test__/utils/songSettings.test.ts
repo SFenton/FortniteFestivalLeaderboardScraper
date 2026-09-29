@@ -26,6 +26,18 @@ beforeEach(() => {
 });
 
 describe('songSettings', () => {
+  it('persists the general filter and defaults older saved settings to no filter', () => {
+    const settings = defaultSongSettings();
+    settings.filters.doubleBass = 'unsupported';
+    saveSongSettings(settings);
+    expect(loadSongSettings().filters.doubleBass).toBe('unsupported');
+    resetSongSettingsForDeselect();
+    expect(loadSongSettings().filters.doubleBass).toBeNull();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { hasScores: { Solo_Guitar: true } } }));
+    expect(loadSongSettings().filters.doubleBass).toBeNull();
+    expect(loadSongSettings().filters.hasScores).toEqual({ Solo_Guitar: true });
+  });
+
   describe('getInstrumentSortModes', () => {
     it('returns 9 instrument sort modes', () => {
       const modes = INSTRUMENT_SORT_MODES;
@@ -112,6 +124,10 @@ describe('songSettings', () => {
   });
 
   describe('isFilterActive', () => {
+    it('counts double bass filtering even without a selected player or instrument', () => {
+      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: 'supported' }, null)).toBe(true);
+      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: 'unsupported' }, null, false, undefined, true)).toBe(true);
+    });
     it('returns false for default filters', () => {
       expect(isFilterActive(defaultSongFilters())).toBe(false);
     });
