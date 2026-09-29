@@ -521,11 +521,13 @@ public sealed partial class PathGenerationCoordinator
             Directory.CreateDirectory(stagingDirectory);
 
             MidiTrackRenamer.MidiVariants variants;
+            bool doubleBassSupported;
             try
             {
                 decryptedMidi ??= MidiCryptor.Decrypt(
                     datBytes,
                     execution.MidiKey);
+                doubleBassSupported = MidiTrackInspector.HasDoubleBassSupport(decryptedMidi);
                 variants = MidiTrackRenamer.ProduceVariants(
                     decryptedMidi);
             }
@@ -563,7 +565,10 @@ public sealed partial class PathGenerationCoordinator
 
             var artifactDirectory = Path.Combine(stagingDirectory, "artifacts");
             Directory.CreateDirectory(artifactDirectory);
-            var maxScores = new SongMaxScores();
+            var maxScores = new SongMaxScores
+            {
+                DoubleBassSupported = doubleBassSupported,
+            };
             var expertScores = new Dictionary<string, int>(StringComparer.Ordinal);
 
             foreach (var instrument in expected)
@@ -651,7 +656,8 @@ public sealed partial class PathGenerationCoordinator
                 execution.Runtime.Profile,
                 expected,
                 expertScores,
-                generatedAtUtc);
+                generatedAtUtc,
+                maxScores.DoubleBassSupported);
             await File.WriteAllTextAsync(
                 Path.Combine(
                     artifactDirectory,

@@ -169,6 +169,31 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                 StringComparison.Ordinal)));
     }
 
+    [Theory]
+    [InlineData(95, true)]
+    [InlineData(96, false)]
+    public async Task Generation_saves_chart_derived_double_bass_support(byte pitch, bool supported)
+    {
+        var store = new FakePathDataStore();
+        store.EnsureSong("double-bass");
+        var coordinator = CreateCoordinator(
+            CreateChoptScript(),
+            store,
+            new StaticDatHandler(EncryptMidi(BuildMinimalMidi(notePitch: pitch), _midiKey)));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("double-bass", new In { pd = 0 })],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState("double-bass")!;
+        Assert.Equal(supported, state.MaxScores.DoubleBassSupported);
+        Assert.Equal(supported, PathArtifactResolver.ReadDoubleBassSupport(
+            _dataDirectory, state.SongId, state.ArtifactGenerationId!));
+        Assert.True(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
+    }
+
     [Fact]
     public async Task Plastic_drum_generation_fails_without_plastic_midi_track()
     {
@@ -1637,7 +1662,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         => new(2026, 8, day, 0, 0, 0, DateTimeKind.Utc);
 
     private static byte[] BuildMinimalMidi(
-        string? trackName = "PLASTIC DRUMS")
+        string? trackName = "PLASTIC DRUMS",
+        byte? notePitch = null)
     {
         using var stream = new MemoryStream();
         stream.Write("MThd"u8);
@@ -1655,6 +1681,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             trackStream.WriteByte((byte)trackNameBytes.Length);
             trackStream.Write(trackNameBytes);
         }
+        if (notePitch is { } pitch)
+            trackStream.Write([0x00, 0x90, pitch, 100, 0x60, 0x80, pitch, 0]);
         trackStream.Write([0x00, 0xff, 0x2f, 0x00]);
         var track = trackStream.ToArray();
         stream.Write("MTrk"u8);

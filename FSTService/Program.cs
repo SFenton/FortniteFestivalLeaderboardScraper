@@ -13,6 +13,18 @@ using Npgsql;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
+if (args.Contains(PathMetadataBackfillCommand.Flag, StringComparer.Ordinal))
+{
+    var configuration = new ConfigurationBuilder()
+        .AddJsonFile("appsettings.json", optional: true)
+        .AddEnvironmentVariables()
+        .Build();
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+    Environment.ExitCode = await PathMetadataBackfillCommand.RunAsync(
+        args, configuration, http, Console.Out, CancellationToken.None);
+    return;
+}
+
 // Capture dispatch is first so mixed capture/host/replay/maintenance flags are
 // rejected before any normal host or mutation service can be constructed.
 if (CaptureOnlyCommand.IsRequested(args))

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-19
-last_verified_commit: 0b07fff0
+last_verified: 2026-09-29
+last_verified_commit: 2f299474
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -91,6 +91,17 @@ The service maps 82 HTTP routes across 14 route-bearing endpoint files plus
 
 Use the integration test's route arrays when an exact pattern list is needed;
 do not maintain a second hand-written 80-row table here.
+
+### Song chart support
+
+`GET /api/songs` exposes optional nullable `doubleBassSupported`: true means
+an inspected plastic-drum chart contains double kick, false means none was
+found, and null or absence means unknown. The value comes from the selected
+immutable generation manifest or a supplement cryptographically bound to that
+same manifest and encrypted MIDI. Publication-bound reads never use a newer
+live generation's metadata. Existing durable payloads remain unchanged until
+the publication pipeline builds another response. Incoming catalog-only songs
+remain unclassified.
 
 ### Path artifacts
 

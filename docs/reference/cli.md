@@ -1,9 +1,10 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-18
-last_verified_commit: c7488355
+last_verified: 2026-09-29
+last_verified_commit: 2f299474
 sources:
+  - FSTService/Scraping/PathMetadataBackfillCommand.cs
   - FSTService/Program.cs
   - FSTService/Persistence/InterruptedAcquisitionNormalizationCommand.cs
   - FSTService/Persistence/InterruptedAcquisitionNormalizationModels.cs
@@ -582,3 +583,26 @@ errors in every supported prefix/value form.
 
 See
 [Max-score correction maintenance](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+
+### File-only path metadata backfill
+
+`--path-metadata-backfill --request <file> --report <new-file>` dispatches before
+host construction, schema initialization and background-service registration.
+It uses `Scraper:DataDirectory` and `Scraper:MidiEncryptionKey` from environment
+or appsettings, with `FESTIVAL_MIDI_KEY` as the key fallback. All input, report
+and supplemental metadata paths must stay below the non-symlink data root.
+
+The request is a JSON array of 1 to 1000 unique records with `songId`,
+`generationId`, `manifestSha256` and HTTPS `datUrl`. Generate it from exact
+publication/live catalog and generation identities using bounded read-only
+inspection. The command checks each original manifest and downloaded encrypted
+MIDI hash, then invokes the same MIDI detector used by generation. It writes
+only new immutable metadata supplements and a new sanitized report. It does
+not run CHOpt, change scores or artifact pointers, access PostgreSQL, publish,
+freeze/unfreeze reads, or start a worker. Existing matching supplements are
+idempotently accepted; disagreements and stale identities reject. Exit 0 means
+all requested generations were classified; exit 2 preserves successful records
+and reports per-generation failures without URLs or configuration values.
+
+This command does not clear deployment/recovery safety gates. Existing durable
+song payloads still need the normal publication pipeline to expose new metadata.
