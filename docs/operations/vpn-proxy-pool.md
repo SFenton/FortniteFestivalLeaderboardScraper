@@ -176,6 +176,14 @@ reported to the adaptive concurrency limiter; otherwise the expected ~3% of
 per-IP 429s pins global DOP at its floor. JSON 429s (which may be account
 scoped) still reduce DOP.
 
+Those per-exit edge 429s also have their own retry budget (12 retries, each
+routed to another exit) before they consume the caller's status-retry budget.
+Leaderboard pages allow four status attempts; at a 3–5% edge-429 rate, four
+consecutive 429s on one page is roughly a once-per-scrape event across
+hundreds of thousands of pages, and the scope-completeness gate then fails
+the whole scrape (scrape `1438`: two pages, `incomplete=2`). JSON 429s and 5xx
+responses keep the original budget.
+
 #### Restoration and quarantine
 
 When every candidate fails or the overall deadline expires, the worker first
@@ -189,8 +197,16 @@ worker's control client allows 30 seconds and treats a control-call timeout as
 a failed step (next candidate, then container restart), never as the overall
 restoration deadline. If control rollback fails,
 it restarts only that proxy container, restoring its static Compose selector,
-and verifies again. If recovery cannot be verified, that exit is quarantined
-until operator intervention or a guarded worker restart. Cancellation stops
+and verifies again. Restoration never accepts another exit's egress; a small
+static region can reconnect to a server a peer already uses, so a working but
+duplicate restored tunnel is reconnected (up to six times) to another random
+server instead of being declared unrecoverable. If recovery cannot be
+verified, that exit is quarantined. With
+`ProxyRegionRotationQuarantineRetrySeconds` set, the census loop retries a
+full verified refresh after that delay (doubling per consecutive failure, up to
+one hour) and the exit rejoins selection only after a `Rotated` or `Restored`
+result; with the default `0` it stays quarantined until operator intervention
+or a guarded worker restart. Cancellation stops
 queued waits and attempts restoration after a tunnel change. Gluetun control
 settings are ephemeral: Docker/container restart returns a refreshed exit to
 the production-owned static Compose region. The host-side boot guard
@@ -204,6 +220,14 @@ exit's egress current with a background census: at most one IP-echo probe per
 exit every five minutes, two at a time, skipping refreshing or quarantined
 exits. An out-of-band change (for example Gluetun's own health restart) starts
 a new generation; two exits sharing an egress schedule a refresh.
+
+Proxied curl sends start their per-attempt timeout only after an exit lease
+is held (`Scraper:ProxyRequestTimeoutSeconds`, default the executor's 30
+seconds). Waiting for an exit is pool back-pressure: before this, requests
+queued behind 96 exit slots at DOP 200 timed out uniformly across songs and
+pages, were retried, and counted as adaptive-limiter failures without ever
+reaching an exit. A second per-minute line, `Proxy send latency`, reports send
+and lease-wait p50/p90/p99/max milliseconds and genuine send timeouts.
 
 Once a minute the pool logs `Proxy pool summary` with successful and
 rate-limited responses (and how many 429s were HTML edge pages), stale

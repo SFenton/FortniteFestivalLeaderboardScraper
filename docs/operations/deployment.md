@@ -1,9 +1,10 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-27
-last_verified_commit: 954ca0bd
+last_verified: 2026-09-29
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - docker-compose.yml
   - deploy/docker-compose.yml
   - deploy/config/fstservice-role.env
@@ -16,6 +17,8 @@ sources:
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
   - FSTService/Scraping/PiaRegionRotator.cs
+  - FSTService/ScraperWorker.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
@@ -138,7 +141,7 @@ live provider inventory.
 Sanitized configuration inspection on 2026-09-26 found:
 
 - a base project with the four core services and 28 numbered Gluetun services;
-- `docker-compose.pia-30.yml` with 30 canonical PIA services and 24 effective
+- `docker-compose.pia-30.yml` with 30 canonical PIA services and 30 effective
   aligned proxy/control/provider/container mappings;
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
@@ -146,18 +149,27 @@ Sanitized configuration inspection on 2026-09-26 found:
 This describes configured files, not a claim about currently running
 containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
-The 24-endpoint configuration excludes two TLS-failing exits and promotes a
-healthy Vancouver spare; its endpoint count, four arrays, and worker
-dependencies were changed together under the worker lock. Since
-2026-09-27T08:21Z the API and worker run one locally built immutable image
-for `954ca0bd` (integration branch `deploy/loop-bundle-b-f5-20260927`: open
-PRs #116, #117, #119, #120, and #121 on top of master) and the web runs the
-matching #117 build. The production-owned worker env enables the egress
+Service/worker releases use one immutable image built from merged `master`,
+with the GHCR digest, local image ID and exact OCI source revision retained
+through deployment and guarded worker startup. The master release retains
+the shutdown, egress retry and projection changes previously qualified in the
+local integration bundle. A service/worker-only rollout preserves the
+separately pinned web image and container until an explicit web deployment.
+The production-owned worker env enables the egress
 refresh plus `Scraper__BandCurrentProjectionMaxParallelScopes=6`,
 `BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`, and
 `Scraper__PrepareSoloCurrentProjectionBeforeRivals=true`; the production
 `.env` enables `BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION`.
-These are canaries under evaluation in scrape `1438`, not accepted defaults.
+These remain production canaries, not accepted defaults.
+
+The operator-authorized frozen acquisition recovery on 2026-09-29 failed
+scrape `1448` and candidate publication `379` through the qualified native
+command, preserving publication `377` / published scrape `1447` and retained
+publication `375`. It released the acquisition freeze and working pointer;
+there is no remaining recovery or publication obligation for that failed
+candidate. Published/retained data and worker fingerprints and the public
+songs response matched before/after recovery. All candidate staging and
+artifacts were retained, so this fact grants no cleanup or deletion authority.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires all 30 canonical service definitions, permits an effective count up to
@@ -213,11 +225,30 @@ worker still owns a database transaction. At the higher throughput reached with
 egress refresh, 30- and 150-second stop grace periods both ended in SIGKILL
 during 2026-09-26 cutovers (the host's 30-second shutdown window is followed by
 synchronous service disposal that can wait on in-flight writes). Give the
-worker stop a long grace period (600 seconds was used afterwards). If
-normalization is rejected, the guarded rollback restarts the previous image
-and its startup cleanup marks the candidate `abandoned_staging_cleanup` before
-starting a new scrape; published data is unaffected, but the new scrape
-resumes with less completed work.
+worker stop a long grace period (600 seconds was used afterwards). Since
+`Scraper:WorkerShutdownTimeoutSeconds` (default 120, clamped to 30–600) the
+full-worker host waits long enough for a cancelled pass to finish its bounded
+30-second cleanup and record the interrupted attempt; the repository template
+sets `stop_grace_period: 180s` on `fstworker` so every Compose stop or
+force-recreate outlasts that budget, and the production overlay needs the same
+value. A guarded rollback to the previous image can mark an older candidate
+`abandoned_staging_cleanup` at the next scrape boundary, preserving published
+data, only when startup gates admit a new scrape.
+
+A clean container exit alone does not prove durable interruption. A stopped
+worker can leave its acquisition attempt `running` and public reads frozen
+with reason `scrape`. Neither interrupted-acquisition normalization nor
+ordinary failure isolation accepts that state. Restarting the previous image
+does not guarantee cleanup: startup notification recovery rejects frozen
+reads before a new scrape can reach the abandonment boundary. A replacement
+worker also makes the old running attempt foreign to the current worker
+identity. If this occurs, retain the stopped worker, published pointer,
+working candidate and freeze evidence. The explicit
+[frozen acquisition abandonment command](../reference/cli.md#frozen-acquisition-abandonment)
+can recover the qualified stopped/uncheckpointed state under the host worker
+lock and exclusive publication fence, retaining all candidate artifacts.
+Hold deployment if its exact-state check fails. Do not manually clear the freeze, change the attempt or
+worker identity, or repeatedly recreate workers to force startup cleanup.
 
 The in-process control update changes a PIA container's **runtime** region,
 not its production Compose environment. On container restart the static

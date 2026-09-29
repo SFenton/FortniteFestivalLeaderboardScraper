@@ -71,6 +71,13 @@ overrides intentionally diverge between the public service and mutation worker.
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
 
+## Worker shutdown
+
+| Key | Default | Accepted range / effect |
+|---|---:|---|
+| `Scraper:ProxyRequestTimeoutSeconds` | `0` | Per-attempt timeout for proxied curl sends, started after an exit lease is acquired; `0` keeps the executor's 30-second default |
+| `Scraper:WorkerShutdownTimeoutSeconds` | `120` | Full-worker host shutdown budget, clamped to 30–600 seconds. It must exceed the scrape pass's bounded 30-second cleanup so a stopped worker records its interrupted phase attempt; Compose `stop_grace_period` must be longer still (template: 180s). |
+
 ## Worker-only PIA region rotation
 
 Region rotation is separate from `Scraper:ProxyActiveStandby` and
@@ -93,6 +100,7 @@ API/frontend and capture-only roles cannot operate VPN regions.
 | `Scraper:ProxyRegionRotationProbeTimeoutSeconds` | `240` | 10–360 seconds overall for all candidates of one refresh |
 | `Scraper:ProxyRegionRotationBurnedEgressTtlSeconds` | `900` | 0–86,400 seconds an egress that returned 429 is rejected as a replacement |
 | `Scraper:ProxyRegionRotationDrainSeconds` | `60` | 0–300 seconds to let in-flight leases finish before the tunnel changes; later reports from the old tunnel are ignored |
+| `Scraper:ProxyRegionRotationQuarantineRetrySeconds` | `0` | 0–3,600 seconds before a quarantined exit gets a fully verified refresh retry (doubling per consecutive failure, capped at one hour); `0` keeps it quarantined until the worker restarts |
 
 The enabled worker requires a nonzero `ExpectedProxyEndpointCount`, four
 complete aligned proxy/control/provider/container arrays with every provider
@@ -272,6 +280,8 @@ invalid/non-positive values prevent startup.
 | Key | Default | Purpose |
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
+| `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
+| `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
 
 The Compose form is
 `Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
@@ -282,6 +292,22 @@ and therefore remains off. Set it back to `false` for immediate code-path
 rollback. Enabling it in production requires a capacity-safe matched full
 scrape A/B and exact publication/data parity; isolated replay timing is not
 promotion evidence.
+
+`Scraper__BandCurrentProjectionMaxParallelScopes` (template variable
+`BAND_CURRENT_PROJECTION_MAX_PARALLEL_SCOPES`) changes only how many selected
+scopes rebuild concurrently. Each scope keeps its own transaction and writes
+disjoint projection and scope-state keys; filtering, query shape, publication,
+cleanup, and failure accounting are unchanged. Both switches are part of the
+durable phase configuration identity. Set it back to `0` for rollback.
+
+`Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes` (template variable
+`BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES`) adds a best-effort
+sweep to BandMaintenance's current-projection subphase. It loads every source
+scope and every existing projection scope key, runs the same unchanged-scope
+filter over the non-impacted ones, and adds up to the cap (in the filter's
+deterministic order) to the impacted set. A sweep failure is logged and the
+refresh continues with the impacted scopes. The switch is part of the durable
+phase configuration identity; `0` disables it.
 
 ## Registered-band remaining-work grace
 
@@ -314,6 +340,7 @@ configuration rollback is independently setting each enable flag to `false`.
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
 | `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
+| `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
@@ -328,6 +355,24 @@ account can execute many neighborhood reads and fingerprint queries. The
 setting changes scheduling only; rival eligibility, methods, directions,
 samples, persistence, publication criticality, and result ordering are
 unchanged.
+
+Rival song counts and neighborhoods read the solo current projection only when
+a scope is ready for its song's active source, and song counts use it only
+when every scope of the instrument is ready. Otherwise each neighborhood
+re-ranks live and snapshot rows for the song. Because the projection is
+normally refreshed later in `Cleanup.SoloCurrentProjection`, songs that
+received a new snapshot in the current scrape take that fallback (scrape
+`1436`: 72-517 of 729 scopes ready per instrument; Rivals `4.6`-`38.5`
+minutes across scrapes `1416`-`1424`). With
+`Scraper__PrepareSoloCurrentProjectionBeforeRivals=true` and legacy worker
+readers, the existing `PrepareSoloCurrentProjectionForDerived` phase refreshes
+stale scopes first. It is best-effort and records nothing on the pass
+context: publication cleanup still reloads stale scopes (including scopes
+re-dirtied by later snapshot activation) and remains the publication-critical
+refresh. Public reads are frozen for all of post-processing, so the earlier
+refresh exposes nothing. Snapshot/overlay worker readers always prepare and
+validate the projection instead. The switch is part of the durable phase
+configuration identity; set it back to `false` for rollback.
 
 ## Leaderboard rivals
 

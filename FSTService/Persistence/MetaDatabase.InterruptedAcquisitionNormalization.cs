@@ -757,17 +757,12 @@ public sealed partial class MetaDatabase
             BlockingReason = reason,
         };
 
-    private static string? GetNormalizationBlockingReason(
+    // Shared identity/blocker admission; each handoff keeps its own distinct phase/worker rules.
+    private static string? GetAcquisitionHandoffBlockingReason(
         InterruptedAcquisitionNormalizationState raw,
         InterruptedAcquisitionNormalizationCommand command,
-        out bool readyToNormalize,
-        out bool alreadyNormalized,
-        out OperationIdentity? operation)
+        bool frozenAcquisition)
     {
-        readyToNormalize = false;
-        alreadyNormalized = false;
-        operation = null;
-
         if (raw.Publication is null)
             return "The publication singleton is missing.";
         if (raw.Publication.PublishedScrapeId
@@ -790,12 +785,23 @@ public sealed partial class MetaDatabase
         {
             return $"Expected working publication {command.ExpectedWorkingPublicationId}, found {FormatNullable(raw.Publication.WorkingPublicationId)}.";
         }
-        if (raw.Publication.PublicReadsFrozen
-            || raw.Publication.PublicReadsFrozenAtUtc is not null
-            || raw.Publication.FrozenScrapeId is not null
-            || raw.Publication.FreezeReason is not null)
+        if (frozenAcquisition)
         {
-            return "Public-read freeze state is not exactly unfrozen and empty.";
+            if (!raw.Publication.PublicReadsFrozen
+                || raw.Publication.PublicReadsFrozenAtUtc is null
+                || raw.Publication.FrozenScrapeId != command.ExpectedPublishedScrapeId
+                || raw.Publication.FreezeReason != "scrape")
+                return "The freeze is not the exact published-scrape acquisition freeze.";
+        }
+        else
+        {
+            if (raw.Publication.PublicReadsFrozen
+                || raw.Publication.PublicReadsFrozenAtUtc is not null
+                || raw.Publication.FrozenScrapeId is not null
+                || raw.Publication.FreezeReason is not null)
+            {
+                return "Public-read freeze state is not exactly unfrozen and empty.";
+            }
         }
         if (raw.Publication.CommitIntentStartedAtUtc is not null
             || raw.Publication.CommitIntentHeartbeatAtUtc is not null
@@ -905,6 +911,23 @@ public sealed partial class MetaDatabase
             return $"{raw.AdvisoryLockCount} foreign advisory database lock(s) remain.";
         if (raw.MaintenanceActivityPresent)
             return "Database maintenance progress remains active.";
+        return null;
+    }
+
+    private static string? GetNormalizationBlockingReason(
+        InterruptedAcquisitionNormalizationState raw,
+        InterruptedAcquisitionNormalizationCommand command,
+        out bool readyToNormalize,
+        out bool alreadyNormalized,
+        out OperationIdentity? operation)
+    {
+        readyToNormalize = false;
+        alreadyNormalized = false;
+        operation = null;
+
+        var commonBlocker = GetAcquisitionHandoffBlockingReason(raw, command, frozenAcquisition: false);
+        if (commonBlocker is not null)
+            return commonBlocker;
         if (raw.GlobalRunningPhaseAttemptCount != 0)
         {
             return $"{raw.GlobalRunningPhaseAttemptCount} running phase attempt(s) remain.";

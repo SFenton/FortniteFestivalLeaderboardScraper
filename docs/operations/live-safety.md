@@ -1,9 +1,10 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-18
-last_verified_commit: c7488355
+last_verified: 2026-09-29
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - AGENTS.md
   - .github/copilot-instructions.md
   - .github/instructions/fst-postgres.instructions.md
@@ -688,6 +689,31 @@ stop the worker or clear the freeze first.
 Do not bypass a failed gate by relaxing `service_healthy`, enabling a candidate
 continuous profile, or broad-recreating the canonical pool. Investigate the
 reported sanitized stage while keeping API/web/PostgreSQL available.
+
+### Frozen acquisition abandonment
+
+A stopped worker can leave an uncheckpointed acquisition with its phase still
+`running` and reads frozen for `scrape`. This is not an interrupted-acquisition
+normalization or post-process isolation state. Use only the separate explicit
+[`--frozen-acquisition-abandonment`](../reference/cli.md#frozen-acquisition-abandonment)
+one-shot after independently pinning active/published scrape IDs, current,
+previous and working publication IDs, the current offline worker identity and
+microsecond freshness, and the original acquisition phase owner and attempt.
+Prove every involved worker container stopped/absent and retain the canonical
+host worker lock throughout recovery and deployment. A rollback replacement
+worker is accepted only when it is also offline with no current operation and
+the old phase stopped progressing before that replacement started.
+
+Require the read-only check first, then the exclusive-fence execution and its
+terminal proof. No checkpoint or partial checkpoint, source mapping owned by
+the candidate, worker query/transaction, waiting/foreign advisory lock,
+maintenance, commit intent, max-score gate or pointer drift may remain.
+Execution atomically fails the exact phase/scrape/building generation and
+releases its working pointer and acquisition freeze. It preserves current and
+previous publications, all historical source data, scores, cache rows, worker
+metadata, staging and artifacts. It performs no candidate cleanup or sweep.
+Any failed admission or final proof holds deployment; manual SQL changes to
+make a rejected state eligible remain forbidden.
 
 ### Interrupted acquisition normalization handoff
 

@@ -238,8 +238,10 @@ Do not copy older minute-based limits from deleted historical guidance.
 
 The songs serializer exposes nullable `doubleBassSupported` chart metadata
 from `PathDataStore`. The store reads it from the selected immutable generation
-manifest during max-score cache refresh, preserving publication binding and
-returning unknown for older or unreadable manifests. See the
+manifest or a hash-bound metadata supplement during max-score cache refresh,
+preserving publication binding and returning unknown for unclassified or
+unreadable generations. Existing durable publication payloads remain unchanged.
+See the
 [API contract](../reference/api-contract.md#song-chart-support).
 
 Response caches expose ETag/Cache-Control behavior and are coordinated with the

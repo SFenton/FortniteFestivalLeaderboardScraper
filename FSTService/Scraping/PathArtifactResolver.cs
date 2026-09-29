@@ -212,7 +212,9 @@ public sealed class PathArtifactResolver
         if (manifest is null || manifest.SongId != songId || manifest.GenerationId != generationId)
             throw new InvalidOperationException("Path generation manifest identity does not match.");
 
-        return manifest.DoubleBassSupported;
+        return manifest.DoubleBassSupported
+            ?? PathDoubleBassMetadataStore.Read(dataDirectory, manifest,
+                MidiCryptor.ComputeHash(File.ReadAllBytes(path)));
     }
 
     internal static bool IsGenerationComplete(

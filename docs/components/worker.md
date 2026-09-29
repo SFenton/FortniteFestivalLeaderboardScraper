@@ -2,8 +2,9 @@
 status: canonical
 owner: worker
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: f65a3a4a
 sources:
+  - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
   - FSTService/Scraping/LeaderboardPaginationPlanner.cs
@@ -377,8 +378,16 @@ remain sequential and resumable. See [Path generation](path-generation.md).
 New generations also record chart-derived double-bass support from the
 original decrypted plastic-drum MIDI, without additional CHOpt runs. This
 metadata follows the immutable generation through staged publication and is
-exposed on songs. Existing generations remain unknown until guarded
-regeneration; adding the filter does not schedule a catalog migration.
+exposed on songs. Existing generations can be classified through the file-only
+metadata backfill without rebuilding CHOpt outputs or changing scores. Adding
+the filter does not schedule a catalog migration.
+
+An explicit operator-only frozen-acquisition abandonment command handles a
+stopped worker whose acquisition phase and freeze were not terminalized.
+It requires exact publication/worker/phase pins and quiescence under the
+publication fence, preserving published history and all candidate artifacts.
+It is separate from normal interrupted-acquisition normalization and does not
+start hosted workers. See [CLI reference](../reference/cli.md#frozen-acquisition-abandonment).
 
 Scrape allocation additionally captures the publication-bound path artifact
 snapshot for the new working publication, and publication preparation re-emits
@@ -559,6 +568,15 @@ account completion against the final target-account denominator. Direct
 single-user and backfill recomputation remain on-demand and do not allocate a
 global preload.
 
+Rival song counts and neighborhoods use the solo current projection only for
+scopes that are ready for their active source. With legacy worker readers the
+projection is otherwise refreshed only in publication cleanup, so songs with a
+new snapshot fall back to per-song live-plus-snapshot ranking during Rivals.
+`Scraper:PrepareSoloCurrentProjectionBeforeRivals` (default `false`) runs the
+existing `PrepareSoloCurrentProjectionForDerived` phase as a best-effort stale
+refresh before Rivals and player stats; publication cleanup still revalidates
+and refreshes. See [configuration](../reference/configuration.md#player-rivals).
+
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
 parity passed, but dense 50-, 379-, and 707-song cases regressed by
@@ -694,6 +712,29 @@ transaction count. Command, round-trip, and logical aggregate-pass fields are
 explicitly labeled `derived`; they are formulas from the current query and
 transaction structure, not runtime instrumentation. Setting the switch back
 to `false` is the code-path rollback.
+
+By default the refresh runs one sequential worker per band type, at most two
+band types at once, so the third band type waits for the first to finish and
+one band type's tail runs alone. `Scraper:BandCurrentProjectionMaxParallelScopes`
+(default `0`, clamped to `16`) instead runs up to that many scope transactions
+at once, interleaving band types. Scope transactions write disjoint
+`current_band_leaderboard_entries` and `band_current_projection_scope` keys,
+and isolated PostgreSQL tests keep sequential and parallel projection and
+state hashes identical for both member-stat query shapes. Promotion needs a
+one-variable full-scrape A/B.
+
+Only scopes in a scrape's impacted set (band extraction plus prune) are
+considered for refresh, so scopes whose sources change through other paths
+drift. A read-only check after scrape `1436` found about 28% of 122,000 scope
+rows stale, including 229 overall song leaderboards (most rebuilt more than 30
+days earlier) while projection reads serve the published generation without a
+freshness check. `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes`
+(default `0`) adds up to that many stale non-impacted scopes, chosen by the
+same filter over all source and projection scope keys; the fast filter makes
+the full-table pass take about two minutes. The filter treats a ready scope
+with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
+converge instead of being selected every scrape, and counts only full-size
+combos, matching the rebuild.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,

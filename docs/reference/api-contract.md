@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: 2f299474
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -93,14 +93,14 @@ do not maintain a second hand-written 80-row table here.
 
 ### Song chart support
 
-`GET /api/songs` adds nullable `doubleBassSupported` on each song. `true`
-means its original plastic-drum MIDI contains a positive-velocity double-kick
-note; `false` means inspection found none. Null or an absent field means
-unknown, including generations created before inspection was added.
-The flag is stored in the immutable path-generation manifest and follows the
-same live or publication-bound generation identity as path maxima. Incoming
-catalog-only songs do not carry this metadata. Existing durable publication
-responses remain unchanged until the publication pipeline creates a new payload.
+`GET /api/songs` exposes optional nullable `doubleBassSupported`: true means
+an inspected plastic-drum chart contains double kick, false means none was
+found, and null or absence means unknown. The value comes from the selected
+immutable generation manifest or a supplement cryptographically bound to that
+same manifest and encrypted MIDI. Publication-bound reads never use a newer
+live generation's metadata. Existing durable payloads remain unchanged until
+the publication pipeline builds another response. Incoming catalog-only songs
+remain unclassified.
 
 ### Path artifacts
 

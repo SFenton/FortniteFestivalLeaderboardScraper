@@ -58,6 +58,33 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void CurrentProjectionScopeParallelismChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigIdForValue("Scraper:BandCurrentProjectionMaxParallelScopes", "");
+        var candidate = CaptureConfigIdForValue("Scraper:BandCurrentProjectionMaxParallelScopes", "6");
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
+    public void SoloProjectionBeforeRivalsChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigIdForValue("Scraper:PrepareSoloCurrentProjectionBeforeRivals", "");
+        var candidate = CaptureConfigIdForValue("Scraper:PrepareSoloCurrentProjectionBeforeRivals", "true");
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
+    public void BandProjectionStaleSweepChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigIdForValue("Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes", "");
+        var candidate = CaptureConfigIdForValue("Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes", "20000");
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
     public void Reattaching_same_scrape_and_instance_is_idempotent()
     {
         var (sink, metaDb, _) = CreateSink();

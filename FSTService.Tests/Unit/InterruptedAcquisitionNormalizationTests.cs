@@ -993,6 +993,142 @@ public sealed class InterruptedAcquisitionNormalizationTests :
             StringComparison.OrdinalIgnoreCase);
     }
 
+    private FrozenAcquisitionAbandonmentCommand SeedFrozenAbandonmentState()
+    {
+        var state = SeedExactState();
+        ExecuteSql("""
+            UPDATE scrape_phase_attempts
+            SET status = 'running', completed_at = NULL, warning_message = NULL, error_message = NULL,
+                last_progress_at = @progress, heartbeat_at = @progress
+            WHERE scrape_id = 1407;
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = TRUE, public_reads_frozen_at = @progress,
+                public_reads_frozen_scrape_id = 1406, public_reads_frozen_reason = 'scrape';
+            UPDATE service_worker_status
+            SET instance_id = 'replacement-stopped-worker', current_operation_json = NULL,
+                started_at = @started WHERE worker_key = 'scraper';
+            """, ("progress", ExactState.WorkerFreshnessUtc.AddSeconds(-2)),
+            ("started", ExactState.WorkerFreshnessUtc.AddSeconds(-1)));
+        return new(state.Command with { ExpectedWorkerInstanceId = "replacement-stopped-worker" },
+            ExactState.WorkerInstanceId, "Operator abandoned the incomplete acquisition before deployment.");
+    }
+
+    [Fact]
+    public void Frozen_abandonment_check_preserves_all_rows_and_original_gates_reject()
+    {
+        var command = SeedFrozenAbandonmentState();
+        var before = ReadProtectedState();
+        Assert.True(Db.GetFrozenAcquisitionAbandonmentReadiness(command).CanExecute);
+        Assert.False(Db.GetInterruptedAcquisitionNormalizationReadiness(command.Identity).CanExecute);
+        Assert.False(Db.GetActiveScrapeFailureIsolationReadiness(1407, 1406).CanExecute);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
+    [Fact]
+    public void Frozen_abandonment_atomically_fails_candidate_preserves_published_state_and_worker()
+    {
+        var command = SeedFrozenAbandonmentState();
+        var published = ReadScalarText("""
+            SELECT jsonb_build_object('scrape', (SELECT to_jsonb(s) FROM scrape_log s WHERE id = 1406),
+                'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY publication_id)
+                    FROM publication_generations g WHERE publication_id IN (310,312)),
+                'catalog', (SELECT to_jsonb(c) FROM publication_song_catalog c WHERE publication_id = 312),
+                'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY surface_name)
+                    FROM publication_surface_bindings b WHERE publication_id = 312),
+                'worker', (SELECT to_jsonb(w) FROM service_worker_status w WHERE worker_key = 'scraper'))::TEXT
+            """);
+        var result = Db.ExecuteFrozenAcquisitionAbandonment(command);
+        Assert.True(result.Succeeded, result.Error ?? result.Before.BlockingReason);
+        Assert.True(result.After!.PublicationIsolationComplete);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+        var pointer = Db.GetPublicationPointerState();
+        Assert.Equal(1406, pointer.PublishedScrapeId);
+        Assert.Equal(312, pointer.CurrentPublicationId);
+        Assert.Equal(310, pointer.PreviousPublicationId);
+        Assert.Null(pointer.WorkingPublicationId);
+        Assert.Equal(1, CountSql("SELECT count(*) FROM publication_song_catalog WHERE publication_id = 314"));
+        Assert.Equal(1, CountSql("SELECT count(*) FROM scrape_phase_attempts WHERE scrape_id=1407 AND status='failed'"));
+        Assert.Equal(published, ReadScalarText("""
+            SELECT jsonb_build_object('scrape', (SELECT to_jsonb(s) FROM scrape_log s WHERE id = 1406),
+                'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY publication_id)
+                    FROM publication_generations g WHERE publication_id IN (310,312)),
+                'catalog', (SELECT to_jsonb(c) FROM publication_song_catalog c WHERE publication_id = 312),
+                'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY surface_name)
+                    FROM publication_surface_bindings b WHERE publication_id = 312),
+                'worker', (SELECT to_jsonb(w) FROM service_worker_status w WHERE worker_key = 'scraper'))::TEXT
+            """));
+        var terminalState = ReadProtectedState();
+        Assert.False(Db.ExecuteFrozenAcquisitionAbandonment(command).Succeeded);
+        Assert.Equal(terminalState, ReadProtectedState());
+    }
+
+    [Theory]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen_reason='post-process'")]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen_scrape_id=1405")]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen=FALSE")]
+    [InlineData("UPDATE scrape_publication_state SET previous_publication_id=NULL")]
+    [InlineData("UPDATE scrape_publication_state SET publication_commit_intent_owner='other'")]
+    [InlineData("UPDATE service_worker_status SET status='running'")]
+    [InlineData("UPDATE service_worker_status SET instance_id='other'")]
+    [InlineData("UPDATE service_worker_status SET updated_at=updated_at+interval '1 microsecond'")]
+    [InlineData("UPDATE service_worker_status SET last_heartbeat_at=last_heartbeat_at+interval '1 microsecond'")]
+    [InlineData("UPDATE service_worker_status SET current_operation_json='{}'::jsonb")]
+    [InlineData("UPDATE scrape_phase_attempts SET worker_instance_id='other' WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET attempt=2 WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET phase_id='post.compute_rankings' WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET heartbeat_at=heartbeat_at+interval '1 minute' WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET status='interrupted', completed_at=heartbeat_at, warning_message='Interrupted' WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_log SET songs_scraped=1 WHERE id=1407")]
+    [InlineData("UPDATE publication_generations SET status='ready' WHERE publication_id=314")]
+    [InlineData("INSERT INTO scrape_phase_attempts SELECT (jsonb_populate_record(NULL::scrape_phase_attempts, (SELECT to_jsonb(p)||'{\"attempt\":2}'::jsonb FROM scrape_phase_attempts p WHERE scrape_id=1407))).*")]
+    [InlineData("UPDATE service_worker_status SET last_status_change_at=last_status_change_at+interval '1 microsecond'")]
+    [InlineData("UPDATE scrape_publication_state SET current_publication_id=310")]
+    [InlineData("UPDATE scrape_publication_state SET working_publication_id=312")]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen_at=NULL")]
+    [InlineData("UPDATE publication_generations SET status='retired' WHERE publication_id=310")]
+
+    public void Frozen_abandonment_rejects_identity_and_control_drift_without_mutation(string sql)
+    {
+        var command = SeedFrozenAbandonmentState();
+        ExecuteSql(sql);
+        var before = ReadProtectedState();
+        Assert.False(Db.GetFrozenAcquisitionAbandonmentReadiness(command).CanExecute);
+        Assert.False(Db.ExecuteFrozenAcquisitionAbandonment(command).Succeeded);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
+    [Fact]
+    public void Frozen_abandonment_revalidates_after_precheck_and_rolls_back_failed_final_proof()
+    {
+        var command = SeedFrozenAbandonmentState();
+        Db.FrozenAcquisitionAbandonmentBeforeFenceTestHook = () =>
+            ExecuteSql("UPDATE service_worker_status SET instance_id='replacement-again'");
+        Assert.False(Db.ExecuteFrozenAcquisitionAbandonment(command).Succeeded);
+        Db.FrozenAcquisitionAbandonmentBeforeFenceTestHook = null;
+        ExecuteSql("UPDATE service_worker_status SET instance_id='replacement-stopped-worker'");
+        var before = ReadProtectedState();
+        Db.FrozenAcquisitionAbandonmentBeforeCommitTestHook = () => throw new TimeoutException("Injected failure.");
+        Assert.False(Db.ExecuteFrozenAcquisitionAbandonment(command).Succeeded);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
+    [Fact]
+    public void Frozen_abandonment_rejects_busy_publication_fence_without_mutation()
+    {
+        var command = SeedFrozenAbandonmentState();
+        var before = ReadProtectedState();
+        using var connection = DataSource.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var acquire = connection.CreateCommand();
+        acquire.Transaction = transaction;
+        acquire.CommandText = "SELECT pg_advisory_xact_lock(@key)";
+        acquire.Parameters.AddWithValue("key", PublicationGenerationSchema.AdvisoryLockKey);
+        acquire.ExecuteNonQuery();
+        Assert.False(Db.GetFrozenAcquisitionAbandonmentReadiness(command).CanExecute);
+        Assert.False(Db.ExecuteFrozenAcquisitionAbandonment(command).Succeeded);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
     private ExactState SeedExactState()
     {
         SetSequences(
@@ -1594,8 +1730,10 @@ public sealed class
 public sealed class
     InterruptedAcquisitionNormalizationEntryPointTests
 {
-    [Fact]
-    public async Task Check_entrypoint_writes_one_json_and_does_not_initialize_schema()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Check_entrypoint_writes_one_json_and_does_not_initialize_schema(bool frozenAbandonment)
     {
         var connectionString =
             SharedPostgresContainer
@@ -1628,8 +1766,9 @@ public sealed class
             startInfo.ArgumentList.Add(
                 typeof(Program).Assembly.Location);
             foreach (var argument in
-                     InterruptedAcquisitionNormalizationCommandTests
-                         .CommandArguments(execute: false))
+                     (frozenAbandonment
+                         ? FrozenAcquisitionAbandonmentCommandTests.CommandArguments()
+                         : InterruptedAcquisitionNormalizationCommandTests.CommandArguments(execute: false)))
             {
                 startInfo.ArgumentList.Add(argument);
             }
@@ -1654,7 +1793,7 @@ public sealed class
                 document.RootElement.ValueKind);
             Assert.False(
                 document.RootElement
-                    .GetProperty("SchemaReady")
+                    .GetProperty(frozenAbandonment ? "CanExecute" : "SchemaReady")
                     .GetBoolean());
             Assert.Equal(
                 stdout.Trim(),

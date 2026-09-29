@@ -324,9 +324,10 @@ fallback, is unchanged.
 ### Songs cache ownership
 
 Song `doubleBassSupported` metadata is read from the immutable generation
-manifest referenced by each snapshot row, never from a newer live generation.
+manifest or hash-bound supplement for the generation referenced by each
+snapshot row, never from a newer live generation.
 The optional field needs no database column or snapshot-manifest version
-change. Older artifact manifests, missing files, and invalid or mismatched
+change. Unclassified generations, missing files, and invalid or mismatched
 identities yield unknown support. The resulting value is serialized into the
 publication-owned songs payload; an existing durable payload is not rewritten
 to add it.

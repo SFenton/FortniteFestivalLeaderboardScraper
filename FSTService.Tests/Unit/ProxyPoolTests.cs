@@ -534,6 +534,73 @@ public sealed class ProxyPoolTests
         => !pool.IsRegionRotationActive(index);
 
     [Fact]
+    public async Task RegionRotation_QuarantinedExitRetriesVerifiedRefreshAndRejoins()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyRegionRotationQuarantineRetrySeconds = 1;
+        options.ProxyRegionRotationMinIntervalSeconds = 5;
+        var rotator = new SequencedRegionRotator(
+            ProxyRegionRotationOutcome.Unsafe, ProxyRegionRotationOutcome.Rotated);
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        pool.CensusInitialDelay = TimeSpan.FromMilliseconds(20);
+        pool.CensusInterval = TimeSpan.FromMilliseconds(200);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null);
+        await WaitUntilAsync(() => Task.FromResult(rotator.Calls), 1);
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [1]);
+
+        await WaitUntilAsync(() => Task.FromResult(rotator.Calls), 2, TimeSpan.FromSeconds(12));
+        await WaitUntilAsync(() => SelectableIndexesAsync(pool, 2), [0, 1]);
+    }
+
+    [Fact]
+    public void RegionRotation_QuarantineRetryRangeIsValidated()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationQuarantineRetrySeconds = 3_601;
+        Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()));
+    }
+
+    private sealed class SequencedRegionRotator : IProxyRegionRotator
+    {
+        private readonly Queue<ProxyRegionRotationOutcome> _outcomes;
+        private int _calls;
+
+        public SequencedRegionRotator(params ProxyRegionRotationOutcome[] outcomes)
+            => _outcomes = new(outcomes);
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public Task<ProxyRegionRotationResult> RotateAsync(
+            ProxyRegionRotationRequest request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _calls);
+            ProxyRegionRotationOutcome outcome;
+            lock (_outcomes)
+            {
+                outcome = _outcomes.Count > 0 ? _outcomes.Dequeue() : ProxyRegionRotationOutcome.Deferred;
+            }
+            return Task.FromResult(new ProxyRegionRotationResult(
+                outcome,
+                outcome == ProxyRegionRotationOutcome.Rotated ? IPAddress.Parse("198.51.100.77") : null));
+        }
+
+        public Task<IPAddress?> GetEgressAsync(Uri proxyUri, CancellationToken ct)
+            => Task.FromResult<IPAddress?>(null);
+    }
+
+    [Fact]
+    public void FormatPercentiles_ReportsNearestRankPercentiles()
+    {
+        Assert.Equal("n=0", ProxyPool.FormatPercentiles([]));
+        var samples = Enumerable.Range(1, 100).Reverse().ToList();
+        Assert.Equal("n=100 p50=51 p90=91 p99=100 max=100", ProxyPool.FormatPercentiles(samples));
+    }
+
+    [Fact]
     public async Task RegionRotation_RequestBudgetTriggersProactiveRefresh()
     {
         var options = CreatePiaRotationOptions();
@@ -599,9 +666,9 @@ public sealed class ProxyPoolTests
         }
     }
 
-    private static async Task WaitUntilAsync<T>(Func<Task<T>> probe, T expected)
+    private static async Task WaitUntilAsync<T>(Func<Task<T>> probe, T expected, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(3));
         T last = await probe();
         while (!Equals(last, expected) && !(last is System.Collections.IEnumerable a
             && expected is System.Collections.IEnumerable b

@@ -93,6 +93,7 @@ internal sealed class ProxyPool :
     private readonly TimeSpan _burnedEgressTtl;
     private readonly int _regionRotationRequestBudget;
     private readonly TimeSpan _regionRotationDrain;
+    private readonly TimeSpan _quarantineRetry;
     private readonly SemaphoreSlim _regionRotationGate;
     private readonly CancellationTokenSource _regionRotationCancellation = new();
     private readonly Dictionary<IPAddress, DateTimeOffset> _rateLimitedEgress = new();
@@ -107,6 +108,8 @@ internal sealed class ProxyPool :
     private bool _disposed;
 
     internal static readonly TimeSpan SummaryInterval = TimeSpan.FromSeconds(60);
+    internal TimeSpan CensusInterval { get; set; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan CensusInitialDelay { get; set; } = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan EgressCensusMaxAge = TimeSpan.FromMinutes(5);
 
     public ProxyPool(
@@ -162,6 +165,10 @@ internal sealed class ProxyPool :
         _burnedEgressTtl = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationBurnedEgressTtlSeconds));
         _regionRotationRequestBudget = Math.Max(0, options.ProxyRegionRotationRequestBudget);
         _regionRotationDrain = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationDrainSeconds));
+        _quarantineRetry = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationQuarantineRetrySeconds));
+        RequestTimeout = options.ProxyRequestTimeoutSeconds > 0
+            ? TimeSpan.FromSeconds(options.ProxyRequestTimeoutSeconds)
+            : null;
         _regionRotationGate = new SemaphoreSlim(_regionRotationMaxConcurrent, _regionRotationMaxConcurrent);
 
         _endpoints = BuildEndpoints(options).ToList();
@@ -239,6 +246,38 @@ internal sealed class ProxyPool :
     }
 
     internal bool UseCurlTransport => _useCurlTransport;
+
+    /// <summary>Per-attempt timeout for proxied curl sends, measured from lease acquisition.</summary>
+    internal TimeSpan? RequestTimeout { get; }
+
+    private readonly object _latencyLock = new();
+    private List<int> _sendLatencyMs = new();
+    private List<int> _leaseWaitMs = new();
+    private long _sendTimeouts;
+    private const int MaxLatencySamples = 50_000;
+
+    /// <summary>Records one proxied send for the per-minute summary percentiles.</summary>
+    internal void RecordSend(TimeSpan leaseWait, TimeSpan send, bool timedOut)
+    {
+        lock (_latencyLock)
+        {
+            if (_sendLatencyMs.Count < MaxLatencySamples)
+                _sendLatencyMs.Add((int)Math.Min(int.MaxValue, send.TotalMilliseconds));
+            if (_leaseWaitMs.Count < MaxLatencySamples)
+                _leaseWaitMs.Add((int)Math.Min(int.MaxValue, leaseWait.TotalMilliseconds));
+            if (timedOut)
+                _sendTimeouts++;
+        }
+    }
+
+    internal static string FormatPercentiles(List<int> samples)
+    {
+        if (samples.Count == 0)
+            return "n=0";
+        samples.Sort();
+        int At(double q) => samples[Math.Min(samples.Count - 1, (int)(q * samples.Count))];
+        return $"n={samples.Count} p50={At(0.50)} p90={At(0.90)} p99={At(0.99)} max={samples[^1]}";
+    }
 
     /// <summary>True when per-exit 429s are answered by refreshing that exit's egress.</summary>
     internal bool RefreshesRateLimitedExits => _regionRotationEnabled && _endpoints.Count > 0;
@@ -698,6 +737,7 @@ internal sealed class ProxyPool :
         RequestBudget,
         DuplicateEgress,
         TransportFailure,
+        QuarantineRetry,
     }
 
     private void TryScheduleRegionRotation(
@@ -707,7 +747,8 @@ internal sealed class ProxyPool :
             || _disposed
             || endpoint.RegionRotationTask is { IsCompleted: false }
             || endpoint.RotationPending
-            || endpoint.CooldownUntil == DateTimeOffset.MaxValue)
+            || (endpoint.CooldownUntil == DateTimeOffset.MaxValue
+                && trigger != RegionRotationTrigger.QuarantineRetry))
             return;
 
         var now = DateTimeOffset.UtcNow;
@@ -837,6 +878,18 @@ internal sealed class ProxyPool :
                 endpoint.PendingEgress = null;
                 var now = DateTimeOffset.UtcNow;
                 _stats.RotationMilliseconds += (long)elapsed.TotalMilliseconds;
+                var wasQuarantined = endpoint.CooldownUntil == DateTimeOffset.MaxValue;
+                if (wasQuarantined
+                    && result.Outcome is ProxyRegionRotationOutcome.Rotated
+                        or ProxyRegionRotationOutcome.Restored)
+                {
+                    endpoint.CooldownUntil = now;
+                    endpoint.QuarantineStrikes = 0;
+                    endpoint.QuarantineRetryAt = null;
+                    _log.LogInformation(
+                        "PIA proxy {Container} left quarantine after a verified {Outcome} refresh.",
+                        endpoint.Name, result.Outcome);
+                }
                 switch (result.Outcome)
                 {
                     case ProxyRegionRotationOutcome.Rotated:
@@ -873,15 +926,14 @@ internal sealed class ProxyPool :
                         _stats.Deferred++;
                         if (trigger == RegionRotationTrigger.TransportFailure)
                             endpoint.PreferContainerRestart = true;
-                        endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
+                        if (wasQuarantined)
+                            ScheduleQuarantineRetry(endpoint, now);
+                        else
+                            endpoint.CooldownUntil = Max(endpoint.CooldownUntil, now + _baseCooldown);
                         break;
                     default:
                         _stats.Unsafe++;
-                        endpoint.AdvanceGeneration(egress: null);
-                        endpoint.CooldownUntil = DateTimeOffset.MaxValue;
-                        _log.LogError(
-                            "PIA proxy {Container} is quarantined: region change and automatic restoration did not verify a healthy distinct egress.",
-                            endpoint.Name);
+                        Quarantine(endpoint, now);
                         break;
                 }
             }
@@ -898,8 +950,7 @@ internal sealed class ProxyPool :
                 if (!_disposed && startedAt != 0)
                 {
                     _stats.Unsafe++;
-                    _endpoints[endpointIndex].AdvanceGeneration(egress: null);
-                    _endpoints[endpointIndex].CooldownUntil = DateTimeOffset.MaxValue;
+                    Quarantine(_endpoints[endpointIndex], DateTimeOffset.UtcNow);
                 }
             }
             _log.LogError(
@@ -920,6 +971,56 @@ internal sealed class ProxyPool :
             }
             if (acquired)
                 _regionRotationGate.Release();
+        }
+    }
+
+    private void Quarantine(ProxyEndpoint endpoint, DateTimeOffset now)
+    {
+        endpoint.AdvanceGeneration(egress: null);
+        endpoint.CooldownUntil = DateTimeOffset.MaxValue;
+        endpoint.QuarantineStrikes++;
+        ScheduleQuarantineRetry(endpoint, now);
+        _log.LogError(
+            "PIA proxy {Container} is quarantined: region change and automatic restoration did not verify a healthy distinct egress{Retry}.",
+            endpoint.Name,
+            endpoint.QuarantineRetryAt is { } at
+                ? $"; a verified refresh will be retried after {(at - now).TotalSeconds:F0}s"
+                : "");
+    }
+
+    private void ScheduleQuarantineRetry(ProxyEndpoint endpoint, DateTimeOffset now)
+    {
+        if (_quarantineRetry <= TimeSpan.Zero)
+        {
+            endpoint.QuarantineRetryAt = null;
+            return;
+        }
+
+        var factor = Math.Pow(2, Math.Clamp(endpoint.QuarantineStrikes - 1, 0, 10));
+        var delay = TimeSpan.FromSeconds(Math.Min(
+            3600, _quarantineRetry.TotalSeconds * factor));
+        endpoint.QuarantineRetryAt = now + delay;
+    }
+
+    private void ScheduleDueQuarantineRetries()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+            var now = DateTimeOffset.UtcNow;
+            foreach (var endpoint in _endpoints)
+            {
+                if (endpoint.CooldownUntil == DateTimeOffset.MaxValue
+                    && endpoint.QuarantineRetryAt is { } at
+                    && at <= now)
+                {
+                    endpoint.QuarantineRetryAt = null;
+                    TryScheduleRegionRotation(endpoint, RegionRotationTrigger.QuarantineRetry);
+                    if (!endpoint.RotationPending)
+                        ScheduleQuarantineRetry(endpoint, now);
+                }
+            }
         }
     }
 
@@ -977,10 +1078,11 @@ internal sealed class ProxyPool :
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(CensusInitialDelay, ct);
             using var gate = new SemaphoreSlim(2, 2);
             while (!ct.IsCancellationRequested)
             {
+                ScheduleDueQuarantineRetries();
                 List<(int Index, long Generation, Uri ProxyUri)> due;
                 lock (_lock)
                 {
@@ -1011,7 +1113,7 @@ internal sealed class ProxyPool :
                     }
                 }));
 
-                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                await Task.Delay(CensusInterval, ct);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -1112,8 +1214,31 @@ internal sealed class ProxyPool :
             burned = _rateLimitedEgress.Count;
         }
 
-        if (stats.Successes == 0 && stats.RateLimited == 0 && stats.RotationsStarted == 0)
+        List<int> sendLatency, leaseWait;
+        long sendTimeouts;
+        lock (_latencyLock)
+        {
+            sendLatency = _sendLatencyMs;
+            leaseWait = _leaseWaitMs;
+            sendTimeouts = _sendTimeouts;
+            _sendLatencyMs = new();
+            _leaseWaitMs = new();
+            _sendTimeouts = 0;
+        }
+
+        if (stats.Successes == 0 && stats.RateLimited == 0 && stats.RotationsStarted == 0
+            && sendLatency.Count == 0)
             return;
+
+        if (sendLatency.Count > 0)
+        {
+            _log.LogInformation(
+                "Proxy send latency ({WindowSeconds:F0}s): send ms {Send}; lease wait ms {LeaseWait}; send timeouts={Timeouts}.",
+                window.TotalSeconds,
+                FormatPercentiles(sendLatency),
+                FormatPercentiles(leaseWait),
+                sendTimeouts);
+        }
 
         var finished = stats.Rotated + stats.Restored + stats.Deferred + stats.Unsafe;
         _log.LogInformation(
@@ -1278,6 +1403,7 @@ internal sealed class ProxyPool :
                 || options.ProxyRegionRotationRequestBudget is < 0 or > 1_000_000
                 || (options.ProxyRegionRotationRequestBudget is > 0 and < 10)
                 || options.ProxyRegionRotationDrainSeconds is < 0 or > 300
+                || options.ProxyRegionRotationQuarantineRetrySeconds is < 0 or > 3_600
                 || !Path.IsPathFullyQualified(options.ProxyCurlTempDirectory)
                 || !Path.GetFullPath(options.ProxyCurlTempDirectory).StartsWith(
                     Path.GetFullPath(options.DataDirectory)
@@ -1286,7 +1412,7 @@ internal sealed class ProxyPool :
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 0-64 distinct regions (0 only with reconnect-in-place), threshold 1-100, per-exit interval 5-86400s, global interval 0-3600s, probe timeout 10-360s, attempt timeout 5-360s, 1-16 attempts, 1..exit-count concurrent rotations, rate-limited egress TTL 0-86400s, request budget 0 or 10-1000000, and drain 0-300s.");
+                    "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 0-64 distinct regions (0 only with reconnect-in-place), threshold 1-100, per-exit interval 5-86400s, global interval 0-3600s, probe timeout 10-360s, attempt timeout 5-360s, 1-16 attempts, 1..exit-count concurrent rotations, rate-limited egress TTL 0-86400s, request budget 0 or 10-1000000, drain 0-300s, and quarantine retry 0-3600s.");
             }
         }
         if (expected == 0)
@@ -1488,6 +1614,8 @@ internal sealed class ProxyPool :
         public bool RotationPending { get; set; }
         public DateTimeOffset RetryAfterUntil { get; set; }
         public bool PreferContainerRestart { get; set; }
+        public int QuarantineStrikes { get; set; }
+        public DateTimeOffset? QuarantineRetryAt { get; set; }
         public long Generation { get; private set; }
         public long GenerationSuccesses { get; private set; }
         public IPAddress? KnownEgress { get; set; }

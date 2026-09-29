@@ -287,6 +287,22 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.True(rebuildOptions.SkipUnchangedScopes);
         Assert.True(rebuildOptions.DisableSynchronousCommit);
         Assert.Equal(2, rebuildOptions.MaxParallelBandTypes);
+        Assert.Equal(0, rebuildOptions.MaxParallelScopes);
+    }
+
+    [Fact]
+    public void CurrentProjectionScopeParallelismIsForwarded()
+    {
+        var rebuildOptions =
+            PostScrapeOrchestrator
+                .CreateBandCurrentProjectionRebuildOptions(
+                    new ScraperOptions
+                    {
+                        BandCurrentProjectionMaxParallelScopes = 6,
+                    });
+
+        Assert.Equal(6, rebuildOptions.MaxParallelScopes);
+        Assert.Equal(2, rebuildOptions.MaxParallelBandTypes);
     }
 
     private static async Task<IReadOnlyList<Persistence.SeasonWindowInfo>> WaitUntilCancelledSeasonWindowsAsync(CancellationToken ct)
@@ -399,7 +415,8 @@ public class PostScrapeOrchestratorTests : IDisposable
         SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
-        DatabaseMaintenanceOptions? databaseMaintenanceOptions = null)
+        DatabaseMaintenanceOptions? databaseMaintenanceOptions = null,
+        BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null)
     {
         var activePersistence = persistence ?? _persistence;
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
@@ -481,6 +498,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _log,
             _registrationMutations,
             null,
+            bandCurrentProjectionBuilder: bandCurrentProjectionBuilder,
             soloCurrentProjectionBuilder:
                 soloCurrentProjectionBuilder ?? _soloCurrentProjectionBuilder,
             databaseMaintenanceOptions: Options.Create(
@@ -1852,6 +1870,91 @@ public class PostScrapeOrchestratorTests : IDisposable
                 entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_LegacyReadersRefreshStaleProjectionBeforeRivalsOnlyWhenEnabled(
+        bool enabled)
+    {
+        const string songId = "song_projection_warm";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_projection_warm";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                EnforcePublicationCriticalPhases = true,
+            }));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, accountId, 120_000);
+        InsertProjectionScope(songId, instrument, sourceSnapshotId: 41);
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                PrepareSoloCurrentProjectionBeforeRivals = enabled,
+            },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext();
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals,
+            CancellationToken.None);
+
+        var logs = _log.Entries.ToList();
+        var projectionIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal));
+        var rivalsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        Assert.True(rivalsIndex >= 0, "Expected rivals to run.");
+        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.False(ctx.SoloCurrentProjectionRefreshedForPublication);
+        Assert.Empty(ctx.RefreshedProjectionScopes);
+        if (!enabled)
+        {
+            Assert.Equal(-1, projectionIndex);
+            Assert.Equal(41, GetProjectionScopeSourceSnapshot(songId, instrument));
+            return;
+        }
+
+        Assert.True(projectionIndex >= 0 && projectionIndex < rivalsIndex,
+            "Expected the stale projection refresh before rivals.");
+        Assert.Equal(42, GetProjectionScopeSourceSnapshot(songId, instrument));
+        Assert.Equal(120_000, GetProjectedScore(songId, instrument, accountId));
+
+        // A later activation re-dirties the warmed scope; cleanup must still see it.
+        InsertSnapshotState(songId, instrument, 45);
+        InsertSnapshotEntry(45, songId, instrument, accountId, 130_000);
+
+        await sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        Assert.Equal(45, GetProjectionScopeSourceSnapshot(songId, instrument));
+        Assert.Equal(130_000, GetProjectedScore(songId, instrument, accountId));
+    }
+
     [Fact]
     public void BandExtraction_DoesNotActivateSoloSnapshots()
     {
@@ -2123,6 +2226,69 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(3, current?.WorkItems?.Completed);
         Assert.Equal(3, current?.WorkItems?.Total);
         Assert.True(current?.WorkItemsTotalFinal);
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(0)]
+    public async Task BandMaintenance_stale_sweep_rebuilds_drifted_non_impacted_scopes_only_when_enabled(
+        int sweepMaxScopes)
+    {
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        void SeedBand(string songId, int teams) => bandPersistence.UpsertBandEntries(
+            songId,
+            "Band_Duets",
+            Enumerable.Range(0, teams).Select(team => new BandLeaderboardEntry
+            {
+                TeamKey = $"{songId}-{team}-a:{songId}-{team}-b",
+                TeamMembers = [$"{songId}-{team}-a", $"{songId}-{team}-b"],
+                InstrumentCombo = "0:1",
+                Score = 900_000 - team,
+                Accuracy = 950_000,
+                Stars = 5,
+                Difficulty = 3,
+                Season = 1,
+                Rank = team + 1,
+                EndTime = "2026-08-16T00:00:00Z",
+                Source = "test",
+            }).ToArray());
+        SeedBand("sweep-a", 2);
+        SeedBand("sweep-b", 2);
+        var builder = new BandCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandCurrentProjectionBuilder>>());
+        var impacted = new BandCurrentProjectionScopeKey("sweep-a", "Band_Duets", "overall", "");
+        var drifted = new BandCurrentProjectionScopeKey("sweep-b", "Band_Duets", "overall", "");
+        await builder.RefreshScopesAsync(await builder.LoadCurrentScopesAsync());
+        await Task.Delay(20);
+        SeedBand("sweep-b", 5);
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                BandCurrentProjectionStaleScopeSweepMaxScopes = sweepMaxScopes,
+            },
+            bandCurrentProjectionBuilder: builder);
+
+        await sut.RunBandMaintenanceForTestAsync(
+            CreateContext(scrapeId: 90_021),
+            new BandExtractionResult(
+                0,
+                0,
+                0,
+                new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+                [impacted]),
+            runFullMaintenance: false,
+            CancellationToken.None);
+
+        var stale = await builder.SelectScopesNeedingRefreshAsync([drifted], 0);
+        if (sweepMaxScopes > 0)
+            Assert.Empty(stale);
+        else
+            Assert.Equal([drifted], stale);
     }
 
     [Fact]

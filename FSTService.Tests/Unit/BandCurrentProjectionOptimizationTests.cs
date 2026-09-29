@@ -337,6 +337,62 @@ public sealed class BandCurrentProjectionOptimizationTests(
                 }));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScopeParallelRefreshPreservesSequentialOutput(
+        bool useCandidate)
+    {
+        const int songCount = 48;
+        const int teamsPerSong = 12;
+        using var sequentialFixture = new InMemoryMetaDatabase();
+        using var parallelFixture = new InMemoryMetaDatabase();
+        var scopes = Seed(sequentialFixture, songCount, teamsPerSong);
+        _ = Seed(parallelFixture, songCount, teamsPerSong);
+        var completed = new System.Collections.Concurrent.ConcurrentBag<BandCurrentProjectionScopeKey>();
+
+        var sequential = await CreateBuilder(sequentialFixture)
+            .RefreshScopesAsync(scopes, ProductionOptions(useCandidate));
+        var parallel = await CreateBuilder(parallelFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate, maxParallelScopes: 6),
+                onScopeCompleted: completed.Add);
+
+        Assert.Equal(songCount, sequential.ScopeCount);
+        Assert.Equal(sequential.ScopeCount, parallel.ScopeCount);
+        Assert.Equal(0, parallel.FailedScopes);
+        Assert.Equal(sequential.SuccessfulScopes, parallel.SuccessfulScopes);
+        Assert.Equal(sequential.InsertedRows, parallel.InsertedRows);
+        Assert.Equal(sequential.Scopes.Count, parallel.Scopes.Count);
+        Assert.Equal(songCount, completed.Distinct().Count());
+        Assert.Equal(
+            await StateHashAsync(sequentialFixture),
+            await StateHashAsync(parallelFixture));
+    }
+
+    [Fact]
+    public void InterleaveByBandTypeAlternatesBandTypesAndKeepsEveryScopeOnce()
+    {
+        BandCurrentProjectionScopeKey Scope(string songId, string bandType) =>
+            new(songId, bandType, "overall", string.Empty);
+        var scopes = new[]
+        {
+            Scope("a", "Band_Quad"),
+            Scope("b", "Band_Quad"),
+            Scope("c", "Band_Quad"),
+            Scope("d", "Band_Duets"),
+            Scope("e", "Band_Trios"),
+            Scope("f", "Band_Duets"),
+        };
+
+        var ordered = BandCurrentProjectionBuilder.InterleaveByBandType(scopes);
+
+        Assert.Equal(
+            ["d", "a", "e", "f", "b", "c"],
+            ordered.Select(static scope => scope.SongId));
+    }
+
     [Fact]
     public async Task MissingMemberRowsPreserveBaselineCandidateParity()
     {
@@ -693,12 +749,14 @@ public sealed class BandCurrentProjectionOptimizationTests(
     private static BandCurrentProjectionRebuildOptions
         ProductionOptions(
             bool useCandidate,
-            bool skipUnchanged = true) =>
+            bool skipUnchanged = true,
+            int maxParallelScopes = 0) =>
         new()
         {
             DisableSynchronousCommit = true,
             SkipUnchangedScopes = skipUnchanged,
             MaxParallelBandTypes = 2,
+            MaxParallelScopes = maxParallelScopes,
             CandidateCleanupBatchSize = 100_000,
             CandidateCleanupMaxBatches = 100,
             PublishOnSuccess = true,

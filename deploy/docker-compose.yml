@@ -180,6 +180,9 @@ services:
       - Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass=${REGISTERED_PLAYER_BAND_DISCOVERY_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__RegisteredBandProcessingMaxLookupsPerPass=${REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation=${BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION:-false}
+      - Scraper__BandCurrentProjectionMaxParallelScopes=${BAND_CURRENT_PROJECTION_MAX_PARALLEL_SCOPES:-0}
+      - Scraper__PrepareSoloCurrentProjectionBeforeRivals=${PREPARE_SOLO_CURRENT_PROJECTION_BEFORE_RIVALS:-false}
+      - Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes=${BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES:-0}
       # ── Registration sync gets the Epic lane while active; background scrape/band requests wait. ──
       - Scraper__RegistrationBackfillMode=${REGISTRATION_BACKFILL_MODE:-ForegroundEpicExclusive}
       # ── Path generation (required by the worker when scrape-pass staging is enabled) ──

@@ -194,6 +194,21 @@ public sealed class ScraperOptions
     public int ProxyContainerRestartCooldownSeconds { get; set; } = 90;
 
     /// <summary>
+    /// Full-worker host shutdown budget. A cancelled scrape pass bounds its own
+    /// resource cleanup to 30 seconds and then records its phase attempt as
+    /// interrupted; the default 30-second host timeout ended the process before
+    /// that record, which made mid-acquisition cutovers unnormalizable.
+    /// </summary>
+    public int WorkerShutdownTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// Per-attempt timeout for proxied curl sends, started after an exit lease
+    /// is acquired (queueing for an exit never counts). Zero keeps the
+    /// executor's 30-second default.
+    /// </summary>
+    public int ProxyRequestTimeoutSeconds { get; set; }
+
+    /// <summary>
     /// Worker-only, opt-in PIA region rotation after repeated per-exit HTTP 429s.
     /// The Gluetun control API changes the actual tunnel, not just proxy selection.
     /// </summary>
@@ -253,6 +268,13 @@ public sealed class ScraperOptions
     public int ProxyRegionRotationDrainSeconds { get; set; } = 60;
 
     /// <summary>
+    /// Seconds before a quarantined exit gets a fully verified refresh retry
+    /// (doubling per consecutive failure, capped at one hour). Zero keeps the
+    /// exit quarantined until the worker restarts.
+    /// </summary>
+    public int ProxyRegionRotationQuarantineRetrySeconds { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;
@@ -285,6 +307,16 @@ public sealed class ScraperOptions
     /// after snapshots have been finalized.
     /// </summary>
     public bool RefreshSoloProjectionDuringCleanup { get; set; } = true;
+
+    /// <summary>
+    /// With legacy worker readers, refresh stale solo current projection
+    /// scopes before rivals and player stats so their current-state reads use
+    /// the ready projection instead of re-ranking live and snapshot rows per
+    /// song. Best-effort; publication cleanup still refreshes and revalidates.
+    /// Snapshot/overlay worker readers always prepare the projection.
+    /// Set via <c>Scraper__PrepareSoloCurrentProjectionBeforeRivals</c>.
+    /// </summary>
+    public bool PrepareSoloCurrentProjectionBeforeRivals { get; set; }
 
     /// <summary>
     /// Maximum number of solo current projection scopes refreshed concurrently during cleanup.
@@ -902,6 +934,23 @@ public sealed class ScraperOptions
     /// is capacity-safe.
     /// </summary>
     public bool BandCurrentProjectionUseBatchedMemberStatsAggregation { get; set; }
+
+    /// <summary>
+    /// Maximum concurrent band current-projection scope transactions across
+    /// all band types. Zero keeps the default of one sequential worker per band
+    /// type with at most two band types at once. Values above 16 are clamped.
+    /// Set via <c>Scraper__BandCurrentProjectionMaxParallelScopes</c>.
+    /// </summary>
+    public int BandCurrentProjectionMaxParallelScopes { get; set; }
+
+    /// <summary>
+    /// When positive, BandMaintenance also rebuilds up to this many stale band
+    /// current-projection scopes outside the scrape's impacted set, selected by
+    /// the unchanged-scope filter over every source and projection scope. Zero
+    /// disables the sweep. Set via
+    /// <c>Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes</c>.
+    /// </summary>
+    public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).

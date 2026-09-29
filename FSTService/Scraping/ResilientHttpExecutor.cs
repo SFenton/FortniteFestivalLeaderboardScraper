@@ -180,6 +180,16 @@ public sealed class ResilientHttpExecutor
     /// <summary>Default maximum retry attempts after the initial try.</summary>
     public const int DefaultMaxRetries = 10;
 
+    /// <summary>
+    /// Retries allowed for per-exit HTML edge 429s on a refresh-enabled proxy
+    /// pool before they start consuming the caller's status-retry budget. Each
+    /// such retry is routed to another exit, so these responses say nothing
+    /// about the request; with a few percent of requests hitting a spent
+    /// egress, a small shared budget made a whole-scrape completeness failure
+    /// likely (scrape 1438: two pages failed after four consecutive edge 429s).
+    /// </summary>
+    public const int DefaultMaxEdgeRateLimitRetries = 12;
+
     /// <summary>Maximum CDN probe retries before giving up. Covers the full 9-step
     /// delay schedule + 6 more at 60 s ≈ 7 minutes total.</summary>
     public const int MaxCdnRetries = 30;
@@ -215,6 +225,8 @@ public sealed class ResilientHttpExecutor
     /// <summary>Maximum jitter (ms) added before non-probe CDN retry attempts.
     /// Set to 0 in tests for determinism.</summary>
     internal int MaxJitterMs { get; set; } = 500;
+
+    internal int MaxEdgeRateLimitRetries { get; set; } = DefaultMaxEdgeRateLimitRetries;
 
     internal Func<HttpRequestMessage, string?, CancellationToken, Task<HttpResponseMessage?>>? CdnBlockFallbackOverride { get; set; }
     internal Func<HttpRequestMessage, string?, CancellationToken, Task<HttpResponseMessage?>>? PrimaryCurlTransportOverride { get; set; }
@@ -884,6 +896,7 @@ public sealed class ResilientHttpExecutor
         CancellationToken ct = default)
     {
         int statusAttempt = 0; // counts only HTTP status-code retries (429, 5xx)
+        int edgeRateLimitAttempt = 0; // per-exit edge 429 retries (separate budget)
         int networkErrors = 0; // counts transient network errors (not counted toward retries)
 
         var op = new InflightOperation(label ?? "request");
@@ -939,35 +952,61 @@ public sealed class ResilientHttpExecutor
                 // is caught below (ct.IsCancellationRequested is false) and counted as a transient
                 // network error, so the retry loop continues until real success or service error.
                 using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                sendCts.CancelAfter(_sendWallClockTimeout);
+                var curlProxyPool = _proxyHealth as ProxyPool is { UseCurlTransport: true } curlPool
+                    ? curlPool
+                    : null;
+                if (curlProxyPool is null)
+                    sendCts.CancelAfter(_sendWallClockTimeout);
                 try
                 {
                     op.SetState(InflightState.Sending);
-                    if (_proxyHealth is ProxyPool { UseCurlTransport: true } proxyPool)
+                    if (curlProxyPool is { } proxyPool)
                     {
-                        using var proxyLease = await proxyPool.AcquireAsync(sendCts.Token)
+                        // Waiting for an exit is pool back-pressure, not a slow
+                        // send: the per-attempt wall clock starts only once a
+                        // lease is held, so queued requests are never timed out
+                        // (and retried, and counted as limiter failures) before
+                        // they reach an exit.
+                        var leaseStarted = Stopwatch.GetTimestamp();
+                        using var proxyLease = await proxyPool.AcquireAsync(ct)
                             ?? throw new InvalidOperationException(
                                 "Curl proxy transport requires at least one configured endpoint.");
+                        var sendTimeout = proxyPool.RequestTimeout ?? _sendWallClockTimeout;
+                        sendCts.CancelAfter(sendTimeout);
                         proxyLease.Apply(sentRequest);
                         proxyPool.PrepareRequest(sentRequest);
                         RecordHttpSend();
-
-                        res = PrimaryCurlTransportOverride is not null
-                            ? await PrimaryCurlTransportOverride(sentRequest, label, sendCts.Token)
-                                ?? throw new HttpRequestException("curl primary transport returned no response")
-                            : await CurlHttpFallback.SendAsync(
-                                sentRequest,
-                                label,
-                                _sendWallClockTimeout,
-                                _log,
-                                sendCts.Token,
-                                proxyPool.CurlTempDirectory,
-                                primaryTransport: true,
-                                maximumResponseBytes:
-                                    CurlResponseMaximumBytes,
-                                scratchValidator:
-                                    CurlScratchValidator)
-                                ?? throw new HttpRequestException("curl primary transport returned no response");
+                        var sendStarted = Stopwatch.GetTimestamp();
+                        var sendCompleted = false;
+                        try
+                        {
+                            res = PrimaryCurlTransportOverride is not null
+                                ? await PrimaryCurlTransportOverride(sentRequest, label, sendCts.Token)
+                                    ?? throw new HttpRequestException("curl primary transport returned no response")
+                                : await CurlHttpFallback.SendAsync(
+                                    sentRequest,
+                                    label,
+                                    sendTimeout,
+                                    _log,
+                                    sendCts.Token,
+                                    proxyPool.CurlTempDirectory,
+                                    primaryTransport: true,
+                                    maximumResponseBytes:
+                                        CurlResponseMaximumBytes,
+                                    scratchValidator:
+                                        CurlScratchValidator)
+                                    ?? throw new HttpRequestException("curl primary transport returned no response");
+                            sendCompleted = true;
+                        }
+                        finally
+                        {
+                            proxyPool.RecordSend(
+                                Stopwatch.GetElapsedTime(leaseStarted, sendStarted),
+                                Stopwatch.GetElapsedTime(sendStarted),
+                                timedOut: !sendCompleted
+                                    && sendCts.IsCancellationRequested
+                                    && !ct.IsCancellationRequested);
+                        }
                     }
                     else
                     {
@@ -1215,6 +1254,17 @@ public sealed class ResilientHttpExecutor
                         sentRequest,
                         retryAfter,
                         res.Content.Headers.ContentType?.MediaType);
+                }
+
+                if (perExitEdgeRateLimit && edgeRateLimitAttempt < MaxEdgeRateLimitRetries)
+                {
+                    RecordStatusRetry();
+                    edgeRateLimitAttempt++;
+                    _log.LogWarning(
+                        "Per-exit edge 429 for {Operation} (edge retry {Attempt}/{MaxAttempts}, DOP {Dop}); retrying on another exit.",
+                        label ?? "request", edgeRateLimitAttempt, MaxEdgeRateLimitRetries, limiter?.CurrentDop ?? -1);
+                    res.Dispose();
+                    continue;
                 }
 
                 if (retryable && statusAttempt < maxRetries)

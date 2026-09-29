@@ -2,8 +2,10 @@
 status: canonical
 owner: service
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: 2f299474
 sources:
+  - FSTService/Scraping/PathMetadataBackfillCommand.cs
+  - FSTService/Scraping/PathDoubleBassMetadataStore.cs
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathGenerationModels.cs
@@ -107,6 +109,29 @@ published artifacts and durable publication payloads are not rewritten in place.
 The generation profile is a semantic identity, not a display label. Change it
 whenever CHOpt arguments or the artifact contract change. A version, binary
 hash, or profile mismatch makes a selected song non-skippable.
+
+## Double-bass support metadata
+
+New generations inspect positive-velocity double-kick Note On events in the
+original `PLASTIC DRUM` or `PLASTIC DRUMS` MIDI. Pitches 59, 71, 83 and 95 map
+to double kick in the pinned CHOpt/SightRead parser. Pad drums and other
+instruments do not qualify. Inspection adds no CHOpt calls and saves an
+optional `doubleBassSupported` boolean in the immutable generation manifest.
+
+For older generations, the file-only `--path-metadata-backfill` command
+creates immutable supplements at
+`path-metadata/<songId>/<generationId>.json`. Each supplement binds the song,
+generation, original manifest SHA-256 and encrypted chart SHA-256. Downloaded
+MIDI must match that encrypted chart hash before inspection. Existing PNGs,
+path JSON, maxima, manifests, generation pointers and database state are
+unchanged. A mismatched, malformed or unavailable supplement remains unknown;
+new generations' own manifest value takes precedence.
+
+The song API reads the manifest or verified supplement for the selected live
+or publication-bound generation during max-score cache refresh. Existing
+durable publication payloads stay unchanged until the publication pipeline
+builds another response. Deploy the compatible service and worker before
+refreshing metadata; deploying web is independently optional.
 
 ## JSON contract
 
