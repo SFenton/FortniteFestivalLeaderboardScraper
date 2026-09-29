@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-26
-last_verified_commit: d15cbdf7
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
@@ -373,6 +373,13 @@ generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
+
+New generations also record chart-derived double-bass support from the
+original decrypted plastic-drum MIDI, without additional CHOpt runs. This
+metadata follows the immutable generation through staged publication and is
+exposed on songs. Existing generations can be classified through the file-only
+metadata backfill without rebuilding CHOpt outputs or changing scores. Adding
+the filter does not schedule a catalog migration.
 
 Scrape allocation additionally captures the publication-bound path artifact
 snapshot for the new working publication, and publication preparation re-emits

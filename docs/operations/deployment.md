@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-26
-last_verified_commit: 0e06e61e
+last_verified: 2026-09-29
+last_verified_commit: fbc32a64
 sources:
   - docker-compose.yml
   - deploy/docker-compose.yml
@@ -16,6 +16,8 @@ sources:
   - deploy/fst-compose.sh
   - FSTService/Dockerfile
   - FSTService/Scraping/PiaRegionRotator.cs
+  - FSTService/ScraperWorker.cs
+  - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
@@ -196,11 +198,21 @@ full-worker host waits long enough for a cancelled pass to finish its bounded
 30-second cleanup and record the interrupted attempt; the repository template
 sets `stop_grace_period: 180s` on `fstworker` so every Compose stop or
 force-recreate outlasts that budget, and the production overlay needs the same
-value. If
-normalization is rejected, the guarded rollback restarts the previous image
-and its startup cleanup marks the candidate `abandoned_staging_cleanup` before
-starting a new scrape; published data is unaffected, but the new scrape
-resumes with less completed work.
+value. A guarded rollback to the previous image can mark an older candidate
+`abandoned_staging_cleanup` at the next scrape boundary, preserving published
+data, only when startup gates admit a new scrape.
+
+A clean container exit alone does not prove durable interruption. A stopped
+worker can leave its acquisition attempt `running` and public reads frozen
+with reason `scrape`. Neither interrupted-acquisition normalization nor
+ordinary failure isolation accepts that state. Restarting the previous image
+does not guarantee cleanup: startup notification recovery rejects frozen
+reads before a new scrape can reach the abandonment boundary. A replacement
+worker also makes the old running attempt foreign to the current worker
+identity. If this occurs, retain the stopped worker, published pointer,
+working candidate and freeze evidence; hold deployment for a qualified exact
+state recovery path. Do not manually clear the freeze, change the attempt or
+worker identity, or repeatedly recreate workers to force startup cleanup.
 
 The in-process control update changes a PIA container's **runtime** region,
 not its production Compose environment. On container restart the static

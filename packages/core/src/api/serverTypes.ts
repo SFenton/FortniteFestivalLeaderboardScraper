@@ -108,6 +108,8 @@ export type ServerSong = {
   durationSeconds?: number;
   albumArt?: string;
   genres?: string[];
+  /** Chart-derived double-kick support; null/absent for unclassified generations. */
+  doubleBassSupported?: boolean | null;
   difficulty?: SongDifficulty;
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
   pathsGeneratedAt?: string;

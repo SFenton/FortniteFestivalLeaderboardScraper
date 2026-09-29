@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-07
-last_verified_commit: 0b07fff0
+last_verified: 2026-09-29
+last_verified_commit: 1efdf69d
 sources:
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
@@ -322,6 +322,15 @@ With the flag off the existing build path, including the frozen published
 fallback, is unchanged.
 
 ### Songs cache ownership
+
+Song `doubleBassSupported` metadata is read from the immutable generation
+manifest or hash-bound supplement for the generation referenced by each
+snapshot row, never from a newer live generation.
+The optional field needs no database column or snapshot-manifest version
+change. Unclassified generations, missing files, and invalid or mismatched
+identities yield unknown support. The resulting value is serialized into the
+publication-owned songs payload; an existing durable payload is not rewritten
+to add it.
 
 With the flag on, the durable current-publication `public-api:songs:v1` row is
 owned by the publication pipeline, which builds it during scrape-time
