@@ -1765,10 +1765,10 @@ describe('SongsPage — extra coverage', () => {
 
   it('opens only General filters without a selected profile, deriving options from catalog metadata', async () => {
     mockApi.getSongs.mockResolvedValue({ songs: [
-      { songId: 's1', title: 'Alpha Song', artist: 'Artist A', year: 1969, durationSeconds: 59 },
+      ...Array.from({ length: 7 }, (_, index) => ({ songId: `early-${index}`, title: `Early Song ${index}`, artist: 'Artist A', year: 1909 + index * 10, durationSeconds: 59 })),
       { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2030, durationSeconds: 600 },
       { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2024, durationSeconds: 180 },
-    ], count: 3, currentSeason: 5 });
+    ], count: 9, currentSeason: 5 });
     localStorage.removeItem('fst:trackedPlayer');
     localStorage.removeItem('fst:selectedProfile');
     await loadSongsFilterModal();
@@ -1790,7 +1790,7 @@ describe('SongsPage — extra coverage', () => {
     expect(screen.getByText('Year')).toBeVisible();
     expect(screen.getByText('Duration')).toBeVisible();
     await act(async () => { fireEvent.click(screen.getByText('Year')); await vi.advanceTimersByTimeAsync(400); });
-    expect(screen.getByText('1960s')).toBeVisible();
+    for (const decade of [1900, 1910, 1920, 1930, 1940, 1950, 1960]) expect(screen.getByText(`${decade}s`)).toBeVisible();
     expect(screen.getByText('2020s')).toBeVisible();
     expect(screen.getByText('2030s')).toBeVisible();
     expect(screen.queryByText('1970s')).toBeNull();

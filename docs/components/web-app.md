@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: 1ecec765
+last_verified_commit: e5624a17
 sources:
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
@@ -416,12 +416,19 @@ indent while switches stay aligned with the dropdown right edge.
 
 Year derives its decade options from the full catalog's `ServerSong.year`
 metadata, sorted chronologically, so newly represented decades appear without
-a web change. Duration uses `ServerSong.durationSeconds`: Under 1 Minute,
+a web change. The 1900s through 1960s remain hidden until songs from those
+decades appear in the loaded catalog. Duration uses
+`ServerSong.durationSeconds`: Under 1 Minute,
 1-2 Minutes through 9-10 Minutes, and 10+ Minutes only when a catalog song is
 at least 600 seconds long. Ranges include their lower bound and exclude the
 upper bound. All decade and duration toggles default on, including newly
-introduced buckets. Turning a bucket off excludes that bucket. Unknown or
-invalid metadata remains included with all toggles on and is excluded when
+introduced buckets. Each dropdown includes Select All and Clear All. Select
+All enables every bucket; Clear All leaves the first currently enabled option
+on and disables the rest. Individual toggles cannot disable the last enabled
+option. If saved selections or catalog changes leave no available option on,
+one available bucket is restored before filtering and editing. Turning a
+bucket off excludes that bucket. Unknown or invalid metadata remains included
+with all toggles on and is excluded when
 that metadata filter is restricted.
 
 Item Shop respects the hide-shop setting and uses the shared shop snapshot,

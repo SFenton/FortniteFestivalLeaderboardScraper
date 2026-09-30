@@ -137,6 +137,18 @@ export const getSongDecade = (year: number | undefined): number | null =>
 export const getSongDurationBucket = (seconds: number | undefined): number | null =>
   seconds != null && Number.isFinite(seconds) && seconds > 0 ? Math.min(10, Math.floor(seconds / 60)) : null;
 
+const DURATION_FILTER_BUCKETS = Array.from({ length: 10 }, (_, minute) => minute);
+
+export const getDurationFilterBuckets = (hasLongSongs: boolean): readonly number[] =>
+  hasLongSongs ? [...DURATION_FILTER_BUCKETS, 10] : DURATION_FILTER_BUCKETS;
+
+/** Restore one visible selection if saved exclusions or catalog changes leave none. */
+export function ensureFilterSelection(filter: Record<number, boolean>, buckets: readonly number[]): Record<number, boolean> {
+  const first = buckets[0];
+  if (first === undefined || buckets.some(bucket => filter[bucket] !== false)) return filter;
+  return { ...filter, [first]: true };
+}
+
 const scopedFilterRecord = (map: Record<string, boolean> | undefined, visibleSet: ReadonlySet<string> | null): Record<string, boolean> => {
   if (!visibleSet) return map ?? {};
 

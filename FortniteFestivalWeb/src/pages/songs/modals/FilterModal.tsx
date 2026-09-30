@@ -11,7 +11,7 @@ import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api';
 import { Gap } from '@festival/theme';
-import type { SongFilters } from '../../../utils/songSettings';
+import { ensureFilterSelection, getDurationFilterBuckets, type SongFilters } from '../../../utils/songSettings';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
 import {
@@ -61,7 +61,6 @@ type FilterModalProps = {
 };
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
-const DURATION_BUCKETS = Array.from({ length: 10 }, (_, minute) => minute);
 const noopBandApply = () => {};
 const noopBandReset = () => {};
 
@@ -112,7 +111,7 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
     const other = value === 'available' ? 'unavailable' : 'available';
     onChange({ ...draft, shopAvailability: draft.shopAvailability === other ? null : other });
   };
-  const durationBuckets = hasLongSongs ? [...DURATION_BUCKETS, 10] : DURATION_BUCKETS;
+  const durationBuckets = getDurationFilterBuckets(hasLongSongs);
   const toggleIndividualBandMemberHasScore = (accountId: string) => {
     const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
     const next = !(current.hasScore ?? false);
@@ -200,24 +199,21 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
       <ModalSection title={t('filter.general')} hint={t('filter.generalHint')}>
         <div style={{ paddingInline: Gap.xl }}>
           <Accordion title={t('filter.yearTitle')} hint={t('filter.yearHint')}>
-            {availableDecades.map(decade => (
-              <ToggleRow
-                key={decade}
-                label={t('filter.decadeLabel', { decade })}
-                checked={draft.yearFilter[decade] !== false}
-                onToggle={() => onChange({ ...draft, yearFilter: { ...draft.yearFilter, [decade]: draft.yearFilter[decade] === false } })}
-              />
-            ))}
+            <CatalogBucketToggles
+              options={availableDecades.map(decade => ({ key: decade, label: t('filter.decadeLabel', { decade }) }))}
+              filter={draft.yearFilter}
+              onChange={yearFilter => onChange({ ...draft, yearFilter })}
+            />
           </Accordion>
           <Accordion title={t('filter.durationTitle')} hint={t('filter.durationHint')}>
-            {durationBuckets.map(minute => (
-              <ToggleRow
-                key={minute}
-                label={minute === 0 ? t('filter.durationUnderMinute') : minute === 10 ? t('filter.durationTenPlus') : t('filter.durationRange', { start: minute, end: minute + 1 })}
-                checked={draft.durationFilter[minute] !== false}
-                onToggle={() => onChange({ ...draft, durationFilter: { ...draft.durationFilter, [minute]: draft.durationFilter[minute] === false } })}
-              />
-            ))}
+            <CatalogBucketToggles
+              options={durationBuckets.map(minute => ({
+                key: minute,
+                label: minute === 0 ? t('filter.durationUnderMinute') : minute === 10 ? t('filter.durationTenPlus') : t('filter.durationRange', { start: minute, end: minute + 1 }),
+              }))}
+              filter={draft.durationFilter}
+              onChange={durationFilter => onChange({ ...draft, durationFilter })}
+            />
           </Accordion>
           {isShopVisible && (
             <Accordion title={t('filter.shopTitle')} hint={t('filter.shopAvailabilityHint')}>
@@ -431,6 +427,41 @@ function areFilterModalDraftsEqual(a: FilterModalDraftState, b: FilterModalDraft
 }
 
 /* -- Toggle components for composite filters -- */
+
+function CatalogBucketToggles({ options, filter, onChange }: {
+  options: readonly { key: number; label: string }[];
+  filter: Record<number, boolean>;
+  onChange: (filter: Record<number, boolean>) => void;
+}) {
+  const selectedFilter = ensureFilterSelection(filter, options.map(option => option.key));
+  const selectedKeys = options.filter(option => selectedFilter[option.key] !== false).map(option => option.key);
+  const toggle = (key: number) => {
+    if (selectedFilter[key] !== false && selectedKeys.length === 1) return;
+    onChange({ ...selectedFilter, [key]: selectedFilter[key] === false });
+  };
+  const clearAll = () => {
+    const keep = selectedKeys[0];
+    if (keep === undefined) return;
+    const next = { ...selectedFilter };
+    for (const option of options) next[option.key] = option.key === keep;
+    onChange(next);
+  };
+
+  return (
+    <>
+      <BulkActions onSelectAll={() => onChange({})} onClearAll={clearAll} />
+      {options.map(option => (
+        <ToggleRow
+          key={option.key}
+          label={option.label}
+          checked={selectedFilter[option.key] !== false}
+          disabled={selectedFilter[option.key] !== false && selectedKeys.length === 1}
+          onToggle={() => toggle(option.key)}
+        />
+      ))}
+    </>
+  );
+}
 
 function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { availableSeasons: number[]; seasonFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
   const { t } = useTranslation();

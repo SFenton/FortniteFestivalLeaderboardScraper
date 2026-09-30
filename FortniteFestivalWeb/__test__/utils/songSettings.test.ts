@@ -7,6 +7,7 @@ import {
   METADATA_SORT_DISPLAY,
   DEFAULT_METADATA_ORDER,
   defaultSongFilters,
+  ensureFilterSelection,
   isFilterActive,
   isVisibleInstrumentFilter,
   defaultSongSettings,
@@ -54,6 +55,14 @@ describe('songSettings', () => {
     expect(isFilterActive({ ...defaultSongFilters(), durationFilter: { 0: false } }, null, false, undefined, selectedBandMode)).toBe(true);
     expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: 'unavailable' }, null, true, undefined, selectedBandMode)).toBe(true);
     expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: 'unavailable' }, null, false, undefined, selectedBandMode)).toBe(false);
+  });
+
+  it('repairs all-off saved selections against current options and includes newly appearing buckets', () => {
+    expect(ensureFilterSelection({ 1970: false, 2020: false }, [1970, 2020])).toEqual({ 1970: true, 2020: false });
+    expect(ensureFilterSelection({ 1970: true, 2020: false }, [2020])).toEqual({ 1970: true, 2020: true });
+    expect(ensureFilterSelection({ 1970: false, 2020: false }, [1970, 2020, 2030])).toEqual({ 1970: false, 2020: false });
+    expect(ensureFilterSelection({ 1970: false }, [])).toEqual({ 1970: false });
+    expect(ensureFilterSelection({ 0: false, 1: false }, [0, 1])).toEqual({ 0: true, 1: false });
   });
 
   describe('getInstrumentSortModes', () => {

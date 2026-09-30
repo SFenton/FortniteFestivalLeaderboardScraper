@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api';
@@ -190,6 +190,47 @@ describe('FilterModal', () => {
     view.rerender(<TestProviders><FilterModal {...props} hasLongSongs /></TestProviders>);
     fireEvent.click(screen.getByText('10+ Minutes'));
     expect(props.onChange.mock.lastCall?.[0].durationFilter).toEqual({ 10: false });
+  });
+
+  it.each([
+    ['Year', 'yearFilter', '1970s', '1960s', 1960, 1970],
+    ['Duration', 'durationFilter', '1-2 Minutes', 'Under 1 Minute', 0, 1],
+  ] as const)('%s bulk actions and individual toggles always retain a selection', (title, field, keptLabel, otherLabel, excludedKey, keptKey) => {
+    const props = { ...defaultProps(), hasSelectedProfile: false };
+    props.draft = { ...props.draft, [field]: { [excludedKey]: false } };
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText(title));
+    const trigger = screen.getByText(title).closest('button')!;
+    const panel = within(document.getElementById(trigger.getAttribute('aria-controls')!)!);
+    fireEvent.click(panel.getByRole('button', { name: 'Clear All' }));
+    const cleared = props.onChange.mock.lastCall![0];
+    expect(Object.entries(cleared[field]).filter(([, enabled]) => enabled).map(([key]) => Number(key))).toEqual([keptKey]);
+    view.rerender(<TestProviders><FilterModal {...props} draft={cleared} /></TestProviders>);
+    expect(panel.getByRole('button', { name: keptLabel })).toBeDisabled();
+    props.onChange.mockClear();
+    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
+    expect(props.onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(panel.getByRole('button', { name: otherLabel }));
+    const expanded = props.onChange.mock.lastCall![0];
+    expect(expanded[field][keptKey]).toBe(true);
+    expect(expanded[field][excludedKey]).toBe(true);
+    view.rerender(<TestProviders><FilterModal {...props} draft={expanded} /></TestProviders>);
+    expect(panel.getByRole('button', { name: keptLabel })).toBeEnabled();
+    fireEvent.click(panel.getByRole('button', { name: 'Select All' }));
+    expect(props.onChange.mock.lastCall![0][field]).toEqual({});
+  });
+
+  it('keeps a sole catalog decade selected and reveals early decades only when present', () => {
+    const props = { ...defaultProps(), availableDecades: [2020] };
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText('Year'));
+    expect(screen.getByText('2020s').closest('button')).toBeDisabled();
+    const earlyDecades = [1900, 1910, 1920, 1930, 1940, 1950, 1960];
+    for (const decade of earlyDecades) expect(screen.queryByText(`${decade}s`)).toBeNull();
+    view.rerender(<TestProviders><FilterModal {...props} availableDecades={[...earlyDecades, 2020]} /></TestProviders>);
+    for (const decade of earlyDecades) expect(screen.getByText(`${decade}s`)).toBeDefined();
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
   });
 
   /* ── Global toggles section ── */
@@ -550,8 +591,7 @@ describe('FilterModal', () => {
     props.availableSeasons = [1, 2, 3];
     renderModal(props);
     fireEvent.click(screen.getByText('Season'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     const newDraft = props.onChange.mock.calls[0]![0];
     expect(newDraft.seasonFilter[1]).toBe(true);
     expect(newDraft.seasonFilter[2]).toBe(true);
@@ -568,8 +608,7 @@ describe('FilterModal', () => {
     props.availableSeasons = [1, 2, 3];
     renderModal(props);
     fireEvent.click(screen.getByText('Season'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     const newDraft = props.onChange.mock.calls[0]![0];
     expect(newDraft.seasonFilter[1]).toBe(false);
     expect(newDraft.seasonFilter[2]).toBe(false);
@@ -611,9 +650,8 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Percentile'));
-    // There are multiple Select All / Clear All buttons; find by the parenthood (the second set from Percentile)
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    // The expanded accordion exposes its bulk actions.
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -661,8 +699,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Stars'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -674,8 +711,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Stars'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -711,8 +747,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Song Intensity'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -724,8 +759,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Song Intensity'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -737,8 +771,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Percentile'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 

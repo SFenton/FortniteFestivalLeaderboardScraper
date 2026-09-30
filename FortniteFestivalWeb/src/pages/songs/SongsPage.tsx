@@ -73,6 +73,8 @@ import {
   defaultSongFilters,
   getSongDecade,
   getSongDurationBucket,
+  getDurationFilterBuckets,
+  ensureFilterSelection,
   loadSongSettings,
   normalizeSongSettings,
   saveSongSettings,
@@ -418,10 +420,23 @@ export default function SongsPage() {
   const activeSongInstrumentFilter = isVisibleInstrumentFilter(settings.instrument, enabledInstruments) ? settings.instrument : null;
   const displayInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
   const modalInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
-  const scopedFilters = useMemo(
-    () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
-    [enabledInstruments, settings.filters],
-  );
+  const availableDecades = useMemo(() => {
+    const decades = new Set<number>();
+    for (const song of songs) {
+      const decade = getSongDecade(song.year);
+      if (decade !== null) decades.add(decade);
+    }
+    return [...decades].sort((a, b) => a - b);
+  }, [songs]);
+  const hasLongSongs = useMemo(() => songs.some(song => getSongDurationBucket(song.durationSeconds) === 10), [songs]);
+  const scopedFilters = useMemo(() => {
+    const filters = sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments);
+    return {
+      ...filters,
+      yearFilter: ensureFilterSelection(filters.yearFilter, availableDecades),
+      durationFilter: ensureFilterSelection(filters.durationFilter, getDurationFilterBuckets(hasLongSongs)),
+    };
+  }, [availableDecades, enabledInstruments, hasLongSongs, settings.filters]);
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
   const visibleMetadataOrder = useMemo(() => {
@@ -878,16 +893,6 @@ export default function SongsPage() {
       : filtersActive
         ? t('songs.noResultsSubtitle')
         : t('common.serviceDown');
-
-  const availableDecades = useMemo(() => {
-    const decades = new Set<number>();
-    for (const song of songs) {
-      const decade = getSongDecade(song.year);
-      if (decade !== null) decades.add(decade);
-    }
-    return [...decades].sort((a, b) => a - b);
-  }, [songs]);
-  const hasLongSongs = useMemo(() => songs.some(song => getSongDurationBucket(song.durationSeconds) === 10), [songs]);
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
