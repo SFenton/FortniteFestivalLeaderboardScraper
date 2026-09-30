@@ -135,34 +135,22 @@ describe('FilterModal', () => {
   it.each([
     ['Double Bass', 'doubleBass', 'Double Bass Support', 'No Double Bass Support', 'supported', 'unsupported'],
     ['Item Shop', 'shopAvailability', 'Available in Item Shop', 'Not Available in Item Shop', 'available', 'unavailable'],
-  ] as const)('allows both or exactly one %s category, never neither', (title, field, first, second, firstValue, secondValue) => {
+  ] as const)('allows every %s category to toggle independently', (title, field, first, second, firstValue, secondValue) => {
     const props = { ...defaultProps(), hasSelectedProfile: false };
     const view = renderModal(props);
     fireEvent.click(screen.getByText(title));
-    const rerenderValue = (value: typeof firstValue | typeof secondValue | null) => {
-      view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, [field]: value }} /></TestProviders>);
-    };
-
-    fireEvent.click(screen.getByText(first));
-    expect(props.onChange.mock.lastCall?.[0][field]).toBe(secondValue);
-    rerenderValue(secondValue);
-    expect(screen.getByText(second).closest('button')).toBeDisabled();
-    props.onChange.mockClear();
-    fireEvent.click(screen.getByText(second));
-    expect(props.onChange).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText(first));
-    expect(props.onChange.mock.lastCall?.[0][field]).toBeNull();
-
-    rerenderValue(null);
-    fireEvent.click(screen.getByText(second));
-    expect(props.onChange.mock.lastCall?.[0][field]).toBe(firstValue);
-    rerenderValue(firstValue);
-    expect(screen.getByText(first).closest('button')).toBeDisabled();
-    props.onChange.mockClear();
-    fireEvent.click(screen.getByText(first));
-    expect(props.onChange).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText(second));
-    expect(props.onChange.mock.lastCall?.[0][field]).toBeNull();
+    for (const [label, expected] of [
+      [first, { [firstValue]: false, [secondValue]: true }],
+      [second, { [firstValue]: false, [secondValue]: false }],
+      [first, { [firstValue]: true, [secondValue]: false }],
+      [second, { [firstValue]: true, [secondValue]: true }],
+    ] as const) {
+      expect(screen.getByText(label).closest('button')).toBeEnabled();
+      fireEvent.click(screen.getByText(label));
+      const changed = props.onChange.mock.lastCall![0];
+      expect(changed[field]).toEqual(expected);
+      view.rerender(<TestProviders><FilterModal {...props} draft={changed} /></TestProviders>);
+    }
   });
 
   it('orders catalog filters before Double Bass and toggles dynamically supplied decades', () => {
@@ -195,7 +183,7 @@ describe('FilterModal', () => {
   it.each([
     ['Year', 'yearFilter', '1970s', '1960s', 1960, 1970],
     ['Duration', 'durationFilter', '1-2 Minutes', 'Under 1 Minute', 0, 1],
-  ] as const)('%s bulk actions and individual toggles always retain a selection', (title, field, keptLabel, otherLabel, excludedKey, keptKey) => {
+  ] as const)('%s bulk actions and individual toggles allow every option off', (title, field, keptLabel, otherLabel, excludedKey, keptKey) => {
     const props = { ...defaultProps(), hasSelectedProfile: false };
     props.draft = { ...props.draft, [field]: { [excludedKey]: false } };
     const view = renderModal(props);
@@ -204,31 +192,35 @@ describe('FilterModal', () => {
     const panel = within(document.getElementById(trigger.getAttribute('aria-controls')!)!);
     fireEvent.click(panel.getByRole('button', { name: 'Clear All' }));
     const cleared = props.onChange.mock.lastCall![0];
-    expect(Object.entries(cleared[field]).filter(([, enabled]) => enabled).map(([key]) => Number(key))).toEqual([keptKey]);
+    expect(Object.values(cleared[field])).not.toContain(true);
+    expect(Object.keys(cleared[field])).toHaveLength(title === 'Year' ? props.availableDecades!.length : 10);
     view.rerender(<TestProviders><FilterModal {...props} draft={cleared} /></TestProviders>);
-    expect(panel.getByRole('button', { name: keptLabel })).toBeDisabled();
-    props.onChange.mockClear();
-    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
-    expect(props.onChange).not.toHaveBeenCalled();
-
-    fireEvent.click(panel.getByRole('button', { name: otherLabel }));
-    const expanded = props.onChange.mock.lastCall![0];
-    expect(expanded[field][keptKey]).toBe(true);
-    expect(expanded[field][excludedKey]).toBe(true);
-    view.rerender(<TestProviders><FilterModal {...props} draft={expanded} /></TestProviders>);
     expect(panel.getByRole('button', { name: keptLabel })).toBeEnabled();
+    expect(panel.getByRole('button', { name: otherLabel })).toBeEnabled();
+    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
+    const oneEnabled = props.onChange.mock.lastCall![0];
+    expect(oneEnabled[field][keptKey]).toBe(true);
+    expect(oneEnabled[field][excludedKey]).toBe(false);
+    view.rerender(<TestProviders><FilterModal {...props} draft={oneEnabled} /></TestProviders>);
+    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
+    expect(Object.values(props.onChange.mock.lastCall![0][field])).not.toContain(true);
     fireEvent.click(panel.getByRole('button', { name: 'Select All' }));
     expect(props.onChange.mock.lastCall![0][field]).toEqual({});
   });
 
-  it('keeps a sole catalog decade selected and reveals early decades only when present', () => {
+  it('allows a sole catalog decade off and reveals early decades only when present', () => {
     const props = { ...defaultProps(), availableDecades: [2020] };
     const view = renderModal(props);
     fireEvent.click(screen.getByText('Year'));
-    expect(screen.getByText('2020s').closest('button')).toBeDisabled();
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
+    fireEvent.click(screen.getByText('2020s'));
+    const changed = props.onChange.mock.lastCall![0];
+    expect(changed.yearFilter).toEqual({ 2020: false });
+    view.rerender(<TestProviders><FilterModal {...props} draft={changed} /></TestProviders>);
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
     const earlyDecades = [1900, 1910, 1920, 1930, 1940, 1950, 1960];
     for (const decade of earlyDecades) expect(screen.queryByText(`${decade}s`)).toBeNull();
-    view.rerender(<TestProviders><FilterModal {...props} availableDecades={[...earlyDecades, 2020]} /></TestProviders>);
+    view.rerender(<TestProviders><FilterModal {...props} draft={changed} availableDecades={[...earlyDecades, 2020]} /></TestProviders>);
     for (const decade of earlyDecades) expect(screen.getByText(`${decade}s`)).toBeDefined();
     expect(screen.getByText('2020s').closest('button')).toBeEnabled();
   });

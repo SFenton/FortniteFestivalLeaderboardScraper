@@ -108,10 +108,18 @@ export function useFilteredSongs({
     const checkYear = Object.values(f.yearFilter ?? {}).some(value => value === false);
     const checkDuration = Object.values(f.durationFilter ?? {}).some(value => value === false);
 
+    const includeDoubleBass = f.doubleBass?.supported !== false;
+    const includeNoDoubleBass = f.doubleBass?.unsupported !== false;
+    const includeInShop = f.shopAvailability?.available !== false;
+    const includeNotInShop = f.shopAvailability?.unavailable !== false;
+
     const list = songs.filter(s => {
       if (!songMatchesSearch(s, search)) return false;
-      if (f.doubleBass === 'supported' && s.doubleBassSupported !== true) return false;
-      if (f.doubleBass === 'unsupported' && s.doubleBassSupported !== false) return false;
+      if (!includeDoubleBass || !includeNoDoubleBass) {
+        const matches = (includeDoubleBass && s.doubleBassSupported === true)
+          || (includeNoDoubleBass && s.doubleBassSupported === false);
+        if (!matches) return false;
+      }
 
       if (checkYear) {
         const decade = getSongDecade(s.year);
@@ -123,9 +131,9 @@ export function useFilteredSongs({
       }
 
       // Wait for a shop snapshot before classifying availability.
-      if (shopVisible && shopSongIds != null) {
-        if (f.shopAvailability === 'available' && !shopSongIds.has(s.songId)) return false;
-        if (f.shopAvailability === 'unavailable' && shopSongIds.has(s.songId)) return false;
+      if (shopVisible) {
+        if (!includeInShop && !includeNotInShop) return false;
+        if (shopSongIds != null && !(shopSongIds.has(s.songId) ? includeInShop : includeNotInShop)) return false;
       }
 
       if (effectiveInstrument && !songSupportsInstrument(s, effectiveInstrument)) return false;

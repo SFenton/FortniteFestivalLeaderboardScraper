@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: e0e2c7bb
+last_verified_commit: e5bcc042
 sources:
   - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
@@ -429,30 +429,30 @@ decades appear in the loaded catalog. Duration uses
 at least 600 seconds long. Ranges include their lower bound and exclude the
 upper bound. All decade and duration toggles default on, including newly
 introduced buckets. Each dropdown includes Select All and Clear All. Select
-All enables every bucket; Clear All leaves the first currently enabled option
-on and disables the rest. Individual toggles cannot disable the last enabled
-option. If saved selections or catalog changes leave no available option on,
-one available bucket is restored before filtering and editing. Turning a
+All enables every bucket; Clear All disables every bucket. Each toggle works
+independently, including the last enabled option. All-off choices persist
+without automatic repair and can produce an empty song list. Turning a
 bucket off excludes that bucket. Unknown or invalid metadata remains included
 with all toggles on and is excluded when
 that metadata filter is restricted.
 
 Item Shop respects the hide-shop setting and uses the shared shop snapshot,
 independent of profile selection. Available in Item Shop and Not Available in
-Item Shop both default on; either can be turned off, but the final active
-option cannot be turned off. Both on includes all songs. Classification waits
-for a loaded shop snapshot rather than treating pending data as unavailable.
+Item Shop both default on and toggle independently. Both on includes all
+songs; both off excludes all songs, even while shop data is pending.
+Classification waits for a loaded shop snapshot rather than treating pending
+data as unavailable.
 This replaces the previous In the Shop and Leaving Tomorrow filter section;
 older saved restrictions migrate to available-only, with no hidden legacy
 restriction retained. Shop badges and leaving-tomorrow display remain intact.
 
-Double Bass uses the same inclusive toggle behavior: Double Bass Support and
-No Double Bass Support both default on, either category can be excluded, and
-at least one must stay on. Both on applies no chart restriction and includes
-unknown support metadata. With one category selected, only explicit `true`
+Double Bass Support and No Double Bass Support both default on and toggle
+independently. Both off excludes all songs. Both on applies no chart
+restriction and includes unknown support metadata. With one category selected, only explicit `true`
 or `false` in `ServerSong.doubleBassSupported` matches that category; absent
-or null metadata matches neither. Existing saved single-category choices
-remain selected. Reset restores all General choices in solo and band views.
+or null metadata matches neither. Existing saved single-category or
+unrestricted choices migrate to independent boolean selections. Reset
+restores all General choices in solo and band views.
 
 ### Settings service progress
 

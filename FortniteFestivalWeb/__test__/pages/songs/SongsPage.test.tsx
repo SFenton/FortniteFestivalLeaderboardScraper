@@ -1566,7 +1566,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
       instrument: 'Solo_Guitar',
       metadataOrder: ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed'],
       instrumentOrder: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
-      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopAvailability: null, yearFilter: {}, durationFilter: {} },
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopAvailability: { available: true, unavailable: true }, yearFilter: {}, durationFilter: {} },
     }));
     mockApi.getPlayer.mockResolvedValue({
       accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1,
@@ -1607,7 +1607,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     selectTestBandProfile();
     setSongSettingsFilter({
       yearFilter: { 2020: false }, durationFilter: { 3: false },
-      doubleBass: 'supported', shopAvailability: 'unavailable',
+      doubleBass: { supported: true, unsupported: false }, shopAvailability: { available: false, unavailable: true },
       selectedBandHasScore: true, hasScores: { Solo_Guitar: true },
     });
     renderSongsPage('/songs');
@@ -1622,8 +1622,8 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     const saved = JSON.parse(localStorage.getItem('fst:songSettings')!).filters;
     expect(saved.yearFilter).toEqual({});
     expect(saved.durationFilter).toEqual({});
-    expect(saved.doubleBass).toBeNull();
-    expect(saved.shopAvailability).toBeNull();
+    expect(saved.doubleBass).toEqual({ supported: true, unsupported: true });
+    expect(saved.shopAvailability).toEqual({ available: true, unavailable: true });
     expect(saved.selectedBandHasScore).toBe(false);
     expect(saved.hasScores).toEqual({ Solo_Guitar: true });
   });

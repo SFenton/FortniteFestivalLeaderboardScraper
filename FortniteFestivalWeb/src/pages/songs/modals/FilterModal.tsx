@@ -11,7 +11,7 @@ import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api';
 import { Gap } from '@festival/theme';
-import { ensureFilterSelection, getDurationFilterBuckets, type SongFilters } from '../../../utils/songSettings';
+import { getDurationFilterBuckets, type SongFilters } from '../../../utils/songSettings';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
 import {
@@ -101,15 +101,11 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
     const next = !draft.selectedBandMissingScore;
     onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
-  const toggleDoubleBass = (value: 'supported' | 'unsupported') => {
-    if (draft.doubleBass === value) return;
-    const other = value === 'supported' ? 'unsupported' : 'supported';
-    onChange({ ...draft, doubleBass: draft.doubleBass === other ? null : other });
+  const toggleDoubleBass = (key: 'supported' | 'unsupported') => {
+    onChange({ ...draft, doubleBass: { ...draft.doubleBass, [key]: !draft.doubleBass[key] } });
   };
-  const toggleShopAvailability = (value: 'available' | 'unavailable') => {
-    if (draft.shopAvailability === value) return;
-    const other = value === 'available' ? 'unavailable' : 'available';
-    onChange({ ...draft, shopAvailability: draft.shopAvailability === other ? null : other });
+  const toggleShopAvailability = (key: 'available' | 'unavailable') => {
+    onChange({ ...draft, shopAvailability: { ...draft.shopAvailability, [key]: !draft.shopAvailability[key] } });
   };
   const durationBuckets = getDurationFilterBuckets(hasLongSongs);
   const toggleIndividualBandMemberHasScore = (accountId: string) => {
@@ -219,14 +215,12 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
             <Accordion title={t('filter.shopTitle')} hint={t('filter.shopAvailabilityHint')}>
               <ToggleRow
                 label={t('filter.shopAvailable')}
-                checked={draft.shopAvailability !== 'unavailable'}
-                disabled={draft.shopAvailability === 'available'}
+                checked={draft.shopAvailability.available}
                 onToggle={() => toggleShopAvailability('available')}
               />
               <ToggleRow
                 label={t('filter.shopUnavailable')}
-                checked={draft.shopAvailability !== 'available'}
-                disabled={draft.shopAvailability === 'unavailable'}
+                checked={draft.shopAvailability.unavailable}
                 onToggle={() => toggleShopAvailability('unavailable')}
               />
             </Accordion>
@@ -234,14 +228,12 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
           <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
             <ToggleRow
               label={t('filter.doubleBassSupport')}
-              checked={draft.doubleBass !== 'unsupported'}
-              disabled={draft.doubleBass === 'supported'}
+              checked={draft.doubleBass.supported}
               onToggle={() => toggleDoubleBass('supported')}
             />
             <ToggleRow
               label={t('filter.noDoubleBassSupport')}
-              checked={draft.doubleBass !== 'supported'}
-              disabled={draft.doubleBass === 'unsupported'}
+              checked={draft.doubleBass.unsupported}
               onToggle={() => toggleDoubleBass('unsupported')}
             />
           </Accordion>
@@ -433,17 +425,10 @@ function CatalogBucketToggles({ options, filter, onChange }: {
   filter: Record<number, boolean>;
   onChange: (filter: Record<number, boolean>) => void;
 }) {
-  const selectedFilter = ensureFilterSelection(filter, options.map(option => option.key));
-  const selectedKeys = options.filter(option => selectedFilter[option.key] !== false).map(option => option.key);
-  const toggle = (key: number) => {
-    if (selectedFilter[key] !== false && selectedKeys.length === 1) return;
-    onChange({ ...selectedFilter, [key]: selectedFilter[key] === false });
-  };
+  const toggle = (key: number) => onChange({ ...filter, [key]: filter[key] === false });
   const clearAll = () => {
-    const keep = selectedKeys[0];
-    if (keep === undefined) return;
-    const next = { ...selectedFilter };
-    for (const option of options) next[option.key] = option.key === keep;
+    const next = { ...filter };
+    for (const option of options) next[option.key] = false;
     onChange(next);
   };
 
@@ -454,8 +439,7 @@ function CatalogBucketToggles({ options, filter, onChange }: {
         <ToggleRow
           key={option.key}
           label={option.label}
-          checked={selectedFilter[option.key] !== false}
-          disabled={selectedFilter[option.key] !== false && selectedKeys.length === 1}
+          checked={filter[option.key] !== false}
           onToggle={() => toggle(option.key)}
         />
       ))}

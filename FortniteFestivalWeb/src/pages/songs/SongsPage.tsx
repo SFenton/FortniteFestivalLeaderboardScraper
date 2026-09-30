@@ -73,8 +73,6 @@ import {
   defaultSongFilters,
   getSongDecade,
   getSongDurationBucket,
-  getDurationFilterBuckets,
-  ensureFilterSelection,
   loadSongSettings,
   normalizeSongSettings,
   saveSongSettings,
@@ -430,14 +428,10 @@ export default function SongsPage() {
     return [...decades].sort((a, b) => a - b);
   }, [songs]);
   const hasLongSongs = useMemo(() => songs.some(song => getSongDurationBucket(song.durationSeconds) === 10), [songs]);
-  const scopedFilters = useMemo(() => {
-    const filters = sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments);
-    return {
-      ...filters,
-      yearFilter: ensureFilterSelection(filters.yearFilter, availableDecades),
-      durationFilter: ensureFilterSelection(filters.durationFilter, getDurationFilterBuckets(hasLongSongs)),
-    };
-  }, [availableDecades, enabledInstruments, hasLongSongs, settings.filters]);
+  const scopedFilters = useMemo(
+    () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
+    [enabledInstruments, settings.filters],
+  );
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
   const visibleMetadataOrder = useMemo(() => {

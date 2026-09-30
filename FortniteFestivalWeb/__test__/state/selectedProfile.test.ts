@@ -38,7 +38,7 @@ function saveActiveSongFilters() {
       ...defaultSongFilters(),
       hasScores: { Solo_Guitar: true },
       selectedBandHasScore: true,
-      shopAvailability: 'available',
+      shopAvailability: { available: true, unavailable: false },
     },
   });
 }
@@ -92,6 +92,6 @@ describe('selectedProfile state', () => {
     const loaded = loadSongSettings();
     expect(loaded.instrument).toBe('Solo_Guitar');
     expect(loaded.filters.hasScores).toEqual({ Solo_Guitar: true });
-    expect(loaded.filters.shopAvailability).toBe('available');
+    expect(loaded.filters.shopAvailability).toEqual({ available: true, unavailable: false });
   });
 });
