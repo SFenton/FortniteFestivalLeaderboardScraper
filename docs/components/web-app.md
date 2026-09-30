@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: f868487e
+last_verified_commit: 6415d3e3
 sources:
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
@@ -411,8 +411,11 @@ The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
 persisted in browser song settings. The General section precedes Global Score
 & FC Toggles and applies across solo and selected-band views. Its Double Bass
 accordion contains mutually exclusive Double Bass Support and No Double Bass
-Support toggles; leaving both off applies no chart filter. The active General
-filter combines with the existing search, shop, score, and instrument filters.
+Support toggles; leaving both off applies no chart filter. General dropdowns
+are inset on both sides below the section heading; their toggle rows use the
+shared accordion left indent while keeping switches aligned with the dropdown
+right edge. The active General filter combines with the existing search, shop,
+score, and instrument filters.
 
 Support comes from `ServerSong.doubleBassSupported`: only explicit `true`
 matches support and explicit `false` matches no support. Missing or null

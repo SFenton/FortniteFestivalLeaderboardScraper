@@ -10,6 +10,7 @@ import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api';
+import { Gap } from '@festival/theme';
 import type { SongFilters } from '../../../utils/songSettings';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
@@ -186,18 +187,20 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
       ) : null}
 
       <ModalSection title={t('filter.general')} hint={t('filter.generalHint')}>
-        <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
-          <ToggleRow
-            label={t('filter.doubleBassSupport')}
-            checked={draft.doubleBass === 'supported'}
-            onToggle={() => toggleDoubleBass('supported')}
-          />
-          <ToggleRow
-            label={t('filter.noDoubleBassSupport')}
-            checked={draft.doubleBass === 'unsupported'}
-            onToggle={() => toggleDoubleBass('unsupported')}
-          />
-        </Accordion>
+        <div style={{ paddingInline: Gap.xl }}>
+          <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
+            <ToggleRow
+              label={t('filter.doubleBassSupport')}
+              checked={draft.doubleBass === 'supported'}
+              onToggle={() => toggleDoubleBass('supported')}
+            />
+            <ToggleRow
+              label={t('filter.noDoubleBassSupport')}
+              checked={draft.doubleBass === 'unsupported'}
+              onToggle={() => toggleDoubleBass('unsupported')}
+            />
+          </Accordion>
+        </div>
       </ModalSection>
 
       {hasSelectedProfile && (selectedBandMode ? (
