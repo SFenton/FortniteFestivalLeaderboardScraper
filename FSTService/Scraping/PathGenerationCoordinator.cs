@@ -522,12 +522,15 @@ public sealed partial class PathGenerationCoordinator
 
             MidiTrackRenamer.MidiVariants variants;
             bool doubleBassSupported;
+            bool plasticDrumsHasAuthoredActivationWindows;
             try
             {
                 decryptedMidi ??= MidiCryptor.Decrypt(
                     datBytes,
                     execution.MidiKey);
                 doubleBassSupported = MidiTrackInspector.HasDoubleBassSupport(decryptedMidi);
+                plasticDrumsHasAuthoredActivationWindows =
+                    MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(decryptedMidi);
                 variants = MidiTrackRenamer.ProduceVariants(
                     decryptedMidi);
             }
@@ -606,6 +609,7 @@ public sealed partial class PathGenerationCoordinator
                             pngPath,
                             jsonPath,
                             execution.Runtime.Profile,
+                            plasticDrumsHasAuthoredActivationWindows,
                             ct);
                     }
                     finally
@@ -657,7 +661,8 @@ public sealed partial class PathGenerationCoordinator
                 expected,
                 expertScores,
                 generatedAtUtc,
-                maxScores.DoubleBassSupported);
+                maxScores.DoubleBassSupported,
+                plasticDrumsHasAuthoredActivationWindows);
             await File.WriteAllTextAsync(
                 Path.Combine(
                     artifactDirectory,
@@ -849,6 +854,7 @@ public sealed partial class PathGenerationCoordinator
         string outputImage,
         string jsonOutput,
         string generationProfile,
+        bool plasticDrumsHasAuthoredActivationWindows,
         CancellationToken ct)
     {
         var startInfo = CreateProcessStartInfo(choptPath);
@@ -921,11 +927,12 @@ public sealed partial class PathGenerationCoordinator
                 requiredSchemaVersion:
                     PathArtifactValidator.RequiredSchemaVersion(
                         generationProfile),
-                requireNonEmptyDrumFills: requireAuthoredDrumFills))
+                requireNonEmptyDrumFills: requireAuthoredDrumFills,
+                allowEmptyDrumFills: !plasticDrumsHasAuthoredActivationWindows))
         {
             throw new PathGenerationException(
                 "artifact_validation",
-                requireAuthoredDrumFills
+                requireAuthoredDrumFills && plasticDrumsHasAuthoredActivationWindows
                     ? "CHOpt JSON did not match the path-data contract, had a non-positive expert totalScore, or omitted authored drum activation windows."
                     : requirePositiveScore
                     ? "CHOpt JSON did not match the path-data contract or had a non-positive expert totalScore."

@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using FSTService.Persistence;
 using FSTService.Scraping;
 
@@ -18,6 +19,9 @@ public sealed class PathArtifactValidationTests
             new Dictionary<string, int> { ["Solo_Guitar"] = 1000 }, DateTime.UtcNow);
         var json = JsonSerializer.Serialize(legacy, PathArtifactManifest.JsonOptions);
         Assert.DoesNotContain("doubleBassSupported", json);
+        Assert.DoesNotContain("plasticDrumsHasAuthoredActivationWindows", json);
+        Assert.Null(JsonSerializer.Deserialize<PathArtifactManifest>(
+            json, PathArtifactManifest.JsonOptions)!.PlasticDrumsHasAuthoredActivationWindows);
         Assert.Null(JsonSerializer.Deserialize<PathArtifactManifest>(
             json, PathArtifactManifest.JsonOptions)!.DoubleBassSupported);
         var unsupported = JsonSerializer.Serialize(
@@ -105,6 +109,25 @@ public sealed class PathArtifactValidationTests
             out _,
             requiredSchemaVersion: 2,
             requireNonEmptyDrumFills: true));
+    }
+
+    [Theory]
+    [InlineData("[]", true)]
+    [InlineData("[{}]", true)]
+    [InlineData("null", false)]
+    [InlineData("{}", false)]
+    [InlineData("\"invalid\"", false)]
+    [InlineData(null, false)]
+    public void Marker_free_drum_validation_requires_an_explicit_array(string? fills, bool expected)
+    {
+        var json = JsonNode.Parse(RichPathJson)!.AsObject();
+        if (fills is null)
+            json.Remove("drumFills");
+        else
+            json["drumFills"] = JsonNode.Parse(fills);
+        Assert.Equal(expected, PathArtifactValidator.TryParseJson(
+            json.ToJsonString(), true, out _, 2,
+            requireNonEmptyDrumFills: true, allowEmptyDrumFills: true));
     }
 
     [Fact]
@@ -603,6 +626,40 @@ public sealed class PathArtifactValidationTests
             }));
     }
 
+    [Theory]
+    [InlineData("Solo_PeripheralCymbals", null, false)]
+    [InlineData("Solo_PeripheralCymbals", true, false)]
+    [InlineData("Solo_PeripheralCymbals", false, true)]
+    [InlineData("Solo_PeripheralDrums", null, false)]
+    [InlineData("Solo_PeripheralDrums", true, false)]
+    [InlineData("Solo_PeripheralDrums", false, true)]
+    public void Immutable_plastic_drums_allow_empty_windows_only_with_explicit_source_evidence(
+        string instrument, bool? hasSourceWindows, bool expectedValid)
+    {
+        using var fixture = CreateValidGeneration(instrument, PathGenerationProfiles.PlasticDrumsV4, hasSourceWindows);
+        foreach (var difficulty in PathGenerationInstruments.Difficulties)
+        {
+            var path = Path.Combine(fixture.InstrumentDirectory, $"{difficulty}.json");
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            json["schemaVersion"] = 2;
+            json["drumFills"] = new JsonArray();
+            File.WriteAllText(path, json.ToJsonString());
+        }
+        Assert.Equal(expectedValid, PathArtifactResolver.IsGenerationComplete(fixture.Root, fixture.State));
+        if (expectedValid)
+        {
+            var validated = PathArtifactResolver.ValidateImmutableGeneration(
+                fixture.Root, fixture.State.SongId, fixture.State.ArtifactGenerationId!);
+            Assert.False(validated.Manifest.PlasticDrumsHasAuthoredActivationWindows);
+            Assert.Equal(123456, validated.MaxScores.GetByInstrument(instrument));
+        }
+        else
+        {
+            Assert.Throws<InvalidOperationException>(() => PathArtifactResolver.ValidateImmutableGeneration(
+                fixture.Root, fixture.State.SongId, fixture.State.ArtifactGenerationId!));
+        }
+    }
+
     [Fact]
     public void ImmutableGeneration_RejectsInvalidManifestAndArtifacts()
     {
@@ -700,12 +757,14 @@ public sealed class PathArtifactValidationTests
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static GenerationFixture CreateValidGeneration()
+    private static GenerationFixture CreateValidGeneration(
+        string instrument = "Solo_Guitar",
+        string profile = "profile-v1",
+        bool? hasSourceWindows = null)
     {
         var root = CreateTestDirectory("path-generation");
         const string songId = "song-1";
         const string generationId = "generation-1";
-        const string instrument = "Solo_Guitar";
         var generationDirectory =
             PathArtifactResolver.GetGenerationDirectory(
                 root,
@@ -722,7 +781,7 @@ public sealed class PathArtifactValidationTests
             SongLastModified: "2026-08-09T00:00:00Z",
             ChoptVersion: "1.2.3",
             ChoptBinarySha256: new string('b', 64),
-            GenerationProfile: "profile-v1",
+            GenerationProfile: profile,
             ExpectedInstruments: [instrument],
             ExpertMaxScores: new Dictionary<string, int>
             {
@@ -735,7 +794,8 @@ public sealed class PathArtifactValidationTests
                 12,
                 0,
                 0,
-                DateTimeKind.Utc));
+                DateTimeKind.Utc),
+            PlasticDrumsHasAuthoredActivationWindows: hasSourceWindows);
         var manifestPath = Path.Combine(
             generationDirectory,
             PathArtifactResolver.ManifestFileName);
@@ -758,7 +818,6 @@ public sealed class PathArtifactValidationTests
 
         var scores = new SongMaxScores
         {
-            MaxLeadScore = 123456,
             GeneratedAt = manifest.GeneratedAtUtc.ToString("o"),
             CHOptVersion = manifest.ChoptVersion,
             CHOptBinarySha256 = manifest.ChoptBinarySha256,
@@ -766,6 +825,7 @@ public sealed class PathArtifactValidationTests
             ArtifactGenerationId = generationId,
             ExpectedInstruments = [instrument],
         };
+        scores.SetByInstrument(instrument, 123456);
         var state = new PathGenerationState(
             SongId: songId,
             Revision: 1,

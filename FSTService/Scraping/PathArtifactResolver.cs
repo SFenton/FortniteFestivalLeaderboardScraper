@@ -428,7 +428,9 @@ public sealed class PathArtifactResolver
                                 .IsPlasticDrumsInstrument(instrument) &&
                             PathGenerationProfiles
                                 .RequiresAuthoredDrumFills(
-                                    manifest.GenerationProfile)) ||
+                                    manifest.GenerationProfile),
+                        allowEmptyDrumFills:
+                            manifest.PlasticDrumsHasAuthoredActivationWindows is false) ||
                     (difficulty == "expert" && score != expertMaximum))
                 {
                     throw new InvalidOperationException(
@@ -666,7 +668,9 @@ internal sealed record PathArtifactManifest(
     Dictionary<string, int> ExpertMaxScores,
     DateTime GeneratedAtUtc,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    bool? DoubleBassSupported = null)
+    bool? DoubleBassSupported = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    bool? PlasticDrumsHasAuthoredActivationWindows = null)
 {
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -828,7 +832,8 @@ internal static class PathArtifactValidator
         bool requirePositiveScore,
         out int? totalScore,
         int? requiredSchemaVersion = null,
-        bool requireNonEmptyDrumFills = false)
+        bool requireNonEmptyDrumFills = false,
+        bool allowEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -838,7 +843,8 @@ internal static class PathArtifactValidator
                 requirePositiveScore,
                 out totalScore,
                 requiredSchemaVersion,
-                requireNonEmptyDrumFills);
+                requireNonEmptyDrumFills,
+                allowEmptyDrumFills);
         }
         catch (IOException)
         {
@@ -855,7 +861,8 @@ internal static class PathArtifactValidator
         bool requirePositiveScore,
         out int? totalScore,
         int? requiredSchemaVersion = null,
-        bool requireNonEmptyDrumFills = false)
+        bool requireNonEmptyDrumFills = false,
+        bool allowEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -887,7 +894,9 @@ internal static class PathArtifactValidator
                 !HasArray(root, "bpms") ||
                 !HasArray(root, "timeSignatures") ||
                 (requireNonEmptyDrumFills &&
-                 !HasNonEmptyArray(root, "drumFills")) ||
+                 !(allowEmptyDrumFills
+                     ? HasArray(root, "drumFills")
+                     : HasNonEmptyArray(root, "drumFills"))) ||
                 !root.TryGetProperty("totalScore", out var score) ||
                 score.ValueKind != JsonValueKind.Number ||
                 !score.TryGetInt32(out var parsed))

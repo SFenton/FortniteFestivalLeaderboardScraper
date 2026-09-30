@@ -377,8 +377,96 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         AssertNoStagingAttempts();
     }
 
+    [Theory]
+    [InlineData("PLASTIC DRUM")]
+    [InlineData("PLASTIC DRUMS")]
+    public async Task Plastic_drums_without_source_windows_promote_and_validate(string trackName)
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(Mode: "missing-drum-fills"));
+        var store = new FakePathDataStore();
+        store.EnsureSong("no-overdrive-plastic-drums");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(EncryptMidi(BuildMinimalMidi(trackName, notePitch: 100), _midiKey)),
+            profile: PathGenerationProfiles.PlasticDrumsV4);
+        var song = CreateSong("no-overdrive-plastic-drums", new In { pd = 0 });
+
+        var result = await coordinator.GeneratePathsAsync([song], false, CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        Assert.Equal(0, result.Failed);
+        Assert.Empty(store.Errors);
+        var state = store.GetPathGenerationState(song.track.su)!;
+        var validated = PathArtifactResolver.ValidateImmutableGeneration(
+            _dataDirectory, state.SongId, state.ArtifactGenerationId!);
+        Assert.Equal(123_456, validated.MaxScores.MaxProCymbalsScore);
+        Assert.Equal(123_456, validated.MaxScores.MaxProDrumsScore);
+        Assert.False(validated.Manifest.DoubleBassSupported);
+        using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            validated.GenerationDirectory, PathArtifactResolver.ManifestFileName)));
+        Assert.False(manifest.RootElement.GetProperty("plasticDrumsHasAuthoredActivationWindows").GetBoolean());
+        Assert.True(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
+        var repeated = await coordinator.GeneratePathsAsync([song], false, CancellationToken.None);
+        Assert.Equal(1, repeated.Skipped);
+        AssertNoStagingAttempts();
+    }
+
+    [Theory]
+    [InlineData("PLASTIC DRUM")]
+    [InlineData("PLASTIC DRUMS")]
+    public async Task Plastic_drums_with_source_windows_save_and_preserve_requirement(string trackName)
+    {
+        var store = new FakePathDataStore();
+        store.EnsureSong("authored-plastic-drums");
+        var coordinator = CreateCoordinator(
+            CreateChoptScript(), store,
+            new StaticDatHandler(EncryptMidi(
+                BuildMinimalMidi(trackName, notePitch: 100, authoredWindow: true), _midiKey)),
+            profile: PathGenerationProfiles.PlasticDrumsV4);
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("authored-plastic-drums", new In { pd = 0 })], false, CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState("authored-plastic-drums")!;
+        var validated = PathArtifactResolver.ValidateImmutableGeneration(
+            _dataDirectory, state.SongId, state.ArtifactGenerationId!);
+        Assert.True(validated.Manifest.PlasticDrumsHasAuthoredActivationWindows);
+        foreach (var instrument in state.ExpectedInstruments)
+        {
+            var path = Path.Combine(validated.GenerationDirectory, instrument, "expert.json");
+            File.WriteAllText(path, File.ReadAllText(path).Replace("\"drumFills\":[{}]", "\"drumFills\":[]", StringComparison.Ordinal));
+        }
+        Assert.False(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
+        Assert.Throws<InvalidOperationException>(() => PathArtifactResolver.ValidateImmutableGeneration(
+            _dataDirectory, state.SongId, state.ArtifactGenerationId!));
+    }
+
+    [Theory]
+    [InlineData("missing-drum-fill-field")]
+    [InlineData("missing-notes")]
+    [InlineData("zero-expert")]
+    [InlineData("malformed-json")]
+    public async Task Marker_free_plastic_drums_still_require_valid_positive_complete_json(string mode)
+    {
+        var store = new FakePathDataStore();
+        store.EnsureSong("invalid-marker-free-drums");
+        var coordinator = CreateCoordinator(
+            CreateChoptScript(new ChoptBehavior(Mode: mode)), store,
+            new StaticDatHandler(EncryptMidi(BuildMinimalMidi(notePitch: 100), _midiKey)),
+            profile: PathGenerationProfiles.PlasticDrumsV4);
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("invalid-marker-free-drums", new In { pd = 0 })], false, CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(0, result.Promoted);
+        Assert.Null(store.GetPathGenerationState("invalid-marker-free-drums")!.ArtifactGenerationId);
+        Assert.Equal("artifact_validation", Assert.Single(store.Errors).FailureStage);
+        AssertNoStagingAttempts();
+    }
+
     [Fact]
-    public async Task Plastic_drums_without_authored_windows_fail_closed()
+    public async Task Plastic_drums_missing_source_authored_windows_fail_closed()
     {
         var chopt = CreateChoptScript(
             new ChoptBehavior(Mode: "missing-drum-fills"));
@@ -387,7 +475,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         var coordinator = CreateCoordinator(
             chopt,
             store,
-            new StaticDatHandler(_encryptedDat),
+            new StaticDatHandler(EncryptMidi(BuildMinimalMidi(authoredWindow: true), _midiKey)),
             profile:
                 $"  {PathGenerationProfiles.PlasticDrumsV4}  ");
 
@@ -1529,6 +1617,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
               malformed-json) printf '{' ;;
               legacy-json) printf '%s' '{{BuildLegacyPathJson(123_456, "expert")}}' ;;
               missing-notes) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}' ;;
+              missing-drum-fill-field) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace(",\"drumFills\":[{}]", "", StringComparison.Ordinal)}}' ;;
               missing-drum-fills) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace("\"drumFills\":[{}]", "\"drumFills\":[]", StringComparison.Ordinal)}}' ;;
               zero-expert)
                 if [ "$difficulty" = "expert" ]; then
@@ -1586,6 +1675,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             if "{{mode}}"=="malformed-json" echo {
             if "{{mode}}"=="legacy-json" echo {{BuildLegacyPathJson(123_456, "expert")}}
             if "{{mode}}"=="missing-notes" echo {{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}
+            if "{{mode}}"=="missing-drum-fill-field" echo {{BuildValidPathJson(123_456, "expert").Replace(",\"drumFills\":[{}]", "", StringComparison.Ordinal)}}
             if "{{mode}}"=="missing-drum-fills" echo {{BuildValidPathJson(123_456, "expert").Replace("\"drumFills\":[{}]", "\"drumFills\":[]", StringComparison.Ordinal)}}
             if "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(0, "expert")}}
             if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="legacy-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="missing-drum-fills" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
@@ -1663,7 +1753,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
     private static byte[] BuildMinimalMidi(
         string? trackName = "PLASTIC DRUMS",
-        byte? notePitch = null)
+        byte? notePitch = null,
+        bool authoredWindow = false)
     {
         using var stream = new MemoryStream();
         stream.Write("MThd"u8);
@@ -1683,6 +1774,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         }
         if (notePitch is { } pitch)
             trackStream.Write([0x00, 0x90, pitch, 100, 0x60, 0x80, pitch, 0]);
+        if (authoredWindow)
+            trackStream.Write([0x00, 0x90, 120, 100, 0x60, 0x80, 120, 0]);
         trackStream.Write([0x00, 0xff, 0x2f, 0x00]);
         var track = trackStream.ToArray();
         stream.Write("MTrk"u8);
