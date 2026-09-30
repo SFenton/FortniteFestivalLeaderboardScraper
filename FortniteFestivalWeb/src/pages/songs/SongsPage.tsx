@@ -1224,6 +1224,7 @@ export default function SongsPage() {
         >
           <LazySongsFilterModal
             visible={filterModal.visible}
+            hasSelectedProfile={profile !== null}
             draft={filterModal.draft}
             savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
             availableSeasons={availableSeasons}

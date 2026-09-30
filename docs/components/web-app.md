@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: ee5be090
+last_verified_commit: f868487e
 sources:
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
@@ -403,7 +403,9 @@ client aligned.
 
 The desktop Songs toolbar and mobile action dock always include Filter once
 the page controls are revealed, including without a selected player or band
-and before score data loads. General filters do not require a score profile.
+and before score data loads. Without a selected profile, the modal shows only
+General and its filters. Selecting a player or band makes the other applicable
+filter sections available, even while score data is loading.
 
 The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
 persisted in browser song settings. The General section precedes Global Score

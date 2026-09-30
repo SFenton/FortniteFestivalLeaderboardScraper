@@ -30,6 +30,7 @@ type FilterModalTestProps = Omit<ComponentProps<typeof FilterModal>, 'onChange'>
 
 const defaultProps = (): FilterModalTestProps => ({
   visible: true,
+  hasSelectedProfile: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
   availableSeasons: [1, 2, 3],
@@ -105,9 +106,15 @@ describe('FilterModal', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('renders modal title when visible', () => {
-    renderModal();
+  it('shows only General filters without a selected profile', () => {
+    renderModal({ hasSelectedProfile: false });
     expect(screen.getByText('Filter Songs')).toBeDefined();
+    expect(screen.getByText('General')).toBeInTheDocument();
+    expect(screen.getByText('Double Bass')).toBeInTheDocument();
+    expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
+    expect(screen.queryByText('Item Shop')).toBeNull();
   });
 
   it('places the general double bass filter before score filters', () => {
@@ -123,7 +130,7 @@ describe('FilterModal', () => {
   });
 
   it('allows neither double bass toggle or exactly one toggle to be selected', () => {
-    const props = defaultProps();
+    const props = { ...defaultProps(), hasSelectedProfile: false };
     const view = renderModal(props);
     fireEvent.click(screen.getByText('Double Bass'));
     fireEvent.click(screen.getByText('Double Bass Support'));

@@ -42,6 +42,7 @@ type FilterModalDraftState = {
 
 type FilterModalProps = {
   visible: boolean;
+  hasSelectedProfile: boolean;
   draft: FilterDraft;
   savedDraft?: FilterDraft;
   availableSeasons: number[];
@@ -60,12 +61,12 @@ const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70
 const noopBandApply = () => {};
 const noopBandReset = () => {};
 
-export default function FilterModal({ visible, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+export default function FilterModal({ visible, hasSelectedProfile, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const { isShopVisible } = useShopState();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
-  const showBandComboSection = selectedBandMode && !!bandComboFilter;
+  const showBandComboSection = hasSelectedProfile && selectedBandMode && !!bandComboFilter;
   const bandComboController = useBandInstrumentFilterController({
     visible: visible && showBandComboSection,
     selectedBand: bandComboFilter?.selectedBand ?? null,
@@ -142,7 +143,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     onChange({ ...draft, instrumentFilter: key });
   }, [draft, onChange]);
 
-  const showIndividualBandMemberFilters = selectedBandMode && selectedBandMembers.length > 0 && bandComboInstruments.length > 0;
+  const showIndividualBandMemberFilters = hasSelectedProfile && selectedBandMode && selectedBandMembers.length > 0 && bandComboInstruments.length > 0;
 
   const modalDraft = useMemo<FilterModalDraftState>(() => ({
     filters: draft,
@@ -199,7 +200,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
         </Accordion>
       </ModalSection>
 
-      {selectedBandMode ? (
+      {hasSelectedProfile && (selectedBandMode ? (
         <ModalSection title={t('filter.selectedBandScores')} hint={t('filter.selectedBandScoresHint', { band: selectedBandName ?? t('band.title') })}>
           <ToggleRow
             label={t('filter.selectedBandHasScore')}
@@ -292,7 +293,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
             </Accordion>
           ))}
         </ModalSection>
-      </>)}
+      </>))}
 
       {showIndividualBandMemberFilters ? (
         <ModalSection>
@@ -321,7 +322,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       ) : null}
 
       {/* Item Shop filters */}
-      {isShopVisible && (
+      {hasSelectedProfile && isShopVisible && (
         <ModalSection>
           <Accordion title={t('filter.shopTitle')} hint={t('filter.shopHint')}>
             <ToggleRow
@@ -341,7 +342,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       )}
 
       {/* Instrument selector */}
-      {!selectedBandMode && (
+      {hasSelectedProfile && !selectedBandMode && (
         <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
           <InstrumentSelector
             instruments={selectorItems}

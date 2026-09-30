@@ -1520,6 +1520,7 @@ describe('SongsPage — callback function coverage (extracted)', () => {
 
 describe('SongsPage — filter callback coverage (explicit desktop)', () => {
   beforeEach(async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     await loadSongsFilterModal();
   });
 
@@ -1736,12 +1737,25 @@ describe('SongsPage — extra coverage', () => {
     });
   });
 
-  it('renders a visible filter pill button without a tracked player', async () => {
+  it('opens only General filters without a selected profile', async () => {
+    localStorage.removeItem('fst:trackedPlayer');
+    localStorage.removeItem('fst:selectedProfile');
+    await loadSongsFilterModal();
     renderSongsPage('/songs');
     await act(async () => { vi.advanceTimersByTime(1000); });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Filter' })).toBeVisible();
     });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.getByText('General')).toBeVisible();
+    expect(screen.getByText('Double Bass')).toBeVisible();
+    expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
+    expect(screen.queryByText('Item Shop')).toBeNull();
   });
 
   it('opens sort modal when sort pill is clicked', async () => {
