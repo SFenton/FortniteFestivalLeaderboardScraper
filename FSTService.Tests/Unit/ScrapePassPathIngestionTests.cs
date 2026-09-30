@@ -1,11 +1,13 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -14,9 +16,9 @@ using NSubstitute;
 namespace FSTService.Tests.Unit;
 
 /// <summary>
-/// Phase B publication-safe scrape-pass path ingestion. Every case asserts
-/// that live <c>songs</c> rows are untouched: staging only writes the working
-/// publication snapshot.
+/// Publication-safe scrape-pass path ingestion. Staging only writes the working
+/// publication snapshot; successful publication promotes staged paths and maxima
+/// into live <c>songs</c> rows together.
 /// </summary>
 public sealed class ScrapePassPathIngestionTests : IDisposable
 {
@@ -115,7 +117,7 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         Assert.Equal(1, result.Applied);
         Assert.Equal(1, result.Bootstrap);
         Assert.Equal(0, result.IdenticalRefresh);
-        Assert.Equal(0, result.ChangedBlocked);
+        Assert.Equal(0, result.ChangedRefresh);
         Assert.Equal(0, result.Failed);
         Assert.Equal(0, result.Conflicted);
         Assert.Equal(0, result.Remaining);
@@ -187,7 +189,7 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         Assert.Equal(1, result.Applied);
         Assert.Equal(1, result.IdenticalRefresh);
         Assert.Equal(0, result.Bootstrap);
-        Assert.Equal(0, result.ChangedBlocked);
+        Assert.Equal(0, result.ChangedRefresh);
 
         var candidate = ReadSnapshot(publicationId, "song-a");
         Assert.NotEqual("gen-existing", candidate.GenerationId);
@@ -199,65 +201,111 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         Assert.Equal(1, live.Revision);
     }
 
-    [Fact]
-    public async Task Changed_maxima_are_blocked_and_recorded_by_default()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    public async Task Midi_catalog_changes_publish_maxima_automatically(int previousScoreOffset)
     {
         var songs = await SeedPendingCatalogAsync("song-a");
-        SeedExistingGeneration("song-a", GeneratedScore - 1);
+        var previousScore = GeneratedScore + previousScoreOffset;
+        SeedExistingGeneration("song-a", previousScore);
+        ExecuteNonQuery(
+            "UPDATE songs SET path_generation_pending = FALSE WHERE song_id = @songId",
+            command => command.Parameters.AddWithValue("songId", "song-a"));
+        Assert.Empty(CreateStore().GetAutomaticPathGenerationCandidates(DateTime.UtcNow));
+
+        // A provider MIDI revision queues the existing song again.
+        songs[0].lastModified = songs[0].lastModified.AddDays(1);
+        await new FestivalPersistence(DataSource).SaveSongsVersionedAsync(songs);
+        Assert.Single(CreateStore().GetAutomaticPathGenerationCandidates(DateTime.UtcNow));
         var (scrapeId, publicationId) = StartScrape();
         var ingestion = CreateIngestion(CreateChoptScript());
 
         var result = await ingestion.IngestAsync(
-            scrapeId,
-            publicationId,
-            songs,
-            CancellationToken.None);
+            scrapeId, publicationId, songs, CancellationToken.None);
 
-        Assert.Equal(0, result.Applied);
+        Assert.Equal(1, result.Applied);
         Assert.Equal(1, result.Staged);
-        Assert.Equal(1, result.ChangedBlocked);
-
+        Assert.Equal(1, result.ChangedRefresh);
+        Assert.Equal(0, result.Deferred);
         var candidate = ReadSnapshot(publicationId, "song-a");
-        Assert.Equal("gen-existing", candidate.GenerationId);
-        Assert.Equal(GeneratedScore - 1, candidate.MaxLeadScore);
-        Assert.False(candidate.PromotionPending);
+        Assert.NotEqual("gen-existing", candidate.GenerationId);
+        Assert.Equal(GeneratedScore, candidate.MaxLeadScore);
+        Assert.Equal(2, candidate.Revision);
+        Assert.True(candidate.PromotionPending);
+        Assert.Equal(previousScore, ReadLiveSong("song-a").MaxLeadScore);
+        Assert.True(ReadLiveSong("song-a").PathGenerationPending);
+        Assert.False(CreateStore().GetPathGenerationDeferralState("song-a")!.ReviewRequired);
+        Assert.Equal(0, CountPathGenerationErrors(
+            "song-a", PublicationPathArtifactSchema.LegacyChangedMaximaReviewReason));
 
+        PublishScrape(scrapeId, "song-a");
         var live = ReadLiveSong("song-a");
-        Assert.Equal("gen-existing", live.GenerationId);
-        Assert.True(live.PathGenerationPending);
-
-        Assert.Equal(
-            1,
-            CountPathGenerationErrors(
-                "song-a",
-                PublicationPathArtifactSchema.ChangedMaximaFailureStage));
+        Assert.Equal(candidate.GenerationId, live.GenerationId);
+        Assert.Equal(GeneratedScore, live.MaxLeadScore);
+        Assert.Equal(2, live.Revision);
+        Assert.False(live.PathGenerationPending);
     }
 
     [Fact]
-    public async Task Changed_maxima_are_applied_when_explicitly_allowed()
+    public async Task Legacy_maxima_review_resumes_without_catalog_change_or_approval()
     {
         var songs = await SeedPendingCatalogAsync("song-a");
         SeedExistingGeneration("song-a", GeneratedScore - 1);
+        var store = CreateStore();
+        await store.MarkPathGenerationReviewRequiredAsync(
+            "song-a", PublicationPathArtifactSchema.LegacyChangedMaximaReviewReason,
+            "2026-07-31T12:00:00.0000000Z", CancellationToken.None);
+        Assert.Single(store.GetAutomaticPathGenerationCandidates(DateTime.UtcNow));
         var (scrapeId, publicationId) = StartScrape();
-        var ingestion = CreateIngestion(
-            CreateChoptScript(),
-            options =>
-                options.ScrapePassPathGenerationAllowChangedMaxima = true);
+        var ingestion = CreateIngestion(CreateChoptScript(), options =>
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ScrapePassPathGenerationAllowChangedMaxima"] = "false",
+                }).Build().Bind(options));
 
         var result = await ingestion.IngestAsync(
-            scrapeId,
-            publicationId,
-            songs,
-            CancellationToken.None);
+            scrapeId, publicationId, songs, CancellationToken.None);
 
         Assert.Equal(1, result.Applied);
-        Assert.Equal(0, result.ChangedBlocked);
-        Assert.Equal(
-            GeneratedScore,
-            ReadSnapshot(publicationId, "song-a").MaxLeadScore);
-        Assert.Equal(
-            GeneratedScore - 1,
-            ReadLiveSong("song-a").MaxLeadScore);
+        Assert.Equal(1, result.ChangedRefresh);
+        Assert.Equal(GeneratedScore, ReadSnapshot(publicationId, "song-a").MaxLeadScore);
+        Assert.Equal(GeneratedScore - 1, ReadLiveSong("song-a").MaxLeadScore);
+        Assert.True(store.GetPathGenerationDeferralState("song-a")!.ReviewRequired);
+
+        PublishScrape(scrapeId, "song-a");
+        var state = store.GetPathGenerationDeferralState("song-a")!;
+        Assert.False(state.Pending);
+        Assert.False(state.ReviewRequired);
+        Assert.Null(state.ReviewReason);
+        Assert.Equal(0, state.AttemptCount);
+        Assert.Equal(GeneratedScore, ReadLiveSong("song-a").MaxLeadScore);
+    }
+
+    [Fact]
+    public async Task Failed_legacy_review_retry_uses_backoff_and_preserves_live_maxima()
+    {
+        var songs = await SeedPendingCatalogAsync("song-a");
+        SeedExistingGeneration("song-a", GeneratedScore - 1);
+        var store = CreateStore();
+        await store.MarkPathGenerationReviewRequiredAsync(
+            "song-a", PublicationPathArtifactSchema.LegacyChangedMaximaReviewReason,
+            "2026-07-31T12:00:00.0000000Z", CancellationToken.None);
+        var (scrapeId, publicationId) = StartScrape();
+        var ingestion = CreateIngestion(CreateChoptScript(),
+            handler: new SelectiveDatHandler(_encryptedDat, "song-a"));
+        var result = await ingestion.IngestAsync(
+            scrapeId, publicationId, songs, CancellationToken.None);
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(0, result.Applied);
+        var state = store.GetPathGenerationDeferralState("song-a")!;
+        Assert.True(state.Pending);
+        Assert.False(state.ReviewRequired);
+        Assert.NotNull(state.NextAttemptAtUtc);
+        Assert.Empty(store.GetAutomaticPathGenerationCandidates(DateTime.UtcNow));
+        Assert.Equal(GeneratedScore - 1, ReadLiveSong("song-a").MaxLeadScore);
+        Assert.Equal("gen-existing", ReadSnapshot(publicationId, "song-a").GenerationId);
     }
 
     [Fact]
@@ -625,60 +673,32 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
     }
 
     [Fact]
-    public async Task Blocked_song_does_not_monopolize_the_next_pass()
+    public async Task Published_changed_song_leaves_the_next_pass_for_other_pending_songs()
     {
         var songs = await SeedPendingCatalogAsync("song-a", "song-b");
         SeedExistingGeneration("song-a", GeneratedScore - 1);
         var first = StartScrape();
-        var ingestion = CreateIngestion(
-            CreateChoptScript(),
+        var ingestion = CreateIngestion(CreateChoptScript(),
             options => options.ScrapePassPathGenerationMaxSongs = 1);
-
         var firstPass = await ingestion.IngestAsync(
-            first.ScrapeId,
-            first.PublicationId,
-            songs,
-            CancellationToken.None);
-
-        Assert.Equal(1, firstPass.ChangedBlocked);
-        Assert.Equal(0, firstPass.Applied);
-        Assert.Equal(1, firstPass.Deferred);
-        var blocked = CreateStore().GetPathGenerationDeferralState("song-a")!;
-        Assert.True(blocked.Pending);
-        Assert.True(blocked.ReviewRequired);
+            first.ScrapeId, first.PublicationId, songs, CancellationToken.None);
+        Assert.Equal(1, firstPass.ChangedRefresh);
+        Assert.Equal(1, firstPass.Applied);
+        Assert.Equal(0, firstPass.Deferred);
+        PublishScrape(first.ScrapeId, "song-a", "song-b");
         var generationsAfterFirstPass = CountGenerations("song-a");
-        Assert.Equal(0, generationsAfterFirstPass);
-        Assert.Equal(
-            1,
-            CountPathGenerationErrors(
-                "song-a",
-                PublicationPathArtifactSchema.ChangedMaximaFailureStage));
 
-        // Next pass: the blocked song is excluded, so the cap goes to the next
-        // pending song instead of regenerating the blocked one.
-        Db.FailScrapeRun(first.ScrapeId, "scrape", "test isolation");
         var second = StartScrape();
         var secondPass = await ingestion.IngestAsync(
-            second.ScrapeId,
-            second.PublicationId,
-            songs,
-            CancellationToken.None);
-
-        Assert.Equal(2, secondPass.Pending);
+            second.ScrapeId, second.PublicationId, songs, CancellationToken.None);
+        Assert.Equal(1, secondPass.Pending);
         Assert.Equal(1, secondPass.Eligible);
-        Assert.Equal(1, secondPass.Selected);
         Assert.Equal(1, secondPass.Applied);
-        Assert.Equal(0, secondPass.ChangedBlocked);
+        Assert.Equal(0, secondPass.ChangedRefresh);
         Assert.NotNull(ReadSnapshotGeneration(second.PublicationId, "song-b"));
-
-        // No duplicate error rows and no repeated generation for the blocked
-        // song.
-        Assert.Equal(
-            1,
-            CountPathGenerationErrors(
-                "song-a",
-                PublicationPathArtifactSchema.ChangedMaximaFailureStage));
         Assert.Equal(generationsAfterFirstPass, CountGenerations("song-a"));
+        Assert.Equal(0, CountPathGenerationErrors(
+            "song-a", PublicationPathArtifactSchema.LegacyChangedMaximaReviewReason));
     }
 
     [Fact]
@@ -688,7 +708,7 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         var store = CreateStore();
         await store.MarkPathGenerationReviewRequiredAsync(
             "song-a",
-            PublicationPathArtifactSchema.ChangedMaximaFailureStage,
+            "manual_chart_validation_review",
             "2026-07-31T12:00:00.0000000Z",
             CancellationToken.None);
 
@@ -731,7 +751,7 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         // T1: blocked for review against the original catalog identity.
         await store.MarkPathGenerationReviewRequiredAsync(
             "song-a",
-            PublicationPathArtifactSchema.ChangedMaximaFailureStage,
+            "manual_chart_validation_review",
             "2026-07-31T12:00:00.0000000Z",
             CancellationToken.None);
         Assert.Empty(
@@ -998,6 +1018,29 @@ public sealed class ScrapePassPathIngestionTests : IDisposable
         long publicationId,
         string songId)
         => ReadSnapshot(publicationId, songId).GenerationId;
+
+    private void PublishScrape(long scrapeId, params string[] songIds)
+    {
+        var publicationId = Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        var json = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            count = songIds.Length,
+            currentSeason = 14,
+            songs = songIds.Select(songId => new
+            {
+                songId,
+                maxScores = SongsCacheService.BuildPublicMaxScores(new SongMaxScores
+                {
+                    MaxLeadScore = ReadSnapshot(publicationId, songId).MaxLeadScore,
+                }),
+            }),
+        });
+        Db.BulkSetCachedResponsesStaging(
+            [(Key: PublicationApiCacheKeys.Songs, Json: json,
+                ETag: ResponseCacheService.ComputeETag(json))], publicationId);
+        Db.CompleteScrapeRun(scrapeId, songIds.Length, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: true);
+    }
 
     private SnapshotRow ReadSnapshot(long publicationId, string songId)
     {
@@ -1336,7 +1379,6 @@ public sealed class ScrapePassPathGenerationOptionsTests
         Assert.Equal(
             TimeSpan.FromMinutes(20),
             options.ScrapePassPathGenerationTimeout);
-        Assert.False(options.ScrapePassPathGenerationAllowChangedMaxima);
         Assert.False(
             new ScraperOptionsValidator().Validate(null, options).Failed);
     }
@@ -1589,9 +1631,8 @@ public sealed class DeploymentRolePathGenerationConfigTests
         Assert.Equal("true", role["Scraper__UsePublicationPathArtifacts"]);
         Assert.Equal("true", role["Scraper__EnableScrapePassPathGeneration"]);
         Assert.Equal("false", role["Scraper__EnableAutomaticPathGeneration"]);
-        Assert.Equal(
-            "false",
-            role["Scraper__ScrapePassPathGenerationAllowChangedMaxima"]);
+        Assert.False(role.ContainsKey(
+            "Scraper__ScrapePassPathGenerationAllowChangedMaxima"));
     }
 
     [Fact]

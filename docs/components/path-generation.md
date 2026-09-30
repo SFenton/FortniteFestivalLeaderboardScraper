@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-09-30
-last_verified_commit: ee5be090
+last_verified_commit: b801fdf3
 sources:
   - FSTService/Scraping/PathMetadataBackfillCommand.cs
   - FSTService/Scraping/PathDoubleBassMetadataStore.cs
@@ -264,18 +264,21 @@ MIDI AES key at startup (`Scraper:MidiEncryptionKey`, with
 invalid key fails readiness instead of starting a worker that would abort every
 staging batch.
 
-Bootstraps and identical-maxima refreshes are applied. A regenerated song whose
-existing maxima change is blocked by default, recorded as
-`max_score_change_requires_review`, durably marked review-required, and left
-pending for max-score maintenance review;
-`Scraper:ScrapePassPathGenerationAllowChangedMaxima` opts in. Per-song failures
-are warnings: the song stays pending, gets a bounded retry-after, and the batch
-continues. Staging subsystem failures never abort the scrape pass. Deferred
-songs are re-armed by a successful promotion, a provider catalog identity
-change, or `POST /api/admin/path-generation/rearm`.
+Bootstraps, identical-maxima refreshes, and changed-maxima refreshes are applied
+automatically to the candidate publication. MIDI updates need no maximum-score
+approval: validated new paths and maxima become public together when that
+scrape publishes. Songs held by the legacy `max_score_change_requires_review`
+reason are eligible again without a catalog change or operator reset. Existing
+review state clears only on a successful live promotion; a failed attempt
+replaces it with ordinary retry backoff.
+
+Per-song failures are warnings: the song stays pending, gets a bounded
+retry-after, and the batch continues. Staging subsystem failures never abort
+the scrape pass. Other deferred songs are re-armed by a successful promotion,
+a provider catalog identity change, or `POST /api/admin/path-generation/rearm`.
 
 When a complete immutable generation is rejected before candidate attachment
-(validation, changed-maxima review, repository failure, or explicit conflict),
+(validation, repository failure, or explicit conflict),
 the worker checks live and retained publication references before deleting the
 unreachable directory. A failed reference check or delete retains the
 generation and records `orphan_cleanup` evidence instead of risking a
@@ -294,8 +297,9 @@ guarded max-score maintenance, or
 
 ## Max-score correction maintenance
 
-A reviewed correction to an already-published song's theoretical maximum uses
-the CLI-only
+Routine MIDI-driven maximum changes use automatic scrape-pass staging above.
+An explicit repair of an already-published generation outside the normal scrape
+pipeline uses the CLI-only
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md),
 not the generic admin endpoint.
 

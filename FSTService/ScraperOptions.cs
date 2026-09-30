@@ -567,14 +567,6 @@ public sealed class ScraperOptions
         DefaultScrapePassPathGenerationTimeout;
 
     /// <summary>
-    /// Allows scrape-pass staging to apply a regenerated song whose existing
-    /// maxima change. Default false records
-    /// <c>max_score_change_requires_review</c> and leaves the candidate, the
-    /// live row, and the pending flag untouched.
-    /// </summary>
-    public bool ScrapePassPathGenerationAllowChangedMaxima { get; set; }
-
-    /// <summary>
     /// Versioned identity for the CHOpt arguments and artifact contract.
     /// Change this value whenever path-generation semantics change.
     /// </summary>

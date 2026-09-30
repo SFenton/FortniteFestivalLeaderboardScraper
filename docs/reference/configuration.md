@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-26
-last_verified_commit: fac42684
+last_verified: 2026-09-30
+last_verified_commit: b801fdf3
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
@@ -198,7 +198,6 @@ surface.
 | `Scraper:EnableScrapePassPathGeneration` | `false` | Worker-only publication-safe scrape-pass staging. Stages pending-song generations into the working publication snapshot; live rows change only at publication commit |
 | `Scraper:ScrapePassPathGenerationMaxSongs` | `25` | Maximum pending songs staged per scrape pass (1–500) |
 | `Scraper:ScrapePassPathGenerationTimeout` | `00:20:00` | Whole-batch staging budget (1 minute–6 hours) |
-| `Scraper:ScrapePassPathGenerationAllowChangedMaxima` | `false` | Applies a regenerated song whose existing maxima changed. Off records `max_score_change_requires_review` and leaves the song pending |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
 | `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v4` | Semantic identity for the dedicated plastic-drums MIDI variant, authored activation-window contract, eight-instrument scope, and artifact schema |
 
@@ -411,8 +410,10 @@ provider-refresh owner.
 `Scraper__UsePublicationPathArtifacts=true` and
 `Scraper__EnableScrapePassPathGeneration=true` with the bounded
 `ScrapePassPathGenerationMaxSongs=25`,
-`ScrapePassPathGenerationTimeout=00:20:00`, and
-`ScrapePassPathGenerationAllowChangedMaxima=false`. Legacy
+`ScrapePassPathGenerationTimeout=00:20:00`. Validated MIDI-driven maximum
+changes apply automatically through candidate publication, without an approval
+setting. The retired `ScrapePassPathGenerationAllowChangedMaxima` key is
+ignored if it remains in older deployment configuration. Legacy
 `Scraper__EnableAutomaticPathGeneration` stays `false` on both roles and is
 rejected at startup, so the supported production configuration replaces the
 legacy generator rather than leaving the catalog without one. The shipped
