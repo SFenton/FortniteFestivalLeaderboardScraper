@@ -71,6 +71,8 @@ import {
   type SongSortMode,
   defaultSongSettings,
   defaultSongFilters,
+  getSongDecade,
+  getSongDurationBucket,
   loadSongSettings,
   normalizeSongSettings,
   saveSongSettings,
@@ -608,8 +610,10 @@ export default function SongsPage() {
         selectedBandHasScore: defaults.selectedBandHasScore,
         selectedBandMissingScore: defaults.selectedBandMissingScore,
         individualBandMemberScoreFilters: defaults.individualBandMemberScoreFilters,
-        shopInShop: defaults.shopInShop,
-        shopLeavingTomorrow: defaults.shopLeavingTomorrow,
+        doubleBass: defaults.doubleBass,
+        yearFilter: defaults.yearFilter,
+        durationFilter: defaults.durationFilter,
+        shopAvailability: defaults.shopAvailability,
         instrumentFilter: null,
       });
       return;
@@ -827,7 +831,6 @@ export default function SongsPage() {
     scoreMap: displayScoreMap,
     allScoreMap: displayAllScoreMap,
     shopSongIds: shopCtx.shopSongIds,
-    leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     isScoreValid,
     filterInvalidScoresEnabled: scoreFilterEnabled,
     shopVisible: isShopVisible,
@@ -875,6 +878,16 @@ export default function SongsPage() {
       : filtersActive
         ? t('songs.noResultsSubtitle')
         : t('common.serviceDown');
+
+  const availableDecades = useMemo(() => {
+    const decades = new Set<number>();
+    for (const song of songs) {
+      const decade = getSongDecade(song.year);
+      if (decade !== null) decades.add(decade);
+    }
+    return [...decades].sort((a, b) => a - b);
+  }, [songs]);
+  const hasLongSongs = useMemo(() => songs.some(song => getSongDurationBucket(song.durationSeconds) === 10), [songs]);
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
@@ -1228,6 +1241,8 @@ export default function SongsPage() {
             draft={filterModal.draft}
             savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
             availableSeasons={availableSeasons}
+            availableDecades={availableDecades}
+            hasLongSongs={hasLongSongs}
             selectedBandMode={isSelectedBand}
             selectedBandName={selectedBand?.displayName}
             selectedBandMembers={selectedBandMemberFilterOptions}

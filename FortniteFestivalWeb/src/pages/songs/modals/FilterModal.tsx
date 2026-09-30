@@ -47,6 +47,8 @@ type FilterModalProps = {
   draft: FilterDraft;
   savedDraft?: FilterDraft;
   availableSeasons: number[];
+  availableDecades?: readonly number[];
+  hasLongSongs?: boolean;
   selectedBandMode?: boolean;
   selectedBandName?: string;
   selectedBandMembers?: readonly { accountId: string; displayName: string }[];
@@ -59,10 +61,11 @@ type FilterModalProps = {
 };
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+const DURATION_BUCKETS = Array.from({ length: 10 }, (_, minute) => minute);
 const noopBandApply = () => {};
 const noopBandReset = () => {};
 
-export default function FilterModal({ visible, hasSelectedProfile, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+export default function FilterModal({ visible, hasSelectedProfile, draft, savedDraft, availableSeasons, availableDecades = [], hasLongSongs = false, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const { isShopVisible } = useShopState();
@@ -100,8 +103,16 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
     onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
   const toggleDoubleBass = (value: 'supported' | 'unsupported') => {
-    onChange({ ...draft, doubleBass: draft.doubleBass === value ? null : value });
+    if (draft.doubleBass === value) return;
+    const other = value === 'supported' ? 'unsupported' : 'supported';
+    onChange({ ...draft, doubleBass: draft.doubleBass === other ? null : other });
   };
+  const toggleShopAvailability = (value: 'available' | 'unavailable') => {
+    if (draft.shopAvailability === value) return;
+    const other = value === 'available' ? 'unavailable' : 'available';
+    onChange({ ...draft, shopAvailability: draft.shopAvailability === other ? null : other });
+  };
+  const durationBuckets = hasLongSongs ? [...DURATION_BUCKETS, 10] : DURATION_BUCKETS;
   const toggleIndividualBandMemberHasScore = (accountId: string) => {
     const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
     const next = !(current.hasScore ?? false);
@@ -188,15 +199,53 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
 
       <ModalSection title={t('filter.general')} hint={t('filter.generalHint')}>
         <div style={{ paddingInline: Gap.xl }}>
+          <Accordion title={t('filter.yearTitle')} hint={t('filter.yearHint')}>
+            {availableDecades.map(decade => (
+              <ToggleRow
+                key={decade}
+                label={t('filter.decadeLabel', { decade })}
+                checked={draft.yearFilter[decade] !== false}
+                onToggle={() => onChange({ ...draft, yearFilter: { ...draft.yearFilter, [decade]: draft.yearFilter[decade] === false } })}
+              />
+            ))}
+          </Accordion>
+          <Accordion title={t('filter.durationTitle')} hint={t('filter.durationHint')}>
+            {durationBuckets.map(minute => (
+              <ToggleRow
+                key={minute}
+                label={minute === 0 ? t('filter.durationUnderMinute') : minute === 10 ? t('filter.durationTenPlus') : t('filter.durationRange', { start: minute, end: minute + 1 })}
+                checked={draft.durationFilter[minute] !== false}
+                onToggle={() => onChange({ ...draft, durationFilter: { ...draft.durationFilter, [minute]: draft.durationFilter[minute] === false } })}
+              />
+            ))}
+          </Accordion>
+          {isShopVisible && (
+            <Accordion title={t('filter.shopTitle')} hint={t('filter.shopAvailabilityHint')}>
+              <ToggleRow
+                label={t('filter.shopAvailable')}
+                checked={draft.shopAvailability !== 'unavailable'}
+                disabled={draft.shopAvailability === 'available'}
+                onToggle={() => toggleShopAvailability('available')}
+              />
+              <ToggleRow
+                label={t('filter.shopUnavailable')}
+                checked={draft.shopAvailability !== 'available'}
+                disabled={draft.shopAvailability === 'unavailable'}
+                onToggle={() => toggleShopAvailability('unavailable')}
+              />
+            </Accordion>
+          )}
           <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
             <ToggleRow
               label={t('filter.doubleBassSupport')}
-              checked={draft.doubleBass === 'supported'}
+              checked={draft.doubleBass !== 'unsupported'}
+              disabled={draft.doubleBass === 'supported'}
               onToggle={() => toggleDoubleBass('supported')}
             />
             <ToggleRow
               label={t('filter.noDoubleBassSupport')}
-              checked={draft.doubleBass === 'unsupported'}
+              checked={draft.doubleBass !== 'supported'}
+              disabled={draft.doubleBass === 'unsupported'}
               onToggle={() => toggleDoubleBass('unsupported')}
             />
           </Accordion>
@@ -323,26 +372,6 @@ export default function FilterModal({ visible, hasSelectedProfile, draft, savedD
           </Accordion>
         </ModalSection>
       ) : null}
-
-      {/* Item Shop filters */}
-      {hasSelectedProfile && isShopVisible && (
-        <ModalSection>
-          <Accordion title={t('filter.shopTitle')} hint={t('filter.shopHint')}>
-            <ToggleRow
-              label={t('filter.shopInShop')}
-              description={t('filter.shopInShopDesc')}
-              checked={draft.shopInShop}
-              onToggle={() => onChange({ ...draft, shopInShop: !draft.shopInShop })}
-            />
-            <ToggleRow
-              label={t('filter.shopLeavingTomorrow')}
-              description={t('filter.shopLeavingTomorrowDesc')}
-              checked={draft.shopLeavingTomorrow}
-              onToggle={() => onChange({ ...draft, shopLeavingTomorrow: !draft.shopLeavingTomorrow })}
-            />
-          </Accordion>
-        </ModalSection>
-      )}
 
       {/* Instrument selector */}
       {hasSelectedProfile && !selectedBandMode && (

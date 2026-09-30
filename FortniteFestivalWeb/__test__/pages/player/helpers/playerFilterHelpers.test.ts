@@ -29,8 +29,9 @@ function baseSongSettings(): SongSettings {
       selectedBandHasScore: false,
       selectedBandMissingScore: false,
       individualBandMemberScoreFilters: {},
-      shopInShop: false,
-      shopLeavingTomorrow: false,
+      shopAvailability: null,
+      yearFilter: {},
+      durationFilter: {},
     },
   };
 }

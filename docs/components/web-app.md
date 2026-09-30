@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: 6415d3e3
+last_verified_commit: 1ecec765
 sources:
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
@@ -407,20 +407,39 @@ and before score data loads. Without a selected profile, the modal shows only
 General and its filters. Selecting a player or band makes the other applicable
 filter sections available, even while score data is loading.
 
-The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
-persisted in browser song settings. The General section precedes Global Score
-& FC Toggles and applies across solo and selected-band views. Its Double Bass
-accordion contains mutually exclusive Double Bass Support and No Double Bass
-Support toggles; leaving both off applies no chart filter. General dropdowns
-are inset on both sides below the section heading; their toggle rows use the
-shared accordion left indent while keeping switches aligned with the dropdown
-right edge. The active General filter combines with the existing search, shop,
-score, and instrument filters.
+The Songs filter modal keeps its draft in `SongsPage`, with applied filters
+persisted in browser song settings. General applies across anonymous, solo,
+and selected-band views and combines with search, score, and instrument
+filters. Its dropdown order is Year, Duration, Item Shop, and Double Bass.
+Dropdowns are inset on both sides; toggle rows use the shared accordion left
+indent while switches stay aligned with the dropdown right edge.
 
-Support comes from `ServerSong.doubleBassSupported`: only explicit `true`
-matches support and explicit `false` matches no support. Missing or null
-metadata, including incoming songs and older path generations, matches neither
-option while a filter is enabled. Both off includes those songs normally.
+Year derives its decade options from the full catalog's `ServerSong.year`
+metadata, sorted chronologically, so newly represented decades appear without
+a web change. Duration uses `ServerSong.durationSeconds`: Under 1 Minute,
+1-2 Minutes through 9-10 Minutes, and 10+ Minutes only when a catalog song is
+at least 600 seconds long. Ranges include their lower bound and exclude the
+upper bound. All decade and duration toggles default on, including newly
+introduced buckets. Turning a bucket off excludes that bucket. Unknown or
+invalid metadata remains included with all toggles on and is excluded when
+that metadata filter is restricted.
+
+Item Shop respects the hide-shop setting and uses the shared shop snapshot,
+independent of profile selection. Available in Item Shop and Not Available in
+Item Shop both default on; either can be turned off, but the final active
+option cannot be turned off. Both on includes all songs. Classification waits
+for a loaded shop snapshot rather than treating pending data as unavailable.
+This replaces the previous In the Shop and Leaving Tomorrow filter section;
+older saved restrictions migrate to available-only, with no hidden legacy
+restriction retained. Shop badges and leaving-tomorrow display remain intact.
+
+Double Bass uses the same inclusive toggle behavior: Double Bass Support and
+No Double Bass Support both default on, either category can be excluded, and
+at least one must stay on. Both on applies no chart restriction and includes
+unknown support metadata. With one category selected, only explicit `true`
+or `false` in `ServerSong.doubleBassSupported` matches that category; absent
+or null metadata matches neither. Existing saved single-category choices
+remain selected. Reset restores all General choices in solo and band views.
 
 ### Settings service progress
 

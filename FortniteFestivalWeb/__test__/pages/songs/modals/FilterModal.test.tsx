@@ -34,6 +34,7 @@ const defaultProps = (): FilterModalTestProps => ({
   draft: baseDraft(),
   savedDraft: baseDraft(),
   availableSeasons: [1, 2, 3],
+  availableDecades: [1960, 1970, 2020, 2030],
   selectedBandMode: false,
   selectedBandName: undefined as string | undefined,
   onChange: vi.fn<(draft: FilterDraft) => void>(),
@@ -114,7 +115,9 @@ describe('FilterModal', () => {
     expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
     expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
     expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
-    expect(screen.queryByText('Item Shop')).toBeNull();
+    expect(screen.getByText('Item Shop')).toBeInTheDocument();
+    expect(screen.getByText('Year')).toBeInTheDocument();
+    expect(screen.getByText('Duration')).toBeInTheDocument();
   });
 
   it('places the general double bass filter before score filters', () => {
@@ -129,20 +132,64 @@ describe('FilterModal', () => {
     expect(screen.getByText('No Double Bass Support')).toBeDefined();
   });
 
-  it('allows neither double bass toggle or exactly one toggle to be selected', () => {
+  it.each([
+    ['Double Bass', 'doubleBass', 'Double Bass Support', 'No Double Bass Support', 'supported', 'unsupported'],
+    ['Item Shop', 'shopAvailability', 'Available in Item Shop', 'Not Available in Item Shop', 'available', 'unavailable'],
+  ] as const)('allows both or exactly one %s category, never neither', (title, field, first, second, firstValue, secondValue) => {
     const props = { ...defaultProps(), hasSelectedProfile: false };
     const view = renderModal(props);
-    fireEvent.click(screen.getByText('Double Bass'));
-    fireEvent.click(screen.getByText('Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('supported');
+    fireEvent.click(screen.getByText(title));
+    const rerenderValue = (value: typeof firstValue | typeof secondValue | null) => {
+      view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, [field]: value }} /></TestProviders>);
+    };
 
-    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'supported' }} /></TestProviders>);
-    fireEvent.click(screen.getByText('No Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('unsupported');
+    fireEvent.click(screen.getByText(first));
+    expect(props.onChange.mock.lastCall?.[0][field]).toBe(secondValue);
+    rerenderValue(secondValue);
+    expect(screen.getByText(second).closest('button')).toBeDisabled();
+    props.onChange.mockClear();
+    fireEvent.click(screen.getByText(second));
+    expect(props.onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText(first));
+    expect(props.onChange.mock.lastCall?.[0][field]).toBeNull();
 
-    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'unsupported' }} /></TestProviders>);
-    fireEvent.click(screen.getByText('No Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBeNull();
+    rerenderValue(null);
+    fireEvent.click(screen.getByText(second));
+    expect(props.onChange.mock.lastCall?.[0][field]).toBe(firstValue);
+    rerenderValue(firstValue);
+    expect(screen.getByText(first).closest('button')).toBeDisabled();
+    props.onChange.mockClear();
+    fireEvent.click(screen.getByText(first));
+    expect(props.onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText(second));
+    expect(props.onChange.mock.lastCall?.[0][field]).toBeNull();
+  });
+
+  it('orders catalog filters before Double Bass and toggles dynamically supplied decades', () => {
+    const { props } = renderModal({ hasSelectedProfile: false });
+    const headers = ['Year', 'Duration', 'Item Shop', 'Double Bass'].map(title => screen.getByText(title));
+    for (let i = 1; i < headers.length; i++) {
+      expect(headers[i - 1]!.compareDocumentPosition(headers[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    fireEvent.click(screen.getByText('Year'));
+    for (const decade of ['1960s', '1970s', '2020s', '2030s']) expect(screen.getByText(decade)).toBeDefined();
+    expect(screen.queryByText('1980s')).toBeNull();
+    fireEvent.click(screen.getByText('1960s'));
+    expect(props.onChange.mock.lastCall?.[0].yearFilter).toEqual({ 1960: false });
+  });
+
+  it('shows all minute ranges and includes 10+ only when the catalog has long songs', () => {
+    const props = defaultProps();
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText('Duration'));
+    expect(screen.getByText('Under 1 Minute')).toBeDefined();
+    for (let minute = 1; minute < 10; minute++) expect(screen.getByText(`${minute}-${minute + 1} Minutes`)).toBeDefined();
+    expect(screen.queryByText('10+ Minutes')).toBeNull();
+    fireEvent.click(screen.getByText('Under 1 Minute'));
+    expect(props.onChange.mock.lastCall?.[0].durationFilter).toEqual({ 0: false });
+    view.rerender(<TestProviders><FilterModal {...props} hasLongSongs /></TestProviders>);
+    fireEvent.click(screen.getByText('10+ Minutes'));
+    expect(props.onChange.mock.lastCall?.[0].durationFilter).toEqual({ 10: false });
   });
 
   /* ── Global toggles section ── */

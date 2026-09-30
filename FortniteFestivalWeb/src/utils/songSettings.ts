@@ -85,7 +85,12 @@ function migrateMetadataOrder(saved: string[]): string[] {
 /* ── Filter ── */
 
 export type SongFilters = {
+  /** null includes both support categories. */
   doubleBass: 'supported' | 'unsupported' | null;
+  yearFilter: Record<number, boolean>;
+  durationFilter: Record<number, boolean>;
+  /** null includes both shop availability categories. */
+  shopAvailability: 'available' | 'unavailable' | null;
   missingScores: Record<string, boolean>;
   missingFCs: Record<string, boolean>;
   hasScores: Record<string, boolean>;
@@ -98,8 +103,6 @@ export type SongFilters = {
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
   difficultyFilter: Record<number, boolean>;
-  shopInShop: boolean;
-  shopLeavingTomorrow: boolean;
 };
 
 export type IndividualBandMemberScoreFilter = {
@@ -109,6 +112,9 @@ export type IndividualBandMemberScoreFilter = {
 
 export const defaultSongFilters = (): SongFilters => ({
   doubleBass: null,
+  yearFilter: {},
+  durationFilter: {},
+  shopAvailability: null,
   missingScores: {},
   missingFCs: {},
   hasScores: {},
@@ -121,9 +127,15 @@ export const defaultSongFilters = (): SongFilters => ({
   percentileFilter: {},
   starsFilter: {},
   difficultyFilter: {},
-  shopInShop: false,
-  shopLeavingTomorrow: false,
 });
+
+/** Decade represented by its first year; missing or invalid metadata has no bucket. */
+export const getSongDecade = (year: number | undefined): number | null =>
+  year != null && Number.isFinite(year) && year > 0 ? Math.floor(year / 10) * 10 : null;
+
+/** Whole-minute lower bound, capped at 10 for the open-ended final bucket. */
+export const getSongDurationBucket = (seconds: number | undefined): number | null =>
+  seconds != null && Number.isFinite(seconds) && seconds > 0 ? Math.min(10, Math.floor(seconds / 60)) : null;
 
 const scopedFilterRecord = (map: Record<string, boolean> | undefined, visibleSet: ReadonlySet<string> | null): Record<string, boolean> => {
   if (!visibleSet) return map ?? {};
@@ -156,7 +168,8 @@ export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | und
 
 export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null, selectedBandMode = false): boolean => {
   if (f.doubleBass === 'supported' || f.doubleBass === 'unsupported') return true;
-  if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
+  if (Object.values(f.yearFilter ?? {}).some(v => v === false) || Object.values(f.durationFilter ?? {}).some(v => v === false)) return true;
+  if (shopVisible && (f.shopAvailability === 'available' || f.shopAvailability === 'unavailable')) return true;
   if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore || hasIndividualBandMemberScoreFilters(f);
   const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
   const hasPerInstrument =
@@ -222,6 +235,10 @@ export function loadSongSettings(): SongSettings {
     const parsed = JSON.parse(raw);
     // Merge with defaults to handle missing keys from older versions
     const defaults = defaultSongSettings();
+    const { shopInShop, shopLeavingTomorrow, ...savedFilters } = parsed.filters ?? {};
+    const shopAvailability = savedFilters.shopAvailability === undefined
+      ? (shopInShop || shopLeavingTomorrow ? 'available' : null)
+      : savedFilters.shopAvailability;
     return normalizeSongSettings({
       sortMode: parsed.sortMode ?? defaults.sortMode,
       sortAscending: parsed.sortAscending ?? defaults.sortAscending,
@@ -229,7 +246,8 @@ export function loadSongSettings(): SongSettings {
       instrumentOrder: parsed.instrumentOrder ?? defaults.instrumentOrder,
       filters: {
         ...defaults.filters,
-        ...(parsed.filters ?? {}),
+        ...savedFilters,
+        shopAvailability: shopAvailability === 'available' || shopAvailability === 'unavailable' ? shopAvailability : null,
       },
       instrument: parsed.instrument ?? defaults.instrument,
     });

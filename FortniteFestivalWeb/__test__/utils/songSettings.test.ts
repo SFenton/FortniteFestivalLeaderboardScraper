@@ -29,13 +29,31 @@ describe('songSettings', () => {
   it('persists the general filter and defaults older saved settings to no filter', () => {
     const settings = defaultSongSettings();
     settings.filters.doubleBass = 'unsupported';
+    settings.filters.yearFilter = { 1970: false };
+    settings.filters.durationFilter = { 2: false };
+    settings.filters.shopAvailability = 'unavailable';
     saveSongSettings(settings);
-    expect(loadSongSettings().filters.doubleBass).toBe('unsupported');
+    expect(loadSongSettings().filters).toEqual(settings.filters);
     resetSongSettingsForDeselect();
-    expect(loadSongSettings().filters.doubleBass).toBeNull();
+    expect(loadSongSettings().filters).toEqual(defaultSongFilters());
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { hasScores: { Solo_Guitar: true } } }));
     expect(loadSongSettings().filters.doubleBass).toBeNull();
     expect(loadSongSettings().filters.hasScores).toEqual({ Solo_Guitar: true });
+  });
+
+  it.each(['shopInShop', 'shopLeavingTomorrow'])('migrates the old %s shop restriction without retaining hidden toggles', field => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { [field]: true } }));
+    const loaded = loadSongSettings().filters;
+    expect(loaded.shopAvailability).toBe('available');
+    expect(loaded).not.toHaveProperty('shopInShop');
+    expect(loaded).not.toHaveProperty('shopLeavingTomorrow');
+  });
+
+  it.each([false, true])('counts catalog filters independently of profile type (band: %s)', selectedBandMode => {
+    expect(isFilterActive({ ...defaultSongFilters(), yearFilter: { 2020: false } }, null, false, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), durationFilter: { 0: false } }, null, false, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: 'unavailable' }, null, true, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: 'unavailable' }, null, false, undefined, selectedBandMode)).toBe(false);
   });
 
   describe('getInstrumentSortModes', () => {

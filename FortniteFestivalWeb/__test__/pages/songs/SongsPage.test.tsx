@@ -1566,7 +1566,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
       instrument: 'Solo_Guitar',
       metadataOrder: ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed'],
       instrumentOrder: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
-      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopInShop: false, shopLeavingTomorrow: false },
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopAvailability: null, yearFilter: {}, durationFilter: {} },
     }));
     mockApi.getPlayer.mockResolvedValue({
       accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1,
@@ -1600,6 +1600,32 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     const resetBtns = Array.from(document.body.querySelectorAll('button')).filter(b => b.textContent === 'Reset');
     await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
+  });
+
+  it('resets all General filters for a selected band while preserving solo filter state', async () => {
+    setDesktopViewport();
+    selectTestBandProfile();
+    setSongSettingsFilter({
+      yearFilter: { 2020: false }, durationFilter: { 3: false },
+      doubleBass: 'supported', shopAvailability: 'unavailable',
+      selectedBandHasScore: true, hasScores: { Solo_Guitar: true },
+    });
+    renderSongsPage('/songs');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => { fireEvent.click(screen.getByLabelText('Filter')); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('Selected Band Scores')).toBeVisible();
+    expect(screen.getByText('Year')).toBeVisible();
+    expect(screen.getByText('Duration')).toBeVisible();
+    expect(screen.getByText('Item Shop')).toBeVisible();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Reset$/ })); });
+    await act(async () => { fireEvent.click(screen.getByText('Apply Filter Changes')); await vi.advanceTimersByTimeAsync(400); });
+    const saved = JSON.parse(localStorage.getItem('fst:songSettings')!).filters;
+    expect(saved.yearFilter).toEqual({});
+    expect(saved.durationFilter).toEqual({});
+    expect(saved.doubleBass).toBeNull();
+    expect(saved.shopAvailability).toBeNull();
+    expect(saved.selectedBandHasScore).toBe(false);
+    expect(saved.hasScores).toEqual({ Solo_Guitar: true });
   });
 
   it('exercises openSort → applySort with desktop viewport', async () => {
@@ -1737,7 +1763,12 @@ describe('SongsPage — extra coverage', () => {
     });
   });
 
-  it('opens only General filters without a selected profile', async () => {
+  it('opens only General filters without a selected profile, deriving options from catalog metadata', async () => {
+    mockApi.getSongs.mockResolvedValue({ songs: [
+      { songId: 's1', title: 'Alpha Song', artist: 'Artist A', year: 1969, durationSeconds: 59 },
+      { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2030, durationSeconds: 600 },
+      { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2024, durationSeconds: 180 },
+    ], count: 3, currentSeason: 5 });
     localStorage.removeItem('fst:trackedPlayer');
     localStorage.removeItem('fst:selectedProfile');
     await loadSongsFilterModal();
@@ -1755,7 +1786,16 @@ describe('SongsPage — extra coverage', () => {
     expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
     expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
     expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
-    expect(screen.queryByText('Item Shop')).toBeNull();
+    expect(screen.getByText('Item Shop')).toBeVisible();
+    expect(screen.getByText('Year')).toBeVisible();
+    expect(screen.getByText('Duration')).toBeVisible();
+    await act(async () => { fireEvent.click(screen.getByText('Year')); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('1960s')).toBeVisible();
+    expect(screen.getByText('2020s')).toBeVisible();
+    expect(screen.getByText('2030s')).toBeVisible();
+    expect(screen.queryByText('1970s')).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByText('Duration')); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('10+ Minutes')).toBeVisible();
   });
 
   it('opens sort modal when sort pill is clicked', async () => {
