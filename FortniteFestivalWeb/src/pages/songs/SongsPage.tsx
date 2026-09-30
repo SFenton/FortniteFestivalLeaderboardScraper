@@ -867,7 +867,6 @@ export default function SongsPage() {
     }));
   }, [effectiveSortMode, hasQuickLinkSections, isWideDesktop, sectionModel.sections]);
 
-  const hasPlayer = hasFilterableProfile;
   const hasSongRowScoreData = hasDisplayScores;
   const emptySubtitle = isSelectedBand && scopedFilters.selectedBandHasScore && bandScoreMap.size === 0
     ? t(activeBandComboId ? 'songs.noSelectedBandComboScores' : 'songs.noSelectedBandScores')
@@ -1124,7 +1123,6 @@ export default function SongsPage() {
   const fabBandFilterAccessory = fabBandFilterActive
     ? <ComboInstrumentFabAccessory instruments={fabSelectedInstruments} />
     : undefined;
-  const fabHasFilterPill = !!playerData || isSelectedBand;
   // FAB content is built unconditionally; the FAB itself gates visibility on
   // `ready` so search bar, dock pills, and main FAB stay hidden until the
   // page reports ContentIn, then fade up + in right-to-left with stagger.
@@ -1132,9 +1130,9 @@ export default function SongsPage() {
   const fabReady = loadPhase === LoadPhase.ContentIn;
   const fabDockActions: ActionItem[] = useMemo(() => [
     { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: sortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: openSort, onIntent: preloadSongsSortModal },
-    ...(fabHasFilterPill ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter, onIntent: preloadSongsFilterModal }] : []),
+    { label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter, onIntent: preloadSongsFilterModal },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- openSort/openFilter are stable per-render closures intentionally re-read
-  ], [t, sortActive, filtersActive, fabHasFilterPill, fabBandFilterActive, fabBandFilterAccessory]);
+  ], [t, sortActive, filtersActive, fabBandFilterActive, fabBandFilterAccessory]);
   const fabHasQuickLinks = pageQuickLinks != null;
 
   return (
@@ -1162,7 +1160,6 @@ export default function SongsPage() {
                     sortActive={sortActive}
                     filtersActive={filtersActive}
                     hasSongs={songs.length > 0 && !isLoading}
-                    hasPlayer={hasPlayer}
                     filteredCount={filtered.length}
                     totalCount={songs.length}
                     onOpenSort={openSort}

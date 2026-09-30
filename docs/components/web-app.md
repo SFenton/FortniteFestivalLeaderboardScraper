@@ -2,8 +2,9 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: ee5be090
 sources:
+  - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
   - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
   - FortniteFestivalWeb/src/utils/songSettings.ts
@@ -399,6 +400,10 @@ client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
 ### Song filters
+
+The desktop Songs toolbar and mobile action dock always include Filter once
+the page controls are revealed, including without a selected player or band
+and before score data loads. General filters do not require a score profile.
 
 The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
 persisted in browser song settings. The General section precedes Global Score

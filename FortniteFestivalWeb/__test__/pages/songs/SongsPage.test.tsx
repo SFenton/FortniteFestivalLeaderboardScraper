@@ -1543,7 +1543,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     });
     const { container } = renderSongsPage('/songs', 'test-player-1');
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    // Filter ActionPill should be in the DOM since hasPlayer=true and desktop viewport
+    // The desktop toolbar always includes the Filter ActionPill.
     const filterBtn = screen.getByLabelText('Filter');
     expect(filterBtn).toBeTruthy();
     // Open the filter modal (exercises openFilter)
@@ -1736,11 +1736,11 @@ describe('SongsPage — extra coverage', () => {
     });
   });
 
-  it('renders filter pill button when player is tracked', async () => {
-    renderSongsPage('/songs', 'test-player-1');
+  it('renders a visible filter pill button without a tracked player', async () => {
+    renderSongsPage('/songs');
     await act(async () => { vi.advanceTimersByTime(1000); });
     await waitFor(() => {
-      expect(screen.getByText('Filter')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Filter' })).toBeVisible();
     });
   });
 

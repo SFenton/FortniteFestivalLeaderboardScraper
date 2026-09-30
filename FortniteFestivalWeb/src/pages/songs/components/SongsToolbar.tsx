@@ -23,7 +23,6 @@ interface SongsToolbarProps {
   sortActive?: boolean;
   filtersActive: boolean;
   hasSongs: boolean;
-  hasPlayer: boolean;
   filteredCount: number;
   totalCount: number;
   onOpenSort: () => void;
@@ -39,7 +38,6 @@ export function SongsToolbar({
   sortActive,
   filtersActive,
   hasSongs,
-  hasPlayer,
   filteredCount,
   totalCount,
   onOpenSort,
@@ -96,21 +94,6 @@ export function SongsToolbar({
     }
   }, [hasSongs]);
 
-  // Track filter button for fade transitions (gated on player data loaded)
-  const [filterVisible, setFilterVisible] = useState(hasPlayer);
-  const prevHasPlayer = useRef(hasPlayer);
-
-  useEffect(() => {
-    const prev = prevHasPlayer.current;
-    prevHasPlayer.current = hasPlayer;
-
-    if (!prev && hasPlayer) {
-      requestAnimationFrame(() => requestAnimationFrame(() => setFilterVisible(true)));
-    } else if (prev && !hasPlayer) {
-      setFilterVisible(false);
-    }
-  }, [hasPlayer]);
-
   return (
     <>
       <div style={styles.toolbar}>
@@ -129,7 +112,7 @@ export function SongsToolbar({
           <div style={sortVisible ? styles.sortSlot : styles.sortSlotHidden}>
             <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} onIntent={onSortIntent} active={sortActive} />
           </div>
-          <div style={filterVisible ? styles.filterSlot : styles.filterSlotHidden}>
+          <div style={styles.filterSlot}>
             <ActionPill
               icon={<IoFunnel size={Size.iconAction} />}
               label={t('common.filter')}
@@ -158,7 +141,6 @@ function useStyles() {
     sortSlot: { opacity: 1, maxWidth: Size.iconXl * 3, transition: transitions(transition('opacity', FAST), transition('max-width', FAST)) } as CSSProperties,
     sortSlotHidden: { opacity: 0, maxWidth: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
     filterSlot: { opacity: 1, maxWidth: Size.iconXl * 3, marginLeft: Gap.sm, transition: transitions(transition('opacity', FAST), transition('max-width', FAST), transition('margin-left', FAST)) } as CSSProperties,
-    filterSlotHidden: { opacity: 0, maxWidth: 0, marginLeft: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`, `margin-left ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
     count: { fontSize: Font.sm, color: Colors.textTertiary, marginBottom: Gap.md } as CSSProperties,
   }), []);
 }

@@ -12,7 +12,6 @@ describe('SongsToolbar', () => {
     sortActive: false,
     filtersActive: false,
     hasSongs: true,
-    hasPlayer: false,
     filteredCount: 100,
     totalCount: 100,
     onOpenSort: vi.fn(),
@@ -31,24 +30,19 @@ describe('SongsToolbar', () => {
     expect(onOpenSort).toHaveBeenCalledTimes(1);
   });
 
-  it('shows filter pill when hasPlayer is true', () => {
-    render(<SongsToolbar {...defaults} hasPlayer />);
-    expect(screen.getByLabelText(/filter/i)).toBeTruthy();
-  });
-
-  it('hides filter pill when hasPlayer is false', () => {
-    render(<SongsToolbar {...defaults} hasPlayer={false} />);
+  it('always shows the filter pill', () => {
+    render(<SongsToolbar {...defaults} />);
     const filterBtn = screen.getByLabelText(/filter/i);
-    expect(filterBtn.parentElement!.style.opacity).toBe('0');
+    expect(filterBtn).toBeVisible();
   });
 
   it('shows filtered count when filtersActive and counts differ', () => {
-    render(<SongsToolbar {...defaults} filtersActive hasPlayer filteredCount={50} totalCount={100} />);
+    render(<SongsToolbar {...defaults} filtersActive filteredCount={50} totalCount={100} />);
     expect(screen.getByText('50 of 100 songs')).toBeTruthy();
   });
 
   it('hides count when filtersActive but counts are equal', () => {
-    render(<SongsToolbar {...defaults} filtersActive hasPlayer filteredCount={100} totalCount={100} />);
+    render(<SongsToolbar {...defaults} filtersActive filteredCount={100} totalCount={100} />);
     expect(screen.queryByText(/of.*songs/)).toBeNull();
   });
 
@@ -68,7 +62,6 @@ describe('SongsToolbar — instrument & filter branches', () => {
     sortActive: false,
     filtersActive: false,
     hasSongs: true,
-    hasPlayer: false,
     filteredCount: 10,
     totalCount: 10,
     onOpenSort: vi.fn(),
@@ -105,7 +98,6 @@ describe('SongsToolbar — instrument transition effects', () => {
     sortActive: false,
     filtersActive: false,
     hasSongs: true,
-    hasPlayer: false,
     filteredCount: 10,
     totalCount: 10,
     onOpenSort: vi.fn(),
@@ -149,19 +141,6 @@ describe('SongsToolbar — instrument transition effects', () => {
     expect(container.innerHTML).toBeTruthy();
   });
 
-  it('fades in filter button when hasPlayer becomes true', () => {
-    const { rerender } = render(<SongsToolbar {...baseProps} hasPlayer={false} />);
-    rerender(<SongsToolbar {...baseProps} hasPlayer={true} />);
-    expect(screen.getByLabelText(/filter/i)).toBeTruthy();
-  });
-
-  it('fades out filter button when hasPlayer becomes false', () => {
-    const { container, rerender } = render(<SongsToolbar {...baseProps} hasPlayer={true} />);
-    rerender(<SongsToolbar {...baseProps} hasPlayer={false} />);
-    act(() => { vi.advanceTimersByTime(500); });
-    expect(container.innerHTML).toBeTruthy();
-  });
-
   it('renders search bar with value and handles change', () => {
     const onSearchChange = vi.fn();
     render(<SongsToolbar {...baseProps} search="hello" onSearchChange={onSearchChange} />);
@@ -173,13 +152,13 @@ describe('SongsToolbar — instrument transition effects', () => {
 
   it('calls onOpenFilter when filter is clicked', () => {
     const onOpenFilter = vi.fn();
-    render(<SongsToolbar {...baseProps} hasPlayer onOpenFilter={onOpenFilter} />);
+    render(<SongsToolbar {...baseProps} onOpenFilter={onOpenFilter} />);
     fireEvent.click(screen.getByLabelText(/filter/i));
     expect(onOpenFilter).toHaveBeenCalledTimes(1);
   });
 
   it('shows active filter styling', () => {
-    render(<SongsToolbar {...baseProps} hasPlayer filtersActive />);
+    render(<SongsToolbar {...baseProps} filtersActive />);
     const filterBtn = screen.getByLabelText(/filter/i);
     // Active pill has backgroundImage: 'none' (frosted noise removed)
     expect(filterBtn.style.backgroundImage).toBe('none');
