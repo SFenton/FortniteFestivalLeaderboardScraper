@@ -16,7 +16,7 @@ import { createTestQueryClient, TestProviders } from '../../helpers/TestProvider
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import { expectCancellableCall } from '../../helpers/requestAssertions';
-import { loadSongsFilterModal } from '../../../src/components/lazy/secondaryControls';
+import { loadSongsFilterModal, loadSongsSortModal } from '../../../src/components/lazy/secondaryControls';
 import { seedAllFirstRunSeen } from '../../helpers/firstRunState';
 
 const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
@@ -1798,17 +1798,18 @@ describe('SongsPage — extra coverage', () => {
     expect(screen.getByText('10+ Minutes')).toBeVisible();
   });
 
-  it('opens sort modal when sort pill is clicked', async () => {
-    renderSongsPage('/songs', 'test-player-1');
-    await act(async () => { vi.advanceTimersByTime(1000); });
-    await waitFor(() => {
-      expect(screen.getByText('Sort')).toBeTruthy();
-    });
-    fireEvent.click(screen.getByText('Sort'));
-    // Modal should open — check for modal content
-    await waitFor(() => {
-      expect(document.body.textContent).toBeTruthy();
-    });
+  it('opens anonymous sorting without Has FC and falls back from a saved Has FC mode', async () => {
+    localStorage.removeItem('fst:trackedPlayer');
+    localStorage.removeItem('fst:selectedProfile');
+    localStorage.setItem('fst:songSettings', JSON.stringify({ ...defaultSongSettings(), sortMode: 'hasfc' }));
+    await loadSongsSortModal();
+    renderSongsPage('/songs');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sort' })); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('Sort Songs')).toBeVisible();
+    expect(screen.queryByText('Has FC')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Title' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('Primary Instrument Order')).toBeNull();
   });
 
   /* ── Empty state with filters vs no filters ── */

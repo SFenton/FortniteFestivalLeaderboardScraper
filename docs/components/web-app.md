@@ -2,8 +2,9 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: e5624a17
+last_verified_commit: e0e2c7bb
 sources:
+  - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
   - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
@@ -400,6 +401,11 @@ client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
 ### Song filters
+
+The Songs sort modal offers Has FC only when a player or band profile is
+selected, independent of whether score data has loaded. Without a selected
+profile, a saved Has FC mode uses Title sorting, and Has FC plus its primary
+instrument order controls are hidden.
 
 The desktop Songs toolbar and mobile action dock always include Filter once
 the page controls are revealed, including without a selected player or band

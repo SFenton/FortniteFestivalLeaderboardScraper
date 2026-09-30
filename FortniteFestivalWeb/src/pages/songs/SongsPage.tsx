@@ -405,6 +405,7 @@ export default function SongsPage() {
     });
   }, [selectedBand?.members, selectedBandComboFilter]);
   const effectiveSortMode: SongSortMode = (() => {
+    if (!profile && settings.sortMode === 'hasfc') return 'title';
     if (!isSelectedBand) return isBandIntensitySortMode(settings.sortMode) ? 'title' : settings.sortMode;
     const bandIntensityInstrument = parseBandIntensityInstrument(settings.sortMode);
     if (bandIntensityInstrument) {
@@ -1212,6 +1213,7 @@ export default function SongsPage() {
               instrumentOrder: settings.instrumentOrder,
             }}
             instrumentFilter={displayInstrumentFilter}
+            hasSelectedProfile={profile !== null}
             hasPlayer={!!playerData}
             hideItemShop={!isShopVisible}
             bandComboInstruments={isSelectedBand ? bandComboInstruments : undefined}

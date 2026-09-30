@@ -37,6 +37,7 @@ type SortModalProps = {
   draft: SortDraft;
   savedDraft?: SortDraft;
   instrumentFilter: InstrumentKey | null;
+  hasSelectedProfile: boolean;
   hasPlayer?: boolean;
   hideItemShop?: boolean;
   bandComboInstruments?: readonly InstrumentKey[];
@@ -48,7 +49,7 @@ type SortModalProps = {
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, bandComboInstruments, metadataVisibility: mv, songRowVisualOrderEnabled, onChange, onCancel, onReset, onApply }: SortModalProps) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasSelectedProfile, hasPlayer, hideItemShop, bandComboInstruments, metadataVisibility: mv, songRowVisualOrderEnabled, onChange, onCancel, onReset, onApply }: SortModalProps) {
   const { t } = useTranslation();
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
@@ -106,7 +107,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
             <RadioRow label={t('sort.duration')} selected={draft.sortMode === 'duration'} onSelect={() => setMode('duration')} />
             {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
-            <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+            {hasSelectedProfile && <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />}
             <RadioRow label={t('sort.lastPlayed')} selected={draft.sortMode === 'lastplayed'} onSelect={() => setMode('lastplayed')} />
           </Accordion>
         </ModalSection>
@@ -118,7 +119,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
           <RadioRow label={t('sort.duration')} selected={draft.sortMode === 'duration'} onSelect={() => setMode('duration')} />
           {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
-          <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+          {hasSelectedProfile && <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />}
         </ModalSection>
         /* v8 ignore stop */
       )}
@@ -197,7 +198,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       )}
 
       {/* Primary Instrument Order (only when NO instrument is selected and sorting by Has FC) */}
-      {instrumentFilter == null && draft.sortMode === 'hasfc' && (
+      {hasSelectedProfile && instrumentFilter == null && draft.sortMode === 'hasfc' && (
         <ModalSection>
           <Accordion title={t('sort.instrumentOrder')} hint={t('sort.instrumentOrderHint')} defaultOpen panelLandmark>
             <ReorderList

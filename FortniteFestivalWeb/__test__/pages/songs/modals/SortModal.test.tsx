@@ -23,6 +23,7 @@ const defaultProps = () => ({
   savedDraft: baseDraft(),
   instrumentFilter: null as InstrumentKey | null,
   hasPlayer: true,
+  hasSelectedProfile: true,
   hideItemShop: false,
   bandComboInstruments: undefined as readonly InstrumentKey[] | undefined,
   metadataVisibility: undefined as MetadataVisibility | undefined,
@@ -79,12 +80,12 @@ describe('SortModal', () => {
     expect(screen.queryByText('Item Shop')).toBeNull();
   });
 
-  it('shows mode radio rows as flat section when hasPlayer is false', () => {
-    renderModal({ hasPlayer: false });
+  it.each([false, true])('hides Has FC without a profile regardless of cached player data (hasPlayer: %s)', hasPlayer => {
+    renderModal({ hasPlayer, hasSelectedProfile: false });
     expect(screen.getByText('Title')).toBeDefined();
     expect(screen.getByText('Artist')).toBeDefined();
     expect(screen.getByText('Year')).toBeDefined();
-    expect(screen.getByText('Has FC')).toBeDefined();
+    expect(screen.queryByText('Has FC')).toBeNull();
   });
 
   it('selects a sort mode', () => {
@@ -104,7 +105,7 @@ describe('SortModal', () => {
     expect(props.onChange.mock.calls[0]![0].sortMode).toBe('year');
   });
 
-  it('selects Has FC mode', () => {
+  it('selects Has FC for a selected profile without player score data', () => {
     const props = defaultProps();
     props.hasPlayer = false;
     renderModal(props);

@@ -243,7 +243,7 @@ import SortModal from '../../../src/pages/songs/modals/SortModal';
 describe('SortModal', () => {
   const draft = { sortMode: 'title', sortAscending: true, metadataOrder: ['score'], instrumentOrder: [] };
   const defaults = {
-    visible: true, draft: draft as any, instrumentFilter: null as any,
+    visible: true, draft: draft as any, instrumentFilter: null as any, hasSelectedProfile: false,
     onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn(),
   };
 
