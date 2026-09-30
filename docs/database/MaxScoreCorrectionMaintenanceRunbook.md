@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-16
-last_verified_commit: bf770d49
+last_verified: 2026-09-30
+last_verified_commit: b801fdf3
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -43,6 +43,11 @@ update_triggers:
 ---
 
 # Max-score correction maintenance
+
+Routine MIDI updates automatically regenerate paths and maxima through worker
+scrape-pass staging and publish with the completed scrape, without approval.
+See [path generation](../components/path-generation.md). This runbook covers
+explicit repairs outside that normal publication flow.
 
 Use this workflow only for a reviewed CHOpt/provider maximum correction whose
 recurring path-generation rule is already fixed. It is CLI-only and bounded to

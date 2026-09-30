@@ -42,7 +42,8 @@ public interface IPathDataStore
     /// <summary>
     /// Pending songs that automatic scrape-pass staging may attempt now.
     /// Excludes songs deferred for review or backoff whose deferral is still
-    /// bound to the current provider catalog identity.
+    /// bound to the current provider catalog identity, except legacy maximum
+    /// review holds, which are automatically eligible again.
     /// </summary>
     IReadOnlyList<PathGenerationCandidate>
         GetAutomaticPathGenerationCandidates(DateTime nowUtc)

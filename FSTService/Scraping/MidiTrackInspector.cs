@@ -26,6 +26,11 @@ internal static class MidiTrackInspector
             track.Name is "PLASTIC DRUM" or "PLASTIC DRUMS"
             && track.HasDoubleKickNotes);
 
+    public static bool HasAuthoredPlasticDrumActivationWindows(ReadOnlySpan<byte> midiData)
+        => InspectTracks(midiData).Any(track =>
+            track.Name is "PLASTIC DRUM" or "PLASTIC DRUMS"
+            && track.HasDrumFillMarkers);
+
     private static List<MidiTrackInspection> InspectTracks(
         ReadOnlySpan<byte> midiData)
     {
@@ -89,6 +94,7 @@ internal static class MidiTrackInspector
         string? trackName = null;
         var hasNotes = false;
         var hasDoubleKickNotes = false;
+        var hasDrumFillMarkers = false;
 
         while (position < trackData.Length)
         {
@@ -182,10 +188,14 @@ internal static class MidiTrackInspector
                 // each difficulty range (easy, medium, hard, expert).
                 if (firstData is 59 or 71 or 83 or 95)
                     hasDoubleKickNotes = true;
+                // SightRead uses pitch 120 for authored drum activation windows.
+                // Any positive start marker conservatively requires preserved windows.
+                if (firstData == 120)
+                    hasDrumFillMarkers = true;
             }
         }
 
-        return new MidiTrackInspection(trackName, hasNotes, hasDoubleKickNotes);
+        return new MidiTrackInspection(trackName, hasNotes, hasDoubleKickNotes, hasDrumFillMarkers);
     }
 
     private static int ReadChunkLength(
@@ -255,5 +265,6 @@ internal static class MidiTrackInspector
     private sealed record MidiTrackInspection(
         string? Name,
         bool HasNotes,
-        bool HasDoubleKickNotes);
+        bool HasDoubleKickNotes,
+        bool HasDrumFillMarkers);
 }

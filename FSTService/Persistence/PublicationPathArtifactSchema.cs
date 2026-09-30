@@ -66,10 +66,10 @@ public static class PublicationPathArtifactSchema
         "scrape_pass_path_staging";
 
     /// <summary>
-    /// Failure stage recorded when a regenerated song changes an existing
-    /// maximum and <c>ScrapePassPathGenerationAllowChangedMaxima</c> is off.
+    /// Legacy review reason admitted back into automatic staging. Changed
+    /// maxima no longer require review; retain the value for existing rows.
     /// </summary>
-    public const string ChangedMaximaFailureStage =
+    public const string LegacyChangedMaximaReviewReason =
         "max_score_change_requires_review";
 
     /// <summary>
