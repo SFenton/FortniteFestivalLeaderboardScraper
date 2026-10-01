@@ -1,5 +1,3 @@
-
-
 export type ChangelogSection = {
   title: string;
   items: string[];
@@ -13,44 +11,20 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
-        title: 'ITEM SHOP',
+        title: 'SONGS',
         items: [
-          'Newly released songs in the Item Shop have a gold pulse on Songs Page and Song Details.',
-          "Songs in the Item Shop that aren't leaving tomorrow now have a green pulse, to match the gold/green/red styles of the instrument chips on Songs Page.",
+          'Added Year, Duration, Item Shop, and Double Bass filters.',
+          'Song filters are now available without selecting a profile or band.',
+          'General filter options can be toggled independently.',
+          'Has FC sorting now requires a selected profile.',
         ],
       },
       {
-        title: 'MOBILE',
+        title: 'CHARTS',
         items: [
-          'FAB buttons and other dock buttons now animate in for a more visually pleasing experience.',
-          'Fixed a bug in search modal where dismissing the keyboard after results show did not expand results view appropriately.',
-        ],
-      },
-      {
-        title: 'SONG DETAILS',
-        items: [
-          'Fixed a bug where leaderboard ranks did not reflect the actual Epic leaderboard value in some cases.',
-        ],
-      },
-      {
-        title: 'NOTIFICATIONS',
-        items: [
-          'Fixed a bug where notification alerts would reset when you re-open the web browser.',
-          'Added support for switching profiles/bands and returning to a different profile/band and seeing the appropriate amount of unread notifications, instead of all of them.',
-        ],
-      },
-      {
-        title: 'RIVALS',
-        items: [
-          'Improved performance when viewing a Rival for the first time.',
-          'Improved availability of Rivals during scrape.',
-        ],
-      },
-      {
-        title: 'LEADERBOARDS',
-        items: [
-          'Changed to instrument icons on combo leaderboards instead of "Lead + ..." text.',
-          'Updated FAB dock on mobile to match other pages.',
+          'Maximum scores now update automatically when song charts change.',
+          'Fixed chart generation for The Other Promise.',
+          'Corrected Pro Drums maximum scores for I Wanna Get Better and Gangnam Style.',
         ],
       },
     ],
