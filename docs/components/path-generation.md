@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
-last_verified_commit: 2f299474
+last_verified: 2026-09-30
+last_verified_commit: b801fdf3
 sources:
   - FSTService/Scraping/PathMetadataBackfillCommand.cs
   - FSTService/Scraping/PathDoubleBassMetadataStore.cs
@@ -68,8 +68,10 @@ together as an immutable generation.
    restrict activation starts to scoring gems nearest Epic's authored
    activation-window endpoints.
 5. FST validates every PNG and JSON artifact. Expert scores must be positive.
-   Plastic-drums expert artifacts must retain non-empty authored activation
-   windows.
+   Plastic-drums expert artifacts must include a `drumFills` array. It must be
+   non-empty when the source MIDI has authored activation-window markers, or
+   when an older manifest has no evidence about those markers. Source charts
+   without markers may produce an empty array.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
    payloads. This accommodates the longest current Festival charts.
@@ -132,6 +134,30 @@ or publication-bound generation during max-score cache refresh. Existing
 durable publication payloads stay unchanged until the publication pipeline
 builds another response. Deploy the compatible service and worker before
 refreshing metadata; deploying web is independently optional.
+
+## Authored drum activation windows
+
+FST inspects positive-velocity pitch-120 Note On events in the original
+`PLASTIC DRUM` or `PLASTIC DRUMS` track, including running status. Marker
+presence conservatively requires CHOpt to preserve non-empty authored windows
+for both Expert Pro Drums and Expert Pro Cymbals. Pad-drum markers, other
+instrument tracks, note-off events, and zero-velocity Note On events do not
+establish plastic-drum window presence. Invalid MIDI fails inspection.
+
+New manifests record the optional source-derived
+`plasticDrumsHasAuthoredActivationWindows` boolean. Only explicit `false`
+allows an empty `drumFills` array during generation and subsequent immutable
+artifact validation. An absent/null value in an older manifest retains the
+strict non-empty requirement. The property is omitted when null so existing
+manifest serialization and hashes remain unchanged.
+
+A marker-free chart can legitimately have no Overdrive phrases or activations,
+as in “The Other Promise”. It still requires structurally valid PNGs, schema-v2
+JSON, an explicit `drumFills` array, and positive Expert scores. This source
+evidence adds no CHOpt invocations and does not change scoring arguments,
+the pinned CHOpt binary, or the generation profile. Existing artifacts are not
+rewritten; a failed song must complete normal guarded generation and
+publication after the compatible service and worker are deployed.
 
 ## JSON contract
 
@@ -238,18 +264,21 @@ MIDI AES key at startup (`Scraper:MidiEncryptionKey`, with
 invalid key fails readiness instead of starting a worker that would abort every
 staging batch.
 
-Bootstraps and identical-maxima refreshes are applied. A regenerated song whose
-existing maxima change is blocked by default, recorded as
-`max_score_change_requires_review`, durably marked review-required, and left
-pending for max-score maintenance review;
-`Scraper:ScrapePassPathGenerationAllowChangedMaxima` opts in. Per-song failures
-are warnings: the song stays pending, gets a bounded retry-after, and the batch
-continues. Staging subsystem failures never abort the scrape pass. Deferred
-songs are re-armed by a successful promotion, a provider catalog identity
-change, or `POST /api/admin/path-generation/rearm`.
+Bootstraps, identical-maxima refreshes, and changed-maxima refreshes are applied
+automatically to the candidate publication. MIDI updates need no maximum-score
+approval: validated new paths and maxima become public together when that
+scrape publishes. Songs held by the legacy `max_score_change_requires_review`
+reason are eligible again without a catalog change or operator reset. Existing
+review state clears only on a successful live promotion; a failed attempt
+replaces it with ordinary retry backoff.
+
+Per-song failures are warnings: the song stays pending, gets a bounded
+retry-after, and the batch continues. Staging subsystem failures never abort
+the scrape pass. Other deferred songs are re-armed by a successful promotion,
+a provider catalog identity change, or `POST /api/admin/path-generation/rearm`.
 
 When a complete immutable generation is rejected before candidate attachment
-(validation, changed-maxima review, repository failure, or explicit conflict),
+(validation, repository failure, or explicit conflict),
 the worker checks live and retained publication references before deleting the
 unreachable directory. A failed reference check or delete retains the
 generation and records `orphan_cleanup` evidence instead of risking a
@@ -268,8 +297,9 @@ guarded max-score maintenance, or
 
 ## Max-score correction maintenance
 
-A reviewed correction to an already-published song's theoretical maximum uses
-the CLI-only
+Routine MIDI-driven maximum changes use automatic scrape-pass staging above.
+An explicit repair of an already-published generation outside the normal scrape
+pipeline uses the CLI-only
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md),
 not the generic admin endpoint.
 

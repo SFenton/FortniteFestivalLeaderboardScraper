@@ -186,6 +186,10 @@ public sealed class PathDataStore : IPathDataStore
                   path_generation_deferral_identity
                       IS DISTINCT FROM NULLIF(last_modified, '')
                   OR (
+                      path_generation_review_required
+                      AND path_generation_review_reason = @legacyMaximaReview
+                  )
+                  OR (
                       NOT path_generation_review_required
                       AND (
                           path_generation_next_attempt_at IS NULL
@@ -195,6 +199,9 @@ public sealed class PathDataStore : IPathDataStore
               )
             ORDER BY song_id
             """;
+        cmd.Parameters.AddWithValue(
+            "legacyMaximaReview",
+            PublicationPathArtifactSchema.LegacyChangedMaximaReviewReason);
         cmd.Parameters.AddWithValue("now", nowUtc);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-29
-last_verified_commit: f65a3a4a
+last_verified: 2026-09-30
+last_verified_commit: b801fdf3
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - FSTService/Scraping/Capture/
@@ -369,11 +369,14 @@ try-acquire or orphaned durable token still fails immediately. Ordinary scrape
 freezes continue to use the existing background-work boundary rather than this
 max-score-only rejection.
 
-Optimal-path generation is a separate coordinated workload. Automatic path
-generation remains disabled by default and selects only pending songs; the
-protected admin route accepts one song at a time. CHOpt outputs are validated
-and promoted as immutable generations, and complete catalogue migrations must
-remain sequential and resumable. See [Path generation](path-generation.md).
+Optimal-path generation is a separate coordinated workload. The production
+worker enables bounded scrape-pass staging for pending songs. MIDI-driven
+maximum changes require no approval: validated immutable generations attach to
+the candidate and become public with the completed scrape. Legacy maximum-score
+review holds are automatically eligible again. Generic option defaults remain
+disabled; the old API-owned automatic generator is rejected at startup, and
+admin regeneration is blocked in publication-bound mode. Complete catalogue
+migrations remain sequential and resumable. See [Path generation](path-generation.md).
 
 New generations also record chart-derived double-bass support from the
 original decrypted plastic-drum MIDI, without additional CHOpt runs. This

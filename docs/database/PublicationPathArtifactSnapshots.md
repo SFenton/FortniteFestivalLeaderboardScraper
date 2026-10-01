@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified: 2026-09-30
+last_verified_commit: b801fdf3
 sources:
   - FSTService/Persistence/PublicationPathArtifactSchema.cs
   - FSTService/Persistence/MetaDatabase.PathPromotion.cs
@@ -436,11 +436,11 @@ against:
 |---|---|
 | No existing generation: revision `0`, null generation ID, all eight maxima null | Bootstrap, applied |
 | Existing generation whose eight staged maxima are all identical | Identical refresh, applied |
-| Existing generation with any changed maximum | Blocked by default: a `max_score_change_requires_review` row is recorded in `path_generation_errors`, the song is durably marked review-required, and the candidate, the live row, and `path_generation_pending` are unchanged |
+| Existing generation with any changed maximum | Changed refresh, automatically applied to the candidate; live maxima and pending state change only on successful publication |
 
-`Scraper:ScrapePassPathGenerationAllowChangedMaxima` opts into applying changed
-maxima. It is off by default because a changed published maximum is a reviewed
-max-score maintenance decision, not a scrape-pass decision.
+MIDI-driven maximum changes require no approval or opt-in. Immutable artifact
+validation, source identity checks, candidate compare-and-swap, and atomic
+publication still apply to every refresh.
 
 Failures are per-song warnings: a failed download, generation, validation, or
 candidate conflict leaves that song pending with its candidate and live rows
@@ -452,7 +452,7 @@ retained publication snapshot/promotion row owns it. Verification or deletion
 failure retains the directory and records `orphan_cleanup` evidence.
 
 Each pass logs and reports pending, selected, staged, applied-to-candidate,
-bootstrap, identical-refresh, changed-blocked, failed, conflicted, and
+bootstrap, identical-refresh, changed-refresh, failed, conflicted, and
 remaining counts, and publishes a `scrape.path_staging` worker operation.
 
 ### Automatic staging deferral state
@@ -473,11 +473,11 @@ songs (
 )
 ```
 
-- **Review required.** A blocked max-score change sets
-  `path_generation_review_required` with a reason. The song is excluded from
-  automatic selection until it is re-armed, so one blocked song cannot consume
-  the per-pass cap or re-record the same error and regenerate the same
-  artifacts every scrape.
+- **Legacy maximum reviews.** A review-required song with the exact legacy
+  reason `max_score_change_requires_review` is eligible automatically, even
+  when its provider identity has not changed. Staging does not mutate the live
+  review state; successful publication clears it. Review holds for other
+  reasons remain excluded until re-armed.
 - **Retry after.** A deterministic generation failure, an invalid staged
   generation, a candidate promotion conflict (explicit `Conflict`,
   `SongMissing`, or `PublicationNotStaging`, or a thrown repository error), or

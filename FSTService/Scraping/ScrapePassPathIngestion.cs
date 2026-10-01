@@ -251,7 +251,7 @@ public sealed class ScrapePassPathIngestion
         _log.LogInformation(
             "Scrape-pass path staging finished for scrape {ScrapeId} publication {PublicationId}. "
             + "Pending={Pending}, Eligible={Eligible}, Selected={Selected}, Staged={Staged}, Applied={Applied}, "
-            + "Bootstrap={Bootstrap}, IdenticalRefresh={IdenticalRefresh}, ChangedBlocked={ChangedBlocked}, "
+            + "Bootstrap={Bootstrap}, IdenticalRefresh={IdenticalRefresh}, ChangedRefresh={ChangedRefresh}, "
             + "Failed={Failed}, Conflicted={Conflicted}, Deferred={Deferred}, Remaining={Remaining}, "
             + "TimedOut={TimedOut}, ElapsedMs={ElapsedMs:N0}.",
             scrapeId,
@@ -263,7 +263,7 @@ public sealed class ScrapePassPathIngestion
             result.Applied,
             result.Bootstrap,
             result.IdenticalRefresh,
-            result.ChangedBlocked,
+            result.ChangedRefresh,
             result.Failed,
             result.Conflicted,
             result.Deferred,
@@ -378,7 +378,7 @@ public sealed class ScrapePassPathIngestion
         var applied = 0;
         var bootstrap = 0;
         var identicalRefresh = 0;
-        var changedBlocked = 0;
+        var changedRefresh = 0;
         var failed = 0;
         var conflicted = 0;
         var deferred = 0;
@@ -456,25 +456,6 @@ public sealed class ScrapePassPathIngestion
             }
 
             var classification = Classify(state, promotion);
-            if (classification == StagedGenerationKind.ChangedMaxima
-                && !options.ScrapePassPathGenerationAllowChangedMaxima)
-            {
-                changedBlocked++;
-                _log.LogWarning(
-                    "Scrape-pass path staging blocked {SongId}: the existing generation's maxima changed. "
-                    + "Candidate, live row, and pending flag are unchanged pending review.",
-                    request.SongId);
-                deferred += await TryBlockForReviewAsync(
-                    request,
-                    promotion,
-                    catalogIdentity,
-                    ct);
-                await CleanupRejectedGenerationBestEffortAsync(
-                    request,
-                    promotion);
-                continue;
-            }
-
             PublicationPathPromotionOutcome outcome;
             try
             {
@@ -519,6 +500,8 @@ public sealed class ScrapePassPathIngestion
                     else if (classification
                         == StagedGenerationKind.IdenticalMaxima)
                         identicalRefresh++;
+                    else
+                        changedRefresh++;
                     // Identifies the immutable generation that becomes an
                     // orphan on disk if this candidate is later failed.
                     _log.LogInformation(
@@ -559,7 +542,7 @@ public sealed class ScrapePassPathIngestion
             Applied = applied,
             Bootstrap = bootstrap,
             IdenticalRefresh = identicalRefresh,
-            ChangedBlocked = changedBlocked,
+            ChangedRefresh = changedRefresh,
             Failed = failed,
             Conflicted = conflicted,
             Deferred = deferred,
@@ -685,54 +668,6 @@ public sealed class ScrapePassPathIngestion
         }
     }
 
-    /// <summary>
-    /// Records the blocked max-score change and durably defers the song for
-    /// review. <c>path_generation_pending</c> is deliberately left true.
-    /// </summary>
-    private async Task<int> TryBlockForReviewAsync(
-        SongPathRequest request,
-        PathGenerationPromotion promotion,
-        string? catalogIdentity,
-        CancellationToken ct)
-    {
-        try
-        {
-            await _store.AppendPathGenerationErrorAsync(
-                new PathGenerationError(
-                    promotion.AttemptId,
-                    promotion.SongId,
-                    promotion.DatFileHash,
-                    promotion.Runtime.Version,
-                    promotion.Runtime.BinarySha256,
-                    promotion.Runtime.Profile,
-                    promotion.ExpectedInstruments,
-                    PublicationPathArtifactSchema
-                        .ChangedMaximaFailureStage,
-                    null,
-                    null,
-                    "The regenerated maxima differ from the current "
-                    + "published generation. Publication-safe staging "
-                    + "requires explicit max-score maintenance review.",
-                    DateTime.UtcNow),
-                ct);
-            await _store.MarkPathGenerationReviewRequiredAsync(
-                promotion.SongId,
-                PublicationPathArtifactSchema.ChangedMaximaFailureStage,
-                catalogIdentity,
-                ct);
-            return 1;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(
-                ex,
-                "Could not durably defer the blocked max-score change for {SongId}. "
-                + "It may be reattempted on the next pass.",
-                request.SongId);
-            return 0;
-        }
-    }
-
     private async Task<int> TryScheduleRetryAsync(
         string songId,
         string reason,
@@ -852,7 +787,7 @@ internal enum StagedGenerationKind
 
 /// <summary>
 /// Per-pass staging counters. <see cref="Applied"/> counts candidate snapshot
-/// updates only; nothing here has touched live <c>songs</c> rows.
+/// updates only; live path generations and maxima change at publication commit.
 /// </summary>
 public sealed record ScrapePassPathIngestionResult
 {
@@ -869,11 +804,11 @@ public sealed record ScrapePassPathIngestionResult
     public int Applied { get; init; }
     public int Bootstrap { get; init; }
     public int IdenticalRefresh { get; init; }
-    public int ChangedBlocked { get; init; }
+    public int ChangedRefresh { get; init; }
     public int Failed { get; init; }
     public int Conflicted { get; init; }
 
-    /// <summary>Songs durably deferred for review or retry this pass.</summary>
+    /// <summary>Songs durably deferred for retry this pass.</summary>
     public int Deferred { get; init; }
 
     public int Remaining { get; init; }

@@ -115,6 +115,41 @@ public sealed class MidiTrackInspectorTests
             Track("PLASTIC DRUMS", [0x00, 0x80, 95, 100]))));
     }
 
+    [Theory]
+    [InlineData("PLASTIC DRUMS", 120, 100, true)]
+    [InlineData("PLASTIC DRUM", 120, 100, true)]
+    [InlineData("PLASTIC DRUMS", 120, 0, false)]
+    [InlineData("PLASTIC DRUMS", 100, 100, false)]
+    [InlineData("PLASTIC DRUMS", 116, 100, false)]
+    [InlineData("PLASTIC DRUMS", 126, 100, false)]
+    [InlineData("PART DRUMS", 120, 100, false)]
+    [InlineData("PLASTIC GUITAR", 120, 100, false)]
+    public void Detects_authored_windows_only_from_positive_plastic_drum_markers(
+        string track, byte pitch, byte velocity, bool expected)
+    {
+        Assert.Equal(expected, MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(
+            BuildMidi(Track(track, [0x00, 0x90, pitch, velocity]))));
+    }
+
+    [Fact]
+    public void Authored_window_inspection_handles_running_status_and_ignores_note_off()
+    {
+        Assert.True(MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(BuildMidi(
+            Track("PLASTIC DRUMS", [0x00, 0x90, 100, 100, 0x10, 120, 100, 0x10, 120, 0]))));
+        Assert.False(MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(BuildMidi(
+            Track("PLASTIC DRUMS", [0x00, 0x80, 120, 100]))));
+        Assert.False(MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(BuildMidi(
+            Track("PLASTIC DRUMS"))));
+    }
+
+    [Fact]
+    public void Authored_window_inspection_cannot_certify_truncated_midi_as_marker_free()
+    {
+        Assert.Throws<InvalidDataException>(() =>
+            MidiTrackInspector.HasAuthoredPlasticDrumActivationWindows(
+                BuildMidi(Track("PLASTIC DRUMS", [0x00, 0x90, 120]))));
+    }
+
     private static MidiTrackSpec Track(
         string name,
         byte[]? events = null)
