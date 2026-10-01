@@ -5,7 +5,7 @@
 import { useMemo } from 'react';
 import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
-import { parseBandIntensityInstrument } from '../../utils/songSettings';
+import { getSongDecade, getSongDurationBucket, parseBandIntensityInstrument } from '../../utils/songSettings';
 import { compareByMode } from '../../utils/songSort';
 import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../utils/songInstrumentDifficulty';
 import { songMatchesSearch } from '../../utils/songSearch';
@@ -23,13 +23,11 @@ interface FilterSortOptions {
   allScoreMap: Map<string, Map<InstrumentKey, PlayerScore>>;
   /** Set of songIds currently in the item shop (for 'shop' sort mode). */
   shopSongIds?: ReadonlySet<string> | null;
-  /** Set of in-shop songIds whose offer expires tomorrow. */
-  leavingTomorrowIds?: ReadonlySet<string> | null;
   /** Callback to check whether a score is within the CHOpt max threshold. */
   isScoreValid?: (songId: string, instrument: InstrumentKey | string, score: number) => boolean;
   /** Whether the "Filter Invalid Scores" app setting is enabled (gates overThreshold filter). */
   filterInvalidScoresEnabled?: boolean;
-  /** Whether the Item Shop feature is visible (gates shopInShop/shopLeavingTomorrow filters). */
+  /** Whether the Item Shop feature is visible (gates shop availability filtering). */
   shopVisible?: boolean;
   /** App-visible instruments that are allowed to participate in per-instrument filters. */
   visibleInstruments?: readonly InstrumentKey[] | null;
@@ -66,7 +64,6 @@ export function useFilteredSongs({
   scoreMap,
   allScoreMap,
   shopSongIds,
-  leavingTomorrowIds,
   isScoreValid,
   filterInvalidScoresEnabled,
   shopVisible,
@@ -108,16 +105,35 @@ export function useFilteredSongs({
     const diffKeys = Object.keys(f.difficultyFilter);
     const checkDiff = !selectedBandMode && effectiveInstrument != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
+    const checkYear = Object.values(f.yearFilter ?? {}).some(value => value === false);
+    const checkDuration = Object.values(f.durationFilter ?? {}).some(value => value === false);
+
+    const includeDoubleBass = f.doubleBass?.supported !== false;
+    const includeNoDoubleBass = f.doubleBass?.unsupported !== false;
+    const includeInShop = f.shopAvailability?.available !== false;
+    const includeNotInShop = f.shopAvailability?.unavailable !== false;
+
     const list = songs.filter(s => {
       if (!songMatchesSearch(s, search)) return false;
-      if (f.doubleBass === 'supported' && s.doubleBassSupported !== true) return false;
-      if (f.doubleBass === 'unsupported' && s.doubleBassSupported !== false) return false;
+      if (!includeDoubleBass || !includeNoDoubleBass) {
+        const matches = (includeDoubleBass && s.doubleBassSupported === true)
+          || (includeNoDoubleBass && s.doubleBassSupported === false);
+        if (!matches) return false;
+      }
 
-      // Item Shop filters (independent of player data)
-      // AND logic: both must pass when both enabled; leaving tomorrow ⊂ in shop
-      if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) {
-        if (f.shopInShop && !shopSongIds?.has(s.songId)) return false;
-        if (f.shopLeavingTomorrow && !leavingTomorrowIds?.has(s.songId)) return false;
+      if (checkYear) {
+        const decade = getSongDecade(s.year);
+        if (decade === null || f.yearFilter[decade] === false) return false;
+      }
+      if (checkDuration) {
+        const bucket = getSongDurationBucket(s.durationSeconds);
+        if (bucket === null || f.durationFilter[bucket] === false) return false;
+      }
+
+      // Wait for a shop snapshot before classifying availability.
+      if (shopVisible) {
+        if (!includeInShop && !includeNotInShop) return false;
+        if (shopSongIds != null && !(shopSongIds.has(s.songId) ? includeInShop : includeNotInShop)) return false;
       }
 
       if (effectiveInstrument && !songSupportsInstrument(s, effectiveInstrument)) return false;
@@ -314,5 +330,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments, selectedBandMode, individualBandMemberSongIds, individualBandMemberFiltersActive]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments, selectedBandMode, individualBandMemberSongIds, individualBandMemberFiltersActive]);
 }

@@ -10,7 +10,8 @@ import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api';
-import type { SongFilters } from '../../../utils/songSettings';
+import { Gap } from '@festival/theme';
+import { getDurationFilterBuckets, type SongFilters } from '../../../utils/songSettings';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
 import {
@@ -42,9 +43,12 @@ type FilterModalDraftState = {
 
 type FilterModalProps = {
   visible: boolean;
+  hasSelectedProfile: boolean;
   draft: FilterDraft;
   savedDraft?: FilterDraft;
   availableSeasons: number[];
+  availableDecades?: readonly number[];
+  hasLongSongs?: boolean;
   selectedBandMode?: boolean;
   selectedBandName?: string;
   selectedBandMembers?: readonly { accountId: string; displayName: string }[];
@@ -60,12 +64,12 @@ const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70
 const noopBandApply = () => {};
 const noopBandReset = () => {};
 
-export default function FilterModal({ visible, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+export default function FilterModal({ visible, hasSelectedProfile, draft, savedDraft, availableSeasons, availableDecades = [], hasLongSongs = false, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const { isShopVisible } = useShopState();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
-  const showBandComboSection = selectedBandMode && !!bandComboFilter;
+  const showBandComboSection = hasSelectedProfile && selectedBandMode && !!bandComboFilter;
   const bandComboController = useBandInstrumentFilterController({
     visible: visible && showBandComboSection,
     selectedBand: bandComboFilter?.selectedBand ?? null,
@@ -97,9 +101,13 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     const next = !draft.selectedBandMissingScore;
     onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
-  const toggleDoubleBass = (value: 'supported' | 'unsupported') => {
-    onChange({ ...draft, doubleBass: draft.doubleBass === value ? null : value });
+  const toggleDoubleBass = (key: 'supported' | 'unsupported') => {
+    onChange({ ...draft, doubleBass: { ...draft.doubleBass, [key]: !draft.doubleBass[key] } });
   };
+  const toggleShopAvailability = (key: 'available' | 'unavailable') => {
+    onChange({ ...draft, shopAvailability: { ...draft.shopAvailability, [key]: !draft.shopAvailability[key] } });
+  };
+  const durationBuckets = getDurationFilterBuckets(hasLongSongs);
   const toggleIndividualBandMemberHasScore = (accountId: string) => {
     const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
     const next = !(current.hasScore ?? false);
@@ -142,7 +150,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     onChange({ ...draft, instrumentFilter: key });
   }, [draft, onChange]);
 
-  const showIndividualBandMemberFilters = selectedBandMode && selectedBandMembers.length > 0 && bandComboInstruments.length > 0;
+  const showIndividualBandMemberFilters = hasSelectedProfile && selectedBandMode && selectedBandMembers.length > 0 && bandComboInstruments.length > 0;
 
   const modalDraft = useMemo<FilterModalDraftState>(() => ({
     filters: draft,
@@ -185,21 +193,54 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       ) : null}
 
       <ModalSection title={t('filter.general')} hint={t('filter.generalHint')}>
-        <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
-          <ToggleRow
-            label={t('filter.doubleBassSupport')}
-            checked={draft.doubleBass === 'supported'}
-            onToggle={() => toggleDoubleBass('supported')}
-          />
-          <ToggleRow
-            label={t('filter.noDoubleBassSupport')}
-            checked={draft.doubleBass === 'unsupported'}
-            onToggle={() => toggleDoubleBass('unsupported')}
-          />
-        </Accordion>
+        <div style={{ paddingInline: Gap.xl }}>
+          <Accordion title={t('filter.yearTitle')} hint={t('filter.yearHint')}>
+            <CatalogBucketToggles
+              options={availableDecades.map(decade => ({ key: decade, label: t('filter.decadeLabel', { decade }) }))}
+              filter={draft.yearFilter}
+              onChange={yearFilter => onChange({ ...draft, yearFilter })}
+            />
+          </Accordion>
+          <Accordion title={t('filter.durationTitle')} hint={t('filter.durationHint')}>
+            <CatalogBucketToggles
+              options={durationBuckets.map(minute => ({
+                key: minute,
+                label: minute === 0 ? t('filter.durationUnderMinute') : minute === 10 ? t('filter.durationTenPlus') : t('filter.durationRange', { start: minute, end: minute + 1 }),
+              }))}
+              filter={draft.durationFilter}
+              onChange={durationFilter => onChange({ ...draft, durationFilter })}
+            />
+          </Accordion>
+          {isShopVisible && (
+            <Accordion title={t('filter.shopTitle')} hint={t('filter.shopAvailabilityHint')}>
+              <ToggleRow
+                label={t('filter.shopAvailable')}
+                checked={draft.shopAvailability.available}
+                onToggle={() => toggleShopAvailability('available')}
+              />
+              <ToggleRow
+                label={t('filter.shopUnavailable')}
+                checked={draft.shopAvailability.unavailable}
+                onToggle={() => toggleShopAvailability('unavailable')}
+              />
+            </Accordion>
+          )}
+          <Accordion title={t('filter.doubleBassTitle')} hint={t('filter.doubleBassHint')}>
+            <ToggleRow
+              label={t('filter.doubleBassSupport')}
+              checked={draft.doubleBass.supported}
+              onToggle={() => toggleDoubleBass('supported')}
+            />
+            <ToggleRow
+              label={t('filter.noDoubleBassSupport')}
+              checked={draft.doubleBass.unsupported}
+              onToggle={() => toggleDoubleBass('unsupported')}
+            />
+          </Accordion>
+        </div>
       </ModalSection>
 
-      {selectedBandMode ? (
+      {hasSelectedProfile && (selectedBandMode ? (
         <ModalSection title={t('filter.selectedBandScores')} hint={t('filter.selectedBandScoresHint', { band: selectedBandName ?? t('band.title') })}>
           <ToggleRow
             label={t('filter.selectedBandHasScore')}
@@ -292,7 +333,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
             </Accordion>
           ))}
         </ModalSection>
-      </>)}
+      </>))}
 
       {showIndividualBandMemberFilters ? (
         <ModalSection>
@@ -320,28 +361,8 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
         </ModalSection>
       ) : null}
 
-      {/* Item Shop filters */}
-      {isShopVisible && (
-        <ModalSection>
-          <Accordion title={t('filter.shopTitle')} hint={t('filter.shopHint')}>
-            <ToggleRow
-              label={t('filter.shopInShop')}
-              description={t('filter.shopInShopDesc')}
-              checked={draft.shopInShop}
-              onToggle={() => onChange({ ...draft, shopInShop: !draft.shopInShop })}
-            />
-            <ToggleRow
-              label={t('filter.shopLeavingTomorrow')}
-              description={t('filter.shopLeavingTomorrowDesc')}
-              checked={draft.shopLeavingTomorrow}
-              onToggle={() => onChange({ ...draft, shopLeavingTomorrow: !draft.shopLeavingTomorrow })}
-            />
-          </Accordion>
-        </ModalSection>
-      )}
-
       {/* Instrument selector */}
-      {!selectedBandMode && (
+      {hasSelectedProfile && !selectedBandMode && (
         <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
           <InstrumentSelector
             instruments={selectorItems}
@@ -398,6 +419,33 @@ function areFilterModalDraftsEqual(a: FilterModalDraftState, b: FilterModalDraft
 }
 
 /* -- Toggle components for composite filters -- */
+
+function CatalogBucketToggles({ options, filter, onChange }: {
+  options: readonly { key: number; label: string }[];
+  filter: Record<number, boolean>;
+  onChange: (filter: Record<number, boolean>) => void;
+}) {
+  const toggle = (key: number) => onChange({ ...filter, [key]: filter[key] === false });
+  const clearAll = () => {
+    const next = { ...filter };
+    for (const option of options) next[option.key] = false;
+    onChange(next);
+  };
+
+  return (
+    <>
+      <BulkActions onSelectAll={() => onChange({})} onClearAll={clearAll} />
+      {options.map(option => (
+        <ToggleRow
+          key={option.key}
+          label={option.label}
+          checked={filter[option.key] !== false}
+          onToggle={() => toggle(option.key)}
+        />
+      ))}
+    </>
+  );
+}
 
 function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { availableSeasons: number[]; seasonFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
   const { t } = useTranslation();

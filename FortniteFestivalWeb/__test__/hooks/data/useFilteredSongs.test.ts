@@ -43,7 +43,7 @@ const songs = [
 ];
 
 describe('useFilteredSongs', () => {
-  it.each([['supported', ['s1']], ['unsupported', ['s2']], [null, ['s1', 's2', 's3', 's4']]] as const)(
+  it.each([['supported', ['s1']], ['unsupported', ['s2']], [null, ['s1', 's2', 's3', 's4']], ['none', []]] as const)(
     'filters double bass %s without classifying unknown songs', (doubleBass, expected) => {
       const { result } = renderHook(() => useFilteredSongs({
         songs: [
@@ -53,7 +53,7 @@ describe('useFilteredSongs', () => {
           song('s4', 'Unknown', 'Artist D'),
         ],
         search: '', sortMode: 'title', sortAscending: true,
-        filters: { ...defaultSongFilters(), doubleBass }, instrument: null,
+        filters: { ...defaultSongFilters(), doubleBass: { supported: doubleBass !== 'unsupported' && doubleBass !== 'none', unsupported: doubleBass !== 'supported' && doubleBass !== 'none' } }, instrument: null,
         scoreMap: new Map(), allScoreMap: new Map(),
       }));
       expect(result.current.map(s => s.songId)).toEqual(expected);
@@ -63,10 +63,10 @@ describe('useFilteredSongs', () => {
   it.each([false, true])('combines double bass with score, search and shop filters (band: %s)', selectedBandMode => {
     const scores = new Map([['s1', score('s1')], ['s2', score('s2')]]);
     const { result } = renderHook(() => useFilteredSongs({
-      songs: songs.map(s => ({ ...s, doubleBassSupported: true })),
+      songs: songs.map(s => ({ ...s, doubleBassSupported: true, durationSeconds: s.songId === 's1' ? 130 : 210 })),
       search: 'Artist', sortMode: 'title', sortAscending: true,
       filters: {
-        ...defaultSongFilters(), doubleBass: 'supported', shopInShop: true,
+        ...defaultSongFilters(), doubleBass: { supported: true, unsupported: false }, shopAvailability: { available: true, unavailable: false }, yearFilter: { 1990: false }, durationFilter: { 2: false },
         ...(selectedBandMode ? { selectedBandHasScore: true } : { hasScores: { Solo_Guitar: true } }),
       },
       instrument: null, scoreMap: scores,
@@ -74,6 +74,54 @@ describe('useFilteredSongs', () => {
       shopVisible: true, shopSongIds: new Set(['s2', 's3']), selectedBandMode,
     }));
     expect(result.current.map(s => s.songId)).toEqual(['s2']);
+  });
+
+  it.each([
+    [-1, []], [0, ['short']], [1, ['one', 'almostTwo']], [2, ['two']], [9, ['almostTen']], [10, ['ten', 'long']],
+  ] as const)('uses precise minute boundaries for duration bucket %s', (bucket, expected) => {
+    const catalog: Song[] = [
+      ['short', 59.9], ['one', 60], ['almostTwo', 119.9], ['two', 120], ['almostTen', 599.9], ['ten', 600], ['long', 900],
+    ].map(([id, seconds]) => ({ ...song(String(id), String(id), 'Artist'), durationSeconds: Number(seconds) }));
+    catalog.push({ ...song('unknown', 'unknown', 'Artist'), durationSeconds: undefined });
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: catalog, search: '', sortMode: 'title', sortAscending: true,
+      filters: { ...defaultSongFilters(), durationFilter: Object.fromEntries(Array.from({ length: 11 }, (_, minute) => [minute, minute === bucket])) },
+      instrument: null, scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    expect(result.current.map(s => s.songId).sort()).toEqual([...expected].sort());
+  });
+
+  it('filters decades including future years while leaving unknown metadata in the unfiltered catalog', () => {
+    const catalog = [1969, 1970, 1999, 2000, 2039, undefined].map((year, index) => ({ ...song(`s${index}`, `Song ${index}`, 'Artist'), year }));
+    const props = { songs: catalog, search: '', sortMode: 'title' as const, sortAscending: true, instrument: null, scoreMap: new Map<string, PlayerScore>(), allScoreMap: new Map<string, Map<InstrumentKey, PlayerScore>>() };
+    const { result, rerender } = renderHook(({ filters }) => useFilteredSongs({ ...props, filters }), { initialProps: { filters: defaultSongFilters() } });
+    expect(result.current).toHaveLength(6);
+    rerender({ filters: { ...defaultSongFilters(), yearFilter: { 1990: false } } });
+    expect(result.current.map(s => s.year)).toEqual([1969, 1970, 2000, 2039]);
+    rerender({ filters: { ...defaultSongFilters(), yearFilter: { 1960: false, 1970: false, 1990: false, 2000: false, 2030: false } } });
+    expect(result.current).toEqual([]);
+  });
+
+  it.each([
+    ['available', ['s2']], ['unavailable', ['s1', 's3']], [null, ['s1', 's2', 's3']], ['none', []],
+  ] as const)('filters shop availability %s without a profile', (shopAvailability, expected) => {
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title', sortAscending: true,
+      filters: { ...defaultSongFilters(), shopAvailability: { available: shopAvailability !== 'unavailable' && shopAvailability !== 'none', unavailable: shopAvailability !== 'available' && shopAvailability !== 'none' } }, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(), shopVisible: true, shopSongIds: new Set(['s2']),
+    }));
+    expect(result.current.map(s => s.songId)).toEqual(expected);
+  });
+
+  it.each([
+    [null, true, 3], [new Set<string>(), true, 0], [null, false, 0], [new Set<string>(), false, 0],
+  ] as const)('handles shop snapshot %s with available category %s', (shopSongIds, available, expected) => {
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title', sortAscending: true,
+      filters: { ...defaultSongFilters(), shopAvailability: { available, unavailable: false } }, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(), shopVisible: true, shopSongIds,
+    }));
+    expect(result.current).toHaveLength(expected);
   });
 
   it('returns all songs with no filters', () => {
@@ -140,7 +188,7 @@ describe('useFilteredSongs', () => {
     ]);
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: { ...defaultSongFilters(), selectedBandHasScore: true, shopInShop: true },
+      filters: { ...defaultSongFilters(), selectedBandHasScore: true, shopAvailability: { available: true, unavailable: false } },
       instrument: null,
       scoreMap: bandScoreMap,
       allScoreMap: new Map(),

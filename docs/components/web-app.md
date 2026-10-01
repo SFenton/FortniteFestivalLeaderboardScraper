@@ -2,8 +2,10 @@
 status: canonical
 owner: web
 last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified_commit: e5bcc042
 sources:
+  - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
+  - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
   - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
   - FortniteFestivalWeb/src/utils/songSettings.ts
@@ -400,17 +402,57 @@ client aligned.
 
 ### Song filters
 
-The Songs filter modal keeps its draft in `SongsPage`, with the applied filter
-persisted in browser song settings. The General section precedes Global Score
-& FC Toggles and applies across solo and selected-band views. Its Double Bass
-accordion contains mutually exclusive Double Bass Support and No Double Bass
-Support toggles; leaving both off applies no chart filter. The active General
-filter combines with the existing search, shop, score, and instrument filters.
+The Songs sort modal offers Has FC only when a player or band profile is
+selected, independent of whether score data has loaded. Without a selected
+profile, a saved Has FC mode uses Title sorting, and Has FC plus its primary
+instrument order controls are hidden.
 
-Support comes from `ServerSong.doubleBassSupported`: only explicit `true`
-matches support and explicit `false` matches no support. Missing or null
-metadata, including incoming songs and older path generations, matches neither
-option while a filter is enabled. Both off includes those songs normally.
+The desktop Songs toolbar and mobile action dock always include Filter once
+the page controls are revealed, including without a selected player or band
+and before score data loads. Without a selected profile, the modal shows only
+General and its filters. Selecting a player or band makes the other applicable
+filter sections available, even while score data is loading.
+
+The Songs filter modal keeps its draft in `SongsPage`, with applied filters
+persisted in browser song settings. General applies across anonymous, solo,
+and selected-band views and combines with search, score, and instrument
+filters. Its dropdown order is Year, Duration, Item Shop, and Double Bass.
+Dropdowns are inset on both sides; toggle rows use the shared accordion left
+indent while switches stay aligned with the dropdown right edge.
+
+Year derives its decade options from the full catalog's `ServerSong.year`
+metadata, sorted chronologically, so newly represented decades appear without
+a web change. The 1900s through 1960s remain hidden until songs from those
+decades appear in the loaded catalog. Duration uses
+`ServerSong.durationSeconds`: Under 1 Minute,
+1-2 Minutes through 9-10 Minutes, and 10+ Minutes only when a catalog song is
+at least 600 seconds long. Ranges include their lower bound and exclude the
+upper bound. All decade and duration toggles default on, including newly
+introduced buckets. Each dropdown includes Select All and Clear All. Select
+All enables every bucket; Clear All disables every bucket. Each toggle works
+independently, including the last enabled option. All-off choices persist
+without automatic repair and can produce an empty song list. Turning a
+bucket off excludes that bucket. Unknown or invalid metadata remains included
+with all toggles on and is excluded when
+that metadata filter is restricted.
+
+Item Shop respects the hide-shop setting and uses the shared shop snapshot,
+independent of profile selection. Available in Item Shop and Not Available in
+Item Shop both default on and toggle independently. Both on includes all
+songs; both off excludes all songs, even while shop data is pending.
+Classification waits for a loaded shop snapshot rather than treating pending
+data as unavailable.
+This replaces the previous In the Shop and Leaving Tomorrow filter section;
+older saved restrictions migrate to available-only, with no hidden legacy
+restriction retained. Shop badges and leaving-tomorrow display remain intact.
+
+Double Bass Support and No Double Bass Support both default on and toggle
+independently. Both off excludes all songs. Both on applies no chart
+restriction and includes unknown support metadata. With one category selected, only explicit `true`
+or `false` in `ServerSong.doubleBassSupported` matches that category; absent
+or null metadata matches neither. Existing saved single-category or
+unrestricted choices migrate to independent boolean selections. Reset
+restores all General choices in solo and band views.
 
 ### Settings service progress
 

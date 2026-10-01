@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api';
@@ -30,9 +30,11 @@ type FilterModalTestProps = Omit<ComponentProps<typeof FilterModal>, 'onChange'>
 
 const defaultProps = (): FilterModalTestProps => ({
   visible: true,
+  hasSelectedProfile: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
   availableSeasons: [1, 2, 3],
+  availableDecades: [1960, 1970, 2020, 2030],
   selectedBandMode: false,
   selectedBandName: undefined as string | undefined,
   onChange: vi.fn<(draft: FilterDraft) => void>(),
@@ -105,9 +107,17 @@ describe('FilterModal', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('renders modal title when visible', () => {
-    renderModal();
+  it('shows only General filters without a selected profile', () => {
+    renderModal({ hasSelectedProfile: false });
     expect(screen.getByText('Filter Songs')).toBeDefined();
+    expect(screen.getByText('General')).toBeInTheDocument();
+    expect(screen.getByText('Double Bass')).toBeInTheDocument();
+    expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
+    expect(screen.getByText('Item Shop')).toBeInTheDocument();
+    expect(screen.getByText('Year')).toBeInTheDocument();
+    expect(screen.getByText('Duration')).toBeInTheDocument();
   });
 
   it('places the general double bass filter before score filters', () => {
@@ -122,20 +132,97 @@ describe('FilterModal', () => {
     expect(screen.getByText('No Double Bass Support')).toBeDefined();
   });
 
-  it('allows neither double bass toggle or exactly one toggle to be selected', () => {
+  it.each([
+    ['Double Bass', 'doubleBass', 'Double Bass Support', 'No Double Bass Support', 'supported', 'unsupported'],
+    ['Item Shop', 'shopAvailability', 'Available in Item Shop', 'Not Available in Item Shop', 'available', 'unavailable'],
+  ] as const)('allows every %s category to toggle independently', (title, field, first, second, firstValue, secondValue) => {
+    const props = { ...defaultProps(), hasSelectedProfile: false };
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText(title));
+    for (const [label, expected] of [
+      [first, { [firstValue]: false, [secondValue]: true }],
+      [second, { [firstValue]: false, [secondValue]: false }],
+      [first, { [firstValue]: true, [secondValue]: false }],
+      [second, { [firstValue]: true, [secondValue]: true }],
+    ] as const) {
+      expect(screen.getByText(label).closest('button')).toBeEnabled();
+      fireEvent.click(screen.getByText(label));
+      const changed = props.onChange.mock.lastCall![0];
+      expect(changed[field]).toEqual(expected);
+      view.rerender(<TestProviders><FilterModal {...props} draft={changed} /></TestProviders>);
+    }
+  });
+
+  it('orders catalog filters before Double Bass and toggles dynamically supplied decades', () => {
+    const { props } = renderModal({ hasSelectedProfile: false });
+    const headers = ['Year', 'Duration', 'Item Shop', 'Double Bass'].map(title => screen.getByText(title));
+    for (let i = 1; i < headers.length; i++) {
+      expect(headers[i - 1]!.compareDocumentPosition(headers[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    fireEvent.click(screen.getByText('Year'));
+    for (const decade of ['1960s', '1970s', '2020s', '2030s']) expect(screen.getByText(decade)).toBeDefined();
+    expect(screen.queryByText('1980s')).toBeNull();
+    fireEvent.click(screen.getByText('1960s'));
+    expect(props.onChange.mock.lastCall?.[0].yearFilter).toEqual({ 1960: false });
+  });
+
+  it('shows all minute ranges and includes 10+ only when the catalog has long songs', () => {
     const props = defaultProps();
     const view = renderModal(props);
-    fireEvent.click(screen.getByText('Double Bass'));
-    fireEvent.click(screen.getByText('Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('supported');
+    fireEvent.click(screen.getByText('Duration'));
+    expect(screen.getByText('Under 1 Minute')).toBeDefined();
+    for (let minute = 1; minute < 10; minute++) expect(screen.getByText(`${minute}-${minute + 1} Minutes`)).toBeDefined();
+    expect(screen.queryByText('10+ Minutes')).toBeNull();
+    fireEvent.click(screen.getByText('Under 1 Minute'));
+    expect(props.onChange.mock.lastCall?.[0].durationFilter).toEqual({ 0: false });
+    view.rerender(<TestProviders><FilterModal {...props} hasLongSongs /></TestProviders>);
+    fireEvent.click(screen.getByText('10+ Minutes'));
+    expect(props.onChange.mock.lastCall?.[0].durationFilter).toEqual({ 10: false });
+  });
 
-    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'supported' }} /></TestProviders>);
-    fireEvent.click(screen.getByText('No Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBe('unsupported');
+  it.each([
+    ['Year', 'yearFilter', '1970s', '1960s', 1960, 1970],
+    ['Duration', 'durationFilter', '1-2 Minutes', 'Under 1 Minute', 0, 1],
+  ] as const)('%s bulk actions and individual toggles allow every option off', (title, field, keptLabel, otherLabel, excludedKey, keptKey) => {
+    const props = { ...defaultProps(), hasSelectedProfile: false };
+    props.draft = { ...props.draft, [field]: { [excludedKey]: false } };
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText(title));
+    const trigger = screen.getByText(title).closest('button')!;
+    const panel = within(document.getElementById(trigger.getAttribute('aria-controls')!)!);
+    fireEvent.click(panel.getByRole('button', { name: 'Clear All' }));
+    const cleared = props.onChange.mock.lastCall![0];
+    expect(Object.values(cleared[field])).not.toContain(true);
+    expect(Object.keys(cleared[field])).toHaveLength(title === 'Year' ? props.availableDecades!.length : 10);
+    view.rerender(<TestProviders><FilterModal {...props} draft={cleared} /></TestProviders>);
+    expect(panel.getByRole('button', { name: keptLabel })).toBeEnabled();
+    expect(panel.getByRole('button', { name: otherLabel })).toBeEnabled();
+    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
+    const oneEnabled = props.onChange.mock.lastCall![0];
+    expect(oneEnabled[field][keptKey]).toBe(true);
+    expect(oneEnabled[field][excludedKey]).toBe(false);
+    view.rerender(<TestProviders><FilterModal {...props} draft={oneEnabled} /></TestProviders>);
+    fireEvent.click(panel.getByRole('button', { name: keptLabel }));
+    expect(Object.values(props.onChange.mock.lastCall![0][field])).not.toContain(true);
+    fireEvent.click(panel.getByRole('button', { name: 'Select All' }));
+    expect(props.onChange.mock.lastCall![0][field]).toEqual({});
+  });
 
-    view.rerender(<TestProviders><FilterModal {...props} draft={{ ...props.draft, doubleBass: 'unsupported' }} /></TestProviders>);
-    fireEvent.click(screen.getByText('No Double Bass Support'));
-    expect(props.onChange.mock.lastCall?.[0].doubleBass).toBeNull();
+  it('allows a sole catalog decade off and reveals early decades only when present', () => {
+    const props = { ...defaultProps(), availableDecades: [2020] };
+    const view = renderModal(props);
+    fireEvent.click(screen.getByText('Year'));
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
+    fireEvent.click(screen.getByText('2020s'));
+    const changed = props.onChange.mock.lastCall![0];
+    expect(changed.yearFilter).toEqual({ 2020: false });
+    view.rerender(<TestProviders><FilterModal {...props} draft={changed} /></TestProviders>);
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
+    const earlyDecades = [1900, 1910, 1920, 1930, 1940, 1950, 1960];
+    for (const decade of earlyDecades) expect(screen.queryByText(`${decade}s`)).toBeNull();
+    view.rerender(<TestProviders><FilterModal {...props} draft={changed} availableDecades={[...earlyDecades, 2020]} /></TestProviders>);
+    for (const decade of earlyDecades) expect(screen.getByText(`${decade}s`)).toBeDefined();
+    expect(screen.getByText('2020s').closest('button')).toBeEnabled();
   });
 
   /* ── Global toggles section ── */
@@ -496,8 +583,7 @@ describe('FilterModal', () => {
     props.availableSeasons = [1, 2, 3];
     renderModal(props);
     fireEvent.click(screen.getByText('Season'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     const newDraft = props.onChange.mock.calls[0]![0];
     expect(newDraft.seasonFilter[1]).toBe(true);
     expect(newDraft.seasonFilter[2]).toBe(true);
@@ -514,8 +600,7 @@ describe('FilterModal', () => {
     props.availableSeasons = [1, 2, 3];
     renderModal(props);
     fireEvent.click(screen.getByText('Season'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     const newDraft = props.onChange.mock.calls[0]![0];
     expect(newDraft.seasonFilter[1]).toBe(false);
     expect(newDraft.seasonFilter[2]).toBe(false);
@@ -557,9 +642,8 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Percentile'));
-    // There are multiple Select All / Clear All buttons; find by the parenthood (the second set from Percentile)
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    // The expanded accordion exposes its bulk actions.
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -607,8 +691,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Stars'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -620,8 +703,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Stars'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -657,8 +739,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Song Intensity'));
-    const selectAllBtns = screen.getAllByText('Select All');
-    fireEvent.click(selectAllBtns[selectAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -670,8 +751,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Song Intensity'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 
@@ -683,8 +763,7 @@ describe('FilterModal', () => {
     props.savedDraft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('Percentile'));
-    const clearAllBtns = screen.getAllByText('Clear All');
-    fireEvent.click(clearAllBtns[clearAllBtns.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear All' }));
     expect(props.onChange).toHaveBeenCalled();
   });
 

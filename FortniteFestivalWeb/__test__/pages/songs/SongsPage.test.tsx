@@ -16,7 +16,7 @@ import { createTestQueryClient, TestProviders } from '../../helpers/TestProvider
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import { expectCancellableCall } from '../../helpers/requestAssertions';
-import { loadSongsFilterModal } from '../../../src/components/lazy/secondaryControls';
+import { loadSongsFilterModal, loadSongsSortModal } from '../../../src/components/lazy/secondaryControls';
 import { seedAllFirstRunSeen } from '../../helpers/firstRunState';
 
 const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
@@ -1520,6 +1520,7 @@ describe('SongsPage — callback function coverage (extracted)', () => {
 
 describe('SongsPage — filter callback coverage (explicit desktop)', () => {
   beforeEach(async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     await loadSongsFilterModal();
   });
 
@@ -1543,7 +1544,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     });
     const { container } = renderSongsPage('/songs', 'test-player-1');
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    // Filter ActionPill should be in the DOM since hasPlayer=true and desktop viewport
+    // The desktop toolbar always includes the Filter ActionPill.
     const filterBtn = screen.getByLabelText('Filter');
     expect(filterBtn).toBeTruthy();
     // Open the filter modal (exercises openFilter)
@@ -1565,7 +1566,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
       instrument: 'Solo_Guitar',
       metadataOrder: ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed'],
       instrumentOrder: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
-      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopInShop: false, shopLeavingTomorrow: false },
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopAvailability: { available: true, unavailable: true }, yearFilter: {}, durationFilter: {} },
     }));
     mockApi.getPlayer.mockResolvedValue({
       accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1,
@@ -1599,6 +1600,32 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     const resetBtns = Array.from(document.body.querySelectorAll('button')).filter(b => b.textContent === 'Reset');
     await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
+  });
+
+  it('resets all General filters for a selected band while preserving solo filter state', async () => {
+    setDesktopViewport();
+    selectTestBandProfile();
+    setSongSettingsFilter({
+      yearFilter: { 2020: false }, durationFilter: { 3: false },
+      doubleBass: { supported: true, unsupported: false }, shopAvailability: { available: false, unavailable: true },
+      selectedBandHasScore: true, hasScores: { Solo_Guitar: true },
+    });
+    renderSongsPage('/songs');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => { fireEvent.click(screen.getByLabelText('Filter')); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('Selected Band Scores')).toBeVisible();
+    expect(screen.getByText('Year')).toBeVisible();
+    expect(screen.getByText('Duration')).toBeVisible();
+    expect(screen.getByText('Item Shop')).toBeVisible();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Reset$/ })); });
+    await act(async () => { fireEvent.click(screen.getByText('Apply Filter Changes')); await vi.advanceTimersByTimeAsync(400); });
+    const saved = JSON.parse(localStorage.getItem('fst:songSettings')!).filters;
+    expect(saved.yearFilter).toEqual({});
+    expect(saved.durationFilter).toEqual({});
+    expect(saved.doubleBass).toEqual({ supported: true, unsupported: true });
+    expect(saved.shopAvailability).toEqual({ available: true, unavailable: true });
+    expect(saved.selectedBandHasScore).toBe(false);
+    expect(saved.hasScores).toEqual({ Solo_Guitar: true });
   });
 
   it('exercises openSort → applySort with desktop viewport', async () => {
@@ -1736,25 +1763,53 @@ describe('SongsPage — extra coverage', () => {
     });
   });
 
-  it('renders filter pill button when player is tracked', async () => {
-    renderSongsPage('/songs', 'test-player-1');
+  it('opens only General filters without a selected profile, deriving options from catalog metadata', async () => {
+    mockApi.getSongs.mockResolvedValue({ songs: [
+      ...Array.from({ length: 7 }, (_, index) => ({ songId: `early-${index}`, title: `Early Song ${index}`, artist: 'Artist A', year: 1909 + index * 10, durationSeconds: 59 })),
+      { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2030, durationSeconds: 600 },
+      { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2024, durationSeconds: 180 },
+    ], count: 9, currentSeason: 5 });
+    localStorage.removeItem('fst:trackedPlayer');
+    localStorage.removeItem('fst:selectedProfile');
+    await loadSongsFilterModal();
+    renderSongsPage('/songs');
     await act(async () => { vi.advanceTimersByTime(1000); });
     await waitFor(() => {
-      expect(screen.getByText('Filter')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Filter' })).toBeVisible();
     });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.getByText('General')).toBeVisible();
+    expect(screen.getByText('Double Bass')).toBeVisible();
+    expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
+    expect(screen.getByText('Item Shop')).toBeVisible();
+    expect(screen.getByText('Year')).toBeVisible();
+    expect(screen.getByText('Duration')).toBeVisible();
+    await act(async () => { fireEvent.click(screen.getByText('Year')); await vi.advanceTimersByTimeAsync(400); });
+    for (const decade of [1900, 1910, 1920, 1930, 1940, 1950, 1960]) expect(screen.getByText(`${decade}s`)).toBeVisible();
+    expect(screen.getByText('2020s')).toBeVisible();
+    expect(screen.getByText('2030s')).toBeVisible();
+    expect(screen.queryByText('1970s')).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByText('Duration')); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('10+ Minutes')).toBeVisible();
   });
 
-  it('opens sort modal when sort pill is clicked', async () => {
-    renderSongsPage('/songs', 'test-player-1');
-    await act(async () => { vi.advanceTimersByTime(1000); });
-    await waitFor(() => {
-      expect(screen.getByText('Sort')).toBeTruthy();
-    });
-    fireEvent.click(screen.getByText('Sort'));
-    // Modal should open — check for modal content
-    await waitFor(() => {
-      expect(document.body.textContent).toBeTruthy();
-    });
+  it('opens anonymous sorting without Has FC and falls back from a saved Has FC mode', async () => {
+    localStorage.removeItem('fst:trackedPlayer');
+    localStorage.removeItem('fst:selectedProfile');
+    localStorage.setItem('fst:songSettings', JSON.stringify({ ...defaultSongSettings(), sortMode: 'hasfc' }));
+    await loadSongsSortModal();
+    renderSongsPage('/songs');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sort' })); await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByText('Sort Songs')).toBeVisible();
+    expect(screen.queryByText('Has FC')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Title' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('Primary Instrument Order')).toBeNull();
   });
 
   /* ── Empty state with filters vs no filters ── */

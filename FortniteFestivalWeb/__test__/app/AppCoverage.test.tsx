@@ -217,7 +217,7 @@ describe('App — coverage: changelog modal', () => {
 
     // Changelog should be showing (no version stored yet)
     const changelogDialog = await screen.findByRole('dialog', { name: /What's New/ });
-    expect(await within(changelogDialog).findByText('ITEM SHOP')).toBeTruthy();
+    expect(await within(changelogDialog).findByText('SONGS')).toBeTruthy();
     expect(screen.queryByTestId('changelog-modal-lazy-loading')).toBeNull();
 
     // localStorage should NOT be written until the user dismisses

@@ -71,6 +71,8 @@ import {
   type SongSortMode,
   defaultSongSettings,
   defaultSongFilters,
+  getSongDecade,
+  getSongDurationBucket,
   loadSongSettings,
   normalizeSongSettings,
   saveSongSettings,
@@ -401,6 +403,7 @@ export default function SongsPage() {
     });
   }, [selectedBand?.members, selectedBandComboFilter]);
   const effectiveSortMode: SongSortMode = (() => {
+    if (!profile && settings.sortMode === 'hasfc') return 'title';
     if (!isSelectedBand) return isBandIntensitySortMode(settings.sortMode) ? 'title' : settings.sortMode;
     const bandIntensityInstrument = parseBandIntensityInstrument(settings.sortMode);
     if (bandIntensityInstrument) {
@@ -416,6 +419,15 @@ export default function SongsPage() {
   const activeSongInstrumentFilter = isVisibleInstrumentFilter(settings.instrument, enabledInstruments) ? settings.instrument : null;
   const displayInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
   const modalInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
+  const availableDecades = useMemo(() => {
+    const decades = new Set<number>();
+    for (const song of songs) {
+      const decade = getSongDecade(song.year);
+      if (decade !== null) decades.add(decade);
+    }
+    return [...decades].sort((a, b) => a - b);
+  }, [songs]);
+  const hasLongSongs = useMemo(() => songs.some(song => getSongDurationBucket(song.durationSeconds) === 10), [songs]);
   const scopedFilters = useMemo(
     () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
     [enabledInstruments, settings.filters],
@@ -608,8 +620,10 @@ export default function SongsPage() {
         selectedBandHasScore: defaults.selectedBandHasScore,
         selectedBandMissingScore: defaults.selectedBandMissingScore,
         individualBandMemberScoreFilters: defaults.individualBandMemberScoreFilters,
-        shopInShop: defaults.shopInShop,
-        shopLeavingTomorrow: defaults.shopLeavingTomorrow,
+        doubleBass: defaults.doubleBass,
+        yearFilter: defaults.yearFilter,
+        durationFilter: defaults.durationFilter,
+        shopAvailability: defaults.shopAvailability,
         instrumentFilter: null,
       });
       return;
@@ -827,7 +841,6 @@ export default function SongsPage() {
     scoreMap: displayScoreMap,
     allScoreMap: displayAllScoreMap,
     shopSongIds: shopCtx.shopSongIds,
-    leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     isScoreValid,
     filterInvalidScoresEnabled: scoreFilterEnabled,
     shopVisible: isShopVisible,
@@ -867,7 +880,6 @@ export default function SongsPage() {
     }));
   }, [effectiveSortMode, hasQuickLinkSections, isWideDesktop, sectionModel.sections]);
 
-  const hasPlayer = hasFilterableProfile;
   const hasSongRowScoreData = hasDisplayScores;
   const emptySubtitle = isSelectedBand && scopedFilters.selectedBandHasScore && bandScoreMap.size === 0
     ? t(activeBandComboId ? 'songs.noSelectedBandComboScores' : 'songs.noSelectedBandScores')
@@ -1124,7 +1136,6 @@ export default function SongsPage() {
   const fabBandFilterAccessory = fabBandFilterActive
     ? <ComboInstrumentFabAccessory instruments={fabSelectedInstruments} />
     : undefined;
-  const fabHasFilterPill = !!playerData || isSelectedBand;
   // FAB content is built unconditionally; the FAB itself gates visibility on
   // `ready` so search bar, dock pills, and main FAB stay hidden until the
   // page reports ContentIn, then fade up + in right-to-left with stagger.
@@ -1132,9 +1143,9 @@ export default function SongsPage() {
   const fabReady = loadPhase === LoadPhase.ContentIn;
   const fabDockActions: ActionItem[] = useMemo(() => [
     { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: sortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: openSort, onIntent: preloadSongsSortModal },
-    ...(fabHasFilterPill ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter, onIntent: preloadSongsFilterModal }] : []),
+    { label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter, onIntent: preloadSongsFilterModal },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- openSort/openFilter are stable per-render closures intentionally re-read
-  ], [t, sortActive, filtersActive, fabHasFilterPill, fabBandFilterActive, fabBandFilterAccessory]);
+  ], [t, sortActive, filtersActive, fabBandFilterActive, fabBandFilterAccessory]);
   const fabHasQuickLinks = pageQuickLinks != null;
 
   return (
@@ -1162,7 +1173,6 @@ export default function SongsPage() {
                     sortActive={sortActive}
                     filtersActive={filtersActive}
                     hasSongs={songs.length > 0 && !isLoading}
-                    hasPlayer={hasPlayer}
                     filteredCount={filtered.length}
                     totalCount={songs.length}
                     onOpenSort={openSort}
@@ -1197,6 +1207,7 @@ export default function SongsPage() {
               instrumentOrder: settings.instrumentOrder,
             }}
             instrumentFilter={displayInstrumentFilter}
+            hasSelectedProfile={profile !== null}
             hasPlayer={!!playerData}
             hideItemShop={!isShopVisible}
             bandComboInstruments={isSelectedBand ? bandComboInstruments : undefined}
@@ -1227,9 +1238,12 @@ export default function SongsPage() {
         >
           <LazySongsFilterModal
             visible={filterModal.visible}
+            hasSelectedProfile={profile !== null}
             draft={filterModal.draft}
             savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
             availableSeasons={availableSeasons}
+            availableDecades={availableDecades}
+            hasLongSongs={hasLongSongs}
             selectedBandMode={isSelectedBand}
             selectedBandName={selectedBand?.displayName}
             selectedBandMembers={selectedBandMemberFilterOptions}

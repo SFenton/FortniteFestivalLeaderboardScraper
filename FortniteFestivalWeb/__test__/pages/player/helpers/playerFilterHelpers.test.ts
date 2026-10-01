@@ -16,7 +16,7 @@ function baseSongSettings(): SongSettings {
     metadataOrder: ['score', 'percentage', 'percentile', 'stars', 'intensity', 'seasonachieved'],
     instrumentOrder: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
     filters: {
-      doubleBass: null,
+      doubleBass: { supported: true, unsupported: true },
       seasonFilter: { 5: true },
       percentileFilter: { 10: true },
       starsFilter: { 6: true },
@@ -29,8 +29,9 @@ function baseSongSettings(): SongSettings {
       selectedBandHasScore: false,
       selectedBandMissingScore: false,
       individualBandMemberScoreFilters: {},
-      shopInShop: false,
-      shopLeavingTomorrow: false,
+      shopAvailability: { available: true, unavailable: true },
+      yearFilter: {},
+      durationFilter: {},
     },
   };
 }

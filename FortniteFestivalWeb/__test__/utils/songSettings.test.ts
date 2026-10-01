@@ -28,14 +28,54 @@ beforeEach(() => {
 describe('songSettings', () => {
   it('persists the general filter and defaults older saved settings to no filter', () => {
     const settings = defaultSongSettings();
-    settings.filters.doubleBass = 'unsupported';
+    settings.filters.doubleBass = { supported: false, unsupported: true };
+    settings.filters.yearFilter = { 1970: false };
+    settings.filters.durationFilter = { 2: false };
+    settings.filters.shopAvailability = { available: false, unavailable: true };
     saveSongSettings(settings);
-    expect(loadSongSettings().filters.doubleBass).toBe('unsupported');
+    expect(loadSongSettings().filters).toEqual(settings.filters);
     resetSongSettingsForDeselect();
-    expect(loadSongSettings().filters.doubleBass).toBeNull();
+    expect(loadSongSettings().filters).toEqual(defaultSongFilters());
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { hasScores: { Solo_Guitar: true } } }));
-    expect(loadSongSettings().filters.doubleBass).toBeNull();
+    expect(loadSongSettings().filters.doubleBass).toEqual({ supported: true, unsupported: true });
     expect(loadSongSettings().filters.hasScores).toEqual({ Solo_Guitar: true });
+  });
+
+  it.each(['shopInShop', 'shopLeavingTomorrow'])('migrates the old %s shop restriction without retaining hidden toggles', field => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { [field]: true } }));
+    const loaded = loadSongSettings().filters;
+    expect(loaded.shopAvailability).toEqual({ available: true, unavailable: false });
+    expect(loaded).not.toHaveProperty('shopInShop');
+    expect(loaded).not.toHaveProperty('shopLeavingTomorrow');
+  });
+
+  it.each([false, true])('counts catalog filters independently of profile type (band: %s)', selectedBandMode => {
+    expect(isFilterActive({ ...defaultSongFilters(), yearFilter: { 2020: false } }, null, false, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), durationFilter: { 0: false } }, null, false, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: { available: false, unavailable: true } }, null, true, undefined, selectedBandMode)).toBe(true);
+    expect(isFilterActive({ ...defaultSongFilters(), shopAvailability: { available: false, unavailable: true } }, null, false, undefined, selectedBandMode)).toBe(false);
+  });
+
+  it('preserves all-off general filters when saved and reloaded', () => {
+    const settings = defaultSongSettings();
+    settings.filters.doubleBass = { supported: false, unsupported: false };
+    settings.filters.shopAvailability = { available: false, unavailable: false };
+    settings.filters.yearFilter = { 1970: false, 2020: false };
+    settings.filters.durationFilter = Object.fromEntries(Array.from({ length: 11 }, (_, bucket) => [bucket, false]));
+    saveSongSettings(settings);
+    expect(loadSongSettings().filters).toEqual(settings.filters);
+    expect(isFilterActive(loadSongSettings().filters)).toBe(true);
+  });
+
+  it.each([
+    ['supported', 'available', { supported: true, unsupported: false }, { available: true, unavailable: false }],
+    ['unsupported', 'unavailable', { supported: false, unsupported: true }, { available: false, unavailable: true }],
+    [null, null, { supported: true, unsupported: true }, { available: true, unavailable: true }],
+  ])('migrates older pair selections (%s, %s)', (doubleBass, shopAvailability, expectedBass, expectedShop) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: { doubleBass, shopAvailability } }));
+    const loaded = loadSongSettings().filters;
+    expect(loaded.doubleBass).toEqual(expectedBass);
+    expect(loaded.shopAvailability).toEqual(expectedShop);
   });
 
   describe('getInstrumentSortModes', () => {
@@ -125,8 +165,8 @@ describe('songSettings', () => {
 
   describe('isFilterActive', () => {
     it('counts double bass filtering even without a selected player or instrument', () => {
-      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: 'supported' }, null)).toBe(true);
-      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: 'unsupported' }, null, false, undefined, true)).toBe(true);
+      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: { supported: true, unsupported: false } }, null)).toBe(true);
+      expect(isFilterActive({ ...defaultSongFilters(), doubleBass: { supported: false, unsupported: true } }, null, false, undefined, true)).toBe(true);
     });
     it('returns false for default filters', () => {
       expect(isFilterActive(defaultSongFilters())).toBe(false);

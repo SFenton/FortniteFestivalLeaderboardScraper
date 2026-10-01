@@ -85,7 +85,10 @@ function migrateMetadataOrder(saved: string[]): string[] {
 /* ── Filter ── */
 
 export type SongFilters = {
-  doubleBass: 'supported' | 'unsupported' | null;
+  doubleBass: { supported: boolean; unsupported: boolean };
+  yearFilter: Record<number, boolean>;
+  durationFilter: Record<number, boolean>;
+  shopAvailability: { available: boolean; unavailable: boolean };
   missingScores: Record<string, boolean>;
   missingFCs: Record<string, boolean>;
   hasScores: Record<string, boolean>;
@@ -98,8 +101,6 @@ export type SongFilters = {
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
   difficultyFilter: Record<number, boolean>;
-  shopInShop: boolean;
-  shopLeavingTomorrow: boolean;
 };
 
 export type IndividualBandMemberScoreFilter = {
@@ -108,7 +109,10 @@ export type IndividualBandMemberScoreFilter = {
 };
 
 export const defaultSongFilters = (): SongFilters => ({
-  doubleBass: null,
+  doubleBass: { supported: true, unsupported: true },
+  yearFilter: {},
+  durationFilter: {},
+  shopAvailability: { available: true, unavailable: true },
   missingScores: {},
   missingFCs: {},
   hasScores: {},
@@ -121,9 +125,20 @@ export const defaultSongFilters = (): SongFilters => ({
   percentileFilter: {},
   starsFilter: {},
   difficultyFilter: {},
-  shopInShop: false,
-  shopLeavingTomorrow: false,
 });
+
+/** Decade represented by its first year; missing or invalid metadata has no bucket. */
+export const getSongDecade = (year: number | undefined): number | null =>
+  year != null && Number.isFinite(year) && year > 0 ? Math.floor(year / 10) * 10 : null;
+
+/** Whole-minute lower bound, capped at 10 for the open-ended final bucket. */
+export const getSongDurationBucket = (seconds: number | undefined): number | null =>
+  seconds != null && Number.isFinite(seconds) && seconds > 0 ? Math.min(10, Math.floor(seconds / 60)) : null;
+
+const DURATION_FILTER_BUCKETS = Array.from({ length: 10 }, (_, minute) => minute);
+
+export const getDurationFilterBuckets = (hasLongSongs: boolean): readonly number[] =>
+  hasLongSongs ? [...DURATION_FILTER_BUCKETS, 10] : DURATION_FILTER_BUCKETS;
 
 const scopedFilterRecord = (map: Record<string, boolean> | undefined, visibleSet: ReadonlySet<string> | null): Record<string, boolean> => {
   if (!visibleSet) return map ?? {};
@@ -155,8 +170,9 @@ export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | und
 };
 
 export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null, selectedBandMode = false): boolean => {
-  if (f.doubleBass === 'supported' || f.doubleBass === 'unsupported') return true;
-  if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
+  if (Object.values(f.doubleBass ?? {}).some(v => v === false)) return true;
+  if (Object.values(f.yearFilter ?? {}).some(v => v === false) || Object.values(f.durationFilter ?? {}).some(v => v === false)) return true;
+  if (shopVisible && Object.values(f.shopAvailability ?? {}).some(v => v === false)) return true;
   if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore || hasIndividualBandMemberScoreFilters(f);
   const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
   const hasPerInstrument =
@@ -222,6 +238,10 @@ export function loadSongSettings(): SongSettings {
     const parsed = JSON.parse(raw);
     // Merge with defaults to handle missing keys from older versions
     const defaults = defaultSongSettings();
+    const { shopInShop, shopLeavingTomorrow, ...savedFilters } = parsed.filters ?? {};
+    const shopAvailability = savedFilters.shopAvailability === undefined
+      ? (shopInShop || shopLeavingTomorrow ? 'available' : null)
+      : savedFilters.shopAvailability;
     return normalizeSongSettings({
       sortMode: parsed.sortMode ?? defaults.sortMode,
       sortAscending: parsed.sortAscending ?? defaults.sortAscending,
@@ -229,7 +249,13 @@ export function loadSongSettings(): SongSettings {
       instrumentOrder: parsed.instrumentOrder ?? defaults.instrumentOrder,
       filters: {
         ...defaults.filters,
-        ...(parsed.filters ?? {}),
+        ...savedFilters,
+        doubleBass: typeof savedFilters.doubleBass === 'string'
+          ? { supported: savedFilters.doubleBass !== 'unsupported', unsupported: savedFilters.doubleBass !== 'supported' }
+          : { ...defaults.filters.doubleBass, ...savedFilters.doubleBass },
+        shopAvailability: typeof shopAvailability === 'string'
+          ? { available: shopAvailability !== 'unavailable', unavailable: shopAvailability !== 'available' }
+          : { ...defaults.filters.shopAvailability, ...shopAvailability },
       },
       instrument: parsed.instrument ?? defaults.instrument,
     });

@@ -988,7 +988,7 @@ describe('App — mobile FAB branches', () => {
     expect(screen.queryByLabelText('Actions')).toBeNull();
     expect(within(dock).getByRole('button', { name: 'Search' })).toBeDefined();
     expect(within(dock).getByRole('button', { name: 'Sort Songs' })).toBeDefined();
-    expect(within(dock).queryByRole('button', { name: 'Filter Songs' })).toBeNull();
+    expect(within(dock).getByRole('button', { name: 'Filter Songs' })).toBeDefined();
 
     expect(within(dock).queryByText('Select Profile')).toBeNull();
     expect(within(dock).queryByText('Item Shop')).toBeNull();
