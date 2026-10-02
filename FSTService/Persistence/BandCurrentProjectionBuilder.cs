@@ -1761,13 +1761,22 @@ public sealed class BandCurrentProjectionBuilder
         cmd.Parameters.AddWithValue("scopeComboId", scope.ScopeComboId);
     }
 
+    /// <summary>
+    /// Orders scopes for the parallel refresh: band types alternate, and within
+    /// each band type the song-wide <c>overall</c> scopes (each spanning every
+    /// combo of the song, roughly ten times a single combo scope's rows) start
+    /// first so the largest transactions never form a single-worker tail.
+    /// Relative order is otherwise preserved.
+    /// </summary>
     internal static BandCurrentProjectionScopeKey[] InterleaveByBandType(
         IReadOnlyList<BandCurrentProjectionScopeKey> scopes)
     {
         var queues = scopes
             .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
             .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(static group => new Queue<BandCurrentProjectionScopeKey>(group))
+            .Select(static group => new Queue<BandCurrentProjectionScopeKey>(
+                group.OrderBy(static scope =>
+                    string.Equals(scope.RankingScope, "overall", StringComparison.OrdinalIgnoreCase) ? 0 : 1)))
             .ToList();
         var ordered = new List<BandCurrentProjectionScopeKey>(scopes.Count);
         while (queues.Count > 0)
