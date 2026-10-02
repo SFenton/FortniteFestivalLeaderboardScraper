@@ -720,7 +720,11 @@ By default the refresh runs one sequential worker per band type, at most two
 band types at once, so the third band type waits for the first to finish and
 one band type's tail runs alone. `Scraper:BandCurrentProjectionMaxParallelScopes`
 (default `0`, clamped to `16`) instead runs up to that many scope transactions
-at once, interleaving band types. Scope transactions write disjoint
+at once, interleaving band types and starting each band type's song-wide
+`overall` scopes (roughly ten times a combo scope's rows) before its combo
+scopes, so the largest transactions do not run alone at the end. Scrape `1457`
+ran 7,342 scopes in about 27 minutes, with its last eight minutes down to two or
+three busy workers on overall scopes. Scope transactions write disjoint
 `current_band_leaderboard_entries` and `band_current_projection_scope` keys,
 and isolated PostgreSQL tests keep sequential and parallel projection and
 state hashes identical for both member-stat query shapes. Promotion needs a
