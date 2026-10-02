@@ -1955,6 +1955,75 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(130_000, GetProjectedScore(songId, instrument, accountId));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_LegacyReadersMatchValidatedProjectionDuringDerivedPhasesOnlyWhenEnabled(
+        bool enabled)
+    {
+        const string songId = "song_projection_validated";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_projection_validated";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                EnforcePublicationCriticalPhases = true,
+            }));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, accountId, 120_000);
+        InsertProjectionScope(songId, instrument, sourceSnapshotId: 41);
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                PrepareSoloCurrentProjectionBeforeRivals = true,
+                UseValidatedSoloProjectionForLegacyDerivedReaders = enabled,
+            },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext();
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals | ScrapePhase.SoloPlayerStats,
+            CancellationToken.None);
+
+        var logs = _log.Entries.ToList();
+        var validatedIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("Validated solo current projection for legacy rivals/player stats readers", StringComparison.Ordinal));
+        var rivalsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        Assert.True(rivalsIndex >= 0, "Expected rivals to run.");
+        Assert.Equal(42, GetProjectionScopeSourceSnapshot(songId, instrument));
+        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.False(ctx.SoloCurrentProjectionRefreshedForPublication);
+        if (enabled)
+            Assert.True(validatedIndex >= 0 && validatedIndex < rivalsIndex,
+                "Expected legacy projection validation before rivals.");
+        else
+            Assert.Equal(-1, validatedIndex);
+    }
+
     [Fact]
     public void BandExtraction_DoesNotActivateSoloSnapshots()
     {

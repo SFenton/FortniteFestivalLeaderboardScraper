@@ -319,6 +319,19 @@ public sealed class ScraperOptions
     public bool PrepareSoloCurrentProjectionBeforeRivals { get; set; }
 
     /// <summary>
+    /// With legacy worker readers and <see cref="PrepareSoloCurrentProjectionBeforeRivals"/>,
+    /// once the early refresh leaves no stale or orphaned solo projection
+    /// scopes, let rivals, leaderboard rivals, and player stats match ready
+    /// projection scopes against the active snapshot during the public-read
+    /// freeze instead of the published scrape. Without it, every scope whose
+    /// active snapshot is not the published scrape fails readiness and those
+    /// readers re-rank live and snapshot rows per song or per instrument.
+    /// Cleared before snapshot activation.
+    /// Set via <c>Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders</c>.
+    /// </summary>
+    public bool UseValidatedSoloProjectionForLegacyDerivedReaders { get; set; }
+
+    /// <summary>
     /// Maximum number of solo current projection scopes refreshed concurrently during cleanup.
     /// </summary>
     public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;

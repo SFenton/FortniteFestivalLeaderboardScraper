@@ -589,7 +589,14 @@ new snapshot fall back to per-song live-plus-snapshot ranking during Rivals.
 `Scraper:PrepareSoloCurrentProjectionBeforeRivals` (default `false`) runs the
 existing `PrepareSoloCurrentProjectionForDerived` phase as a best-effort stale
 refresh before Rivals and player stats; publication cleanup still revalidates
-and refreshes. See [configuration](../reference/configuration.md#player-rivals).
+and refreshes. During the public-read freeze, legacy readers still match
+projection scopes against the published scrape, so that refresh alone leaves
+the preload and most neighborhoods on the fallback.
+`Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` (default `false`)
+revalidates after the refresh and, when no stale or orphaned scope remains,
+lets Rivals, LeaderboardRivals, and PlayerStatsTiers match ready scopes against
+the active snapshot; it is cleared before snapshot activation. See
+[configuration](../reference/configuration.md#player-rivals).
 
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
