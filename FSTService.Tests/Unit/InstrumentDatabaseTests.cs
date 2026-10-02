@@ -1137,6 +1137,42 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyReaders_match_validated_projection_only_inside_read_scope_flow()
+    {
+        InsertSnapshotEntry(816, "song_legacy_scope", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotState("song_legacy_scope", 816, isFinalized: true);
+        InsertProjectionScope("song_legacy_scope", sourceSnapshotId: 816);
+        InsertProjectionEntry("song_legacy_scope", "acct_user", 130_000, source: "projection");
+        SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
+
+        var release = new TaskCompletionSource();
+        var outsideRead = Task.Run(async () =>
+        {
+            await release.Task;
+            return Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_scope")).Score;
+        });
+
+        using (InstrumentDatabase.BeginValidatedProjectionReadScope())
+        {
+            Assert.Equal(
+                130_000,
+                Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_scope")).Score);
+            Assert.Equal(
+                130_000,
+                await Task.Run(() => Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_scope")).Score));
+
+            // A flow started before the scope keeps published-scrape matching.
+            release.SetResult();
+            Assert.Equal(120_000, await outsideRead);
+        }
+
+        Assert.False(Db.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.Equal(
+            120_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_scope")).Score);
+    }
+
+    [Fact]
     public void LegacyReaders_match_validated_projection_to_active_snapshot_during_freeze()
     {
         InsertSnapshotEntry(816, "song_legacy_frozen", "acct_user", 120_000, source: "scrape");

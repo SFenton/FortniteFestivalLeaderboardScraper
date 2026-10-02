@@ -56,6 +56,37 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// </summary>
     public bool UseValidatedCurrentProjectionForWorkerReaders { get; set; }
 
+    private static readonly AsyncLocal<bool> ValidatedProjectionReadScope = new();
+
+    /// <summary>
+    /// True inside <see cref="BeginValidatedProjectionReadScope"/> on the current
+    /// async flow only; other concurrent operations keep their own matching.
+    /// </summary>
+    internal static bool IsValidatedProjectionReadScopeActive => ValidatedProjectionReadScope.Value;
+
+    /// <summary>
+    /// Lets projected current-state reads issued from this async flow (and work it
+    /// starts) match ready scopes against the active snapshot during the
+    /// public-read freeze, without changing reads issued by other operations.
+    /// </summary>
+    internal static IDisposable BeginValidatedProjectionReadScope()
+    {
+        var previous = ValidatedProjectionReadScope.Value;
+        ValidatedProjectionReadScope.Value = true;
+        return new ValidatedProjectionReadScopeHandle(previous);
+    }
+
+    private sealed class ValidatedProjectionReadScopeHandle(bool previous) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                ValidatedProjectionReadScope.Value = previous;
+        }
+    }
+
     /// <summary>
     /// When true, filtered projection reads preserve projection order by using
     /// the stored rank as the window ordering key.
@@ -3946,6 +3977,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var projectionSongFilter = filterSong ? "AND scope.song_id = @songId" : string.Empty;
         var usePublishedSnapshotDuringFreeze =
             UseValidatedCurrentProjectionForWorkerReaders
+            || ValidatedProjectionReadScope.Value
                 ? "FALSE"
                 : "publication.public_reads_frozen";
         return $"""

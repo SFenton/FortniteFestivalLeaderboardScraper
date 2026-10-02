@@ -610,6 +610,19 @@ revalidates after the refresh and, when no stale or orphaned scope remains,
 lets Rivals, LeaderboardRivals, and PlayerStatsTiers match ready scopes against
 the active snapshot; it is cleared before snapshot activation. See
 [configuration](../reference/configuration.md#player-rivals).
+`Scraper:UseValidatedSoloProjectionForLegacyPrecompute` (default `false`)
+applies the same rule to `Cleanup.PrecomputeAll`: after publication cleanup's
+projection refresh succeeds and no stale or orphaned scope remains, precompute's
+current-state readers (leeway metadata, player profiles) match ready scopes
+against the active snapshot until precompute ends. The match is scoped to
+precompute's own async flow, so other worker operations keep published-scrape
+matching. Readiness compares only snapshot identities, so overlay rows and
+snapshot-state pointers are fingerprinted before and after; if a concurrent
+write (for example registration backfill) changed them, precompute reruns with
+the default matching. Without it, every scope
+whose active snapshot is not the published scrape re-resolves snapshot and
+overlay rows for the active snapshot, which is what the projection already
+holds; that resolution dominated precompute database time in scrape `1457`.
 
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
