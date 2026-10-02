@@ -55,3 +55,15 @@ definition, size, and scan count in
 verifies each index is gone. Lock contention defers (exit code 3); other
 failures refuse (exit code 2). `rollback` refuses an invalid leftover index
 instead of silently replacing it.
+
+## Production state
+
+Applied on 2026-10-02 during scrape `1459`'s leaderboard fetch, after the API
+and worker both ran an image without the old `CREATE INDEX` statements
+(bundle revision `bf4c4765`). `plan` reported no blockers. `apply` dropped all
+three indexes on the first attempt each, reclaiming about 9.4, 9.8, and
+11.6 GiB (30.8 GiB in total; the drive went from 44% to 43% used). Afterwards
+a duets team lookup used the `ix_cble_team_song` partition index (about 0.1
+ms). The manifest under
+`fst-data/evidence/band-projection-index-retirement/` records each drop and its
+definition for `rollback`. Running `apply` again finds nothing to drop.
