@@ -737,7 +737,15 @@ same filter over all source and projection scope keys; the fast filter makes
 the full-table pass take about two minutes. The filter treats a ready scope
 with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
 converge instead of being selected every scrape, and counts only full-size
-combos, matching the rebuild.
+combos, matching the rebuild. It also selects every ready scope whose
+`projection_generation` differs from `published_generation` (except a
+never-published empty scope): `row_count` and `last_rebuilt_at` describe the
+latest rebuilt candidate, so a candidate whose publish was interrupted
+otherwise looked current forever while readers kept serving the older
+generation. On 2026-10-02 production had 3,409 such combo scopes (last
+rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
+serving stale published rows, for example 71 published versus 30 current
+rows. The stale sweep converges them within its cap.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,

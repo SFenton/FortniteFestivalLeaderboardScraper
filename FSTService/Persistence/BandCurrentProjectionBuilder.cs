@@ -793,6 +793,13 @@ public sealed class BandCurrentProjectionBuilder
             WHERE (source_scope.projected_rows = 0
                    AND existing.song_id IS NOT NULL
                    AND (existing.status <> 'ready' OR existing.row_count <> 0))
+               -- row_count/last_rebuilt_at describe the latest rebuilt candidate,
+               -- not the published generation. A ready candidate that was never
+               -- published (interrupted or failed publish) would otherwise look
+               -- current forever while readers keep serving the older generation.
+               OR (existing.status = 'ready'
+                   AND existing.projection_generation IS DISTINCT FROM existing.published_generation
+                   AND NOT (existing.row_count = 0 AND existing.published_generation IS NULL))
                OR (source_scope.projected_rows > 0 AND (
                     existing.song_id IS NULL
                     OR existing.status <> 'ready'
