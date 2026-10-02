@@ -63,6 +63,10 @@ LIVENESS_ROOT_TABLES = (
 )
 DEFAULT_MAX_LIVE_FRACTION = 0.5
 DEFAULT_MIN_RECLAIM_BYTES = 128 * 1024**2
+# Every worker stop/recreate (and so every Scraper:ResumeScrapeId change) runs under
+# this flock in tools/fst-worker-compose-guard.sh; the swap holds it shared.
+WORKER_MUTATION_LOCK_PATH = pathlib.Path(
+    "/home/sfenton/Docker/FestivalServiceTracker/.fst-worker-compose-guard.lock")
 
 
 def compaction_root() -> pathlib.Path:
@@ -410,6 +414,30 @@ def drop_bound_check(child: dict) -> bool:
         raise
 
 
+class worker_mutation_fence:
+    """Holds the worker-guard flock (shared, non-blocking) from the worker check through
+    the committed swap, so no guarded worker stop/recreate can interleave."""
+
+    def __init__(self, path: pathlib.Path | None = None):
+        self.path = path or WORKER_MUTATION_LOCK_PATH
+        self.handle = None
+
+    def __enter__(self):
+        if not self.path.exists():
+            raise TransientRefusal(f"worker mutation lock {self.path} is missing")
+        self.handle = self.path.open("r")
+        try:
+            fcntl.flock(self.handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.handle.close()
+            raise TransientRefusal("a worker deployment holds the worker mutation lock")
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
+
+
 def relation_identity(relation: str) -> dict | None:
     out = retire.psql(
         f"SELECT coalesce(json_build_object('oid', oid::bigint, 'relfilenode', relfilenode::bigint, "
@@ -485,11 +513,11 @@ def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_sc
             print(f"window closed before swap ({why}); dropped replacement", flush=True)
             return None
 
-    if worker is not None and worker_configuration() != worker:
-        retire.psql(f"DROP TABLE public.{new} RESTRICT;")
-        raise TransientRefusal("the worker container or its resume configuration changed during the run")
     try:
-        attempts = swap_in(child, songs, new, resume_scrape_id)
+        with worker_mutation_fence():
+            if worker is not None and worker_configuration() != worker:
+                raise TransientRefusal("the worker container or its resume configuration changed during the run")
+            attempts = swap_in(child, songs, new, resume_scrape_id)
     except BaseException:
         if retire.psql(f"SELECT to_regclass({quote('public.' + new)}) IS NOT NULL;") == "t":
             retire.psql(f"DROP TABLE public.{new} RESTRICT;")

@@ -192,10 +192,11 @@ class SwapTests(unittest.TestCase):
                    build_replacement=lambda child, songs, new: None,
                    table_fingerprint=lambda relation: (10, "9"),
                    worker_configuration=lambda: {"container_id": "new", "resume_scrape_id": 0},
+                   WORKER_MUTATION_LOCK_PATH=self.lock_path(),
                    swap_in=lambda *a, **k: swapped.append(a)), \
                 Patch(retire, dump_child=lambda child, path: path.write_bytes(b"x"),
                       verify_archive=lambda *a, **k: {"toc_ok": True}, append_manifest=lambda *a, **k: None,
-                      psql=lambda sql, timeout=900: dropped.append(sql) or "",
+                      psql=lambda sql, timeout=900: dropped.append(sql) or ("t" if "to_regclass" in sql else ""),
                       ARCHIVE_ROOT=pathlib.Path(self.tmp.name)):
             with self.assertRaises(compact.TransientRefusal):
                 compact.compact_child(CHILD, argparse.Namespace(max_live_fraction=0.5, min_reclaim_bytes=0,
@@ -204,6 +205,29 @@ class SwapTests(unittest.TestCase):
         self.assertEqual(swapped, [])
         self.assertTrue(any("DROP TABLE public.leaderboard_entries_snapshot_solo_guitar_s1410_cnew" in sql
                             for sql in dropped))
+
+    def lock_path(self):
+        path = pathlib.Path(self.tmp.name) / "guard.lock"
+        path.touch()
+        return path
+
+    def test_worker_mutation_fence_defers_while_a_deployment_holds_the_lock(self):
+        import fcntl
+        path = self.lock_path()
+        with path.open("r") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(compact.TransientRefusal):
+                with compact.worker_mutation_fence(path):
+                    pass
+        with compact.worker_mutation_fence(path):
+            with path.open("r") as deployer:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(deployer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_missing_worker_mutation_lock_defers(self):
+        with self.assertRaises(compact.TransientRefusal):
+            with compact.worker_mutation_fence(pathlib.Path(self.tmp.name) / "absent.lock"):
+                pass
 
     def setUp(self):
         import tempfile

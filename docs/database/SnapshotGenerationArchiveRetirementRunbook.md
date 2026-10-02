@@ -199,10 +199,12 @@ shares the retirement lock, so it never overlaps a retirement run:
    `CREATE TRIGGER` and other DDL on it) and holds them through `COMMIT`, then
    requires the instrument parent's DEFAULT partition to be empty, no
    whole-child root (including a user trigger), and no live song outside the
-   copied set. Immediately before the transaction the run also requires the
-   `fstworker` container ID and its `Scraper:ResumeScrapeId` to equal the values
-   pinned at run start, because a resume change needs a container recreate.
-   Only then does it `DETACH` the child,
+   copied set. From the worker check through the committed swap the run holds
+   the worker-guard flock (`.fst-worker-compose-guard.lock`, shared and
+   non-blocking), so no guarded worker stop or recreate can interleave; it also
+   requires the `fstworker` container ID and its `Scraper:ResumeScrapeId` to
+   equal the values pinned at run start, because a resume change needs a
+   container recreate. Only then does it `DETACH` the child,
    rename it `<child>_cold`, rename the replacement to the child's name, and
    `ATTACH ... FOR VALUES IN (<snapshot>)`. The replacement's `CHECK` skips its
    validation scan and its indexes are adopted; PostgreSQL still validates the

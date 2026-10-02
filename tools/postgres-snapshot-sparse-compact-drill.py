@@ -126,6 +126,8 @@ def main() -> int:
         retire.preflight = lambda: None
         retire.probe_window = lambda url: (True, "isolated drill")
         compact.worker_configuration = lambda: {"container_id": "drill", "resume_scrape_id": 0}
+        compact.WORKER_MUTATION_LOCK_PATH = archive_root / ".worker-guard.lock"
+        compact.WORKER_MUTATION_LOCK_PATH.touch()
 
         def cli(*argv: str) -> int:
             return compact.main(list(argv))
