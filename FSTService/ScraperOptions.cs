@@ -976,6 +976,15 @@ public sealed class ScraperOptions
     public bool BandSearchProjectionParallelBandTypes { get; set; }
 
     /// <summary>
+    /// How many band types the post-fetch band spool flush writes at once.
+    /// Each band type's chunks stay ordered and write rows keyed by band type.
+    /// 1 (default) flushes band types one after another; values are clamped
+    /// to the number of band types. Set via
+    /// <c>Scraper__BandSpoolFlushMaxParallelBandTypes</c>.
+    /// </summary>
+    public int BandSpoolFlushMaxParallelBandTypes { get; set; } = 1;
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>
