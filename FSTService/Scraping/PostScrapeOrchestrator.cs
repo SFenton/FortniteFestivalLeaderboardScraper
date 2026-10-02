@@ -503,11 +503,73 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync(
                 ctx,
                 "Cleanup.PrecomputeAll",
-                () => PrecomputeAllForCleanupAsync(
+                () => RunWithValidatedLegacyProjectionForPrecomputeAsync(
                     ctx,
-                    ctx.EpicReportedOver100Pages,
+                    () => PrecomputeAllForCleanupAsync(
+                        ctx,
+                        ctx.EpicReportedOver100Pages,
+                        ct),
                     ct),
                 alwaysPropagateFailure: true);
+        }
+    }
+
+    /// <summary>
+    /// With legacy worker readers, precompute's current-state reads match ready
+    /// solo projection scopes against the published scrape during the
+    /// public-read freeze, so after snapshot activation every scope fails
+    /// readiness and each read re-resolves snapshot and overlay rows for the
+    /// active snapshot. Once the cleanup refresh has left no stale or orphaned
+    /// scope, the projection equals that resolution, so when
+    /// <see cref="ScraperOptions.UseValidatedSoloProjectionForLegacyPrecompute"/>
+    /// is set the projection is matched against the active snapshot for the
+    /// duration of precompute only. Scopes that still differ fall back as before.
+    /// </summary>
+    internal async Task RunWithValidatedLegacyProjectionForPrecomputeAsync(
+        ScrapePassContext ctx,
+        Func<Task> precompute,
+        CancellationToken ct)
+    {
+        var enabled = false;
+        if (_options.Value.UseValidatedSoloProjectionForLegacyPrecompute
+            && ctx.SoloCurrentProjectionRefreshedForPublication
+            && !_persistence.UsePublishedScopeSources
+            && !_persistence.UseSnapshotOverlayWorkerReaders
+            && _soloCurrentProjectionBuilder is { } builder)
+        {
+            try
+            {
+                var staleScopes = await builder.LoadStaleScopesAsync(ct);
+                if (staleScopes.Count == 0 && !await builder.HasOrphanedProjectionScopesAsync(ct))
+                {
+                    _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(true);
+                    enabled = true;
+                    _log.LogInformation(
+                        "Validated solo current projection for legacy precompute readers; ready scopes match their active snapshot until precompute ends.");
+                }
+                else
+                {
+                    _log.LogWarning(
+                        "Solo current projection is not fully validated before precompute (stale={StaleScopeCount:N0}); legacy readers keep published-scrape matching.",
+                        staleScopes.Count);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Solo current projection validation before precompute failed; legacy readers keep published-scrape matching.");
+            }
+        }
+
+        try
+        {
+            await precompute();
+        }
+        finally
+        {
+            if (enabled)
+                _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
         }
     }
 

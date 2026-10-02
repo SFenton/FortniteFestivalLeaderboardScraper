@@ -341,6 +341,7 @@ configuration rollback is independently setting each enable flag to `false`.
 | `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
 | `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
 | `Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` | `false` | boolean | After that early refresh leaves no stale or orphaned scope, legacy rivals, leaderboard-rivals, and player-stats readers match ready projection scopes against the active snapshot during the freeze |
+| `Scraper:UseValidatedSoloProjectionForLegacyPrecompute` | `false` | boolean | After publication cleanup's projection refresh leaves no stale or orphaned scope, legacy precompute readers match ready projection scopes against the active snapshot until precompute ends |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
