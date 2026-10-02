@@ -736,8 +736,11 @@ about 2.3 minutes while deleting nothing.
 `16`) instead publishes one song per transaction, largest songs first, with up
 to that many at once. Each song's flip and old-generation delete stay atomic,
 so readers see a song entirely old or entirely new and an interruption
-leaves no half-published song; songs no longer flip together. The global
-state row is refreshed once afterwards. Cleanup then probes only unsettled
+leaves no half-published song; songs no longer flip together. Before the
+first song commits, the global `current_generation` advances to the new
+generation, which closes the scrape-publication band gate exactly as the
+single transaction did; the global state row is recomputed from the
+published scopes once afterwards (or after a failure). Cleanup then probes only unsettled
 scopes (not ready, or `projection_generation` different from
 `published_generation`) through the scope-key index. Each rebuild writes its
 rows and scope state in one transaction, and each publish deletes the scope's

@@ -1276,17 +1276,31 @@ public sealed class BandCurrentProjectionBuilder
             .ToArray();
 
         var partials = new ConcurrentBag<BandCurrentProjectionPublishResult>();
-        await Parallel.ForEachAsync(
-            songGroups,
-            new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
-            async (songScopes, innerCt) =>
-                partials.Add(await TryPublishGenerationCoreAsync(
-                    generation,
-                    songScopes,
-                    fullRebuiltAt: null,
-                    updateGlobalState: false,
-                    logPublished: false,
-                    innerCt)));
+        // Close the global publication gate before any song commits: the gate
+        // compares the scrape publication's band generation with
+        // current_generation, which the legacy single transaction advanced
+        // atomically with every scope flip. The caller's final state refresh
+        // recomputes it from the published scopes.
+        await AdvanceGlobalGenerationAsync(generation, ct);
+        try
+        {
+            await Parallel.ForEachAsync(
+                songGroups,
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
+                async (songScopes, innerCt) =>
+                    partials.Add(await TryPublishGenerationCoreAsync(
+                        generation,
+                        songScopes,
+                        fullRebuiltAt: null,
+                        updateGlobalState: false,
+                        logPublished: false,
+                        innerCt)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            throw;
+        }
 
         var result = new BandCurrentProjectionPublishResult(
             generation,
@@ -1905,6 +1919,22 @@ public sealed class BandCurrentProjectionBuilder
                 updated_at = EXCLUDED.updated_at
             """;
         cmd.Parameters.AddWithValue("fullRebuiltAt", fullRebuiltAt.HasValue ? fullRebuiltAt.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task AdvanceGlobalGenerationAsync(long generation, CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {StateTable} (id, current_generation, updated_at)
+            VALUES (TRUE, @generation, @now)
+            ON CONFLICT (id) DO UPDATE SET
+                current_generation = GREATEST({StateTable}.current_generation, EXCLUDED.current_generation),
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("generation", generation);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync(ct);
     }

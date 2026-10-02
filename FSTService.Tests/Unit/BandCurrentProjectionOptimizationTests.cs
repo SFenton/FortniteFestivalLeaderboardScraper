@@ -417,6 +417,55 @@ public sealed class BandCurrentProjectionOptimizationTests(
     }
 
     [Fact]
+    public async Task PerSongPublishClosesGlobalPublicationGateBeforeAnySongCommits()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 3, 4);
+        await PrimeAsync(fixture, scopes);
+        var primedGeneration = await GlobalGenerationAsync(fixture);
+        await ExecuteSqlAsync(fixture, """
+            CREATE TABLE fst_test_publish_gate (
+                state_generation BIGINT,
+                published_generation BIGINT);
+
+            CREATE FUNCTION fst_test_record_publish_gate()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                INSERT INTO fst_test_publish_gate
+                SELECT current_generation, NEW.published_generation
+                FROM band_current_projection_state
+                WHERE id = TRUE;
+                RETURN NEW;
+            END;
+            $$;
+
+            CREATE TRIGGER fst_test_record_publish_gate
+            AFTER UPDATE OF published_generation ON band_current_projection_scope
+            FOR EACH ROW
+            WHEN (NEW.published_generation IS DISTINCT FROM OLD.published_generation)
+            EXECUTE FUNCTION fst_test_record_publish_gate();
+            """);
+        await MarkSourceChangedAsync(fixture, scopes.Select(static scope => scope.SongId).ToArray());
+
+        var refreshed = await CreateBuilder(fixture).RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true, publishParallelism: 2));
+        var generation = refreshed.PublishResult.Generation;
+
+        Assert.True(generation > primedGeneration);
+        Assert.Equal(3, refreshed.PublishResult.PublishedScopes);
+        var observed = await ReadPublishGateObservationsAsync(fixture);
+        Assert.Equal(3, observed.Count);
+        // Every song's flip committed while the global generation already
+        // differed from the previously published one, so the scrape
+        // publication gate was closed before any song became visible.
+        Assert.All(observed, row => Assert.Equal((generation, generation), row));
+        Assert.Equal(generation, await GlobalGenerationAsync(fixture));
+    }
+
+    [Fact]
     public async Task PerSongPublishFailureRollsBackAndRetryPublishes()
     {
         using var fixture = new InMemoryMetaDatabase();
@@ -1320,6 +1369,45 @@ public sealed class BandCurrentProjectionOptimizationTests(
             "SELECT COUNT(*)::BIGINT FROM current_band_leaderboard_entries";
         return Convert.ToInt64(
             await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<long> GlobalGenerationAsync(
+        InMemoryMetaDatabase fixture)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT current_generation FROM band_current_projection_state WHERE id = TRUE";
+        return Convert.ToInt64(
+            await command.ExecuteScalarAsync());
+    }
+
+    private static async Task ExecuteSqlAsync(
+        InMemoryMetaDatabase fixture,
+        string sql)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<List<(long StateGeneration, long PublishedGeneration)>>
+        ReadPublishGateObservationsAsync(
+            InMemoryMetaDatabase fixture)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT state_generation, published_generation FROM fst_test_publish_gate";
+        var rows = new List<(long, long)>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            rows.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return rows;
     }
 
     private static async Task<long> UnpublishedGenerationRowCountAsync(
