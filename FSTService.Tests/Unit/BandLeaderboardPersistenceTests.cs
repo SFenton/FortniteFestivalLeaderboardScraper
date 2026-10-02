@@ -422,6 +422,39 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.Equal(0, CountRows("band_team_configurations"));
     }
 
+    [Fact]
+    public async Task TeamMembershipRebuildsSerializeWithinBandTypeOnly()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000), rebuildTeamMembership: false);
+
+        using var holder = _fixture.DataSource.OpenConnection();
+        using var holderTx = holder.BeginTransaction();
+        BandLeaderboardPersistence.RebuildBandTeamMembershipForTeams(holder, holderTx, "Band_Duets", ["acct-a:acct-b"]);
+
+        var otherBandType = Task.Run(() => persistence.RebuildBandTeamMembershipForTeams("Band_Trios", ["acct-a:acct-b:acct-c"]));
+        Assert.Same(otherBandType, await Task.WhenAny(otherBandType, Task.Delay(TimeSpan.FromSeconds(30))));
+        await otherBandType;
+
+        var sameBandType = Task.Run(() => persistence.RebuildBandTeamMembershipForTeams("Band_Duets", ["acct-a:acct-b"]));
+        var account = Task.Run(() =>
+        {
+            using var conn = _fixture.DataSource.OpenConnection();
+            using var tx = conn.BeginTransaction();
+            BandLeaderboardPersistence.RebuildBandTeamMembershipForAccount(conn, tx, "acct-a");
+            tx.Commit();
+        });
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.False(sameBandType.IsCompleted);
+        Assert.False(account.IsCompleted);
+
+        holderTx.Commit();
+        await Task.WhenAll(sameBandType, account).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(2, CountMembershipRows());
+    }
+
     private void UpsertDirect(
         BandLeaderboardPersistence persistence,
         string songId,

@@ -827,10 +827,12 @@ public sealed class BandLeaderboardPersistence
 
         if (deleted > 0)
         {
-            foreach (var (bandType, teamKeys) in affectedTeamsByBandType)
-            {
-                RebuildBandTeamMembershipForTeams(bandType, teamKeys.ToArray());
-            }
+            // Band types rebuild disjoint membership rows under per-band-type
+            // locks, so they run concurrently instead of one after another.
+            Parallel.ForEach(
+                affectedTeamsByBandType,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, affectedTeamsByBandType.Count) },
+                kvp => RebuildBandTeamMembershipForTeams(kvp.Key, kvp.Value.ToArray()));
 
             MarkBandTeamMembershipStateForAccounts(affectedAccounts);
 
@@ -989,7 +991,7 @@ public sealed class BandLeaderboardPersistence
         RegistrationMutationGate.AssertTransactionAllowed(
             conn,
             tx);
-        LockBandTeamMembershipRebuild(conn, tx);
+        LockBandTeamMembershipRebuildForBandType(conn, tx, bandType);
         DeleteBandTeamMembershipForTeams(conn, tx, bandType, teamKeys);
 
         var countRows = new List<BandTeamMembershipCountRow>();
@@ -1161,11 +1163,41 @@ public sealed class BandLeaderboardPersistence
         }
     }
 
+    internal const string BandTeamMembershipRebuildLockKey = "band_team_membership_rebuild";
+
+    /// <summary>
+    /// Account-level rebuilds touch every band type's membership rows for the
+    /// account, so they hold the rebuild lock exclusively.
+    /// </summary>
     private static void LockBandTeamMembershipRebuild(NpgsqlConnection conn, NpgsqlTransaction tx)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT pg_advisory_xact_lock(hashtextextended('band_team_membership_rebuild', 0))";
+        cmd.CommandText = "SELECT pg_advisory_xact_lock(hashtextextended(@key, 0))";
+        cmd.Parameters.AddWithValue("key", BandTeamMembershipRebuildLockKey);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Team-level rebuilds write only <paramref name="bandType"/>'s membership
+    /// and configuration rows (both keyed by band type), so they share the
+    /// rebuild lock with other band types and serialize only within their own
+    /// band type, where concurrent rebuilds of the same teams deadlock. Every
+    /// caller takes the shared lock before the band-type lock.
+    /// </summary>
+    private static void LockBandTeamMembershipRebuildForBandType(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string bandType)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            SELECT pg_advisory_xact_lock_shared(hashtextextended(@key, 0)),
+                   pg_advisory_xact_lock(hashtextextended(@key || ':' || @bandType, 0))
+            """;
+        cmd.Parameters.AddWithValue("key", BandTeamMembershipRebuildLockKey);
+        cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.ExecuteNonQuery();
     }
 

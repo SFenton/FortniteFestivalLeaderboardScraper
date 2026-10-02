@@ -2402,6 +2402,37 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshScopes_SkipUnchangedSelectsReadyCandidateThatWasNeverPublished()
+    {
+        SeedBandRankingsSource();
+        var scope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var published = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        var staged = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { PublishOnSuccess = false, SkipUnchangedScopes = false });
+        var stagedGeneration = Assert.Single(staged.Scopes.Select(static result => result.Generation).Distinct());
+        Assert.Equal(published.Generation, GetCurrentBandProjectionPublishedGeneration(scope));
+
+        var refreshed = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = true });
+        var refreshedGeneration = Assert.Single(refreshed.Scopes.Select(static result => result.Generation).Distinct());
+        var (entries, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+
+        Assert.Equal(1, refreshed.ScopeCount);
+        Assert.True(refreshed.PublishResult.Published);
+        Assert.Equal(refreshedGeneration, GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.Equal(0, CountCurrentBandProjectionRows(scope, published.Generation));
+        Assert.Equal(0, CountCurrentBandProjectionRows(scope, stagedGeneration));
+        Assert.Equal("p3:p4", entries[0].TeamKey);
+        Assert.Equal(9999, entries[0].Score);
+
+        var steady = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = true });
+        Assert.Equal(0, steady.ScopeCount);
+    }
+
+    [Fact]
     public async Task RebuildAll_WithBandTypeFilterPrunesOnlyThatBandType()
     {
         SeedBandRankingsSource();

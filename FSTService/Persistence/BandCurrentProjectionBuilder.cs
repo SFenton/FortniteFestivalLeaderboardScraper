@@ -10,6 +10,7 @@ public sealed class BandCurrentProjectionBuilder
 {
     internal const int LegacyMemberStatsAggregateSubqueriesPerRow = 7;
     internal const int MaxParallelScopesLimit = 16;
+    private const int UnsettledScopeCleanupChunkSize = 500;
     private const string ExpectedMemberCountSql = """
         CASE band_type
             WHEN 'Band_Duets' THEN 2
@@ -418,16 +419,21 @@ public sealed class BandCurrentProjectionBuilder
             .ThenBy(static result => result.SongId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var publishResult = options.PublishOnSuccess
-            ? await TryPublishGenerationAsync(generation, scopesToRefresh, fullRebuiltAt: null, ct)
-            : BandCurrentProjectionPublishResult.NotPublished(generation, scopesToRefresh.Length, 0, scopesToRefresh.Length, failedScopes, 0);
+        var publishParallelism = Math.Clamp(options.PublishParallelism, 0, MaxParallelScopesLimit);
+        var publishResult = !options.PublishOnSuccess
+            ? BandCurrentProjectionPublishResult.NotPublished(generation, scopesToRefresh.Length, 0, scopesToRefresh.Length, failedScopes, 0)
+            : publishParallelism > 0
+                ? await PublishGenerationBySongAsync(generation, scopesToRefresh, orderedResults, publishParallelism, ct)
+                : await TryPublishGenerationAsync(generation, scopesToRefresh, fullRebuiltAt: null, ct);
 
         await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, ct);
 
         var affectedBandTypes = GetAffectedBandTypes(options, scopesToRefresh, includeAllWhenUnfiltered: false);
-        var candidateRowsDeleted = options.PublishOnSuccess
-            ? await DeleteUnpublishedCandidateRowsAsync(options, affectedBandTypes, ct)
-            : 0;
+        var candidateRowsDeleted = !options.PublishOnSuccess
+            ? 0
+            : publishParallelism > 0
+                ? await DeleteUnpublishedCandidateRowsForUnsettledScopesAsync(options, affectedBandTypes, ct)
+                : await DeleteUnpublishedCandidateRowsAsync(options, affectedBandTypes, ct);
 
         sw.Stop();
 
@@ -436,11 +442,12 @@ public sealed class BandCurrentProjectionBuilder
                 orderedResults,
                 options);
         _log.LogInformation(
-            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, maxParallelScopes={MaxParallelScopes}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, maxParallelScopes={MaxParallelScopes}, publishParallelism={PublishParallelism}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
             scopesToRefresh.Length,
             normalizedScopes.Length,
             maxParallelBandTypes,
             maxParallelScopes,
+            publishParallelism,
             options.UseBatchedMemberStatsAggregation,
             operationMetrics.SuccessfulScopeTransactions,
             operationMetrics.DerivedSuccessfulScopeCommandExecutions,
@@ -679,6 +686,43 @@ public sealed class BandCurrentProjectionBuilder
             : selected;
     }
 
+    /// <summary>
+    /// Runs the unchanged-scope filter once over <paramref name="impactedScopes"/>
+    /// plus the stale-sweep <paramref name="sweepCandidates"/>, returning every
+    /// impacted scope that needs a rebuild and at most <paramref name="maxStaleScopes"/>
+    /// non-impacted ones, each in the filter's deterministic order. One pass
+    /// replaces a sweep filter followed by the refresh's own filter over the
+    /// merged set, which read every requested song's band entries twice.
+    /// </summary>
+    public async Task<BandCurrentProjectionSweepSelection> SelectImpactedAndStaleScopesAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impactedScopes,
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> sweepCandidates,
+        int maxStaleScopes,
+        CancellationToken ct = default)
+    {
+        var impacted = impactedScopes
+            .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
+            .OfType<BandCurrentProjectionScopeKey>()
+            .ToHashSet();
+        var candidates = sweepCandidates
+            .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
+            .OfType<BandCurrentProjectionScopeKey>()
+            .Where(scope => !impacted.Contains(scope))
+            .Distinct()
+            .ToArray();
+        var requested = impacted.Concat(candidates).ToArray();
+        if (requested.Length == 0)
+            return new BandCurrentProjectionSweepSelection([], [], 0);
+
+        var selected = await FilterScopesNeedingRefreshAsync(requested, ct);
+        var impactedSelected = selected.Where(impacted.Contains).ToArray();
+        var staleSelected = selected.Where(scope => !impacted.Contains(scope));
+        return new BandCurrentProjectionSweepSelection(
+            impactedSelected,
+            maxStaleScopes > 0 ? staleSelected.Take(maxStaleScopes).ToArray() : [],
+            candidates.Length);
+    }
+
     private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
@@ -793,6 +837,13 @@ public sealed class BandCurrentProjectionBuilder
             WHERE (source_scope.projected_rows = 0
                    AND existing.song_id IS NOT NULL
                    AND (existing.status <> 'ready' OR existing.row_count <> 0))
+               -- row_count/last_rebuilt_at describe the latest rebuilt candidate,
+               -- not the published generation. A ready candidate that was never
+               -- published (interrupted or failed publish) would otherwise look
+               -- current forever while readers keep serving the older generation.
+               OR (existing.status = 'ready'
+                   AND existing.projection_generation IS DISTINCT FROM existing.published_generation
+                   AND NOT (existing.row_count = 0 AND existing.published_generation IS NULL))
                OR (source_scope.projected_rows > 0 AND (
                     existing.song_id IS NULL
                     OR existing.status <> 'ready'
@@ -1147,11 +1198,201 @@ public sealed class BandCurrentProjectionBuilder
         return totalDeleted;
     }
 
-    public async Task<BandCurrentProjectionPublishResult> TryPublishGenerationAsync(
+    /// <summary>
+    /// Targeted alternative to <see cref="DeleteUnpublishedCandidateRowsAsync"/>
+    /// for the per-song publish path. A scope whose rebuild and publish both
+    /// committed holds only its published generation: every rebuild writes its
+    /// rows and scope state in one transaction, and every publish deletes the
+    /// scope's other generations in the publishing transaction. Rows that are
+    /// neither published nor the ready candidate can therefore exist only for
+    /// unsettled scopes (not ready, or candidate generation different from the
+    /// published generation), so only those scopes are probed through the
+    /// scope-key index instead of scanning the whole projection.
+    /// </summary>
+    private async Task<long> DeleteUnpublishedCandidateRowsForUnsettledScopesAsync(
+        BandCurrentProjectionRebuildOptions options,
+        IReadOnlyCollection<string> affectedBandTypes,
+        CancellationToken ct)
+    {
+        if (affectedBandTypes.Count == 0 || options.CandidateCleanupBatchSize <= 0)
+            return 0;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        var unsettled = new List<BandCurrentProjectionScopeKey>();
+        await using (var select = conn.CreateCommand())
+        {
+            ApplyCommandOptions(select, options);
+            select.CommandText = $"""
+                SELECT song_id, band_type, ranking_scope, scope_combo_id
+                FROM {ScopeTable}
+                WHERE band_type = ANY(@affectedBandTypes)
+                  AND (status <> 'ready' OR projection_generation IS DISTINCT FROM published_generation)
+                ORDER BY band_type, ranking_scope, scope_combo_id, song_id
+                """;
+            select.Parameters.AddWithValue("affectedBandTypes", affectedBandTypes.ToArray());
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                unsettled.Add(new BandCurrentProjectionScopeKey(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+            }
+        }
+
+        long totalDeleted = 0;
+        foreach (var chunk in unsettled.Chunk(UnsettledScopeCleanupChunkSize))
+        {
+            await using var cmd = conn.CreateCommand();
+            ApplyCommandOptions(cmd, options);
+            cmd.CommandText = $"""
+                WITH requested AS (
+                    SELECT *
+                    FROM unnest(@songIds, @bandTypes, @rankingScopes, @scopeComboIds)
+                        AS requested(song_id, band_type, ranking_scope, scope_combo_id)
+                ), deleted AS (
+                    DELETE FROM {ProjectionTable} projection
+                    USING requested
+                    JOIN {ScopeTable} scope
+                      ON scope.song_id = requested.song_id
+                     AND scope.band_type = requested.band_type
+                     AND scope.ranking_scope = requested.ranking_scope
+                     AND scope.scope_combo_id = requested.scope_combo_id
+                    WHERE projection.song_id = requested.song_id
+                      AND projection.band_type = requested.band_type
+                      AND projection.ranking_scope = requested.ranking_scope
+                      AND projection.scope_combo_id = requested.scope_combo_id
+                      AND projection.projection_generation IS DISTINCT FROM scope.published_generation
+                      AND NOT (projection.projection_generation = scope.projection_generation AND scope.status = 'ready')
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM deleted
+                """;
+            cmd.Parameters.AddWithValue("songIds", chunk.Select(static scope => scope.SongId).ToArray());
+            cmd.Parameters.AddWithValue("bandTypes", chunk.Select(static scope => scope.BandType).ToArray());
+            cmd.Parameters.AddWithValue("rankingScopes", chunk.Select(static scope => scope.RankingScope).ToArray());
+            cmd.Parameters.AddWithValue("scopeComboIds", chunk.Select(static scope => scope.ScopeComboId).ToArray());
+            totalDeleted += Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        }
+
+        _log.LogInformation(
+            "Band current projection unsettled-scope candidate cleanup probed {UnsettledScopes:N0} scope(s) and deleted {DeletedRows:N0} row(s) for {BandTypes}.",
+            unsettled.Count,
+            totalDeleted,
+            string.Join(',', affectedBandTypes));
+        return totalDeleted;
+    }
+
+    /// <summary>
+    /// Publishes <paramref name="generation"/> one song at a time in independent
+    /// transactions, up to <paramref name="parallelism"/> at once, largest
+    /// songs first. Each transaction flips that song's ready scopes and deletes
+    /// their older generations atomically, so a reader never sees a song's
+    /// scope without rows and an interruption leaves every song either fully
+    /// old or fully new. The caller refreshes the global state once afterwards.
+    /// </summary>
+    private async Task<BandCurrentProjectionPublishResult> PublishGenerationBySongAsync(
+        long generation,
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+        IReadOnlyCollection<BandCurrentProjectionScopeResult> results,
+        int parallelism,
+        CancellationToken ct)
+    {
+        if (scopes.Count == 0)
+            return new BandCurrentProjectionPublishResult(generation, true, 0, 0, 0, 0, 0, 0, 0);
+
+        var songWeights = results
+            .GroupBy(static result => result.SongId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.Sum(static result => result.InsertedRows),
+                StringComparer.OrdinalIgnoreCase);
+        var songGroups = scopes
+            .GroupBy(static scope => scope.SongId, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.ToArray())
+            .OrderByDescending(group => songWeights.GetValueOrDefault(group[0].SongId))
+            .ThenBy(static group => group[0].SongId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var partials = new ConcurrentBag<BandCurrentProjectionPublishResult>();
+        // Close the global publication gate before any song commits: the gate
+        // compares the scrape publication's band generation with
+        // current_generation, which the legacy single transaction advanced
+        // atomically with every scope flip. The caller's final state refresh
+        // recomputes it from the published scopes.
+        try
+        {
+            await AdvanceGlobalGenerationAsync(generation, ct);
+            await Parallel.ForEachAsync(
+                songGroups,
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
+                async (songScopes, innerCt) =>
+                    partials.Add(await TryPublishGenerationCoreAsync(
+                        generation,
+                        songScopes,
+                        fullRebuiltAt: null,
+                        updateGlobalState: false,
+                        logPublished: false,
+                        innerCt)));
+        }
+        catch
+        {
+            // Reconcile on any failure, including cancellation: the advanced
+            // generation must not keep the gate closed when no song (or only
+            // some songs) published. Unpublished ready scopes stay selectable.
+            try
+            {
+                await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            }
+            catch (Exception reconcileFailure)
+            {
+                _log.LogWarning(reconcileFailure, "Failed to reconcile band current projection global state after an interrupted per-song publish.");
+            }
+
+            throw;
+        }
+
+        var result = new BandCurrentProjectionPublishResult(
+            generation,
+            partials.Any(static partial => partial.Published),
+            scopes.Count,
+            partials.Sum(static partial => partial.ReadyScopes),
+            partials.Sum(static partial => partial.FailedScopes),
+            partials.Sum(static partial => partial.MissingScopes),
+            partials.Sum(static partial => partial.PublishedScopes),
+            partials.Sum(static partial => partial.PublishedRows),
+            partials.Sum(static partial => partial.DeletedRows));
+
+        _log.LogInformation(
+            "Published band current projection generation {Generation:N0} in {SongCount:N0} song transaction(s) (parallelism {Parallelism}): {PublishedScopes:N0}/{ScopeCount:N0} scope(s), {PublishedRows:N0} row(s), {DeletedRows:N0} old row(s) deleted.",
+            generation,
+            songGroups.Length,
+            parallelism,
+            result.PublishedScopes,
+            scopes.Count,
+            result.PublishedRows,
+            result.DeletedRows);
+        return result;
+    }
+
+    public Task<BandCurrentProjectionPublishResult> TryPublishGenerationAsync(
         long generation,
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         DateTime? fullRebuiltAt = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        TryPublishGenerationCoreAsync(
+            generation,
+            scopes,
+            fullRebuiltAt,
+            updateGlobalState: true,
+            logPublished: true,
+            ct);
+
+    private async Task<BandCurrentProjectionPublishResult> TryPublishGenerationCoreAsync(
+        long generation,
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+        DateTime? fullRebuiltAt,
+        bool updateGlobalState,
+        bool logPublished,
+        CancellationToken ct)
     {
         var normalizedScopes = scopes
             .Select(NormalizeScope)
@@ -1237,7 +1478,8 @@ public sealed class BandCurrentProjectionBuilder
         if (readyScopes == 0)
         {
             await tx.RollbackAsync(ct);
-            await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            if (updateGlobalState)
+                await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
             return new BandCurrentProjectionPublishResult(generation, false, normalizedScopes.Length, readyScopes, failedScopes, missingScopes, 0, 0, 0);
         }
 
@@ -1291,7 +1533,8 @@ public sealed class BandCurrentProjectionBuilder
         if (publishedScopes != readyScopes)
         {
             await tx.RollbackAsync(ct);
-            await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            if (updateGlobalState)
+                await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
             return new BandCurrentProjectionPublishResult(
                 generation,
                 false,
@@ -1307,16 +1550,20 @@ public sealed class BandCurrentProjectionBuilder
         var effectiveFullRebuiltAt = failedScopes == 0 && missingScopes == 0 && publishedScopes == normalizedScopes.Length
             ? fullRebuiltAt
             : null;
-        await RefreshGlobalStateFromScopesAsync(conn, tx, effectiveFullRebuiltAt, ct);
+        if (updateGlobalState)
+            await RefreshGlobalStateFromScopesAsync(conn, tx, effectiveFullRebuiltAt, ct);
         await tx.CommitAsync(ct);
 
-        _log.LogInformation(
-            "Published band current projection generation {Generation:N0}: {ReadyScopes:N0}/{ScopeCount:N0} scope(s), {PublishedRows:N0} row(s), {DeletedRows:N0} old row(s) deleted.",
-            generation,
-            readyScopes,
-            normalizedScopes.Length,
-            publishedRows,
-            deletedRows);
+        if (logPublished)
+        {
+            _log.LogInformation(
+                "Published band current projection generation {Generation:N0}: {ReadyScopes:N0}/{ScopeCount:N0} scope(s), {PublishedRows:N0} row(s), {DeletedRows:N0} old row(s) deleted.",
+                generation,
+                readyScopes,
+                normalizedScopes.Length,
+                publishedRows,
+                deletedRows);
+        }
 
         return new BandCurrentProjectionPublishResult(
             generation,
@@ -1720,6 +1967,22 @@ public sealed class BandCurrentProjectionBuilder
                 updated_at = EXCLUDED.updated_at
             """;
         cmd.Parameters.AddWithValue("fullRebuiltAt", fullRebuiltAt.HasValue ? fullRebuiltAt.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task AdvanceGlobalGenerationAsync(long generation, CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {StateTable} (id, current_generation, updated_at)
+            VALUES (TRUE, @generation, @now)
+            ON CONFLICT (id) DO UPDATE SET
+                current_generation = GREATEST({StateTable}.current_generation, EXCLUDED.current_generation),
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("generation", generation);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -2302,7 +2565,7 @@ public sealed class BandCurrentProjectionBuilder
         """;
 }
 
-public sealed class BandCurrentProjectionRebuildOptions
+public sealed record BandCurrentProjectionRebuildOptions
 {
     public int CommandTimeoutSeconds { get; init; }
     public bool DisableSynchronousCommit { get; init; } = true;
@@ -2316,6 +2579,13 @@ public sealed class BandCurrentProjectionRebuildOptions
     /// many independent scope transactions at once across all band types.
     /// </summary>
     public int MaxParallelScopes { get; init; }
+    /// <summary>
+    /// Zero publishes an incremental refresh in one transaction and then scans
+    /// the whole projection for unpublished candidates. A positive value
+    /// publishes one song per transaction with up to that many at once (values
+    /// above 16 are clamped) and probes only unsettled scopes for candidates.
+    /// </summary>
+    public int PublishParallelism { get; init; }
     public int CandidateCleanupBatchSize { get; init; } = 100_000;
     public int CandidateCleanupMaxBatches { get; init; } = 100;
     public bool ClearExisting { get; init; }
@@ -2330,6 +2600,11 @@ public sealed record BandCurrentProjectionScopeKey(
     string BandType,
     string RankingScope,
     string ScopeComboId);
+
+public sealed record BandCurrentProjectionSweepSelection(
+    IReadOnlyList<BandCurrentProjectionScopeKey> ImpactedScopes,
+    IReadOnlyList<BandCurrentProjectionScopeKey> StaleScopes,
+    int SweepCandidateCount);
 
 public sealed record BandCurrentProjectionScopeSummary(
     string SongId,

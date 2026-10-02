@@ -949,6 +949,16 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionMaxParallelScopes { get; set; }
 
     /// <summary>
+    /// Zero (default) publishes a band current-projection refresh in one
+    /// transaction and then scans the whole projection for unpublished
+    /// candidates. A positive value publishes one song per transaction with up
+    /// to that many concurrent transactions (values above 16 are clamped) and
+    /// probes only unsettled scopes for leftover candidates. Set via
+    /// <c>Scraper__BandCurrentProjectionPublishParallelism</c>.
+    /// </summary>
+    public int BandCurrentProjectionPublishParallelism { get; set; }
+
+    /// <summary>
     /// When positive, BandMaintenance also rebuilds up to this many stale band
     /// current-projection scopes outside the scrape's impacted set, selected by
     /// the unchanged-scope filter over every source and projection scope. Zero
@@ -956,6 +966,23 @@ public sealed class ScraperOptions
     /// <c>Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes</c>.
     /// </summary>
     public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
+
+    /// <summary>
+    /// When true, BandMaintenance refreshes the band search projection one
+    /// band type per concurrent transaction instead of one transaction for all
+    /// band types. Default false. Set via
+    /// <c>Scraper__BandSearchProjectionParallelBandTypes</c>.
+    /// </summary>
+    public bool BandSearchProjectionParallelBandTypes { get; set; }
+
+    /// <summary>
+    /// How many band types the post-fetch band spool flush writes at once.
+    /// Each band type's chunks stay ordered and write rows keyed by band type.
+    /// 1 (default) flushes band types one after another; values are clamped
+    /// to the number of band types. Set via
+    /// <c>Scraper__BandSpoolFlushMaxParallelBandTypes</c>.
+    /// </summary>
+    public int BandSpoolFlushMaxParallelBandTypes { get; set; } = 1;
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
