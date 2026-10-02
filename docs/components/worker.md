@@ -836,6 +836,17 @@ remain explicitly indeterminate. Timeout/cancel transition states are also
 `not_applicable`; parent phase progress is never relabeled as subphase
 progress.
 
+The post-fetch band spool flush (`flushing_band`) writes each band type's
+spool in ordered 64-page chunks, one transaction per chunk. By default the
+band types flush one after another: in scrape `1458`, 31.5 minutes of the
+152-minute acquisition (Trios 14.5, Duets 10.1, Quad 6.9 minutes).
+`Scraper:BandSpoolFlushMaxParallelBandTypes` (default `1`, clamped to the
+number of band types) flushes up to that many band types at once. Chunk
+transactions write `band_entries`, `band_member_stats`, and `band_members`
+rows keyed by band type, so band types never contend for the same rows;
+chunks within a band type stay ordered. Flush progress totals stay monotonic,
+and a failed chunk is retained for replay exactly as before.
+
 `BandExtraction` intentionally has no exact parent percentage because song
 extraction and membership-summary rebuild use unrelated units. Its subphase
 epochs are exact `songs` and `batches` counters and reset at the stage
