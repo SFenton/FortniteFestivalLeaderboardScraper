@@ -371,6 +371,111 @@ public sealed class BandCurrentProjectionOptimizationTests(
             await StateHashAsync(parallelFixture));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public async Task PerSongPublishPreservesSingleTransactionPublishOutput(
+        int publishParallelism)
+    {
+        const int songCount = 24;
+        const int teamsPerSong = 10;
+        using var legacyFixture = new InMemoryMetaDatabase();
+        using var perSongFixture = new InMemoryMetaDatabase();
+        var scopes = Seed(legacyFixture, songCount, teamsPerSong);
+        _ = Seed(perSongFixture, songCount, teamsPerSong);
+        await PrimeAsync(legacyFixture, scopes);
+        await PrimeAsync(perSongFixture, scopes);
+        var changedSongs = scopes
+            .Where(static (_, index) => index % 2 == 0)
+            .Select(static scope => scope.SongId)
+            .ToArray();
+        await MarkSourceChangedAsync(legacyFixture, changedSongs);
+        await MarkSourceChangedAsync(perSongFixture, changedSongs);
+
+        var legacy = await CreateBuilder(legacyFixture)
+            .RefreshScopesAsync(scopes, ProductionOptions(useCandidate: true, maxParallelScopes: 6));
+        var perSong = await CreateBuilder(perSongFixture)
+            .RefreshScopesAsync(
+                scopes,
+                ProductionOptions(useCandidate: true, maxParallelScopes: 6, publishParallelism: publishParallelism));
+
+        Assert.Equal(changedSongs.Length, legacy.ScopeCount);
+        Assert.Equal(legacy.ScopeCount, perSong.ScopeCount);
+        Assert.Equal(0, perSong.FailedScopes);
+        Assert.True(perSong.PublishResult.Published);
+        Assert.Equal(legacy.PublishResult.ReadyScopes, perSong.PublishResult.ReadyScopes);
+        Assert.Equal(legacy.PublishResult.PublishedScopes, perSong.PublishResult.PublishedScopes);
+        Assert.Equal(legacy.PublishResult.PublishedRows, perSong.PublishResult.PublishedRows);
+        Assert.Equal(legacy.PublishResult.DeletedRows, perSong.PublishResult.DeletedRows);
+        Assert.Equal(changedSongs.Length * teamsPerSong, perSong.PublishResult.DeletedRows);
+        Assert.Equal(legacy.CandidateRowsDeleted, perSong.CandidateRowsDeleted);
+        Assert.Equal(legacy.DeletedRows, perSong.DeletedRows);
+        Assert.Equal(0, await UnpublishedGenerationRowCountAsync(perSongFixture));
+        Assert.Equal(
+            await StateHashAsync(legacyFixture),
+            await StateHashAsync(perSongFixture));
+    }
+
+    [Fact]
+    public async Task PerSongPublishFailureRollsBackAndRetryPublishes()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 2, 4);
+        await CreateInsertFailureTriggerAsync(fixture);
+        var builder = CreateBuilder(fixture);
+
+        var failed = await builder.RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true, publishParallelism: 4));
+
+        Assert.Equal(2, failed.FailedScopes);
+        Assert.False(failed.PublishResult.Published);
+        Assert.Equal(2, failed.PublishResult.FailedScopes);
+        Assert.Equal(0, await ProjectionRowCountAsync(fixture));
+
+        await DropInsertFailureTriggerAsync(fixture);
+        var retry = await builder.RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true, publishParallelism: 4));
+
+        Assert.Equal(0, retry.FailedScopes);
+        Assert.True(retry.PublishResult.Published);
+        Assert.Equal(2, retry.PublishResult.PublishedScopes);
+        Assert.Equal("ready", await ScopeStatusAsync(fixture, scopes[0]));
+        Assert.Equal(8, await ProjectionRowCountAsync(fixture));
+        Assert.Equal(0, await UnpublishedGenerationRowCountAsync(fixture));
+    }
+
+    [Fact]
+    public async Task PerSongPublishCleansUnsettledScopeCandidatesOnly()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 3, 4);
+        await PrimeAsync(fixture, scopes);
+        var builder = CreateBuilder(fixture);
+
+        // Stage an unpublished candidate for song 1, then mark it failed so the
+        // candidate is neither published nor the ready generation.
+        await MarkSourceChangedAsync(fixture, [scopes[1].SongId]);
+        var staged = await builder.RefreshScopesAsync(
+            [scopes[1]],
+            new BandCurrentProjectionRebuildOptions { PublishOnSuccess = false, SkipUnchangedScopes = false });
+        var stagedGeneration = Assert.Single(staged.Scopes).Generation;
+        await SetScopeStatusAsync(fixture, scopes[1], "failed");
+        Assert.Equal(4, await UnpublishedGenerationRowCountAsync(fixture));
+
+        await MarkSourceChangedAsync(fixture, [scopes[0].SongId]);
+        var refreshed = await builder.RefreshScopesAsync(
+            [scopes[0]],
+            ProductionOptions(useCandidate: true, publishParallelism: 4));
+
+        Assert.True(refreshed.PublishResult.Published);
+        Assert.Equal(4, refreshed.CandidateRowsDeleted);
+        Assert.Equal(0, await UnpublishedGenerationRowCountAsync(fixture));
+        Assert.Equal(12, await ProjectionRowCountAsync(fixture));
+        Assert.NotEqual(0, stagedGeneration);
+    }
+
     [Fact]
     public void InterleaveByBandTypeAlternatesBandTypesAndKeepsEveryScopeOnce()
     {
@@ -750,13 +855,15 @@ public sealed class BandCurrentProjectionOptimizationTests(
         ProductionOptions(
             bool useCandidate,
             bool skipUnchanged = true,
-            int maxParallelScopes = 0) =>
+            int maxParallelScopes = 0,
+            int publishParallelism = 0) =>
         new()
         {
             DisableSynchronousCommit = true,
             SkipUnchangedScopes = skipUnchanged,
             MaxParallelBandTypes = 2,
             MaxParallelScopes = maxParallelScopes,
+            PublishParallelism = publishParallelism,
             CandidateCleanupBatchSize = 100_000,
             CandidateCleanupMaxBatches = 100,
             PublishOnSuccess = true,
@@ -1213,6 +1320,50 @@ public sealed class BandCurrentProjectionOptimizationTests(
             "SELECT COUNT(*)::BIGINT FROM current_band_leaderboard_entries";
         return Convert.ToInt64(
             await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<long> UnpublishedGenerationRowCountAsync(
+        InMemoryMetaDatabase fixture)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)::BIGINT
+            FROM current_band_leaderboard_entries projection
+            LEFT JOIN band_current_projection_scope scope
+              ON scope.song_id = projection.song_id
+             AND scope.band_type = projection.band_type
+             AND scope.ranking_scope = projection.ranking_scope
+             AND scope.scope_combo_id = projection.scope_combo_id
+            WHERE projection.projection_generation IS DISTINCT FROM scope.published_generation
+            """;
+        return Convert.ToInt64(
+            await command.ExecuteScalarAsync());
+    }
+
+    private static async Task SetScopeStatusAsync(
+        InMemoryMetaDatabase fixture,
+        BandCurrentProjectionScopeKey scope,
+        string status)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE band_current_projection_scope
+            SET status = @status
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+            """;
+        command.Parameters.AddWithValue("status", status);
+        command.Parameters.AddWithValue("songId", scope.SongId);
+        command.Parameters.AddWithValue("bandType", scope.BandType);
+        command.Parameters.AddWithValue("rankingScope", scope.RankingScope);
+        command.Parameters.AddWithValue("scopeComboId", scope.ScopeComboId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<string?> ScopeStatusAsync(
