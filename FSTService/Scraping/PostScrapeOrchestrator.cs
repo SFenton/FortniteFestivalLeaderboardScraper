@@ -1717,7 +1717,7 @@ public sealed class PostScrapeOrchestrator
         // The chunk fallback below keeps filtering so completed scopes are skipped.
         var initialOptions = preselectedConsideredScopeCount is null
             ? rebuildOptions
-            : rebuildOptions.WithSkipUnchangedScopes(false);
+            : rebuildOptions with { SkipUnchangedScopes = false };
         _log.LogInformation(
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
