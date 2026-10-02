@@ -270,6 +270,13 @@ Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
 `DisabledProxyContainerRecycler`, which rejects restart requests. The recycler
 normally restarts a container without rewriting provider selectors; legacy
 recreate/city-selection support exists for provider-specific workflows.
+Once a restart has requested the stop, it always finishes with a start on its
+own bounded token, waiting for a canceled stop to settle first. Docker records
+an API stop as explicit, so the `unless-stopped` policy never revives the
+container. On 2026-10-02 a restoration deadline fired between stop and start
+during scrape `1458`, and `pia-gluetun-14` stayed exited, while its quarantine
+retries (control-API only) could not reach it, until an operator ran
+`docker start`.
 The PIA-only control API change above never writes `SERVER_CITIES` or
 `SERVER_NAMES`, so it does not reuse AirVPN's legacy Docker recreate path.
 

@@ -96,6 +96,7 @@ sources:
   - tools/postgres-snapshot-generation-restore-authorize.sh
   - tools/postgres-snapshot-generation-restore.py
   - tools/postgres-snapshot-generation-restore.test.py
+  - tools/postgres-snapshot-archive-retire.test.py
   - tools/postgres-snapshot-generation-drop-drill.py
   - tools/capture-snapshot-generation-drop-health.py
   - tools/capture-publication-route-contract.sh
@@ -581,6 +582,15 @@ generation-child drop removes only that snapshot while another generation,
 its two index attachments, and the empty default child remain intact. This
 does not substitute for the separately required recurring archive-before-drop
 retention package.
+
+Snapshot archive retirement (`tools/postgres-snapshot-archive-retire.py`,
+including its automatic mode) has hermetic unit tests for identity parsing,
+liveness eligibility, lock-bounded detach, the network-bound window allow-list,
+cycle binding, transient deferral, and the `AUTO_DISABLED` tripwire:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-snapshot-archive-retire.test.py
+```
 
 Snapshot-generation DROP and logical-restore validation:
 

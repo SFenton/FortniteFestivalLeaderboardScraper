@@ -77,4 +77,88 @@ public sealed class GluetunContainerRecyclerTests
         Assert.Equal("festivalservicetracker_default", endpoint.Key);
         Assert.Equal(["gluetun-3", "vpn"], endpoint.Value.Aliases);
     }
+    [Fact]
+    public async Task Restart_StartsAfterAStopThatCompleted()
+    {
+        var calls = new List<string>();
+
+        var canceled = await GluetunContainerRecycler.RestartWithoutLeavingStoppedAsync(
+            stop: _ => { calls.Add("stop"); return Task.CompletedTask; },
+            isRunning: _ => { calls.Add("inspect"); return Task.FromResult(false); },
+            start: _ => { calls.Add("start"); return Task.CompletedTask; },
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.False(canceled);
+        Assert.Equal(["stop", "start"], calls);
+    }
+
+    [Fact]
+    public async Task Restart_StillStartsWhenTheCallerCancelsDuringStop()
+    {
+        using var caller = new CancellationTokenSource();
+        var calls = new List<string>();
+        var running = new Queue<bool>([true, true, false]);
+
+        var canceled = await GluetunContainerRecycler.RestartWithoutLeavingStoppedAsync(
+            stop: token =>
+            {
+                calls.Add("stop");
+                caller.Cancel();
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            },
+            isRunning: token =>
+            {
+                Assert.False(token.IsCancellationRequested);
+                calls.Add("inspect");
+                return Task.FromResult(running.Dequeue());
+            },
+            start: token =>
+            {
+                Assert.False(token.IsCancellationRequested);
+                calls.Add("start");
+                return Task.CompletedTask;
+            },
+            TimeSpan.FromSeconds(5),
+            caller.Token,
+            delay: (_, _) => Task.CompletedTask);
+
+        Assert.True(canceled);
+        Assert.Equal(["stop", "inspect", "inspect", "inspect", "start"], calls);
+    }
+
+    [Fact]
+    public async Task Restart_DoesNotStartWhenTheStopFailsForAnotherReason()
+    {
+        var started = false;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            GluetunContainerRecycler.RestartWithoutLeavingStoppedAsync(
+                stop: _ => throw new InvalidOperationException("daemon error"),
+                isRunning: _ => Task.FromResult(false),
+                start: _ => { started = true; return Task.CompletedTask; },
+                TimeSpan.FromSeconds(5),
+                CancellationToken.None));
+
+        Assert.False(started);
+    }
+
+    [Fact]
+    public async Task Restart_ReportsATimeoutWhenTheCanceledStopNeverSettles()
+    {
+        using var caller = new CancellationTokenSource();
+        var started = false;
+
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            GluetunContainerRecycler.RestartWithoutLeavingStoppedAsync(
+                stop: token => { caller.Cancel(); token.ThrowIfCancellationRequested(); return Task.CompletedTask; },
+                isRunning: _ => Task.FromResult(true),
+                start: _ => { started = true; return Task.CompletedTask; },
+                TimeSpan.FromMilliseconds(50),
+                caller.Token,
+                delay: (interval, token) => Task.Delay(TimeSpan.FromMilliseconds(5), token)));
+
+        Assert.False(started);
+    }
 }

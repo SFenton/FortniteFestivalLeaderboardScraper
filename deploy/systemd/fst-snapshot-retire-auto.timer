@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for an FST snapshot retirement window every 10 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=10min
+AccuracySec=1min
+Persistent=false
+Unit=fst-snapshot-retire-auto.service
+
+[Install]
+WantedBy=timers.target
