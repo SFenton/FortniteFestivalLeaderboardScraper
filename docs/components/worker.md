@@ -655,7 +655,12 @@ reported under `post.band_maintenance`, reusing the existing
 machinery instead of adding a phase-progress schema or web-specific case.
 `prune` and `search_projection_refresh` each run as a single blocking database
 call with no truthful denominator until they finish, so both stay
-indeterminate - they never report a fabricated total or percentage.
+indeterminate - they never report a fabricated total or percentage. The search
+refresh normally runs every band type in one transaction (8.2 minutes on one
+backend in scrape `1457`, mostly member and team projection inserts);
+`Scraper:BandSearchProjectionParallelBandTypes` runs each band type in its own
+concurrent transaction with a shared cutoff that advances only after all of
+them commit.
 `current_projection_refresh` is the only subphase with an honest final
 denominator, but that denominator is not known when the subphase starts: the
 extraction-plus-prune impacted-scope set merged before the subphase begins is

@@ -196,8 +196,10 @@ public sealed class BandSearchTests : IDisposable
         Assert.Equal("acct-bass:acct-sf", result.TeamKey);
     }
 
-    [Fact]
-    public async Task RefreshIncremental_RefreshesChangedTeamsAndRemovesDeadProjectionRows()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefreshIncremental_RefreshesChangedTeamsAndRemovesDeadProjectionRows(bool parallelBandTypes)
     {
         SeedAccountNames(
             ("acct-sf", "SFentonX"),
@@ -243,7 +245,8 @@ public sealed class BandSearchTests : IDisposable
             new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Band_Duets"] = ["acct-dead:acct-sf"],
-            });
+            },
+            parallelBandTypes: parallelBandTypes);
 
         Assert.True(result.ProjectionAvailable);
         Assert.Equal(2, result.ImpactedTeams);
@@ -266,6 +269,57 @@ public sealed class BandSearchTests : IDisposable
         Assert.True(reader.Read());
         Assert.Equal(1, reader.GetInt64(0));
         Assert.Equal(2, reader.GetInt64(1));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefreshIncremental_RefreshesEveryBandTypeAndAdvancesCutoffOnce(bool parallelBandTypes)
+    {
+        SeedAccountNames(
+            ("acct-a", "Alpha Player"),
+            ("acct-b", "Bravo Player"),
+            ("acct-c", "Charlie Player"));
+        var rebuiltAt = DateTime.UtcNow.AddDays(-1);
+        PublishBandSearchProjectionState(rebuiltAt);
+        SeedBandSourceRow("song-duet", "Band_Duets", "acct-a:acct-b", "0:1", 2_000, DateTime.UtcNow,
+            (0, "acct-a", 0),
+            (1, "acct-b", 1));
+        SeedBandSourceRow("song-trio", "Band_Trios", "acct-a:acct-b:acct-c", "0:1:3", 3_000, DateTime.UtcNow,
+            (0, "acct-a", 0),
+            (1, "acct-b", 1),
+            (2, "acct-c", 3));
+        SeedBandSourceRow("song-old", "Band_Duets", "acct-b:acct-c", "0:1", 1_000, rebuiltAt.AddDays(-1),
+            (0, "acct-b", 0),
+            (1, "acct-c", 1));
+        var builder = new BandSearchProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandSearchProjectionBuilder>>());
+
+        var result = await builder.RefreshIncrementalAsync(
+            new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+            parallelBandTypes: parallelBandTypes);
+
+        Assert.True(result.ProjectionAvailable);
+        Assert.Equal(2, result.ImpactedTeams);
+        Assert.Equal(2, result.ChangedSourceTeams);
+        Assert.Equal(2, result.InsertedTeamRows);
+        Assert.Equal(5, result.InsertedMemberRows);
+        Assert.Contains(
+            _persistence.SearchBands("Charlie Player", null, pageSize: 10).Results,
+            band => band.TeamKey == "acct-a:acct-b:acct-c");
+        Assert.DoesNotContain(
+            _persistence.SearchBands("Charlie Player", null, pageSize: 10).Results,
+            band => band.TeamKey == "acct-b:acct-c");
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT team_rows, member_rows, refreshed_at FROM {BandSearchProjectionBuilder.StateTable} WHERE id = TRUE";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(2, reader.GetInt64(0));
+        Assert.Equal(5, reader.GetInt64(1));
+        Assert.True(reader.GetDateTime(2) > rebuiltAt.AddHours(1));
     }
 
     [Fact]
