@@ -146,6 +146,9 @@ class SwapTests(unittest.TestCase):
         for table in compact.LIVENESS_ROOT_TABLES:
             self.assertIn(f"public.{table}", sql[:lock])
         self.assertLess(lock, sql.index("DETACH PARTITION"))
+        self.assertIn("LOCK TABLE public.leaderboard_entries_snapshot_solo_guitar_s1410 IN SHARE MODE", sql)
+        self.assertLess(sql.index("LOCK TABLE public.leaderboard_entries_snapshot_solo_guitar_s1410"),
+                        sql.index("$guard$"))
         self.assertLess(sql.index("$guard$"), sql.index("DETACH PARTITION"))
 
     def test_exhausted_swap_contention_is_transient(self):
@@ -161,7 +164,8 @@ class SwapTests(unittest.TestCase):
     def test_whole_child_guard_includes_resume_and_bindings(self):
         sql = compact.whole_child_root_sql(CHILD, 1410)
         for marker in ("status = 'running'", "live_publications WHERE scrape_id = 1410", "scrape_writer_failures",
-                       "snapshot_generation_retention_holds", "publication_surface_bindings", "1410 = 1410"):
+                       "snapshot_generation_retention_holds", "publication_surface_bindings", "pg_trigger",
+                       "1410 = 1410"):
             self.assertIn(marker, sql)
 
     def test_unreadable_worker_configuration_defers(self):
@@ -171,6 +175,42 @@ class SwapTests(unittest.TestCase):
         with Patch(compact.subprocess, run=lambda *a, **k: Failed()):
             with self.assertRaises(compact.TransientRefusal):
                 compact.configured_resume_scrape_id()
+
+    def test_worker_configuration_reads_container_and_resume(self):
+        class Inspected:
+            returncode, stdout = 0, "abc123\nPATH=/bin\nScraper__ResumeScrapeId=1410\n"
+
+        with Patch(compact.subprocess, run=lambda *a, **k: Inspected()):
+            self.assertEqual(compact.worker_configuration(), {"container_id": "abc123", "resume_scrape_id": 1410})
+
+    def test_changed_worker_configuration_defers_before_swap(self):
+        dropped, swapped = [], []
+        with Patch(compact, scope_liveness=lambda child, resume: live(songs=["song_a"]),
+                   relation_identity=lambda relation: None,
+                   measure=lambda child, songs: {"rows": 100, "live_rows": 10, "fingerprint": "1",
+                                                 "live_fingerprint": "9", "songs": 3},
+                   build_replacement=lambda child, songs, new: None,
+                   table_fingerprint=lambda relation: (10, "9"),
+                   worker_configuration=lambda: {"container_id": "new", "resume_scrape_id": 0},
+                   swap_in=lambda *a, **k: swapped.append(a)), \
+                Patch(retire, dump_child=lambda child, path: path.write_bytes(b"x"),
+                      verify_archive=lambda *a, **k: {"toc_ok": True}, append_manifest=lambda *a, **k: None,
+                      psql=lambda sql, timeout=900: dropped.append(sql) or "",
+                      ARCHIVE_ROOT=pathlib.Path(self.tmp.name)):
+            with self.assertRaises(compact.TransientRefusal):
+                compact.compact_child(CHILD, argparse.Namespace(max_live_fraction=0.5, min_reclaim_bytes=0,
+                                                                drill_every=0, window=None),
+                                      0, 0, {"container_id": "old", "resume_scrape_id": 0})
+        self.assertEqual(swapped, [])
+        self.assertTrue(any("DROP TABLE public.leaderboard_entries_snapshot_solo_guitar_s1410_cnew" in sql
+                            for sql in dropped))
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
 
     def test_interrupted_compaction_leftover_blocks_the_child(self):
         with Patch(compact, relation_identity=lambda relation: {"oid": 1, "relfilenode": 1, "attached": False}):

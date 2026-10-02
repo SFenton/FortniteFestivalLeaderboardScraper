@@ -195,9 +195,14 @@ shares the retirement lock, so it never overlaps a retirement run:
 6. **Swap** in one transaction with `lock_timeout=500ms` (below the server's
    1-second `deadlock_timeout`, so any lock cycle aborts the swap rather than a
    worker write) and up to 12 retries. It first takes `SHARE` locks on every
-   liveness-root table and holds them through `COMMIT`, then requires the
-   instrument parent's DEFAULT partition to be empty, no whole-child root, and
-   no live song outside the copied set. Only then does it `DETACH` the child,
+   liveness-root table and on the child itself (which conflicts with
+   `CREATE TRIGGER` and other DDL on it) and holds them through `COMMIT`, then
+   requires the instrument parent's DEFAULT partition to be empty, no
+   whole-child root (including a user trigger), and no live song outside the
+   copied set. Immediately before the transaction the run also requires the
+   `fstworker` container ID and its `Scraper:ResumeScrapeId` to equal the values
+   pinned at run start, because a resume change needs a container recreate.
+   Only then does it `DETACH` the child,
    rename it `<child>_cold`, rename the replacement to the child's name, and
    `ATTACH ... FOR VALUES IN (<snapshot>)`. The replacement's `CHECK` skips its
    validation scan and its indexes are adopted; PostgreSQL still validates the

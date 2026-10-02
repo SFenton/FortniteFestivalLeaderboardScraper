@@ -83,21 +83,29 @@ def text_array(values: list[str]) -> str:
     return "ARRAY[" + ",".join(quote(v) for v in values) + "]::text[]"
 
 
-def configured_resume_scrape_id() -> int:
-    """The worker's Scraper:ResumeScrapeId (a whole-child liveness root), or 0."""
+def worker_configuration() -> dict:
+    """The worker container identity and its Scraper:ResumeScrapeId (a whole-child
+    liveness root). Changing the resume ID requires recreating the container, so a
+    run pins the container ID and re-checks both immediately before every swap."""
     result = subprocess.run(
-        ["docker", "inspect", "fstworker", "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
+        ["docker", "inspect", "fstworker", "--format", "{{.Id}}{{println}}{{range .Config.Env}}{{println .}}{{end}}"],
         capture_output=True, text=True, timeout=20)
-    if result.returncode != 0:
+    if result.returncode != 0 or not result.stdout.strip():
         raise TransientRefusal("cannot read the fstworker configuration for Scraper__ResumeScrapeId")
-    for line in result.stdout.splitlines():
+    lines = result.stdout.splitlines()
+    resume = 0
+    for line in lines[1:]:
         key, _, value = line.partition("=")
         if key == "Scraper__ResumeScrapeId":
             try:
-                return max(0, int(value))
+                resume = max(0, int(value))
             except ValueError as error:
                 raise RetirementError(f"unparseable Scraper__ResumeScrapeId={value!r}") from error
-    return 0
+    return {"container_id": lines[0].strip(), "resume_scrape_id": resume}
+
+
+def configured_resume_scrape_id() -> int:
+    return worker_configuration()["resume_scrape_id"]
 
 
 def attached_children() -> list[dict]:
@@ -164,6 +172,8 @@ def whole_child_root_sql(child: dict, resume_scrape_id: int) -> str:
   OR EXISTS (SELECT 1 FROM publication_surface_bindings b
              WHERE b.publication_id IN (SELECT publication_id FROM live_publications)
                AND strpos(b.binding_json::text, {quote(child["relation"])}) > 0)
+  OR EXISTS (SELECT 1 FROM pg_trigger t
+             WHERE t.tgrelid = to_regclass({quote("public." + child["relation"])}) AND NOT t.tgisinternal)
   OR {s} = {int(resume_scrape_id)})"""
 
 
@@ -318,6 +328,8 @@ BEGIN;
 SET LOCAL lock_timeout = '500ms';
 SET LOCAL statement_timeout = '60s';
 LOCK TABLE {", ".join("public." + t for t in LIVENESS_ROOT_TABLES)} IN SHARE MODE;
+-- SHARE on the child conflicts with CREATE TRIGGER and other schema changes on it.
+LOCK TABLE public.{rel} IN SHARE MODE;
 DO $guard$
 BEGIN
   IF EXISTS (SELECT 1 FROM ONLY public.{default}) THEN
@@ -405,7 +417,8 @@ def relation_identity(relation: str) -> dict | None:
     return json.loads(out) if out else None
 
 
-def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_scrape_id: int) -> dict | None:
+def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_scrape_id: int,
+                  worker: dict | None = None) -> dict | None:
     if relation_identity(object_names(child)["old"]) is not None:
         raise RetirementError(
             f"{object_names(child)['old']} exists from an interrupted compaction; recover it before compacting again")
@@ -472,6 +485,9 @@ def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_sc
             print(f"window closed before swap ({why}); dropped replacement", flush=True)
             return None
 
+    if worker is not None and worker_configuration() != worker:
+        retire.psql(f"DROP TABLE public.{new} RESTRICT;")
+        raise TransientRefusal("the worker container or its resume configuration changed during the run")
     try:
         attempts = swap_in(child, songs, new, resume_scrape_id)
     except BaseException:
@@ -578,7 +594,8 @@ def command_compact(args: argparse.Namespace) -> int:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise TransientRefusal("another retirement or compaction run holds the lock")
-        resume = configured_resume_scrape_id()
+        worker = worker_configuration()
+        resume = worker["resume_scrape_id"]
         children = attached_children()
         if args.only:
             children = [c for c in children if c["relation"] in set(args.only)]
@@ -597,7 +614,7 @@ def command_compact(args: argparse.Namespace) -> int:
                 print(f"window closed ({why}); ending run", flush=True)
                 break
             retire.preflight()
-            if compact_child(child, args, processed, resume) is not None:
+            if compact_child(child, args, processed, resume, worker) is not None:
                 processed += 1
                 if args.pause_seconds:
                     time.sleep(args.pause_seconds)

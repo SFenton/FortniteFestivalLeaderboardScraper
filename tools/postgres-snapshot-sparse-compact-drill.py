@@ -125,7 +125,7 @@ def main() -> int:
         retire.LOCK_PATH = archive_root / ".retirement.lock"
         retire.preflight = lambda: None
         retire.probe_window = lambda url: (True, "isolated drill")
-        compact.configured_resume_scrape_id = lambda: 0
+        compact.worker_configuration = lambda: {"container_id": "drill", "resume_scrape_id": 0}
 
         def cli(*argv: str) -> int:
             return compact.main(list(argv))
