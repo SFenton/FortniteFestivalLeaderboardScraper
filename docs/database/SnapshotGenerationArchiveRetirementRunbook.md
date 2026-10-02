@@ -1,17 +1,21 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-09-26
-last_verified_commit: 95351cac
+last_verified: 2026-10-02
+last_verified_commit: 598965ef
 sources:
   - tools/postgres-snapshot-archive-retire.py
   - tools/postgres-snapshot-archive-retire.test.py
+  - deploy/systemd/fst-snapshot-retire-auto.service
+  - deploy/systemd/fst-snapshot-retire-auto.timer
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - docs/decisions/0010-snapshot-archive-retirement.md
+  - docs/decisions/0011-automatic-snapshot-archive-retirement.md
 update_triggers:
   - Snapshot-generation liveness roots, report-cycle format, partition layout, archive format, or retirement/restore commands change.
+  - Scrape phase or sub-operation names, `/api/service-info` `currentUpdate` fields, or the host timer change.
 ---
 
 # Snapshot generation archive retirement
@@ -19,9 +23,13 @@ update_triggers:
 This operator procedure reclaims space from `leaderboard_entries_snapshot`
 children that an immutable report-only retention cycle proved unreferenced. It
 archives every child before any mutation, keeps each archive on the FST drive,
-and restores any child with one command. It is not a worker feature or an
-automatic scheduler. See [ADR 0010](../decisions/0010-snapshot-archive-retirement.md)
-for why it replaces the per-child quarantine machine for this workload.
+and restores any child with one command. It is a host tool, not a worker
+feature. A host systemd timer runs its `auto` mode once per scrape during
+network-bound fetching (see [Automatic retirement](#automatic-retirement)).
+See [ADR 0010](../decisions/0010-snapshot-archive-retirement.md) for why it
+replaces the per-child quarantine machine for this workload and
+[ADR 0011](../decisions/0011-automatic-snapshot-archive-retirement.md) for why
+it runs automatically.
 
 ## Authorization boundary
 
@@ -97,6 +105,51 @@ partitions of the parent indexes. A restored child receives a new OID and
 relfilenode, so the same cycle can never retire it again; a later report cycle
 must reclassify it.
 
+## Automatic retirement
+
+Each scrape's terminal post-publication safe point records a new report-only
+cycle, and each cycle adds roughly 9 GiB of newly unreferenced children
+(about 36 GiB per day at four scrapes per day). `auto` retires them without an
+operator-supplied hash:
+
+1. It does nothing while `AUTO_DISABLED` exists in the archive root.
+2. It reads `GET /api/service-info` and continues only when `currentUpdate`
+   is `scrape.leaderboards` with sub-operation `fetching_leaderboards`,
+   `fetching_pages`, or `awaiting_band`. Idle workers, spool drains, index
+   drops, flushes, index builds, post-processing, unknown sub-operations, and
+   an unreachable API all close the window.
+3. It selects the newest observed, report-only, oracle-agreeing cycle with no
+   global blockers that is no older than 12 hours and was recorded for the
+   current publication, and binds that cycle's own `candidate_identity_hash`.
+   The normal `retire` path then re-checks every cycle gate.
+4. It retires that cycle with the per-child sequence above, re-probing the
+   window (and `AUTO_DISABLED`) before every child, so the run ends when the
+   scrape reaches its flush or an operator creates the file.
+
+Load, health, disk-floor, lock-wait, lock-held, and exhausted detach-contention
+refusals are transient: the run exits successfully and the next timer tick
+retries. Any other error (cycle gate, fingerprint, archive, restore drill,
+non-lock DDL failure) writes `AUTO_DISABLED` with the cycle and error and exits
+non-zero, and every later run stays idle until an operator investigates and
+deletes the file.
+
+The timer runs the tool from a dedicated worktree detached at accepted master:
+
+```bash
+OPS=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/ops/snapshot-retire-checkout
+git worktree add --detach "$OPS" origin/master        # or: git -C "$OPS" checkout --detach origin/master
+cp "$OPS"/deploy/systemd/fst-snapshot-retire-auto.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now fst-snapshot-retire-auto.timer
+journalctl --user -u fst-snapshot-retire-auto.service --since today   # run log
+systemctl --user disable --now fst-snapshot-retire-auto.timer        # stop automation
+touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapshot-generations/AUTO_DISABLED  # pause without unloading
+```
+
+Every child still lands in `cycle-<id>/manifest.jsonl` with its archive, so
+rollback is the same `restore` command. Archives are about 8% of the reclaimed
+size (about 3 GiB per day) and are never deleted automatically.
+
 ## Live-safety windows
 
 Run only while the scrape is network-bound (solo or band page fetching) or
@@ -105,7 +158,9 @@ band spool flush (`flushing_band`) from 393 to 167 chunks per minute, so stop
 runs (create the stop file) before any flush subphase or post-processing.
 Post-processing phases also read current snapshots for long periods; a detach
 then exhausts its retries and the run stops rather than queueing. Stop runs
-before planned worker cutovers. Archives stay on the 4 TB FST drive.
+before planned worker cutovers: create the manual run's stop file, and create
+`AUTO_DISABLED` (then delete it after the cutover) so an automatic run ends
+before its next child. Archives stay on the 4 TB FST drive.
 
 ## 2026-09-26 cycle 95 evidence
 
