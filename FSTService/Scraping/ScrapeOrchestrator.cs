@@ -559,9 +559,14 @@ public sealed class ScrapeOrchestrator
                         bandSpool.Complete();
                         _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
                             bandSpool.RecordCount, bandSpool.EntryCount);
+                        var bandFlushParallelism = Math.Clamp(
+                            _options.Value.BandSpoolFlushMaxParallelBandTypes,
+                            1,
+                            BandInstrumentMapping.AllBandTypes.Count);
                         writerResults.Add(await Task.Run(() => bandSpool.FlushAll(
                             maxBatchPages: 64,
-                            onProgress: ReportBandSpoolFlushProgress)));
+                            onProgress: ReportBandSpoolFlushProgress,
+                            maxParallelInstruments: bandFlushParallelism)));
                     }
                     finally
                     {

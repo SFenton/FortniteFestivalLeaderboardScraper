@@ -1500,7 +1500,8 @@ public sealed class PostScrapeOrchestrator
 
                 return await _bandSearchProjectionBuilder.RefreshIncrementalAsync(
                     impactedTeams,
-                    ct);
+                    ct,
+                    _options.Value.BandSearchProjectionParallelBandTypes);
             },
             GetBandSearchProjectionTimingMetrics);
 
@@ -1562,35 +1563,40 @@ public sealed class PostScrapeOrchestrator
         if (sweepMax <= 0 || _bandCurrentProjectionBuilder is null)
             return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
 
-        var scopes = impactedScopes;
+        BandCurrentProjectionSweepSelection selection;
         try
         {
-            var impacted = impactedScopes.ToHashSet();
             var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
                 .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
-                .Where(scope => !impacted.Contains(scope))
-                .Distinct()
                 .ToArray();
-            var stale = await _bandCurrentProjectionBuilder.SelectScopesNeedingRefreshAsync(
+            // One filter pass selects both the impacted scopes that changed and
+            // the capped stale sweep, so the refresh below skips its own filter.
+            selection = await _bandCurrentProjectionBuilder.SelectImpactedAndStaleScopesAsync(
+                impactedScopes,
                 candidates,
                 sweepMax,
                 ct);
-            _log.LogInformation(
-                "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}).",
-                stale.Count,
-                candidates.Length,
-                sweepMax);
-            if (stale.Count > 0)
-                scopes = MergeCurrentProjectionScopes(impactedScopes, stale);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(
                 ex,
                 "Band current projection stale sweep failed; refreshing only the impacted scopes.");
+            return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
         }
 
-        return await RefreshBandCurrentProjectionScopesAsync(scopes, ct);
+        _log.LogInformation(
+            "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}); {ImpactedSelected:N0}/{ImpactedScopes:N0} impacted scope(s) need a rebuild.",
+            selection.StaleScopes.Count,
+            selection.SweepCandidateCount,
+            sweepMax,
+            selection.ImpactedScopes.Count,
+            impactedScopes.Count);
+        return await RefreshBandCurrentProjectionScopesAsync(
+            MergeCurrentProjectionScopes(selection.ImpactedScopes, selection.StaleScopes),
+            ct,
+            preselectedConsideredScopeCount:
+                MergeCurrentProjectionScopes(impactedScopes, selection.StaleScopes).Count);
     }
 
     internal Task RunBandMaintenanceForTestAsync(
@@ -1708,15 +1714,34 @@ public sealed class PostScrapeOrchestrator
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? preselectedConsideredScopeCount = null)
     {
         const int FallbackChunkSize = 128;
 
+        // Preselected scopes already passed the unchanged-scope filter, so the
+        // considered count (impacted plus capped stale scopes) is reported
+        // separately, matching the builder's own filtered accounting.
+        var consideredScopeCount = preselectedConsideredScopeCount ?? scopes.Count;
         if (scopes.Count == 0)
-            return BandMaintenanceTimingMetrics.NoWork;
+        {
+            if (consideredScopeCount == 0)
+                return BandMaintenanceTimingMetrics.NoWork;
+
+            _progress.BeginPhaseProgress(0);
+            return new BandMaintenanceTimingMetrics(
+                RowsRead: consideredScopeCount,
+                RowsWritten: 0,
+                RowsDeleted: 0,
+                ScopeCount: 0);
+        }
 
         var rebuildOptions =
             CreateBandCurrentProjectionRebuildOptions(_options.Value);
+        // The chunk fallback below keeps filtering so completed scopes are skipped.
+        var initialOptions = preselectedConsideredScopeCount is null
+            ? rebuildOptions
+            : rebuildOptions with { SkipUnchangedScopes = false };
         _log.LogInformation(
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
@@ -1755,7 +1780,7 @@ public sealed class PostScrapeOrchestrator
         {
             result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(
                 scopes,
-                rebuildOptions,
+                initialOptions,
                 ct,
                 OnScopesFinalized,
                 OnScopeCompleted);
@@ -1770,6 +1795,7 @@ public sealed class PostScrapeOrchestrator
                 planFinalized,
                 completedScopeKeys,
                 completedLock,
+                consideredScopeCount,
                 ct);
         }
 
@@ -1787,7 +1813,7 @@ public sealed class PostScrapeOrchestrator
                 $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
         }
 
-        return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
+        return GetBandCurrentProjectionTimingMetrics(result, consideredScopeCount);
     }
 
     internal static BandCurrentProjectionRebuildOptions
@@ -1800,6 +1826,8 @@ public sealed class PostScrapeOrchestrator
                     .BandCurrentProjectionUseBatchedMemberStatsAggregation,
             MaxParallelScopes =
                 options.BandCurrentProjectionMaxParallelScopes,
+            PublishParallelism =
+                options.BandCurrentProjectionPublishParallelism,
         };
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(
@@ -1809,6 +1837,7 @@ public sealed class PostScrapeOrchestrator
         bool planFinalized,
         HashSet<BandCurrentProjectionScopeKey> completedScopeKeys,
         object completedLock,
+        int consideredScopeCount,
         CancellationToken ct)
     {
         var scopeChunks = scopes
@@ -1897,7 +1926,7 @@ public sealed class PostScrapeOrchestrator
         }
 
         return new BandMaintenanceTimingMetrics(
-            RowsRead: scopes.Count,
+            RowsRead: consideredScopeCount,
             RowsWritten: insertedRows,
             RowsDeleted: deletedRows,
             ScopeCount: refreshedScopes);

@@ -686,7 +686,12 @@ reported under `post.band_maintenance`, reusing the existing
 machinery instead of adding a phase-progress schema or web-specific case.
 `prune` and `search_projection_refresh` each run as a single blocking database
 call with no truthful denominator until they finish, so both stay
-indeterminate - they never report a fabricated total or percentage.
+indeterminate - they never report a fabricated total or percentage. The search
+refresh normally runs every band type in one transaction (8.2 minutes on one
+backend in scrape `1457`, mostly member and team projection inserts);
+`Scraper:BandSearchProjectionParallelBandTypes` runs each band type in its own
+concurrent transaction with a shared cutoff that advances only after all of
+them commit.
 `current_projection_refresh` is the only subphase with an honest final
 denominator, but that denominator is not known when the subphase starts: the
 extraction-plus-prune impacted-scope set merged before the subphase begins is
@@ -761,6 +766,33 @@ and isolated PostgreSQL tests keep sequential and parallel projection and
 state hashes identical for both member-stat query shapes. Promotion needs a
 one-variable full-scrape A/B.
 
+After the rebuilds, the default publish runs one transaction that flips every
+ready scope's `published_generation` and deletes the older generations, then
+a candidate cleanup scans the whole projection for rows that are neither
+published nor the ready candidate. In scrape `1457` the single-backend publish
+took about 6.5 minutes (about 15.6 million old rows) and the cleanup scan
+about 2.3 minutes while deleting nothing.
+`Scraper:BandCurrentProjectionPublishParallelism` (default `0`, clamped to
+`16`) instead publishes one song per transaction, largest songs first, with up
+to that many at once. Each song's flip and old-generation delete stay atomic,
+so readers see a song entirely old or entirely new and an interruption
+leaves no half-published song; songs no longer flip together. Before the
+first song commits, the global `current_generation` advances to the new
+generation, which closes the scrape-publication band gate exactly as the
+single transaction did; the global state row is recomputed from the
+published scopes once afterwards, or immediately after a failure or
+cancellation. Interrupted songs publish on the next refresh because the
+unchanged-scope filter reselects ready scopes whose candidate was never
+published. Cleanup then probes only unsettled
+scopes (not ready, or `projection_generation` different from
+`published_generation`) through the scope-key index. Each rebuild writes its
+rows and scope state in one transaction, and each publish deletes the scope's
+other generations, so rows that are neither published nor the ready candidate
+can exist only for such scopes. Full rebuilds keep the whole-projection scan.
+Isolated PostgreSQL tests keep projection, scope-state, and global-state
+hashes and published/deleted counts identical to the single-transaction
+publish. Promotion needs a full-scrape A/B.
+
 Only scopes in a scrape's impacted set (band extraction plus prune) are
 considered for refresh, so scopes whose sources change through other paths
 drift. A read-only check after scrape `1436` found about 28% of 122,000 scope
@@ -769,10 +801,23 @@ days earlier) while projection reads serve the published generation without a
 freshness check. `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes`
 (default `0`) adds up to that many stale non-impacted scopes, chosen by the
 same filter over all source and projection scope keys; the fast filter makes
-the full-table pass take about two minutes. The filter treats a ready scope
+the full-table pass take about two and a half minutes. The sweep runs that
+filter once over the impacted scopes plus every other scope key and hands the
+selected set to the refresh with its own filter disabled; previously the
+refresh filtered the merged set again, which in scrape `1457` cost a second
+2.3-minute pass over the same band entries. The chunk fallback still filters,
+so scopes completed before a batch failure are skipped. The filter treats a ready scope
 with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
 converge instead of being selected every scrape, and counts only full-size
-combos, matching the rebuild.
+combos, matching the rebuild. It also selects every ready scope whose
+`projection_generation` differs from `published_generation` (except a
+never-published empty scope): `row_count` and `last_rebuilt_at` describe the
+latest rebuilt candidate, so a candidate whose publish was interrupted
+otherwise looked current forever while readers kept serving the older
+generation. On 2026-10-02 production had 3,409 such combo scopes (last
+rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
+serving stale published rows, for example 71 published versus 30 current
+rows. The stale sweep converges them within its cap.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
@@ -839,6 +884,17 @@ including monolithic SQL, publication gates, retries, and retention work,
 remain explicitly indeterminate. Timeout/cancel transition states are also
 `not_applicable`; parent phase progress is never relabeled as subphase
 progress.
+
+The post-fetch band spool flush (`flushing_band`) writes each band type's
+spool in ordered 64-page chunks, one transaction per chunk. By default the
+band types flush one after another: in scrape `1458`, 31.5 minutes of the
+152-minute acquisition (Trios 14.5, Duets 10.1, Quad 6.9 minutes).
+`Scraper:BandSpoolFlushMaxParallelBandTypes` (default `1`, clamped to the
+number of band types) flushes up to that many band types at once. Chunk
+transactions write `band_entries`, `band_member_stats`, and `band_members`
+rows keyed by band type, so band types never contend for the same rows;
+chunks within a band type stay ordered. Flush progress totals stay monotonic,
+and a failed chunk is retained for replay exactly as before.
 
 `BandExtraction` intentionally has no exact parent percentage because song
 extraction and membership-summary rebuild use unrelated units. Its subphase
@@ -913,6 +969,16 @@ the phase failure; a secondary rebuild failure is logged and attached without
 replacing it. Discovery records impacted teams/scopes immediately after band
 entry persistence, before later registration/checkpoint metadata writes, while
 lookup completion still waits for every required durable write.
+
+Team-level membership rebuilds (band writers, extraction, and prune) take the
+`band_team_membership_rebuild` advisory lock in shared mode plus an exclusive
+per-band-type lock, because membership and configuration rows are keyed by
+band type and concurrent rebuilds of the same teams deadlock only within one
+band type. Account-level rebuilds, which touch every band type for an
+account, take the lock exclusively. BandMaintenance prune therefore rebuilds
+the affected band types' membership summaries concurrently after its delete
+transaction; in scrape `1457` the three sequential rebuilds took about 10 of
+the prune subphase's 16.9 minutes.
 
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative

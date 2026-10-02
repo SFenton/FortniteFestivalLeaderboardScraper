@@ -280,7 +280,10 @@ invalid/non-positive values prevent startup.
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
 | `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
+| `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
+| `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
+| `Scraper:BandSpoolFlushMaxParallelBandTypes` | `1` | How many band types the post-fetch band spool flush writes at once; clamped to the number of band types |
 
 The Compose form is
 `Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
@@ -299,14 +302,33 @@ disjoint projection and scope-state keys; filtering, query shape, publication,
 cleanup, and failure accounting are unchanged. Both switches are part of the
 durable phase configuration identity. Set it back to `0` for rollback.
 
+`Scraper__BandCurrentProjectionPublishParallelism` (template variable
+`BAND_CURRENT_PROJECTION_PUBLISH_PARALLELISM`) changes only the incremental
+refresh's publish and candidate cleanup: each song's scopes flip and lose
+their older generations in their own transaction, and cleanup probes only
+unsettled scopes. Rebuilds, filtering, and failure accounting are unchanged,
+and the end state matches the single-transaction publish. It is part of the
+durable phase configuration identity; `0` is the rollback.
+
 `Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes` (template variable
 `BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES`) adds a best-effort
 sweep to BandMaintenance's current-projection subphase. It loads every source
 scope and every existing projection scope key, runs the same unchanged-scope
-filter over the non-impacted ones, and adds up to the cap (in the filter's
-deterministic order) to the impacted set. A sweep failure is logged and the
-refresh continues with the impacted scopes. The switch is part of the durable
+filter once over those and the impacted scopes, and refreshes every impacted
+scope that needs it plus up to the cap of the others (in the filter's
+deterministic order) without filtering again. A sweep failure is logged and
+the refresh continues with the impacted scopes. The switch is part of the durable
 phase configuration identity; `0` disables it.
+
+`Scraper__BandSearchProjectionParallelBandTypes` (template variable
+`BAND_SEARCH_PROJECTION_PARALLEL_BAND_TYPES`) makes BandMaintenance's
+`search_projection_refresh` subphase refresh each band type in its own
+concurrent transaction under the existing rebuild lock. All band types use the
+same incremental cutoff, and the next cutoff (`refreshed_at`) advances only
+after every band type commits, so a failed band type is refreshed again in
+full next time. Readers may briefly see one band type refreshed before
+another. It is part of the durable phase configuration identity; `false` is
+the rollback.
 
 ## Registered-band remaining-work grace
 
@@ -411,6 +433,29 @@ profiles and score DTOs in memory. The setting does not change rank methods,
 neighbor radius, sample caps, persistence shape, or publication behavior.
 Direct single-user calls and max-score maintenance keep their separate
 on-demand and maintenance-lease paths.
+
+## Rankings concurrency
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
+| `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
+| `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
+
+Per-instrument solo rankings always run at most two instruments at once to
+bound PostgreSQL memory. The production worker env sets
+`BandTeamRankings__MaxParallelBandTypes=2` and
+`BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`. With the
+band rank-history schema ensured once per instance, scrape `1459` rebuilt the
+three band types in 16.0 minutes (39.0 in `1458`, when the schema lock
+serialized them), which left the sequential rank-history snapshots (about 35
+minutes) as the longest branch of ComputeRankings. Peak PostgreSQL anonymous
+memory during that overlap was about 2.9 GiB on top of 4.2 GiB of shared
+buffers in the 16 GiB container. Raising
+`Scraper__RankHistorySnapshotMaxDegreeOfParallelism` (template variable
+`RANK_HISTORY_SNAPSHOT_MAX_DOP`) runs that many snapshot writers at once and
+adds WAL and data-file pressure; it is part of the durable phase configuration
+identity, and `1` is the rollback.
 
 ## Role differences
 

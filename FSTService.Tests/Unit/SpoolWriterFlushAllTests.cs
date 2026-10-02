@@ -712,4 +712,114 @@ public class SpoolWriterFlushAllTests
         Assert.Contains(progressSnapshot, p => p.State == "instrument_completed" && p.InstrumentsCompleted == 1);
         Assert.True(runningCallbacks >= 2);
     }
+    private SpoolWriter<TestEntry> CreateSpool(string label, SpoolWriter<TestEntry>.FlushBatch flush)
+    {
+        return new SpoolWriter<TestEntry>(
+            _log, label,
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: flush);
+    }
+
+    [Fact]
+    public async Task FlushAll_ParallelInstruments_FlushConcurrentlyKeepPerInstrumentOrderAndMonotonicProgress()
+    {
+        var instruments = new[] { "Band_Duets", "Band_Trios", "Band_Quad" };
+        var allStarted = new CountdownEvent(instruments.Length);
+        var calls = new System.Collections.Concurrent.ConcurrentQueue<(string Instrument, string FirstSong, int Pages)>();
+        var firstChunkSeen = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+        var progress = new List<SpoolWriter<TestEntry>.FlushProgress>();
+
+        await using var spool = CreateSpool("test-parallel", (instrument, batch) =>
+        {
+            if (firstChunkSeen.TryAdd(instrument, true))
+            {
+                allStarted.Signal();
+                Assert.True(allStarted.Wait(TimeSpan.FromSeconds(10)), "Expected every instrument's first chunk to be in flight at once.");
+            }
+
+            calls.Enqueue((instrument, batch[0].SongId, batch.Count));
+        });
+
+        foreach (var instrument in instruments)
+            for (int i = 0; i < 5; i++)
+                spool.Enqueue($"s{i}", instrument, new[] { new TestEntry { Id = $"{instrument}-{i}", Value = i } });
+
+        spool.Complete();
+        var result = spool.FlushAll(
+            maxBatchPages: 2,
+            onProgress: snapshot => progress.Add(snapshot),
+            maxParallelInstruments: 3);
+
+        Assert.Equal(15, result.FlushedPages);
+        Assert.Empty(result.Failures);
+        foreach (var instrument in instruments)
+        {
+            var instrumentCalls = calls.Where(call => call.Instrument == instrument).ToArray();
+            Assert.Equal(new[] { "s0", "s2", "s4" }, instrumentCalls.Select(static call => call.FirstSong));
+            Assert.Equal(new[] { 2, 2, 1 }, instrumentCalls.Select(static call => call.Pages));
+        }
+
+        var flushed = progress.Select(static snapshot => snapshot.PagesFlushed).ToArray();
+        Assert.Equal(flushed.Order(), flushed);
+        Assert.Contains(progress, snapshot => snapshot.State == "instrument_completed" && snapshot.InstrumentsCompleted == 3 && snapshot.PagesFlushed == 15);
+    }
+
+    [Fact]
+    public async Task FlushAll_ParallelInstruments_RetainsFailedChunkWhileOtherInstrumentsFlush()
+    {
+        var flushed = new System.Collections.Concurrent.ConcurrentBag<string>();
+        await using var spool = CreateSpool("test-parallel-failure", (instrument, batch) =>
+        {
+            if (instrument == "Band_Trios")
+                throw new InvalidOperationException("injected");
+            flushed.Add(instrument);
+        });
+
+        foreach (var instrument in new[] { "Band_Duets", "Band_Trios", "Band_Quad" })
+            for (int i = 0; i < 3; i++)
+                spool.Enqueue($"s{i}", instrument, new[] { new TestEntry { Id = $"{instrument}-{i}", Value = i } });
+
+        spool.Complete();
+        var result = spool.FlushAll(maxBatchPages: 2, maxParallelInstruments: 3);
+
+        Assert.Equal(6, result.FlushedPages);
+        Assert.Equal(2, result.Failures.Count);
+        Assert.All(result.Failures, failure => Assert.Equal("Band_Trios", failure.Instrument));
+        Assert.Equal(4, flushed.Count);
+        Assert.DoesNotContain("Band_Trios", flushed);
+    }
+    [Fact]
+    public async Task FlushAll_ParallelInstruments_SurfacesCancellationUnwrapped()
+    {
+        await using var spool = CreateSpool("test-parallel-cancel", (_, _) => throw new OperationCanceledException("stop"));
+        foreach (var instrument in new[] { "Band_Duets", "Band_Trios" })
+            spool.Enqueue("s0", instrument, new[] { new TestEntry { Id = instrument, Value = 1 } });
+
+        spool.Complete();
+
+        var ex = Assert.ThrowsAny<OperationCanceledException>(() => spool.FlushAll(maxBatchPages: 1, maxParallelInstruments: 2));
+        Assert.Equal("stop", ex.Message);
+    }
 }
