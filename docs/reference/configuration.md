@@ -282,6 +282,7 @@ invalid/non-positive values prevent startup.
 | `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
+| `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
 
 The Compose form is
 `Scraper__BandCurrentProjectionUseBatchedMemberStatsAggregation`. The switch
@@ -317,6 +318,16 @@ scope that needs it plus up to the cap of the others (in the filter's
 deterministic order) without filtering again. A sweep failure is logged and
 the refresh continues with the impacted scopes. The switch is part of the durable
 phase configuration identity; `0` disables it.
+
+`Scraper__BandSearchProjectionParallelBandTypes` (template variable
+`BAND_SEARCH_PROJECTION_PARALLEL_BAND_TYPES`) makes BandMaintenance's
+`search_projection_refresh` subphase refresh each band type in its own
+concurrent transaction under the existing rebuild lock. All band types use the
+same incremental cutoff, and the next cutoff (`refreshed_at`) advances only
+after every band type commits, so a failed band type is refreshed again in
+full next time. Readers may briefly see one band type refreshed before
+another. It is part of the durable phase configuration identity; `false` is
+the rollback.
 
 ## Registered-band remaining-work grace
 

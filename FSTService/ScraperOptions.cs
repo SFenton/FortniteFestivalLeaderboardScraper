@@ -968,6 +968,14 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
 
     /// <summary>
+    /// When true, BandMaintenance refreshes the band search projection one
+    /// band type per concurrent transaction instead of one transaction for all
+    /// band types. Default false. Set via
+    /// <c>Scraper__BandSearchProjectionParallelBandTypes</c>.
+    /// </summary>
+    public bool BandSearchProjectionParallelBandTypes { get; set; }
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

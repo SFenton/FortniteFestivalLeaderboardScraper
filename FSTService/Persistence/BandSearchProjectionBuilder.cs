@@ -80,8 +80,12 @@ public sealed class BandSearchProjectionBuilder
 
     public async Task<BandSearchProjectionIncrementalResult> RefreshIncrementalAsync(
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> additionalTeamsByBandType,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool parallelBandTypes = false)
     {
+        if (parallelBandTypes)
+            return await RefreshIncrementalByBandTypeAsync(additionalTeamsByBandType, ct);
+
         var sw = Stopwatch.StartNew();
 
         await using var lockConn = await _dataSource.OpenConnectionAsync(ct);
@@ -163,6 +167,144 @@ public sealed class BandSearchProjectionBuilder
         {
             await ReleaseRebuildLockAsync(lockConn, CancellationToken.None);
         }
+    }
+
+    /// <summary>
+    /// Refreshes each band type in its own concurrent transaction. Projection,
+    /// identity, and refresh-key rows are keyed by band type, so the
+    /// transactions write disjoint rows; each applies its own row-count delta.
+    /// All band types use one cutoff, and <c>refreshed_at</c> (the next
+    /// cutoff) advances only after every band type commits, so a failed band
+    /// type is retried in full on the next refresh.
+    /// </summary>
+    private async Task<BandSearchProjectionIncrementalResult> RefreshIncrementalByBandTypeAsync(
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> additionalTeamsByBandType,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+
+        await using var lockConn = await _dataSource.OpenConnectionAsync(ct);
+        await AcquireRebuildLockAsync(lockConn, ct);
+        try
+        {
+            DateTime? cutoff;
+            await using (var cutoffConn = await _dataSource.OpenConnectionAsync(ct))
+            await using (var cutoffTx = await cutoffConn.BeginTransactionAsync(ct))
+            {
+                cutoff = await GetIncrementalCutoffAsync(cutoffConn, cutoffTx, ct);
+                await cutoffTx.CommitAsync(ct);
+            }
+
+            if (cutoff is null)
+            {
+                _log.LogDebug("Band search projection incremental refresh skipped: projection state is absent.");
+                return new BandSearchProjectionIncrementalResult(false, 0, 0, 0, 0, 0, 0, 0, 0);
+            }
+
+            var refreshedAt = DateTime.UtcNow;
+            var bandTypes = FSTService.Scraping.BandInstrumentMapping.AllBandTypes
+                .Concat(additionalTeamsByBandType.Keys)
+                .Where(static bandType => !string.IsNullOrWhiteSpace(bandType))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var partials = new System.Collections.Concurrent.ConcurrentBag<BandSearchProjectionIncrementalResult>();
+            await Parallel.ForEachAsync(
+                bandTypes,
+                new ParallelOptions { MaxDegreeOfParallelism = bandTypes.Length, CancellationToken = ct },
+                async (bandType, innerCt) =>
+                {
+                    var provided = additionalTeamsByBandType
+                        .Where(kvp => string.Equals(kvp.Key, bandType, StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+                    partials.Add(await RefreshIncrementalBandTypeAsync(bandType, provided, cutoff.Value, refreshedAt, innerCt));
+                });
+
+            await using (var stateConn = await _dataSource.OpenConnectionAsync(ct))
+            {
+                await using var stateCmd = stateConn.CreateCommand();
+                stateCmd.CommandText = $"UPDATE {StateTable} SET refreshed_at = @refreshedAt WHERE id = TRUE";
+                stateCmd.Parameters.AddWithValue("refreshedAt", refreshedAt);
+                await stateCmd.ExecuteNonQueryAsync(ct);
+            }
+
+            sw.Stop();
+            var result = new BandSearchProjectionIncrementalResult(
+                true,
+                partials.Sum(static partial => partial.ImpactedTeams),
+                partials.Sum(static partial => partial.ProvidedTeams),
+                partials.Sum(static partial => partial.ChangedSourceTeams),
+                partials.Sum(static partial => partial.DeletedTeamRows),
+                partials.Sum(static partial => partial.InsertedTeamRows),
+                partials.Sum(static partial => partial.DeletedMemberRows),
+                partials.Sum(static partial => partial.InsertedMemberRows),
+                Math.Round(sw.Elapsed.TotalMilliseconds, 3));
+            _log.LogInformation(
+                "Refreshed band search projection for {ImpactedTeams:N0} impacted team(s) across {BandTypes:N0} concurrent band type(s) in {Elapsed:n1}s. " +
+                "Teams: {DeletedTeams:N0} deleted / {InsertedTeams:N0} inserted; members: {DeletedMembers:N0} deleted / {InsertedMembers:N0} inserted.",
+                result.ImpactedTeams,
+                bandTypes.Length,
+                sw.Elapsed.TotalSeconds,
+                result.DeletedTeamRows,
+                result.InsertedTeamRows,
+                result.DeletedMemberRows,
+                result.InsertedMemberRows);
+            return result;
+        }
+        finally
+        {
+            await ReleaseRebuildLockAsync(lockConn, CancellationToken.None);
+        }
+    }
+
+    private async Task<BandSearchProjectionIncrementalResult> RefreshIncrementalBandTypeAsync(
+        string bandType,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> providedTeams,
+        DateTime cutoff,
+        DateTime refreshedAt,
+        CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        await CreateRefreshKeysTableAsync(conn, tx, ct);
+        var provided = await CopyProvidedRefreshKeysAsync(conn, providedTeams, ct);
+        var changed = await InsertChangedRefreshKeysAsync(conn, tx, cutoff, ct, bandType);
+        var impacted = await CountRefreshKeysAsync(conn, tx, ct);
+        if (impacted == 0)
+        {
+            await tx.CommitAsync(ct);
+            return new BandSearchProjectionIncrementalResult(true, 0, provided, changed, 0, 0, 0, 0, 0);
+        }
+
+        await FillMissingRefreshKeyBandIdsAsync(conn, tx, ct);
+        var (deletedTeamRows, deletedMemberRows) = await CountExistingProjectionRowsForRefreshAsync(conn, tx, ct);
+        await DeleteProjectionRowsForRefreshAsync(conn, tx, ct);
+        var insertedTeamRows = await ExecuteNonQueryAsync(conn, tx, BuildTeamProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
+        var insertedMemberRows = await ExecuteNonQueryAsync(conn, tx, BuildMemberProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
+        await UpsertBandIdentityFromRefreshAsync(conn, tx, refreshedAt, ct);
+
+        await ExecuteNonQueryAsync(conn, tx, $"""
+            UPDATE {StateTable}
+            SET team_rows = GREATEST(0, team_rows - @deletedTeamRows + @insertedTeamRows),
+                member_rows = GREATEST(0, member_rows - @deletedMemberRows + @insertedMemberRows)
+            WHERE id = TRUE
+            """, ct,
+            ("deletedTeamRows", deletedTeamRows),
+            ("insertedTeamRows", insertedTeamRows),
+            ("deletedMemberRows", deletedMemberRows),
+            ("insertedMemberRows", insertedMemberRows));
+
+        await tx.CommitAsync(ct);
+        return new BandSearchProjectionIncrementalResult(
+            true,
+            impacted,
+            provided,
+            changed,
+            deletedTeamRows,
+            insertedTeamRows,
+            deletedMemberRows,
+            insertedMemberRows,
+            0);
     }
 
     public async Task EnsureStateRefreshedAtAsync(CancellationToken ct = default)
@@ -565,8 +707,25 @@ public sealed class BandSearchProjectionBuilder
         return count;
     }
 
-    private static async Task<int> InsertChangedRefreshKeysAsync(NpgsqlConnection conn, NpgsqlTransaction tx, DateTime cutoff, CancellationToken ct)
+    private static async Task<int> InsertChangedRefreshKeysAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        DateTime cutoff,
+        CancellationToken ct,
+        string? bandType = null)
     {
+        if (bandType is not null)
+        {
+            return await ExecuteNonQueryAsync(conn, tx, """
+                INSERT INTO _band_search_refresh_keys (band_type, team_key)
+                SELECT DISTINCT band_type, team_key
+                FROM band_entries
+                WHERE band_type = @bandType
+                  AND last_updated_at >= @cutoff
+                ON CONFLICT (band_type, team_key) DO NOTHING
+                """, ct, ("cutoff", cutoff), ("bandType", bandType));
+        }
+
         return await ExecuteNonQueryAsync(conn, tx, """
             INSERT INTO _band_search_refresh_keys (band_type, team_key)
             SELECT DISTINCT band_type, team_key

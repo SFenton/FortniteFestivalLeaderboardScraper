@@ -185,6 +185,7 @@ services:
       - Scraper__PrepareSoloCurrentProjectionBeforeRivals=${PREPARE_SOLO_CURRENT_PROJECTION_BEFORE_RIVALS:-false}
       - Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=${USE_VALIDATED_SOLO_PROJECTION_FOR_LEGACY_DERIVED_READERS:-false}
       - Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes=${BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES:-0}
+      - Scraper__BandSearchProjectionParallelBandTypes=${BAND_SEARCH_PROJECTION_PARALLEL_BAND_TYPES:-false}
       # ── Registration sync gets the Epic lane while active; background scrape/band requests wait. ──
       - Scraper__RegistrationBackfillMode=${REGISTRATION_BACKFILL_MODE:-ForegroundEpicExclusive}
       # ── Path generation (required by the worker when scrape-pass staging is enabled) ──

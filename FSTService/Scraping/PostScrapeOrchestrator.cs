@@ -1500,7 +1500,8 @@ public sealed class PostScrapeOrchestrator
 
                 return await _bandSearchProjectionBuilder.RefreshIncrementalAsync(
                     impactedTeams,
-                    ct);
+                    ct,
+                    _options.Value.BandSearchProjectionParallelBandTypes);
             },
             GetBandSearchProjectionTimingMetrics);
 
