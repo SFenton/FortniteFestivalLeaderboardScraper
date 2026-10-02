@@ -162,6 +162,20 @@ refresh plus `Scraper__BandCurrentProjectionMaxParallelScopes=6`,
 `.env` enables `BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION`.
 These remain production canaries, not accepted defaults.
 
+Between master releases, the improvement loop deploys local bundle images at
+idle scrape boundaries through the guarded worker deploy: one immutable image
+for both API and worker, labelled with the exact bundle revision, built from a
+`deploy/loop-bundle*` branch that merges reviewed PRs onto `master`. Bundle
+content merges to `master` only after the next scrape on it passes leaderboard
+and band fetch. Since the scrape `1458` boundary (2026-10-02) production runs
+`deploy/loop-bundle2-20261002` (`bf4c4765`: #133–#136, now merged, plus
+#138–#141). The worker env additionally sets
+`Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=true` and adds US
+East as an eighth egress-refresh region (see
+[VPN/proxy pool](vpn-proxy-pool.md)). Check the running image's
+`org.opencontainers.image.revision` label before deploying a master image:
+a newer master build can lack bundle changes that are not merged yet.
+
 The operator-authorized frozen acquisition recovery on 2026-09-29 failed
 scrape `1448` and candidate publication `379` through the qualified native
 command, preserving publication `377` / published scrape `1447` and retained

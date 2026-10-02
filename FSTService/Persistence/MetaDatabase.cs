@@ -63,6 +63,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         _catalogPublicationLagCache;
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
+    private int _bandRankHistoryTablesEnsured;
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
     internal Func<Exception?>?
@@ -7541,7 +7542,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         try
         {
             currentStage = "ensure_vnext_schema";
-            EnsureBandRankHistoryTables(conn, tx);
+            EnsureBandRankHistoryTablesOnce();
             lastCompletedStage = "ensure_vnext_schema";
 
             if (resolvedOptions.DisableSynchronousCommit)
@@ -16214,6 +16215,24 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("comboId", comboId);
         var result = cmd.ExecuteScalar();
         return result is DBNull or null ? 0 : Convert.ToInt32(result);
+    }
+
+    /// <summary>
+    /// Ensures the band rank-history schema in its own short transaction, once per
+    /// instance. The schema DDL takes a transaction-scoped advisory lock and table
+    /// locks; inside a band-ranking rebuild those were held for the whole rebuild,
+    /// which serialized the per-band-type rebuilds.
+    /// </summary>
+    private void EnsureBandRankHistoryTablesOnce()
+    {
+        if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        EnsureBandRankHistoryTables(conn, tx);
+        tx.Commit();
+        Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
     }
 
     private static void EnsureBandRankHistoryTables(NpgsqlConnection conn, NpgsqlTransaction tx)

@@ -126,26 +126,41 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
         {
             _log.LogWarning("Restarting proxy container {Container}", containerName);
 
-            try
-            {
-                await _docker.Containers.StopContainerAsync(containerName,
-                    new ContainerStopParameters { WaitBeforeKillSeconds = StopWaitSeconds }, ct);
-            }
-            catch (DockerContainerNotFoundException)
-            {
-                _log.LogError("Container {Container} not found — cannot restart", containerName);
-                return false;
-            }
-            catch (DockerApiException ex) when (ex.StatusCode == HttpStatusCode.NotModified)
-            {
-                _log.LogInformation("Proxy container {Container} is already stopped; starting it", containerName);
-            }
+            var stopCanceled = await RestartWithoutLeavingStoppedAsync(
+                stop: async token =>
+                {
+                    try
+                    {
+                        await _docker.Containers.StopContainerAsync(containerName,
+                            new ContainerStopParameters { WaitBeforeKillSeconds = StopWaitSeconds }, token);
+                    }
+                    catch (DockerApiException ex) when (ex.StatusCode == HttpStatusCode.NotModified)
+                    {
+                        _log.LogInformation("Proxy container {Container} is already stopped; starting it", containerName);
+                    }
+                },
+                isRunning: async token =>
+                    (await _docker.Containers.InspectContainerAsync(containerName, token)).State?.Running == true,
+                start: token => _docker.Containers.StartContainerAsync(
+                    containerName, new ContainerStartParameters(), token),
+                settleTimeout: TimeSpan.FromSeconds(StopWaitSeconds + StartSettleSeconds),
+                ct);
 
-            await _docker.Containers.StartContainerAsync(
-                containerName, new ContainerStartParameters(), ct);
+            if (stopCanceled)
+            {
+                _log.LogWarning(
+                    "Proxy container {Container} restart was canceled after its stop; started it before returning so the exit is not left stopped.",
+                    containerName);
+                ct.ThrowIfCancellationRequested();
+            }
 
             _log.LogInformation("Proxy container {Container} restarted", containerName);
             return true;
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            _log.LogError("Container {Container} not found — cannot restart", containerName);
+            return false;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -153,6 +168,58 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
                 containerName, ex.Message);
             return false;
         }
+    }
+
+    /// <summary>Extra time, beyond the stop grace period, for a canceled stop to settle before the start.</summary>
+    private const uint StartSettleSeconds = 30;
+
+    /// <summary>
+    /// Stops then starts a container without ever leaving it stopped once the stop
+    /// was requested. Docker records an API stop as explicit, so an
+    /// <c>unless-stopped</c> policy never revives it; a caller deadline that fired
+    /// between stop and start used to strand the exit until operator recovery.
+    /// The start therefore runs on its own bounded token: after a canceled stop it
+    /// waits for the daemon to finish stopping, starts the container, and reports
+    /// the cancellation to the caller.
+    /// </summary>
+    /// <returns><c>true</c> when the caller's token canceled the stop.</returns>
+    internal static async Task<bool> RestartWithoutLeavingStoppedAsync(
+        Func<CancellationToken, Task> stop,
+        Func<CancellationToken, Task<bool>> isRunning,
+        Func<CancellationToken, Task> start,
+        TimeSpan settleTimeout,
+        CancellationToken ct,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
+    {
+        delay ??= static (interval, token) => Task.Delay(interval, token);
+        var stopCanceled = false;
+        try
+        {
+            await stop(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            stopCanceled = true;
+        }
+
+        using var settle = new CancellationTokenSource(settleTimeout);
+        try
+        {
+            if (stopCanceled)
+            {
+                while (await isRunning(settle.Token))
+                    await delay(TimeSpan.FromMilliseconds(500), settle.Token);
+            }
+
+            await start(settle.Token);
+        }
+        catch (OperationCanceledException) when (settle.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"The container did not stop and restart within {settleTimeout.TotalSeconds:N0}s.");
+        }
+
+        return stopCanceled;
     }
 
     /// <summary>

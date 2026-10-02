@@ -394,6 +394,29 @@ public sealed class BandCurrentProjectionOptimizationTests(
     }
 
     [Fact]
+    public void InterleaveByBandTypeStartsSongWideOverallScopesFirst()
+    {
+        BandCurrentProjectionScopeKey Scope(string songId, string bandType, string rankingScope) =>
+            new(songId, bandType, rankingScope, rankingScope == "combo" ? "c1" : string.Empty);
+        var scopes = new[]
+        {
+            Scope("a", "Band_Duets", "combo"),
+            Scope("b", "Band_Duets", "combo"),
+            Scope("c", "Band_Duets", "overall"),
+            Scope("d", "Band_Quad", "combo"),
+            Scope("e", "Band_Quad", "overall"),
+            Scope("f", "Band_Quad", "overall"),
+        };
+
+        var ordered = BandCurrentProjectionBuilder.InterleaveByBandType(scopes);
+
+        Assert.Equal(
+            ["c", "e", "a", "f", "b", "d"],
+            ordered.Select(static scope => scope.SongId));
+        Assert.Equal(scopes.Length, ordered.Distinct().Count());
+    }
+
+    [Fact]
     public async Task MissingMemberRowsPreserveBaselineCandidateParity()
     {
         using var baselineFixture = new InMemoryMetaDatabase();
