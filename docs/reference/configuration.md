@@ -340,6 +340,7 @@ configuration rollback is independently setting each enable flag to `false`.
 |---|---:|---:|---|
 | `Scraper:RivalsMaxDegreeOfParallelism` | `2` | positive integer | Maximum registered accounts whose song-neighborhood rival scans may run concurrently |
 | `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
+| `Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` | `false` | boolean | After that early refresh leaves no stale or orphaned scope, legacy rivals, leaderboard-rivals, and player-stats readers match ready projection scopes against the active snapshot during the freeze |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
@@ -372,6 +373,24 @@ refresh. Public reads are frozen for all of post-processing, so the earlier
 refresh exposes nothing. Snapshot/overlay worker readers always prepare and
 validate the projection instead. The switch is part of the durable phase
 configuration identity; set it back to `false` for rollback.
+
+The early refresh alone does not reach the projection during the public-read
+freeze: legacy readers match each scope's source against the published scrape,
+so every song whose active snapshot is newer fails readiness. The all-scope
+check behind the shared rivals preload then always falls back to whole-instrument
+live-plus-snapshot ranking (about 33 seconds per instrument in scrapes
+`1453`-`1456`; 338 of 731 Solo Guitar scopes mismatched while every scope
+matched its active snapshot). With
+`Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=true` as well,
+the phase reloads stale scopes and orphans after its refresh; when none remain,
+legacy readers match ready scopes against the active snapshot, which is what
+the fallback reads, until just before snapshot activation, and the
+read pass always clears it. Readiness still requires an exact source match per
+scope, so any scope that changes later falls back as before. Read-only
+production parity on 25 rivals accounts found identical rows (all columns)
+from both paths: Solo Guitar `8,055`, Solo Bass `4,764`, Pro Drums `141`.
+It is part of the durable phase configuration identity; set it to `false` for
+rollback.
 
 ## Leaderboard rivals
 

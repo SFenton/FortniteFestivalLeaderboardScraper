@@ -2249,6 +2249,48 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void LegacyValidatedProjectionToggle_RequiresLegacyReadersPropagatesAndResetsWithPass()
+    {
+        using var overlay = CreatePersistence(new FeatureOptions
+        {
+            UseSnapshotOverlayWorkerReaders = true,
+        });
+        Assert.Throws<InvalidOperationException>(() =>
+            overlay.SetValidatedCurrentProjectionForLegacyWorkerReaders(true));
+
+        using var published = CreatePersistence(new FeatureOptions
+        {
+            UsePublishedScopeSources = true,
+        });
+        Assert.Throws<InvalidOperationException>(() =>
+            published.SetValidatedCurrentProjectionForLegacyWorkerReaders(true));
+
+        using var legacy = CreatePersistence();
+        var guitar = Assert.IsType<InstrumentDatabase>(
+            legacy.GetOrCreateInstrumentDb("Solo_Guitar"));
+
+        using (legacy.BeginValidatedCurrentProjectionReadPass())
+        {
+            legacy.SetValidatedCurrentProjectionForLegacyWorkerReaders(true);
+            var bass = Assert.IsType<InstrumentDatabase>(
+                legacy.GetOrCreateInstrumentDb("Solo_Bass"));
+
+            Assert.True(legacy.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+            Assert.False(legacy.UseValidatedCurrentProjectionForWorkerReaders);
+            Assert.True(guitar.UseValidatedCurrentProjectionForWorkerReaders);
+            Assert.True(bass.UseValidatedCurrentProjectionForWorkerReaders);
+            Assert.False(guitar.UseSnapshotOverlayWorkerReaders);
+
+            // Clearing the overlay toggle must not drop the legacy validation.
+            legacy.SetValidatedCurrentProjectionForWorkerReaders(false);
+            Assert.True(guitar.UseValidatedCurrentProjectionForWorkerReaders);
+        }
+
+        Assert.False(legacy.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+        Assert.False(guitar.UseValidatedCurrentProjectionForWorkerReaders);
+    }
+
+    [Fact]
     public void ValidatedWorkerProjectionToggle_RequiresSnapshotReadersAndPropagates()
     {
         using var baseline = CreatePersistence();

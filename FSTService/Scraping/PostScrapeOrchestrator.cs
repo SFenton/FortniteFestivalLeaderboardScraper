@@ -419,6 +419,11 @@ public sealed class PostScrapeOrchestrator
                 await RunPhaseAsync(ctx, "PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
             }
 
+            // Snapshot activation changes active sources; legacy readers return
+            // to published-scrape matching for the rest of the pass.
+            if (_persistence.UseValidatedCurrentProjectionForLegacyWorkerReaders)
+                _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
+
             // ── Solo finalize ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
             {
@@ -1140,26 +1145,44 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogInformation(
                     "Solo current projection is already fresh before rivals/player stats.");
-                return;
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Refreshing {ScopeCount:N0} stale solo projection scope(s) before rivals/player stats; publication cleanup still revalidates.",
+                    scopes.Count);
+                var result = await builder.RefreshScopesAsync(scopes, rebuildOptions, ct);
+                if (result.FailedScopeCount > 0)
+                {
+                    _log.LogWarning(
+                        "Early solo projection refresh left {FailedScopeCount:N0}/{ScopeCount:N0} scope(s) stale; readers fall back for them and cleanup retries.",
+                        result.FailedScopeCount,
+                        result.ScopeCount);
+                    return;
+                }
+
+                _log.LogInformation(
+                    "Refreshed {ScopeCount:N0} solo projection scope(s) before rivals/player stats in {ElapsedMs:N0} ms.",
+                    result.SucceededScopeCount,
+                    result.TotalElapsedMs);
             }
 
-            _log.LogInformation(
-                "Refreshing {ScopeCount:N0} stale solo projection scope(s) before rivals/player stats; publication cleanup still revalidates.",
-                scopes.Count);
-            var result = await builder.RefreshScopesAsync(scopes, rebuildOptions, ct);
-            if (result.FailedScopeCount > 0)
+            if (!_options.Value.UseValidatedSoloProjectionForLegacyDerivedReaders)
+                return;
+
+            var remainingStaleScopes = await builder.LoadStaleScopesAsync(ct);
+            if (remainingStaleScopes.Count > 0
+                || await builder.HasOrphanedProjectionScopesAsync(ct))
             {
                 _log.LogWarning(
-                    "Early solo projection refresh left {FailedScopeCount:N0}/{ScopeCount:N0} scope(s) stale; readers fall back for them and cleanup retries.",
-                    result.FailedScopeCount,
-                    result.ScopeCount);
+                    "Solo current projection is not fully validated before rivals/player stats (stale={StaleScopeCount:N0}); legacy readers keep published-scrape matching.",
+                    remainingStaleScopes.Count);
                 return;
             }
 
+            _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(true);
             _log.LogInformation(
-                "Refreshed {ScopeCount:N0} solo projection scope(s) before rivals/player stats in {ElapsedMs:N0} ms.",
-                result.SucceededScopeCount,
-                result.TotalElapsedMs);
+                "Validated solo current projection for legacy rivals/player stats readers; ready scopes now match their active snapshot until snapshot activation.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

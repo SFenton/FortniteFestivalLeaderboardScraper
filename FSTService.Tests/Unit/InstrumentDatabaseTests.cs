@@ -1137,6 +1137,42 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void LegacyReaders_match_validated_projection_to_active_snapshot_during_freeze()
+    {
+        InsertSnapshotEntry(816, "song_legacy_frozen", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotState("song_legacy_frozen", 816, isFinalized: true);
+        InsertProjectionScope("song_legacy_frozen", sourceSnapshotId: 816);
+        InsertProjectionEntry("song_legacy_frozen", "acct_user", 130_000, source: "projection");
+        SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
+
+        // Freeze mapping: the scope's source (816) is not the published scrape, so
+        // legacy readers fall back to the active snapshot rows.
+        Assert.Equal(
+            120_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_frozen")).Score);
+        Assert.Equal(
+            120_000,
+            Assert.Single(Db.GetCurrentStatePlayerScoresForAccounts(["acct_user"])["acct_user"]).Score);
+
+        Db.UseValidatedCurrentProjectionForWorkerReaders = true;
+
+        Assert.Equal(
+            130_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_frozen")).Score);
+        Assert.Equal(
+            130_000,
+            Assert.Single(Db.GetCurrentStatePlayerScoresForAccounts(["acct_user"])["acct_user"]).Score);
+
+        // A scope whose source no longer matches the active snapshot still falls back.
+        InsertSnapshotEntry(817, "song_legacy_frozen", "acct_user", 140_000, source: "scrape");
+        InsertSnapshotState("song_legacy_frozen", 817, isFinalized: true);
+
+        Assert.Equal(
+            140_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct_user", "song_legacy_frozen")).Score);
+    }
+
+    [Fact]
     public void ValidatedWorkerProjection_uses_active_candidate_during_public_read_freeze()
     {
         InsertSnapshotEntry(816, "song_worker_frozen", "acct_user", 120_000, source: "scrape");

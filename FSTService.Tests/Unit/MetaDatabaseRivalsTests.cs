@@ -414,12 +414,34 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
 
     // ═══ ResetStaleRivals ═══════════════════════════════════════
 
-    [Fact]
-    public void ResetStaleRivals_resets_complete_with_zero_rivals()
+    private void InsertCurrentEntries(string accountId, string instrument, int songCount)
     {
-        Db.EnsureRivalsStatus("stale");
-        Db.StartRivals("stale");
-        Db.CompleteRivals("stale", 0, 0);
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO current_leaderboard_entries
+                (song_id, instrument, account_id, score, first_seen_at, last_updated_at, computed_at)
+            SELECT 'song_' || n, @instrument, @accountId, 1000 + n, now(), now(), now()
+            FROM generate_series(1, @songCount) AS n
+            """;
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("songCount", songCount);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void CompleteWithZeroRivals(string accountId)
+    {
+        Db.EnsureRivalsStatus(accountId);
+        Db.StartRivals(accountId);
+        Db.CompleteRivals(accountId, 0, 0);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_resets_zero_rivals_once_an_instrument_has_enough_songs()
+    {
+        CompleteWithZeroRivals("stale");
+        InsertCurrentEntries("stale", "Solo_Guitar", RivalsCalculator.MinUserSongsPerInstrument);
 
         var count = Db.ResetStaleRivals();
         Assert.Equal(1, count);
@@ -428,6 +450,43 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Equal("pending", status!.Status);
         Assert.Equal(0, status.CombosComputed);
         Assert.Equal(0, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_keeps_zero_rivals_complete_while_songs_are_insufficient()
+    {
+        CompleteWithZeroRivals("no_data");
+        CompleteWithZeroRivals("sparse");
+        InsertCurrentEntries("sparse", "Solo_Guitar", RivalsCalculator.MinUserSongsPerInstrument - 1);
+        InsertCurrentEntries("sparse", "Solo_Bass", RivalsCalculator.MinUserSongsPerInstrument - 1);
+        InsertCurrentEntries("sparse", "Solo_PeripheralDrums", 4);
+
+        var count = Db.ResetStaleRivals();
+
+        Assert.Equal(0, count);
+        Assert.Equal("complete", Db.GetRivalsStatus("no_data")!.Status);
+        Assert.Equal("complete", Db.GetRivalsStatus("sparse")!.Status);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_counts_the_pro_drums_family_together()
+    {
+        CompleteWithZeroRivals("drummer");
+        InsertCurrentEntries("drummer", "Solo_PeripheralDrums", 6);
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO current_leaderboard_entries
+                    (song_id, instrument, account_id, score, first_seen_at, last_updated_at, computed_at)
+                SELECT 'cymbal_song_' || n, 'Solo_PeripheralCymbals', 'drummer', 500, now(), now(), now()
+                FROM generate_series(1, 4) AS n
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        Assert.Equal(1, Db.ResetStaleRivals());
+        Assert.Equal("pending", Db.GetRivalsStatus("drummer")!.Status);
     }
 
     [Fact]

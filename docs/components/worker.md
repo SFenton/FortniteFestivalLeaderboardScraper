@@ -101,6 +101,13 @@ Full-worker mode registers:
 
 API/frontend modes register only the background services appropriate to those
 roles. Registration-sync mode omits scheduled scrape and band-history work.
+
+Registration backfill polls for queued accounts and history reconstruction
+every 30 seconds outside scrapes. Each `HistoryReconstructor` instance reuses
+its last season-window discovery for the same caller for 30 minutes instead of
+calling the Epic events API on every poll; season rollovers still appear within
+that interval, and post-scrape first-seen-season discovery keeps its
+synthetic-season backstop.
 The production worker role also sets
 `Scraper__EnableItemShopRefresh=false`: startup loads persisted Item Shop state
 for local consumers without provider HTTP, notification reconciliation, or
@@ -262,6 +269,12 @@ selected for their publication. Cleanup precompute must serialize canonical
 `/api/songs` from that explicit collection; it cannot fall back to the
 service's newer singleton live catalog. A supplied empty catalog fails before
 cache staging.
+
+Cleanup precompute loads each `(song, instrument)` threshold band (scores
+within ±5% of the chart maximum) once, for leeway metadata, and reuses those
+exact arrays as the player band-scores cache. Both previously ran the same
+query over the same scopes with no score writes in between; scrape `1456`
+spent 168.7 seconds on the duplicate load (3,482,397 scores, 5,848 pairs).
 
 ## Continuous loop
 
@@ -571,6 +584,17 @@ account completion against the final target-account denominator. Direct
 single-user and backfill recomputation remain on-demand and do not allocate a
 global preload.
 
+Each scheduled pass first re-queues completed rows from an older rivals
+algorithm, and zero-rival completions only when the account's current
+projection rows can now produce rivals: at least
+`RivalsCalculator.MinUserSongsPerInstrument` (10) songs on one instrument or
+across the Pro Drums family. Accounts that still lack songs stay complete, so a
+pass with no pending, dirty, or newly eligible accounts skips the shared
+preload entirely. Before this gate, seven data-less registered accounts were
+re-queued every scrape, which forced a roughly five-minute preload in scrapes
+`1453`–`1456`. Score changes still reach every account through the
+dirty-rivals path.
+
 Rival song counts and neighborhoods use the solo current projection only for
 scopes that are ready for their active source. With legacy worker readers the
 projection is otherwise refreshed only in publication cleanup, so songs with a
@@ -578,7 +602,14 @@ new snapshot fall back to per-song live-plus-snapshot ranking during Rivals.
 `Scraper:PrepareSoloCurrentProjectionBeforeRivals` (default `false`) runs the
 existing `PrepareSoloCurrentProjectionForDerived` phase as a best-effort stale
 refresh before Rivals and player stats; publication cleanup still revalidates
-and refreshes. See [configuration](../reference/configuration.md#player-rivals).
+and refreshes. During the public-read freeze, legacy readers still match
+projection scopes against the published scrape, so that refresh alone leaves
+the preload and most neighborhoods on the fallback.
+`Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` (default `false`)
+revalidates after the refresh and, when no stale or orphaned scope remains,
+lets Rivals, LeaderboardRivals, and PlayerStatsTiers match ready scopes against
+the active snapshot; it is cleared before snapshot activation. See
+[configuration](../reference/configuration.md#player-rivals).
 
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
