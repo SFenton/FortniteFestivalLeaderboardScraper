@@ -1771,6 +1771,7 @@ public sealed class PostScrapeOrchestrator
                 planFinalized,
                 completedScopeKeys,
                 completedLock,
+                consideredScopeCount,
                 ct);
         }
 
@@ -1810,6 +1811,7 @@ public sealed class PostScrapeOrchestrator
         bool planFinalized,
         HashSet<BandCurrentProjectionScopeKey> completedScopeKeys,
         object completedLock,
+        int consideredScopeCount,
         CancellationToken ct)
     {
         var scopeChunks = scopes
@@ -1898,7 +1900,7 @@ public sealed class PostScrapeOrchestrator
         }
 
         return new BandMaintenanceTimingMetrics(
-            RowsRead: scopes.Count,
+            RowsRead: consideredScopeCount,
             RowsWritten: insertedRows,
             RowsDeleted: deletedRows,
             ScopeCount: refreshedScopes);
