@@ -363,12 +363,14 @@ public sealed class ScrapeTimePrecomputer
         _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs and rank offsets for {OffsetCount} pairs in {Elapsed}ms.",
             tiers.Count, leewayMetadata.RankOffsets.Count, sw.ElapsedMilliseconds);
 
-        _log.LogInformation("Building scrape-time band scores cache for player precomputation.");
-        var bandScoresCache = BuildBandScoresCache(
-            allMaxScores,
-            instrumentKeys,
-            maintenanceScopes);
-        _log.LogInformation("Built scrape-time band scores cache for {Count:N0} (song, instrument) pair(s).", bandScoresCache.Count);
+        // Player precomputation reuses the exact threshold-band scores that
+        // leeway metadata just loaded (same scopes and bounds, no score writes
+        // in between) instead of reloading every band.
+        var bandScoresCache = leewayMetadata.BandScoresByKey;
+        _log.LogInformation(
+            "Reusing leeway threshold-band scores for {Count:N0} (song, instrument) pair(s) as the player band scores cache ({CachedScoreCount:N0} score(s)).",
+            bandScoresCache.Count,
+            bandScoresCache.Values.Sum(static scores => (long)scores.Length));
 
         // ── Phases 2-7: Independent. Run sequentially by default so API latency
         // remains the priority while post-scrape work is active.
@@ -534,6 +536,7 @@ public sealed class ScrapeTimePrecomputer
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = new ConcurrentDictionary<(string, string), PopulationTierData>();
         var rankOffsets = new ConcurrentBag<LeaderboardRankOffsetData>();
+        var bandScoresByKey = new ConcurrentDictionary<(string, string), int[]>();
 
         // Build flat list of (songId, instrument, maxScore) to process
         var workItems = new List<(string SongId, string Instrument, int MaxScore)>();
@@ -567,6 +570,7 @@ public sealed class ScrapeTimePrecomputer
 
             var baseCount = db.GetCurrentStatePopulationAtOrBelow(songId, lowerBound);
             var bandScores = db.GetCurrentStateScoresInBand(songId, lowerBound, upperBound);
+            bandScoresByKey[(songId, instrument)] = bandScores.ToArray();
 
             // Build changepoints: each score maps to a leeway percentage
             var tiers = new List<PopulationTier>();
@@ -625,7 +629,11 @@ public sealed class ScrapeTimePrecomputer
             populationTiers.Count,
             offsets.Count,
             sw.Elapsed.TotalSeconds);
-        return new LeewayMetadata(populationTiers, offsets, offsetsByKey);
+        return new LeewayMetadata(
+            populationTiers,
+            offsets,
+            offsetsByKey,
+            new Dictionary<(string, string), int[]>(bandScoresByKey));
     }
 
     private void StoreLeaderboardRankOffsets(IReadOnlyList<LeaderboardRankOffsetData> offsets)
@@ -667,66 +675,6 @@ public sealed class ScrapeTimePrecomputer
     // ═══════════════════════════════════════════════════════════════
     // Band Scores Cache (shared across player precomputation)
     // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Pre-fetches all scores in the threshold band per (songId, instrument).
-    /// Reused across all player precomputations to avoid redundant DB queries.
-    /// </summary>
-    private Dictionary<(string, string), int[]> BuildBandScoresCache(
-        Dictionary<string, SongMaxScores> allMaxScores,
-        IReadOnlyList<string> instrumentKeys,
-        IReadOnlySet<(string SongId, string Instrument)>?
-            allowedScopes)
-    {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var cache = new ConcurrentDictionary<(string, string), int[]>();
-        var workItems = new List<(string SongId, string Instrument, int MaxScore)>();
-        foreach (var (songId, ms) in allMaxScores)
-            foreach (var inst in instrumentKeys)
-            {
-                if (allowedScopes is not null
-                    && !allowedScopes.Contains((songId, inst)))
-                {
-                    continue;
-                }
-                var max = ms.GetByInstrument(inst);
-                if (max.HasValue && max.Value > 0) workItems.Add((songId, inst, max.Value));
-            }
-
-        _log.LogInformation(
-            "Building band scores cache for {Count:N0} (song, instrument) pair(s) with maxDegree={MaxDegree}.",
-            workItems.Count,
-            8);
-        var completed = 0;
-        var lastLogged = 0;
-        Parallel.ForEach(workItems, new ParallelOptions { MaxDegreeOfParallelism = 8 }, item =>
-        {
-            var db = _persistence.GetOrCreateInstrumentDb(item.Instrument);
-            var lo = (int)(item.MaxScore * 0.95);
-            var hi = (int)(item.MaxScore * 1.05);
-            var scores = db.GetCurrentStateScoresInBand(item.SongId, lo, hi);
-            cache[(item.SongId, item.Instrument)] = scores.ToArray();
-
-            var current = Interlocked.Increment(ref completed);
-            if (ShouldLogPrecomputeProgress(current, workItems.Count, sw.Elapsed, ref lastLogged))
-            {
-                _log.LogInformation(
-                    "Band scores cache progress: {Completed:N0}/{Total:N0} pairs ({Percent:P1}) in {Elapsed:n1}s.",
-                    current,
-                    workItems.Count,
-                    current / (double)Math.Max(1, workItems.Count),
-                    sw.Elapsed.TotalSeconds);
-            }
-        });
-
-        _log.LogInformation(
-            "Band scores cache complete: {Completed:N0}/{Total:N0} pairs, {CachedScoreCount:N0} score(s) cached in {Elapsed:n1}s.",
-            completed,
-            workItems.Count,
-            cache.Values.Sum(static scores => scores.Length),
-            sw.Elapsed.TotalSeconds);
-        return new Dictionary<(string, string), int[]>(cache);
-    }
 
     private static bool ShouldLogPrecomputeProgress(int completed, int total, TimeSpan elapsed, ref int lastLogged)
     {
@@ -1985,7 +1933,8 @@ public sealed class ScrapeTimePrecomputer
     private sealed record LeewayMetadata(
         Dictionary<(string SongId, string Instrument), PopulationTierData> PopulationTiers,
         IReadOnlyList<LeaderboardRankOffsetData> RankOffsets,
-        IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> RankOffsetsByKey);
+        IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> RankOffsetsByKey,
+        Dictionary<(string, string), int[]> BandScoresByKey);
 
     // ═══════════════════════════════════════════════════════════════
     // Phase 5: Rankings Pages (page 1 for each instrument × metric)

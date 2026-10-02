@@ -57,11 +57,12 @@ public sealed class RivalsOrchestrator
         foreach (var id in registeredIds)
             _persistence.Meta.EnsureRivalsStatus(id);
 
-        // Reset stale completions: users marked 'complete' with 0 rivals found
-        // are likely victims of a computation that ran before data was available.
+        // Reset stale completions: zero-rival rows whose account now has enough
+        // songs were likely computed before data was available; older-algorithm
+        // rows are recomputed under the current algorithm.
         var resetCount = _persistence.Meta.ResetStaleRivals();
         if (resetCount > 0)
-            _log.LogInformation("Reset {Count} stale rivals status (complete with 0 rivals) to pending.", resetCount);
+            _log.LogInformation("Reset {Count} stale rivals status (zero rivals with enough songs, or an older algorithm) to pending.", resetCount);
 
         // Determine who needs computation
         var pending = _persistence.Meta.GetPendingRivalsAccounts();
