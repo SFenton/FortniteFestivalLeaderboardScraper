@@ -24,6 +24,7 @@ update_triggers:
 | [0009](0009-offline-retention-report-admission.md) | Produce genuine report-only retention evidence after an external idle stop |
 | [0010](0010-snapshot-archive-retirement.md) | Retire report-only candidates through verified archives |
 | [0011](0011-automatic-snapshot-archive-retirement.md) | Retire each scrape's agreeing cycle automatically during network-bound fetch |
+| [0012](0012-sparse-snapshot-child-compaction.md) | Compact sparse snapshot children to their live scopes through verified archives |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.
