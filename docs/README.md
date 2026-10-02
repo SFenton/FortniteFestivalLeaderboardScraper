@@ -42,6 +42,7 @@ evidence remain the behavioral sources of truth.
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
+| Work on in-app bug reports and feature requests | [In-app feedback](components/in-app-feedback.md) |
 | Work on scheduled scraping and derived data | [Worker](components/worker.md) |
 | Understand optimal path generation and regeneration | [Path generation](components/path-generation.md) |
 | Work on shared .NET or TypeScript code | [Shared code](components/shared-code.md) |

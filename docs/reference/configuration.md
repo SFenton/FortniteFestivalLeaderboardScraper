@@ -17,6 +17,7 @@ sources:
   - FSTService/Scraping/ScrapePassPathIngestion.cs
   - FSTService/Program.cs
   - FSTService/FeatureOptions.cs
+  - FSTService/FeedbackOptions.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/DatabaseMaintenanceOptions.cs
@@ -59,8 +60,9 @@ overrides intentionally diverge between the public service and mutation worker.
 | Section | Scope |
 |---|---|
 | `Scraper` | hosting mode, schedule, concurrency, phases, catalog/path work, proxy pool |
-| `Features` | persistence/publication rollout and App Manual |
+| `Features` | persistence/publication rollout, App Manual, and in-app feedback |
 | `ClientTelemetry` | bounded browser interaction diagnostics |
+| `Feedback` | in-app bug report/feature request GitHub target, limits, and media conversion ([In-app feedback](../components/in-app-feedback.md)) |
 | `ImprovementNotifications` | notification scope, projection refresh, staleness |
 | `PublicationCommit` | read drain, locks, retries, leases, deferred recovery |
 | `BandRankHistory` | mode, storage/read source, compaction/retention behavior |
@@ -463,6 +465,7 @@ features, operator-supplied values include:
 - API key;
 - Epic client ID/secret;
 - MIDI/path-generation key;
+- in-app feedback GitHub token (`Feedback__GitHubToken`);
 - VPN provider credentials, keys, addresses, and server selection;
 - optional e-mail/reporting credentials.
 
