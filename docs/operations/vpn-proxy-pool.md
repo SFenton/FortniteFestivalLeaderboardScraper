@@ -250,6 +250,18 @@ every OpenVPN TLS handshake; CA Toronto, US Ohio, US Salt Lake City,
 Switzerland, and France were intermittent. Requalify before relying on these
 lists; PIA server health changes.
 
+On 2026-10-02 a disposable spare Gluetun clone (UDP, eight region changes
+each, real IP-echo egress) qualified US East: 8/8 healthy reconnects with 5
+distinct egress addresses; the embedded server list carries 6 US East servers
+and 96 addresses, comparable to the existing regions (73-109). US Michigan and
+CA Ontario reached healthy egress on only 2/8 attempts and US Ohio on 1/8, so
+they stay excluded. Traceroutes and TCP probes from the host showed many large
+PIA ranges failing at the ISP's first upstream hop (ICMP network-unreachable
+or TCP timeouts) with no gateway block rule, so unreachable regions reflect the
+path from this site rather than Gluetun's server list. Because throughput is
+bounded by how many distinct, non-rate-limited egress addresses the refresh
+can reach, each added qualified region widens that pool.
+
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
 kept none of US Las Vegas's 86 or CA Toronto's 74 addresses, but loading a
@@ -340,7 +352,8 @@ Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
 workers could not record an interrupted attempt within the shutdown window
 (see [Deployment](deployment.md)); publication pointers were unchanged
 throughout. The production worker env now enables refresh with the seven
-qualified regions above, reconnect-in-place, a one-429 trigger, 10-second
+qualified regions above (eight with US East from scrape `1459`),
+reconnect-in-place, a one-429 trigger, 10-second
 per-exit interval, 1-second global spacing, twelve concurrent refreshes, four
 12-second attempts within 90 seconds, a 300-second rate-limited egress window,
 and a 5-second drain.
