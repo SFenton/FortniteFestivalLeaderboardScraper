@@ -571,6 +571,17 @@ account completion against the final target-account denominator. Direct
 single-user and backfill recomputation remain on-demand and do not allocate a
 global preload.
 
+Each scheduled pass first re-queues completed rows from an older rivals
+algorithm, and zero-rival completions only when the account's current
+projection rows can now produce rivals: at least
+`RivalsCalculator.MinUserSongsPerInstrument` (10) songs on one instrument or
+across the Pro Drums family. Accounts that still lack songs stay complete, so a
+pass with no pending, dirty, or newly eligible accounts skips the shared
+preload entirely. Before this gate, seven data-less registered accounts were
+re-queued every scrape, which forced a roughly five-minute preload in scrapes
+`1453`–`1456`. Score changes still reach every account through the
+dirty-rivals path.
+
 Rival song counts and neighborhoods use the solo current projection only for
 scopes that are ready for their active source. With legacy worker readers the
 projection is otherwise refreshed only in publication cleanup, so songs with a

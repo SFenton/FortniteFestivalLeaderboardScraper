@@ -6368,7 +6368,49 @@ public sealed partial class MetaDatabase : IMetaDatabase
     public void FailRivals(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'error', error_message = @err, completed_at = @now WHERE account_id = @id AND status = 'in_progress'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
     public RivalsStatusInfo? GetRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, combos_computed, total_combos_to_compute, rivals_found, algorithm_version, started_at, completed_at, error_message FROM rivals_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new RivalsStatusInfo { AccountId = r.GetString(0), Status = r.GetString(1), CombosComputed = r.GetInt32(2), TotalCombosToCompute = r.GetInt32(3), RivalsFound = r.GetInt32(4), AlgorithmVersion = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) }; }
     public List<string> GetPendingRivalsAccounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM rivals_status WHERE status IN ('pending', 'in_progress')"; var list = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(r.GetString(0)); return list; }
-    public int ResetStaleRivals() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'pending', combos_computed = 0, rivals_found = 0, error_message = NULL WHERE status = 'complete' AND (rivals_found = 0 OR algorithm_version < @version)"; cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); return cmd.ExecuteNonQuery(); }
+    /// <summary>
+    /// Re-queues completed rivals rows computed by an older algorithm, and
+    /// zero-rival completions only once the account's current scores can
+    /// produce rivals (enough songs on one instrument or across the Pro Drums
+    /// family). Accounts that still lack data would recompute to zero again, and
+    /// queuing them forces the full current-score preload every scrape; score
+    /// changes still reach them through the dirty-rivals path.
+    /// </summary>
+    public int ResetStaleRivals()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE rivals_status rs
+            SET status = 'pending', combos_computed = 0, rivals_found = 0, error_message = NULL
+            WHERE rs.status = 'complete'
+              AND (
+                  rs.algorithm_version < @version
+                  OR (
+                      rs.rivals_found = 0
+                      AND (
+                          EXISTS (
+                              SELECT 1
+                              FROM current_leaderboard_entries entry
+                              WHERE entry.account_id = rs.account_id
+                              GROUP BY entry.instrument
+                              HAVING count(*) >= @minSongs
+                          )
+                          OR (
+                              SELECT count(*)
+                              FROM current_leaderboard_entries entry
+                              WHERE entry.account_id = rs.account_id
+                                AND entry.instrument = ANY(@proDrumsFamily)
+                          ) >= @minSongs
+                      )
+                  )
+              )
+            """;
+        cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals);
+        cmd.Parameters.AddWithValue("minSongs", (long)RivalsCalculator.MinUserSongsPerInstrument);
+        cmd.Parameters.AddWithValue("proDrumsFamily", ComboIds.ProDrumsFamilyInstruments.ToArray());
+        return cmd.ExecuteNonQuery();
+    }
 
     public void UpsertDirtyRivalSongs(IReadOnlyList<RivalDirtySongRow> dirtySongs)
     {
