@@ -101,6 +101,13 @@ Full-worker mode registers:
 
 API/frontend modes register only the background services appropriate to those
 roles. Registration-sync mode omits scheduled scrape and band-history work.
+
+Registration backfill polls for queued accounts and history reconstruction
+every 30 seconds outside scrapes. Each `HistoryReconstructor` instance reuses
+its last season-window discovery for the same caller for 30 minutes instead of
+calling the Epic events API on every poll; season rollovers still appear within
+that interval, and post-scrape first-seen-season discovery keeps its
+synthetic-season backstop.
 The production worker role also sets
 `Scraper__EnableItemShopRefresh=false`: startup loads persisted Item Shop state
 for local consumers without provider HTTP, notification reconciliation, or

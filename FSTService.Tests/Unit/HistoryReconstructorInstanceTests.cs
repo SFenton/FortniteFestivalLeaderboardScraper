@@ -46,8 +46,16 @@ public class HistoryReconstructorInstanceTests : IDisposable
         try { Directory.Delete(_dataDir, true); } catch { }
     }
 
+    private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private (HistoryReconstructor recon, MockHttpMessageHandler scraperHandler, MockHttpMessageHandler eventsHandler) CreateReconstructor(
-        TimeSpan? seasonWindowDiscoveryTimeout = null)
+        TimeSpan? seasonWindowDiscoveryTimeout = null,
+        TimeSpan? seasonWindowReuseInterval = null,
+        TimeProvider? timeProvider = null)
     {
         var scraperHandler = new MockHttpMessageHandler();
         var scraperHttp = new HttpClient(scraperHandler);
@@ -68,7 +76,9 @@ public class HistoryReconstructorInstanceTests : IDisposable
                 Substitute.For<ILogger<UserSyncProgressTracker>>()),
             _log,
             proxyHealth: null,
-            seasonWindowDiscoveryTimeout: seasonWindowDiscoveryTimeout);
+            seasonWindowDiscoveryTimeout: seasonWindowDiscoveryTimeout,
+            seasonWindowReuseInterval: seasonWindowReuseInterval,
+            timeProvider: timeProvider);
         return (recon, scraperHandler, eventsHandler);
     }
 
@@ -202,6 +212,59 @@ public class HistoryReconstructorInstanceTests : IDisposable
         // Verify they were cached in DB
         var cached = _metaDb.Db.GetSeasonWindows();
         Assert.Equal(3, cached.Count);
+    }
+
+    [Fact]
+    public async Task DiscoverSeasonWindowsAsync_ReusesRecentDiscoveryUntilIntervalElapses()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero));
+        var (recon, scraperHandler, eventsHandler) = CreateReconstructor(
+            seasonWindowReuseInterval: TimeSpan.FromMinutes(30),
+            timeProvider: clock);
+        _metaDb.Db.UpsertSeasonWindow(1, "evt_1", "season_001");
+        _metaDb.Db.UpsertSeasonWindow(2, "evt_2", "season_002");
+        eventsHandler.EnqueueJsonOk("{\"events\": []}");
+
+        var first = await recon.DiscoverSeasonWindowsAsync("token", "caller");
+        clock.Now += TimeSpan.FromMinutes(29);
+        var reused = await recon.DiscoverSeasonWindowsAsync("token", "caller");
+
+        Assert.Equal(2, first.Count);
+        Assert.Same(first, reused);
+        Assert.Single(eventsHandler.Requests);
+
+        // A different caller, or an elapsed interval, consults the events API again.
+        eventsHandler.EnqueueJsonOk("{\"events\": []}");
+        await recon.DiscoverSeasonWindowsAsync("token", "other-caller");
+        Assert.Equal(2, eventsHandler.Requests.Count);
+
+        clock.Now += TimeSpan.FromMinutes(31);
+        eventsHandler.EnqueueJsonOk("""
+        {
+            "events": [{
+                "eventId": "FNFestival",
+                "eventWindows": [ { "eventWindowId": "season_3" } ]
+            }]
+        }
+        """);
+        var refreshed = await recon.DiscoverSeasonWindowsAsync("token", "other-caller");
+        Assert.Equal(3, eventsHandler.Requests.Count);
+        Assert.Equal(3, refreshed.Count);
+        Assert.Empty(scraperHandler.Requests);
+    }
+
+    [Fact]
+    public async Task DiscoverSeasonWindowsAsync_ZeroReuseIntervalAlwaysConsultsApi()
+    {
+        var (recon, _, eventsHandler) = CreateReconstructor(seasonWindowReuseInterval: TimeSpan.Zero);
+        _metaDb.Db.UpsertSeasonWindow(1, "evt_1", "season_001");
+        eventsHandler.EnqueueJsonOk("{\"events\": []}");
+        eventsHandler.EnqueueJsonOk("{\"events\": []}");
+
+        await recon.DiscoverSeasonWindowsAsync("token", "caller");
+        await recon.DiscoverSeasonWindowsAsync("token", "caller");
+
+        Assert.Equal(2, eventsHandler.Requests.Count);
     }
 
     [Fact]
