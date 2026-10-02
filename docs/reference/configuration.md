@@ -280,6 +280,7 @@ invalid/non-positive values prevent startup.
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
 | `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
+| `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
 
 The Compose form is
@@ -298,6 +299,14 @@ scopes rebuild concurrently. Each scope keeps its own transaction and writes
 disjoint projection and scope-state keys; filtering, query shape, publication,
 cleanup, and failure accounting are unchanged. Both switches are part of the
 durable phase configuration identity. Set it back to `0` for rollback.
+
+`Scraper__BandCurrentProjectionPublishParallelism` (template variable
+`BAND_CURRENT_PROJECTION_PUBLISH_PARALLELISM`) changes only the incremental
+refresh's publish and candidate cleanup: each song's scopes flip and lose
+their older generations in their own transaction, and cleanup probes only
+unsettled scopes. Rebuilds, filtering, and failure accounting are unchanged,
+and the end state matches the single-transaction publish. It is part of the
+durable phase configuration identity; `0` is the rollback.
 
 `Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes` (template variable
 `BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES`) adds a best-effort

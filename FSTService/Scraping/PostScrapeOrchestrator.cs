@@ -1800,6 +1800,8 @@ public sealed class PostScrapeOrchestrator
                     .BandCurrentProjectionUseBatchedMemberStatsAggregation,
             MaxParallelScopes =
                 options.BandCurrentProjectionMaxParallelScopes,
+            PublishParallelism =
+                options.BandCurrentProjectionPublishParallelism,
         };
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(

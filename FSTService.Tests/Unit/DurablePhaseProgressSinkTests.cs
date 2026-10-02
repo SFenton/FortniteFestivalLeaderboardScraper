@@ -67,6 +67,15 @@ public sealed class DurablePhaseProgressSinkTests
     }
 
     [Fact]
+    public void CurrentProjectionPublishParallelismChangesDurableConfigurationIdentity()
+    {
+        var baseline = CaptureConfigIdForValue("Scraper:BandCurrentProjectionPublishParallelism", "");
+        var candidate = CaptureConfigIdForValue("Scraper:BandCurrentProjectionPublishParallelism", "6");
+
+        Assert.NotEqual(baseline, candidate);
+    }
+
+    [Fact]
     public void SoloProjectionBeforeRivalsChangesDurableConfigurationIdentity()
     {
         var baseline = CaptureConfigIdForValue("Scraper:PrepareSoloCurrentProjectionBeforeRivals", "");

@@ -949,6 +949,16 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionMaxParallelScopes { get; set; }
 
     /// <summary>
+    /// Zero (default) publishes a band current-projection refresh in one
+    /// transaction and then scans the whole projection for unpublished
+    /// candidates. A positive value publishes one song per transaction with up
+    /// to that many concurrent transactions (values above 16 are clamped) and
+    /// probes only unsettled scopes for leftover candidates. Set via
+    /// <c>Scraper__BandCurrentProjectionPublishParallelism</c>.
+    /// </summary>
+    public int BandCurrentProjectionPublishParallelism { get; set; }
+
+    /// <summary>
     /// When positive, BandMaintenance also rebuilds up to this many stale band
     /// current-projection scopes outside the scrape's impacted set, selected by
     /// the unchanged-scope filter over every source and projection scope. Zero

@@ -761,6 +761,33 @@ and isolated PostgreSQL tests keep sequential and parallel projection and
 state hashes identical for both member-stat query shapes. Promotion needs a
 one-variable full-scrape A/B.
 
+After the rebuilds, the default publish runs one transaction that flips every
+ready scope's `published_generation` and deletes the older generations, then
+a candidate cleanup scans the whole projection for rows that are neither
+published nor the ready candidate. In scrape `1457` the single-backend publish
+took about 6.5 minutes (about 15.6 million old rows) and the cleanup scan
+about 2.3 minutes while deleting nothing.
+`Scraper:BandCurrentProjectionPublishParallelism` (default `0`, clamped to
+`16`) instead publishes one song per transaction, largest songs first, with up
+to that many at once. Each song's flip and old-generation delete stay atomic,
+so readers see a song entirely old or entirely new and an interruption
+leaves no half-published song; songs no longer flip together. Before the
+first song commits, the global `current_generation` advances to the new
+generation, which closes the scrape-publication band gate exactly as the
+single transaction did; the global state row is recomputed from the
+published scopes once afterwards, or immediately after a failure or
+cancellation. Interrupted songs publish on the next refresh because the
+unchanged-scope filter reselects ready scopes whose candidate was never
+published. Cleanup then probes only unsettled
+scopes (not ready, or `projection_generation` different from
+`published_generation`) through the scope-key index. Each rebuild writes its
+rows and scope state in one transaction, and each publish deletes the scope's
+other generations, so rows that are neither published nor the ready candidate
+can exist only for such scopes. Full rebuilds keep the whole-projection scan.
+Isolated PostgreSQL tests keep projection, scope-state, and global-state
+hashes and published/deleted counts identical to the single-transaction
+publish. Promotion needs a full-scrape A/B.
+
 Only scopes in a scrape's impacted set (band extraction plus prune) are
 considered for refresh, so scopes whose sources change through other paths
 drift. A read-only check after scrape `1436` found about 28% of 122,000 scope
@@ -772,7 +799,15 @@ same filter over all source and projection scope keys; the fast filter makes
 the full-table pass take about two minutes. The filter treats a ready scope
 with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
 converge instead of being selected every scrape, and counts only full-size
-combos, matching the rebuild.
+combos, matching the rebuild. It also selects every ready scope whose
+`projection_generation` differs from `published_generation` (except a
+never-published empty scope): `row_count` and `last_rebuilt_at` describe the
+latest rebuilt candidate, so a candidate whose publish was interrupted
+otherwise looked current forever while readers kept serving the older
+generation. On 2026-10-02 production had 3,409 such combo scopes (last
+rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
+serving stale published rows, for example 71 published versus 30 current
+rows. The stale sweep converges them within its cap.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
