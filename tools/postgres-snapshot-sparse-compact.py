@@ -53,6 +53,14 @@ ROOTS = {
     "Solo_PeripheralDrums": "leaderboard_entries_snapshot_pro_drums",
 }
 SWAP_ATTEMPTS = 12
+TRANSIENT_SWAP_ERRORS = ("lock timeout", "deadlock detected", "canceling statement due to statement timeout")
+# Every liveness root. The swap takes SHARE locks on them first, so no root can
+# change between the in-transaction guard and COMMIT.
+LIVENESS_ROOT_TABLES = (
+    "scrape_publication_state", "publication_generations", "leaderboard_snapshot_state",
+    "solo_current_projection_scope", "leaderboard_published_scope_source", "scrape_log",
+    "scrape_writer_failures", "snapshot_generation_retention_holds", "publication_surface_bindings",
+)
 DEFAULT_MAX_LIVE_FRACTION = 0.5
 DEFAULT_MIN_RECLAIM_BYTES = 128 * 1024**2
 
@@ -81,7 +89,7 @@ def configured_resume_scrape_id() -> int:
         ["docker", "inspect", "fstworker", "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
         capture_output=True, text=True, timeout=20)
     if result.returncode != 0:
-        return 0
+        raise TransientRefusal("cannot read the fstworker configuration for Scraper__ResumeScrapeId")
     for line in result.stdout.splitlines():
         key, _, value = line.partition("=")
         if key == "Scraper__ResumeScrapeId":
@@ -141,6 +149,22 @@ def live_songs_sql(instrument: str, snapshot_id: int) -> str:
   SELECT source.song_id FROM leaderboard_published_scope_source source
   WHERE source.instrument = {i} AND source.source_snapshot_id = {s}
     AND source.published_scrape_id IN (SELECT scrape_id FROM live_publications)"""
+
+
+def whole_child_root_sql(child: dict, resume_scrape_id: int) -> str:
+    """True when any whole-child liveness root (or an exclusion) protects the child."""
+    i, s = quote(child["instrument"]), int(child["snapshot_id"])
+    return f"""(
+  EXISTS (SELECT 1 FROM scrape_log WHERE id = {s} AND status = 'running')
+  OR EXISTS (SELECT 1 FROM live_publications WHERE scrape_id = {s})
+  OR EXISTS (SELECT 1 FROM scrape_writer_failures f
+             WHERE f.instrument = {i} AND f.scrape_id = {s} AND f.replayed_at IS NULL)
+  OR EXISTS (SELECT 1 FROM snapshot_generation_retention_holds h
+             WHERE h.instrument = {i} AND h.snapshot_id = {s})
+  OR EXISTS (SELECT 1 FROM publication_surface_bindings b
+             WHERE b.publication_id IN (SELECT publication_id FROM live_publications)
+               AND strpos(b.binding_json::text, {quote(child["relation"])}) > 0)
+  OR {s} = {int(resume_scrape_id)})"""
 
 
 def scope_liveness(child: dict, resume_scrape_id: int) -> dict:
@@ -279,21 +303,31 @@ WHERE ix.indrelid = to_regclass({quote('public.' + parent)});"""))
     retire.psql("\n".join(statements), timeout=2000)
 
 
-def swap_in(child: dict, songs: list[str], new: str, sleep=time.sleep) -> int:
+def swap_in(child: dict, songs: list[str], new: str, resume_scrape_id: int, sleep=time.sleep) -> int:
     """Detaches the old child and attaches the replacement under the same bound in one
-    lock-bounded transaction that re-checks liveness while holding the parent lock."""
+    lock-bounded transaction. SHARE locks on every liveness root are taken first and
+    held through COMMIT, so the full guard (whole-child roots and the live song set)
+    cannot be invalidated before the swap becomes visible."""
     rel, parent, s = child["relation"], child["parent_relation"], int(child["snapshot_id"])
     old = object_names(child)["old"]
+    default = f"{parent}_default"
     sql = f"""
 BEGIN;
-SET LOCAL lock_timeout = '2s';
+-- Roots are locked before the parent, and lock_timeout stays below the server's
+-- 1 s deadlock_timeout, so any lock cycle aborts this swap, never a worker write.
+SET LOCAL lock_timeout = '500ms';
 SET LOCAL statement_timeout = '60s';
-ALTER TABLE public.{parent} DETACH PARTITION public.{rel};
-ALTER TABLE public.{rel} RENAME TO {old};
-ALTER TABLE public.{new} RENAME TO {rel};
-ALTER TABLE public.{parent} ATTACH PARTITION public.{rel} FOR VALUES IN ({s});
+LOCK TABLE {", ".join("public." + t for t in LIVENESS_ROOT_TABLES)} IN SHARE MODE;
 DO $guard$
 BEGIN
+  IF EXISTS (SELECT 1 FROM ONLY public.{default}) THEN
+    RAISE EXCEPTION 'compaction refused: DEFAULT partition {default} is not empty';
+  END IF;
+  IF EXISTS (
+    WITH {LIVE_PUBLICATIONS_CTE}
+    SELECT 1 WHERE {whole_child_root_sql(child, resume_scrape_id)}) THEN
+    RAISE EXCEPTION 'compaction refused: a whole-child liveness root appeared';
+  END IF;
   IF EXISTS (
     WITH {LIVE_PUBLICATIONS_CTE}
     SELECT 1 FROM ({live_songs_sql(child["instrument"], s)}) live
@@ -302,13 +336,17 @@ BEGIN
   END IF;
 END
 $guard$;
+ALTER TABLE public.{parent} DETACH PARTITION public.{rel};
+ALTER TABLE public.{rel} RENAME TO {old};
+ALTER TABLE public.{new} RENAME TO {rel};
+ALTER TABLE public.{parent} ATTACH PARTITION public.{rel} FOR VALUES IN ({s});
 COMMIT;"""
     for attempt in range(1, SWAP_ATTEMPTS + 1):
         try:
             retire.psql(sql, timeout=180)
             return attempt
         except RetirementError as error:
-            if "lock timeout" not in str(error):
+            if not any(marker in str(error) for marker in TRANSIENT_SWAP_ERRORS):
                 raise
             if attempt == SWAP_ATTEMPTS:
                 raise TransientRefusal(
@@ -360,7 +398,17 @@ def drop_bound_check(child: dict) -> bool:
         raise
 
 
+def relation_identity(relation: str) -> dict | None:
+    out = retire.psql(
+        f"SELECT coalesce(json_build_object('oid', oid::bigint, 'relfilenode', relfilenode::bigint, "
+        f"'attached', relispartition)::text, '') FROM pg_class WHERE oid = to_regclass({quote('public.' + relation)});")
+    return json.loads(out) if out else None
+
+
 def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_scrape_id: int) -> dict | None:
+    if relation_identity(object_names(child)["old"]) is not None:
+        raise RetirementError(
+            f"{object_names(child)['old']} exists from an interrupted compaction; recover it before compacting again")
     live = scope_liveness(child, resume_scrape_id)
     blocker = compaction_blocker(child, live)
     if blocker:
@@ -425,11 +473,17 @@ def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_sc
             return None
 
     try:
-        attempts = swap_in(child, songs, new)
+        attempts = swap_in(child, songs, new, resume_scrape_id)
     except BaseException:
         if retire.psql(f"SELECT to_regclass({quote('public.' + new)}) IS NOT NULL;") == "t":
             retire.psql(f"DROP TABLE public.{new} RESTRICT;")
         raise
+    swapped = relation_identity(child["relation"])
+    # Durable before anything else can fail: restore accepts this state, and the
+    # old child stays as <child>_cold until verification passes.
+    retire.append_manifest(manifest_path(), {
+        **base, "state": "swapped", "swap_attempts": attempts,
+        "new_oid": swapped["oid"], "new_relfilenode": swapped["relfilenode"], "at": retire.utcnow()})
     attached = verify_attached(child)
     swapped_rows, swapped_fingerprint = table_fingerprint(child["relation"])
     if swapped_rows != live_rows or swapped_fingerprint != measured["live_fingerprint"]:
@@ -512,12 +566,11 @@ COMMIT;""", timeout=300))
 
 
 def command_compact(args: argparse.Namespace) -> int:
-    args.window = None if args.no_window else (lambda: retire.probe_window(args.service_info_url))
-    if args.window is not None:
-        is_open, why = args.window()
-        if not is_open:
-            print(f"outside the network-bound fetch window ({why}); nothing to do", flush=True)
-            return 0
+    args.window = lambda: retire.probe_window(args.service_info_url)
+    is_open, why = args.window()
+    if not is_open:
+        print(f"outside the network-bound fetch window ({why}); nothing to do", flush=True)
+        return 0
     compaction_root().mkdir(parents=True, exist_ok=True)
     retire.LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with retire.LOCK_PATH.open("w") as lock:
@@ -539,11 +592,10 @@ def command_compact(args: argparse.Namespace) -> int:
             if args.stop_file and pathlib.Path(args.stop_file).exists():
                 print("stop file present; ending run", flush=True)
                 break
-            if args.window is not None:
-                is_open, why = args.window()
-                if not is_open:
-                    print(f"window closed ({why}); ending run", flush=True)
-                    break
+            is_open, why = args.window()
+            if not is_open:
+                print(f"window closed ({why}); ending run", flush=True)
+                break
             retire.preflight()
             if compact_child(child, args, processed, resume) is not None:
                 processed += 1
@@ -555,9 +607,9 @@ def command_compact(args: argparse.Namespace) -> int:
 
 def command_restore(args: argparse.Namespace) -> int:
     entries = [json.loads(line) for line in manifest_path().read_text().splitlines()]
-    matches = [e for e in entries if e["relation"] == args.relation and e["state"] == "compacted"]
+    matches = [e for e in entries if e["relation"] == args.relation and e["state"] in ("swapped", "compacted")]
     if not matches:
-        raise RetirementError("relation has no compacted manifest entry")
+        raise RetirementError("relation has no swapped or compacted manifest entry")
     entry = matches[-1]
     if any(e["relation"] == args.relation and e["state"] == "restored" and e["new_oid"] == entry["new_oid"]
            for e in entries):
@@ -623,8 +675,6 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--pause-seconds", type=float, default=3)
             cmd.add_argument("--stop-file")
             cmd.add_argument("--service-info-url", default=retire.SERVICE_INFO_URL)
-            cmd.add_argument("--no-window", action="store_true",
-                             help="skip the network-bound fetch window check (isolated drills only)")
     restore = sub.add_parser("restore")
     restore.add_argument("--relation", required=True)
     return parser

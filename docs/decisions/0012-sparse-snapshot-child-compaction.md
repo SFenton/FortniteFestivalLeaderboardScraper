@@ -37,9 +37,11 @@ tool archives and verifies the whole child like retirement, builds a
 replacement holding only the live songs' rows with the parent's index shapes
 and a validated bound `CHECK`, requires an exact live-subset fingerprint,
 re-proves liveness, and swaps it in with one lock-bounded `DETACH`/`ATTACH`
-transaction that re-checks liveness under the parent lock. The old child is
-dropped without `CASCADE` only after attachment, index adoption, and the live
-fingerprint verify.
+transaction. That transaction first takes `SHARE` locks on every liveness-root
+table, holds them through `COMMIT`, and re-checks the whole-child roots, the
+live song set, and an empty DEFAULT partition before detaching. The old child is
+dropped without `CASCADE` only after a durable `swapped` record and the
+attachment, index adoption, and live fingerprint verify.
 
 ## Consequences
 
@@ -51,7 +53,9 @@ fingerprint verify.
 - Rollback is online: the archived non-live rows are reinserted into the
   attached child and the original whole-child fingerprint is required.
 - The swap holds the instrument parent's exclusive lock only for catalog work
-  (milliseconds) because the indexes are prebuilt and the `CHECK` skips the
-  attach scan; contention defers instead of queueing.
+  plus validation of the empty DEFAULT partition (milliseconds), because the
+  indexes are prebuilt and the `CHECK` skips the replacement's attach scan. Root
+  locks are taken first with a lock timeout below `deadlock_timeout`, so
+  contention or a lock cycle defers the compaction instead of a worker write.
 - Compaction is manual until a production canary and a following clean report
   cycle are accepted; it shares retirement's lock and live-safety windows.

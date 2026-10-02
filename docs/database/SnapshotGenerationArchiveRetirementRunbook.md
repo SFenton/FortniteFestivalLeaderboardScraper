@@ -192,19 +192,31 @@ shares the retirement lock, so it never overlaps a retirement run:
    and require the replacement's fingerprint to equal the live subset's.
 5. **Re-prove** liveness; the live set may only shrink, and the run ends
    before the swap if the network-bound window closed.
-6. **Swap** in one transaction with `lock_timeout=2s` and up to 12 retries:
-   `DETACH` the child, rename it `<child>_cold`, rename the replacement to the
-   child's name, `ATTACH ... FOR VALUES IN (<snapshot>)` (the `CHECK` skips the
-   validation scan and the indexes are adopted, so this is catalog-only), and
-   re-check liveness while holding the instrument parent lock.
-7. **Verify** the attachment, bound, index adoption (every parent index has
+6. **Swap** in one transaction with `lock_timeout=500ms` (below the server's
+   1-second `deadlock_timeout`, so any lock cycle aborts the swap rather than a
+   worker write) and up to 12 retries. It first takes `SHARE` locks on every
+   liveness-root table and holds them through `COMMIT`, then requires the
+   instrument parent's DEFAULT partition to be empty, no whole-child root, and
+   no live song outside the copied set. Only then does it `DETACH` the child,
+   rename it `<child>_cold`, rename the replacement to the child's name, and
+   `ATTACH ... FOR VALUES IN (<snapshot>)`. The replacement's `CHECK` skips its
+   validation scan and its indexes are adopted; PostgreSQL still validates the
+   (empty) DEFAULT partition under its lock. Lock timeouts, deadlocks, and
+   statement timeouts are transient deferrals.
+7. **Record** a durable `swapped` manifest entry with the new identity, then
+   **verify** the attachment, bound, index adoption (every parent index has
    exactly one adopted child index), and the live fingerprint; then
-   `DROP TABLE <child>_cold RESTRICT` and drop the temporary `CHECK`.
+   `DROP TABLE <child>_cold RESTRICT`, drop the temporary `CHECK`, and record
+   `compacted`.
 
-`compaction/manifest.jsonl` records `archived` and `compacted` entries with the
-old and new physical identity, the live song list, and both fingerprints. The
-compacted child has a new OID and relfilenode; later report cycles classify it
-like any other child, and it is compacted again as more of its songs change.
+`compaction/manifest.jsonl` records `archived`, `swapped`, and `compacted`
+entries with the old and new physical identity, the live song list, and both
+fingerprints. If a run stops after `swapped`, `<child>_cold` remains and the
+tool refuses that child until an operator restores it (`restore` accepts a
+`swapped` entry) or drops `<child>_cold` after confirming the compacted
+fingerprint. The compacted child has a new OID and relfilenode; later report
+cycles classify it like any other child, and it is compacted again as more of
+its songs change.
 
 ```bash
 python3 tools/postgres-snapshot-sparse-compact.py plan --show 20
@@ -220,10 +232,11 @@ python3 tools/postgres-snapshot-sparse-compact.py restore --relation <child>
 manifest with its compacted fingerprint, reloads the archive's data into a
 standalone `<child>_rfill` table, checks the archived whole-child fingerprint,
 inserts only the non-live songs' rows into the attached child, and requires the
-original whole-child fingerprint. `--no-window` exists only for the isolated
-drill (`tools/postgres-snapshot-sparse-compact-drill.py --work-root <dir>`).
-Compaction obeys the live-safety windows below and exits with code 3 on a
-transient deferral.
+original whole-child fingerprint. The worker configuration must be readable
+(for `Scraper:ResumeScrapeId`) or the run defers. There is no window bypass;
+the isolated drill (`tools/postgres-snapshot-sparse-compact-drill.py
+--work-root <dir>`) injects its own window. Compaction obeys the live-safety
+windows below and exits with code 3 on a transient deferral.
 
 ## Live-safety windows
 

@@ -124,6 +124,7 @@ def main() -> int:
         retire.ARCHIVE_ROOT = archive_root
         retire.LOCK_PATH = archive_root / ".retirement.lock"
         retire.preflight = lambda: None
+        retire.probe_window = lambda url: (True, "isolated drill")
         compact.configured_resume_scrape_id = lambda: 0
 
         def cli(*argv: str) -> int:
@@ -136,12 +137,12 @@ def main() -> int:
         expect([p["relation"] for p in plan] == ["leaderboard_entries_snapshot_solo_guitar_s100"],
                "plan selects only the sparse child")
 
-        expect(cli("compact", "--no-window", "--only", "leaderboard_entries_snapshot_solo_guitar_s101",
+        expect(cli("compact", "--only", "leaderboard_entries_snapshot_solo_guitar_s101",
                    "--min-reclaim-bytes", "0") == 0, "dense child run completes")
         expect(int(q("SELECT count(*) FROM leaderboard_entries_snapshot_solo_guitar_s101")) == 5200,
                "dense child is left untouched")
 
-        expect(cli("compact", "--no-window", "--only", "leaderboard_entries_snapshot_solo_guitar_s100",
+        expect(cli("compact", "--only", "leaderboard_entries_snapshot_solo_guitar_s100",
                    "--min-reclaim-bytes", "0", "--drill-every", "1") == 0, "sparse compaction runs")
         expect(int(q("SELECT count(*) FROM leaderboard_entries_snapshot WHERE snapshot_id = 100")) == 50,
                "root reads see only the live song's rows")
@@ -175,7 +176,15 @@ FROM pg_class c WHERE c.relname = 'leaderboard_entries_snapshot_solo_guitar_s100
                "a second restore of the same compaction is refused")
 
         q("INSERT INTO solo_current_projection_scope VALUES ('song_b', 'Solo_Guitar', 100);")
-        expect(cli("compact", "--no-window", "--only", "leaderboard_entries_snapshot_solo_guitar_s100",
+        q("INSERT INTO leaderboard_entries_snapshot_solo_guitar_default SELECT 999, 'song_z', 'Solo_Guitar', 'acct_z', 1, "
+          "NULL, NULL, NULL, NULL, NULL, 0, 'scrape', -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now(), now();")
+        expect(cli("compact", "--only", "leaderboard_entries_snapshot_solo_guitar_s100",
+                   "--min-reclaim-bytes", "0") == 2, "a non-empty DEFAULT partition refuses the swap")
+        expect(int(q("SELECT count(*) FROM leaderboard_entries_snapshot_solo_guitar_s100")) == 5050
+               and q("SELECT count(*) FROM pg_class WHERE relname ~ '_(cnew|cold)$'") == "0",
+               "a refused swap leaves the child and no replacement behind")
+        q("DELETE FROM leaderboard_entries_snapshot_solo_guitar_default;")
+        expect(cli("compact", "--only", "leaderboard_entries_snapshot_solo_guitar_s100",
                    "--min-reclaim-bytes", "0") == 0, "re-compaction after restore runs")
         expect(q("SELECT string_agg(DISTINCT song_id, ',' ORDER BY song_id) FROM leaderboard_entries_snapshot_solo_guitar_s100")
                == "song_a,song_b", "a newly live song is retained")

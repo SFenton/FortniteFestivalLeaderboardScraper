@@ -132,22 +132,50 @@ class SwapTests(unittest.TestCase):
             return value
 
         with Patch(retire, psql=fake_psql):
-            attempts = compact.swap_in(CHILD, ["song_a"], "rel_cnew", sleep=lambda _: None)
+            attempts = compact.swap_in(CHILD, ["song_a"], "rel_cnew", 0, sleep=lambda _: None)
         self.assertEqual(attempts, 2)
         sql = calls[-1]
         self.assertLess(sql.index("DETACH PARTITION"), sql.index("ATTACH PARTITION"))
         self.assertIn("FOR VALUES IN (1410)", sql)
         self.assertIn("compaction liveness changed during swap", sql)
-        self.assertIn("lock_timeout = '2s'", sql)
+        self.assertIn("a whole-child liveness root appeared", sql)
+        self.assertIn("FROM ONLY public.leaderboard_entries_snapshot_solo_guitar_default", sql)
+        self.assertIn("lock_timeout = '500ms'", sql)
         self.assertNotIn("CONCURRENTLY", sql)
+        lock = sql.index("IN SHARE MODE")
+        for table in compact.LIVENESS_ROOT_TABLES:
+            self.assertIn(f"public.{table}", sql[:lock])
+        self.assertLess(lock, sql.index("DETACH PARTITION"))
+        self.assertLess(sql.index("$guard$"), sql.index("DETACH PARTITION"))
 
     def test_exhausted_swap_contention_is_transient(self):
-        def fake_psql(sql, timeout=900):
-            raise compact.RetirementError("psql failed: ERROR:  canceling statement due to lock timeout")
+        for message in ("canceling statement due to lock timeout", "deadlock detected",
+                        "canceling statement due to statement timeout"):
+            def fake_psql(sql, timeout=900, message=message):
+                raise compact.RetirementError(f"psql failed: ERROR:  {message}")
 
-        with Patch(retire, psql=fake_psql):
+            with self.subTest(message=message), Patch(retire, psql=fake_psql):
+                with self.assertRaises(compact.TransientRefusal):
+                    compact.swap_in(CHILD, ["song_a"], "rel_cnew", 0, sleep=lambda _: None)
+
+    def test_whole_child_guard_includes_resume_and_bindings(self):
+        sql = compact.whole_child_root_sql(CHILD, 1410)
+        for marker in ("status = 'running'", "live_publications WHERE scrape_id = 1410", "scrape_writer_failures",
+                       "snapshot_generation_retention_holds", "publication_surface_bindings", "1410 = 1410"):
+            self.assertIn(marker, sql)
+
+    def test_unreadable_worker_configuration_defers(self):
+        class Failed:
+            returncode, stdout = 1, ""
+
+        with Patch(compact.subprocess, run=lambda *a, **k: Failed()):
             with self.assertRaises(compact.TransientRefusal):
-                compact.swap_in(CHILD, ["song_a"], "rel_cnew", sleep=lambda _: None)
+                compact.configured_resume_scrape_id()
+
+    def test_interrupted_compaction_leftover_blocks_the_child(self):
+        with Patch(compact, relation_identity=lambda relation: {"oid": 1, "relfilenode": 1, "attached": False}):
+            with self.assertRaises(compact.RetirementError):
+                compact.compact_child(CHILD, argparse.Namespace(), 0, 0)
 
     def test_non_lock_swap_errors_are_not_retried(self):
         calls = []
@@ -158,7 +186,7 @@ class SwapTests(unittest.TestCase):
 
         with Patch(retire, psql=fake_psql):
             with self.assertRaises(compact.RetirementError) as raised:
-                compact.swap_in(CHILD, ["song_a"], "rel_cnew", sleep=lambda _: None)
+                compact.swap_in(CHILD, ["song_a"], "rel_cnew", 0, sleep=lambda _: None)
         self.assertNotIsInstance(raised.exception, compact.TransientRefusal)
         self.assertEqual(len(calls), 1)
 
@@ -172,6 +200,7 @@ class SelectionTests(unittest.TestCase):
     def run_child(self, measured, **arg_overrides):
         dumped = []
         with Patch(compact, scope_liveness=lambda child, resume: live(songs=["song_a", "song_b"]),
+                   relation_identity=lambda relation: None,
                    measure=lambda child, songs: measured), \
                 Patch(retire, dump_child=lambda child, path: dumped.append(path)):
             result = compact.compact_child(CHILD, self.args(**arg_overrides), 0, 0)
@@ -193,6 +222,7 @@ class SelectionTests(unittest.TestCase):
     def test_blocked_children_are_skipped_without_measuring(self):
         measured = []
         with Patch(compact, scope_liveness=lambda child, resume: live(running_scrape=True),
+                   relation_identity=lambda relation: None,
                    measure=lambda child, songs: measured.append(child)):
             self.assertIsNone(compact.compact_child(CHILD, self.args(), 0, 0))
         self.assertEqual(measured, [])

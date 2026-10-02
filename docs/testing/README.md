@@ -601,7 +601,8 @@ Sparse compaction unit tests cover per-song and whole-child liveness blockers,
 OID-keyed object names, replacement DDL that mirrors the parent indexes and
 partition bound, lock-bounded swap retries, and dense/small skips before any
 archive. The drill proves plan selection, a catalog-only swap with adopted
-indexes, partition pruning, the archive restore drill, exact-fingerprint
+indexes, partition pruning, the archive restore drill, refusal on a non-empty
+DEFAULT partition with nothing left behind, exact-fingerprint
 rollback, refusal of a repeated rollback, and re-compaction that keeps a newly
 live song.
 
