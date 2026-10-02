@@ -2565,7 +2565,7 @@ public sealed class BandCurrentProjectionBuilder
         """;
 }
 
-public sealed class BandCurrentProjectionRebuildOptions
+public sealed record BandCurrentProjectionRebuildOptions
 {
     public int CommandTimeoutSeconds { get; init; }
     public bool DisableSynchronousCommit { get; init; } = true;
@@ -2593,24 +2593,6 @@ public sealed class BandCurrentProjectionRebuildOptions
     public IReadOnlyCollection<string>? BandTypes { get; init; }
     public bool IncludeOverallScopes { get; init; } = true;
     public bool IncludeComboScopes { get; init; } = true;
-
-    public BandCurrentProjectionRebuildOptions WithSkipUnchangedScopes(bool skipUnchangedScopes) =>
-        new()
-        {
-            CommandTimeoutSeconds = CommandTimeoutSeconds,
-            DisableSynchronousCommit = DisableSynchronousCommit,
-            SkipUnchangedScopes = skipUnchangedScopes,
-            UseBatchedMemberStatsAggregation = UseBatchedMemberStatsAggregation,
-            MaxParallelBandTypes = MaxParallelBandTypes,
-            MaxParallelScopes = MaxParallelScopes,
-            CandidateCleanupBatchSize = CandidateCleanupBatchSize,
-            CandidateCleanupMaxBatches = CandidateCleanupMaxBatches,
-            ClearExisting = ClearExisting,
-            PublishOnSuccess = PublishOnSuccess,
-            BandTypes = BandTypes,
-            IncludeOverallScopes = IncludeOverallScopes,
-            IncludeComboScopes = IncludeComboScopes,
-        };
 }
 
 public sealed record BandCurrentProjectionScopeKey(
