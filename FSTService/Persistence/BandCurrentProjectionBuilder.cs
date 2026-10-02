@@ -686,6 +686,43 @@ public sealed class BandCurrentProjectionBuilder
             : selected;
     }
 
+    /// <summary>
+    /// Runs the unchanged-scope filter once over <paramref name="impactedScopes"/>
+    /// plus the stale-sweep <paramref name="sweepCandidates"/>, returning every
+    /// impacted scope that needs a rebuild and at most <paramref name="maxStaleScopes"/>
+    /// non-impacted ones, each in the filter's deterministic order. One pass
+    /// replaces a sweep filter followed by the refresh's own filter over the
+    /// merged set, which read every requested song's band entries twice.
+    /// </summary>
+    public async Task<BandCurrentProjectionSweepSelection> SelectImpactedAndStaleScopesAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impactedScopes,
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> sweepCandidates,
+        int maxStaleScopes,
+        CancellationToken ct = default)
+    {
+        var impacted = impactedScopes
+            .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
+            .OfType<BandCurrentProjectionScopeKey>()
+            .ToHashSet();
+        var candidates = sweepCandidates
+            .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
+            .OfType<BandCurrentProjectionScopeKey>()
+            .Where(scope => !impacted.Contains(scope))
+            .Distinct()
+            .ToArray();
+        var requested = impacted.Concat(candidates).ToArray();
+        if (requested.Length == 0)
+            return new BandCurrentProjectionSweepSelection([], [], 0);
+
+        var selected = await FilterScopesNeedingRefreshAsync(requested, ct);
+        var impactedSelected = selected.Where(impacted.Contains).ToArray();
+        var staleSelected = selected.Where(scope => !impacted.Contains(scope));
+        return new BandCurrentProjectionSweepSelection(
+            impactedSelected,
+            maxStaleScopes > 0 ? staleSelected.Take(maxStaleScopes).ToArray() : [],
+            candidates.Length);
+    }
+
     private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
@@ -2556,6 +2593,24 @@ public sealed class BandCurrentProjectionRebuildOptions
     public IReadOnlyCollection<string>? BandTypes { get; init; }
     public bool IncludeOverallScopes { get; init; } = true;
     public bool IncludeComboScopes { get; init; } = true;
+
+    public BandCurrentProjectionRebuildOptions WithSkipUnchangedScopes(bool skipUnchangedScopes) =>
+        new()
+        {
+            CommandTimeoutSeconds = CommandTimeoutSeconds,
+            DisableSynchronousCommit = DisableSynchronousCommit,
+            SkipUnchangedScopes = skipUnchangedScopes,
+            UseBatchedMemberStatsAggregation = UseBatchedMemberStatsAggregation,
+            MaxParallelBandTypes = MaxParallelBandTypes,
+            MaxParallelScopes = MaxParallelScopes,
+            CandidateCleanupBatchSize = CandidateCleanupBatchSize,
+            CandidateCleanupMaxBatches = CandidateCleanupMaxBatches,
+            ClearExisting = ClearExisting,
+            PublishOnSuccess = PublishOnSuccess,
+            BandTypes = BandTypes,
+            IncludeOverallScopes = IncludeOverallScopes,
+            IncludeComboScopes = IncludeComboScopes,
+        };
 }
 
 public sealed record BandCurrentProjectionScopeKey(
@@ -2563,6 +2618,11 @@ public sealed record BandCurrentProjectionScopeKey(
     string BandType,
     string RankingScope,
     string ScopeComboId);
+
+public sealed record BandCurrentProjectionSweepSelection(
+    IReadOnlyList<BandCurrentProjectionScopeKey> ImpactedScopes,
+    IReadOnlyList<BandCurrentProjectionScopeKey> StaleScopes,
+    int SweepCandidateCount);
 
 public sealed record BandCurrentProjectionScopeSummary(
     string SongId,

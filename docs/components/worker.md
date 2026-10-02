@@ -796,7 +796,12 @@ days earlier) while projection reads serve the published generation without a
 freshness check. `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes`
 (default `0`) adds up to that many stale non-impacted scopes, chosen by the
 same filter over all source and projection scope keys; the fast filter makes
-the full-table pass take about two minutes. The filter treats a ready scope
+the full-table pass take about two and a half minutes. The sweep runs that
+filter once over the impacted scopes plus every other scope key and hands the
+selected set to the refresh with its own filter disabled; previously the
+refresh filtered the merged set again, which in scrape `1457` cost a second
+2.3-minute pass over the same band entries. The chunk fallback still filters,
+so scopes completed before a batch failure are skipped. The filter treats a ready scope
 with an empty source and `row_count = 0` as fresh, so rebuilt empty scopes
 converge instead of being selected every scrape, and counts only full-size
 combos, matching the rebuild. It also selects every ready scope whose

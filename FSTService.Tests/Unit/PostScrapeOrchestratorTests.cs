@@ -2377,6 +2377,80 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task BandMaintenance_stale_sweep_with_only_unchanged_impacted_scopes_finalizes_zero_progress_and_counts_considered_scopes()
+    {
+        const long scrapeId = 90_022;
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries(
+            "sweep-unchanged",
+            "Band_Duets",
+            Enumerable.Range(0, 2).Select(team => new BandLeaderboardEntry
+            {
+                TeamKey = $"sweep-unchanged-{team}-a:sweep-unchanged-{team}-b",
+                TeamMembers = [$"sweep-unchanged-{team}-a", $"sweep-unchanged-{team}-b"],
+                InstrumentCombo = "0:1",
+                Score = 900_000 - team,
+                Accuracy = 950_000,
+                Stars = 5,
+                Difficulty = 3,
+                Season = 1,
+                Rank = team + 1,
+                EndTime = "2026-08-16T00:00:00Z",
+                Source = "test",
+            }).ToArray());
+        var builder = new BandCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandCurrentProjectionBuilder>>());
+        await builder.RefreshScopesAsync(await builder.LoadCurrentScopesAsync());
+        var impacted = new BandCurrentProjectionScopeKey("sweep-unchanged", "Band_Duets", "overall", "");
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                BandCurrentProjectionStaleScopeSweepMaxScopes = 10,
+            },
+            bandCurrentProjectionBuilder: builder);
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+
+        await sut.RunBandMaintenanceForTestAsync(
+            CreateContext(scrapeId: scrapeId),
+            new BandExtractionResult(
+                0,
+                0,
+                0,
+                new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+                [impacted]),
+            runFullMaintenance: false,
+            CancellationToken.None);
+
+        var current = _progress.GetProgressResponse().Current;
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            current?.SubOperation);
+        // A final zero total is reported as no work items, as before.
+        Assert.Null(current?.WorkItems);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT rows_read, rows_written, scope_count
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+              AND subphase = @subphase
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("subphase", PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(1, reader.GetInt64(0));
+        Assert.Equal(0, reader.GetInt64(1));
+        Assert.Equal(0, reader.GetInt64(2));
+    }
+
+    [Fact]
     public async Task BandMaintenance_records_exact_three_stable_subphase_timings()
     {
         const long scrapeId = 90_001;
