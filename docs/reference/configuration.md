@@ -412,6 +412,29 @@ neighbor radius, sample caps, persistence shape, or publication behavior.
 Direct single-user calls and max-score maintenance keep their separate
 on-demand and maintenance-lease paths.
 
+## Rankings concurrency
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
+| `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
+| `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
+
+Per-instrument solo rankings always run at most two instruments at once to
+bound PostgreSQL memory. The production worker env sets
+`BandTeamRankings__MaxParallelBandTypes=2` and
+`BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`. With the
+band rank-history schema ensured once per instance, scrape `1459` rebuilt the
+three band types in 16.0 minutes (39.0 in `1458`, when the schema lock
+serialized them), which left the sequential rank-history snapshots (about 35
+minutes) as the longest branch of ComputeRankings. Peak PostgreSQL anonymous
+memory during that overlap was about 2.9 GiB on top of 4.2 GiB of shared
+buffers in the 16 GiB container. Raising
+`Scraper__RankHistorySnapshotMaxDegreeOfParallelism` (template variable
+`RANK_HISTORY_SNAPSHOT_MAX_DOP`) runs that many snapshot writers at once and
+adds WAL and data-file pressure; it is part of the durable phase configuration
+identity, and `1` is the rollback.
+
 ## Role differences
 
 `deploy/config/fstservice-role.env` enables published-source reads while
