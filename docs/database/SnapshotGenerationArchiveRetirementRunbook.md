@@ -149,7 +149,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now fst-snapshot-retire-auto.timer
 journalctl --user -u fst-snapshot-retire-auto.service --since today   # run log
 systemctl --user disable --now fst-snapshot-retire-auto.timer        # stop automation
-touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapshot-generations/AUTO_DISABLED  # pause without unloading
+touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapshot-generations/AUTO_DISABLED  # pause retirement without unloading
+touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapshot-generations/compaction/AUTO_DISABLED  # pause compaction
 ```
 
 Every child still lands in `cycle-<id>/manifest.jsonl` with its archive, so
@@ -245,6 +246,29 @@ the isolated drill (`tools/postgres-snapshot-sparse-compact-drill.py
 --work-root <dir>`) injects its own window. Compaction obeys the live-safety
 windows below and exits with code 3 on a transient deferral.
 
+`compact` scans exactly only children whose cheap estimate (live scope rows
+from published scope sources against the child's row estimate) is within
+`--max-live-fraction + 0.15` and half the reclaim floor, largest estimated
+reclaim first, so dense and just-compacted children cost one catalog query.
+
+### Automatic compaction
+
+The same systemd timer runs `postgres-snapshot-sparse-compact.py auto` after
+the retirement step. `auto` compacts eligible children (largest first, up to
+400 per run) only while the network-bound window stays open, for at most 150
+minutes, and re-checks `compaction/AUTO_DISABLED` before every child. Transient
+refusals exit successfully for the next tick; any other failure writes
+`compaction/AUTO_DISABLED` (independent of retirement's tripwire) and every
+later run stays idle until an operator investigates and deletes it. Children
+decay as their scopes change, so a child is compacted again once its live
+fraction falls under the threshold.
+
+2026-10-02 production canary (scrape `1458` fetch): Pro Bass `s1413` went
+from 1,065,520 to 16,530 rows and 540 MB to 6.5 MB in 11 seconds, with a
+passing full restore drill, a first-attempt swap, identical API page hashes
+for all six live songs across six offsets, identical per-song root-table
+fingerprints, and both indexes adopted.
+
 ## Live-safety windows
 
 Run only while the scrape is network-bound (solo or band page fetching) or
@@ -254,8 +278,10 @@ runs (create the stop file) before any flush subphase or post-processing.
 Post-processing phases also read current snapshots for long periods; a detach
 then exhausts its retries and the run stops rather than queueing. Stop runs
 before planned worker cutovers: create the manual run's stop file, and create
-`AUTO_DISABLED` (then delete it after the cutover) so an automatic run ends
-before its next child. Archives stay on the 4 TB FST drive.
+both `AUTO_DISABLED` files (archive root and `compaction/`; delete them after
+the cutover) so automatic runs end before their next child. A guarded worker
+cutover cannot interleave with a compaction swap, which holds the worker-guard
+flock. Archives stay on the 4 TB FST drive.
 
 ## 2026-09-26 cycle 95 evidence
 

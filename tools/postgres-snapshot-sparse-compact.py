@@ -18,6 +18,8 @@ non-live rows into the compacted child online.
 Commands:
   plan     list compactable children with live/total rows and reclaimable bytes
   compact  compact eligible children (bounded by --limit; network-bound windows only)
+  auto     compact eligible children during the network-bound fetch window;
+           integrity failures write a disable file that only an operator clears
   restore  re-insert one compacted child's archived non-live rows
 """
 
@@ -67,6 +69,10 @@ DEFAULT_MIN_RECLAIM_BYTES = 128 * 1024**2
 # this flock in tools/fst-worker-compose-guard.sh; the swap holds it shared.
 WORKER_MUTATION_LOCK_PATH = pathlib.Path(
     "/home/sfenton/Docker/FestivalServiceTracker/.fst-worker-compose-guard.lock")
+
+
+def auto_disable_file() -> pathlib.Path:
+    return compaction_root() / "AUTO_DISABLED"
 
 
 def compaction_root() -> pathlib.Path:
@@ -546,11 +552,13 @@ def compact_child(child: dict, args: argparse.Namespace, ordinal: int, resume_sc
     return entry
 
 
-def command_plan(args: argparse.Namespace) -> int:
-    resume = configured_resume_scrape_id()
-    children = attached_children()
+ESTIMATE_MARGIN = 0.15
+
+
+def estimate_children(children: list[dict]) -> dict:
+    """Cheap per-child live-song and live-row estimates from the scope roots (read-only)."""
     values = ",".join(f"({quote(c['instrument'])},{int(c['snapshot_id'])})" for c in children) or "(NULL,NULL)"
-    estimates = {
+    return {
         (row["instrument"], int(row["snapshot_id"])): row
         for row in json.loads(retire.psql(f"""
 BEGIN READ ONLY;
@@ -582,6 +590,11 @@ SELECT coalesce(json_agg(r), '[]') FROM (
   GROUP BY 1, 2) r;
 COMMIT;""", timeout=300))
     }
+
+
+def plan_children(children: list[dict], resume: int, max_live_fraction: float, min_reclaim_bytes: int) -> list[dict]:
+    """Children whose estimates make them compaction candidates, largest reclaim first."""
+    estimates = estimate_children(children)
     plan = []
     for child in children:
         estimate = estimates.get((child["instrument"], int(child["snapshot_id"])), {})
@@ -593,12 +606,19 @@ COMMIT;""", timeout=300))
                      "live_fraction_estimate": round(fraction, 3),
                      "reclaim_bytes_estimate": int(child["total_bytes"] * (1 - fraction))})
     eligible = [p for p in plan if p["live_songs"] > 0 and not p["whole_child_root"]
-                and p["live_fraction_estimate"] <= args.max_live_fraction
-                and p["reclaim_bytes_estimate"] >= args.min_reclaim_bytes
+                and p["live_fraction_estimate"] <= max_live_fraction
+                and p["reclaim_bytes_estimate"] >= min_reclaim_bytes
                 and int(p["snapshot_id"]) != resume
                 and (p["instrument"], int(p["snapshot_id"])) not in retire.NEVER]
     eligible.sort(key=lambda p: p["reclaim_bytes_estimate"], reverse=True)
-    print(f"attached children={len(plan)} total_gib={sum(p['total_bytes'] for p in plan) / 1024**3:.1f}")
+    return eligible
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    resume = configured_resume_scrape_id()
+    children = attached_children()
+    eligible = plan_children(children, resume, args.max_live_fraction, args.min_reclaim_bytes)
+    print(f"attached children={len(children)} total_gib={sum(c['total_bytes'] for c in children) / 1024**3:.1f}")
     print(f"compaction candidates={len(eligible)} total_gib={sum(p['total_bytes'] for p in eligible) / 1024**3:.1f} "
           f"reclaim_estimate_gib={sum(p['reclaim_bytes_estimate'] for p in eligible) / 1024**3:.1f}")
     for p in eligible[: args.show]:
@@ -610,7 +630,18 @@ COMMIT;""", timeout=300))
 
 
 def command_compact(args: argparse.Namespace) -> int:
-    args.window = lambda: retire.probe_window(args.service_info_url)
+    disable_file = getattr(args, "disable_file", None)
+    base_window = lambda: retire.probe_window(args.service_info_url)
+    deadline = (time.monotonic() + args.max_minutes * 60) if getattr(args, "max_minutes", 0) else None
+
+    def window() -> tuple[bool, str]:
+        if disable_file is not None and disable_file.exists():
+            return False, f"{disable_file.name} present"
+        if deadline is not None and time.monotonic() >= deadline:
+            return False, "run time budget reached"
+        return base_window()
+
+    args.window = window
     is_open, why = args.window()
     if not is_open:
         print(f"outside the network-bound fetch window ({why}); nothing to do", flush=True)
@@ -625,11 +656,17 @@ def command_compact(args: argparse.Namespace) -> int:
         worker = worker_configuration()
         resume = worker["resume_scrape_id"]
         children = attached_children()
-        if args.only:
-            children = [c for c in children if c["relation"] in set(args.only)]
-            if len(children) != len(set(args.only)):
+        only = getattr(args, "only", None)
+        if only:
+            children = [c for c in children if c["relation"] in set(only)]
+            if len(children) != len(set(only)):
                 raise RetirementError("--only names a relation that is not an attached generation child")
-        children.sort(key=lambda c: int(c["total_bytes"]), reverse=True)
+            children.sort(key=lambda c: int(c["total_bytes"]), reverse=True)
+        else:
+            # Cheap estimates gate the exact (full-scan) measurement; the margin keeps
+            # borderline children eligible while dense and just-compacted ones drop out.
+            children = plan_children(children, resume, min(1.0, args.max_live_fraction + ESTIMATE_MARGIN),
+                                     max(0, args.min_reclaim_bytes // 2))
         processed = 0
         for child in children:
             if processed >= args.limit:
@@ -648,6 +685,28 @@ def command_compact(args: argparse.Namespace) -> int:
                     time.sleep(args.pause_seconds)
         print(f"run complete processed={processed}", flush=True)
     return 0
+
+
+def command_auto(args: argparse.Namespace) -> int:
+    """Timer entry point: compact during the network-bound window; transient refusals
+    defer to the next tick, and any other failure writes AUTO_DISABLED."""
+    disable_file = auto_disable_file()
+    if disable_file.exists():
+        print(f"automatic compaction disabled by {disable_file}; operator must investigate and clear it",
+              flush=True)
+        return 0
+    args.disable_file = disable_file
+    args.only = None
+    try:
+        return command_compact(args)
+    except TransientRefusal as error:
+        print(f"deferred: {error}", flush=True)
+        return 0
+    except BaseException as error:
+        if isinstance(error, KeyboardInterrupt):
+            raise
+        retire.trip_auto(disable_file, None, error)
+        raise
 
 
 def command_restore(args: argparse.Namespace) -> int:
@@ -706,7 +765,7 @@ COMMIT;""", timeout=2000)
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("plan", "compact"):
+    for name in ("plan", "compact", "auto"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--max-live-fraction", type=float, default=DEFAULT_MAX_LIVE_FRACTION)
         cmd.add_argument("--min-reclaim-bytes", type=int, default=DEFAULT_MIN_RECLAIM_BYTES)
@@ -714,8 +773,10 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--show", type=int, default=20)
             cmd.add_argument("--output")
         else:
-            cmd.add_argument("--limit", type=int, default=1)
-            cmd.add_argument("--only", action="append")
+            cmd.add_argument("--limit", type=int, default=1 if name == "compact" else 400)
+            cmd.add_argument("--max-minutes", type=float, default=0 if name == "compact" else 150)
+            if name == "compact":
+                cmd.add_argument("--only", action="append")
             cmd.add_argument("--drill-every", type=int, default=10)
             cmd.add_argument("--pause-seconds", type=float, default=3)
             cmd.add_argument("--stop-file")
@@ -732,6 +793,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_plan(args)
         if args.command == "compact":
             return command_compact(args)
+        if args.command == "auto":
+            return command_auto(args)
         return command_restore(args)
     except TransientRefusal as error:
         print(f"deferred: {error}", file=sys.stderr, flush=True)

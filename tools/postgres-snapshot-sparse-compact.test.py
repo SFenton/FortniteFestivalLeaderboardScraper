@@ -292,5 +292,64 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(measured, [])
 
 
+class AutoTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def args(self):
+        return compact.build_parser().parse_args(["auto"])
+
+    def test_auto_defaults_bound_the_run(self):
+        args = self.args()
+        self.assertEqual((args.limit, args.max_minutes, args.max_live_fraction), (400, 150, 0.5))
+        self.assertFalse(hasattr(args, "only"))
+
+    def test_disable_file_short_circuits(self):
+        calls = []
+        with Patch(retire, ARCHIVE_ROOT=self.root), Patch(compact, command_compact=lambda a: calls.append(a) or 0):
+            compact.auto_disable_file().parent.mkdir(parents=True, exist_ok=True)
+            compact.auto_disable_file().write_text("{}")
+            self.assertEqual(compact.command_auto(self.args()), 0)
+        self.assertEqual(calls, [])
+
+    def test_transient_refusal_defers_without_tripping(self):
+        def deferred(args):
+            raise compact.TransientRefusal("another retirement or compaction run holds the lock")
+
+        with Patch(retire, ARCHIVE_ROOT=self.root), Patch(compact, command_compact=deferred):
+            self.assertEqual(compact.command_auto(self.args()), 0)
+            self.assertFalse(compact.auto_disable_file().exists())
+
+    def test_integrity_failure_trips_and_exits_non_zero(self):
+        def broken(args):
+            raise compact.RetirementError("replacement does not match the live fingerprint")
+
+        with Patch(retire, ARCHIVE_ROOT=self.root), Patch(compact, command_compact=broken):
+            self.assertEqual(compact.main(["auto"]), 2)
+            record = __import__("json").loads(compact.auto_disable_file().read_text())
+        self.assertIn("live fingerprint", record["error"])
+
+    def test_auto_window_honors_disable_file_and_time_budget(self):
+        with Patch(retire, ARCHIVE_ROOT=self.root, probe_window=lambda url: (True, "fetching")):
+            args = self.args()
+            args.disable_file = compact.auto_disable_file()
+            args.max_minutes = 0.0001
+            compact.compaction_root().mkdir(parents=True, exist_ok=True)
+            with Patch(compact, attached_children=lambda: [], worker_configuration=lambda: {
+                    "container_id": "x", "resume_scrape_id": 0}, plan_children=lambda *a: []):
+                import time as _time
+                self.assertEqual(compact.command_compact(args), 0)
+                _time.sleep(0.02)
+                is_open, why = args.window()
+                self.assertEqual((is_open, why), (False, "run time budget reached"))
+                args.disable_file.write_text("{}")
+                self.assertEqual(args.window(), (False, "AUTO_DISABLED present"))
+
+
 if __name__ == "__main__":
     unittest.main()

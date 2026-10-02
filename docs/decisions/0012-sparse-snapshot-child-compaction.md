@@ -57,5 +57,8 @@ attachment, index adoption, and live fingerprint verify.
   indexes are prebuilt and the `CHECK` skips the replacement's attach scan. Root
   locks are taken first with a lock timeout below `deadlock_timeout`, so
   contention or a lock cycle defers the compaction instead of a worker write.
-- Compaction is manual until a production canary and a following clean report
-  cycle are accepted; it shares retirement's lock and live-safety windows.
+- A host timer runs compaction automatically after whole-child retirement,
+  only in network-bound fetch windows and with its own `AUTO_DISABLED`
+  tripwire. It was enabled only after a single-child production canary
+  (API and fingerprint parity) and a following report cycle with no global
+  blockers; it shares retirement's lock and live-safety windows.
