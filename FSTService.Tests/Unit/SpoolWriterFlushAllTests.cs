@@ -810,4 +810,16 @@ public class SpoolWriterFlushAllTests
         Assert.Equal(4, flushed.Count);
         Assert.DoesNotContain("Band_Trios", flushed);
     }
+    [Fact]
+    public async Task FlushAll_ParallelInstruments_SurfacesCancellationUnwrapped()
+    {
+        await using var spool = CreateSpool("test-parallel-cancel", (_, _) => throw new OperationCanceledException("stop"));
+        foreach (var instrument in new[] { "Band_Duets", "Band_Trios" })
+            spool.Enqueue("s0", instrument, new[] { new TestEntry { Id = instrument, Value = 1 } });
+
+        spool.Complete();
+
+        var ex = Assert.ThrowsAny<OperationCanceledException>(() => spool.FlushAll(maxBatchPages: 1, maxParallelInstruments: 2));
+        Assert.Equal("stop", ex.Message);
+    }
 }

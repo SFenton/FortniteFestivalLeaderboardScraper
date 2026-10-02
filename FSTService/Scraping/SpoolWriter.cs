@@ -248,10 +248,25 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                     _label,
                     work.Count(static item => item.Spool.FlushedPosition > 0),
                     maxParallelInstruments);
-                Parallel.ForEach(
-                    work,
-                    new ParallelOptions { MaxDegreeOfParallelism = maxParallelInstruments },
-                    item => FlushInstrument(item.Instrument, item.Spool, item.Index));
+                try
+                {
+                    Parallel.ForEach(
+                        work,
+                        new ParallelOptions { MaxDegreeOfParallelism = maxParallelInstruments },
+                        item => FlushInstrument(item.Instrument, item.Spool, item.Index));
+                }
+                catch (AggregateException aggregate)
+                {
+                    // Surface the same exception type the sequential loop would:
+                    // cancellation when every failure is cancellation, otherwise
+                    // the first fault.
+                    var inner = aggregate.Flatten().InnerExceptions;
+                    var surfaced = inner.All(static ex => ex is OperationCanceledException)
+                        ? inner[0]
+                        : inner.First(static ex => ex is not OperationCanceledException);
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(surfaced).Throw();
+                    throw;
+                }
             }
 
             void FlushInstrument(string instrument, InstrumentSpool spool, int sequentialIndex)
