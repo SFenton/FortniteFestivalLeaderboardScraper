@@ -524,6 +524,10 @@ public sealed class PostScrapeOrchestrator
     /// <see cref="ScraperOptions.UseValidatedSoloProjectionForLegacyPrecompute"/>
     /// is set the projection is matched against the active snapshot for the
     /// duration of precompute only. Scopes that still differ fall back as before.
+    /// Readiness does not see overlay writes (registration backfill can write at
+    /// any time), so overlay and snapshot-state inputs are fingerprinted before
+    /// and after; if they changed, precompute reruns with published-scrape
+    /// matching so its output equals the default path.
     /// </summary>
     internal async Task RunWithValidatedLegacyProjectionForPrecomputeAsync(
         ScrapePassContext ctx,
@@ -531,6 +535,7 @@ public sealed class PostScrapeOrchestrator
         CancellationToken ct)
     {
         var enabled = false;
+        string? sourceFingerprint = null;
         if (_options.Value.UseValidatedSoloProjectionForLegacyPrecompute
             && ctx.SoloCurrentProjectionRefreshedForPublication
             && !_persistence.UsePublishedScopeSources
@@ -539,6 +544,7 @@ public sealed class PostScrapeOrchestrator
         {
             try
             {
+                sourceFingerprint = await builder.GetSourceFingerprintAsync(ct);
                 var staleScopes = await builder.LoadStaleScopesAsync(ct);
                 if (staleScopes.Count == 0 && !await builder.HasOrphanedProjectionScopesAsync(ct))
                 {
@@ -571,6 +577,26 @@ public sealed class PostScrapeOrchestrator
             if (enabled)
                 _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
         }
+
+        if (!enabled)
+            return;
+
+        string? finalFingerprint = null;
+        try
+        {
+            finalFingerprint = await _soloCurrentProjectionBuilder!.GetSourceFingerprintAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Could not re-fingerprint solo projection inputs after precompute; rerunning precompute with published-scrape matching.");
+        }
+
+        if (string.Equals(finalFingerprint, sourceFingerprint, StringComparison.Ordinal))
+            return;
+
+        _log.LogWarning(
+            "Solo projection inputs changed during precompute (overlay or snapshot state); rerunning precompute with published-scrape matching.");
+        await precompute();
     }
 
     /// <summary>
