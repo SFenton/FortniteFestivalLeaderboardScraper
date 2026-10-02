@@ -522,8 +522,9 @@ public sealed class PostScrapeOrchestrator
     /// active snapshot. Once the cleanup refresh has left no stale or orphaned
     /// scope, the projection equals that resolution, so when
     /// <see cref="ScraperOptions.UseValidatedSoloProjectionForLegacyPrecompute"/>
-    /// is set the projection is matched against the active snapshot for the
-    /// duration of precompute only. Scopes that still differ fall back as before.
+    /// is set the projection is matched against the active snapshot for
+    /// precompute's own async flow only (other worker operations keep
+    /// published-scrape matching). Scopes that still differ fall back as before.
     /// Readiness does not see overlay writes (registration backfill can write at
     /// any time), so overlay and snapshot-state inputs are fingerprinted before
     /// and after; if they changed, precompute reruns with published-scrape
@@ -548,7 +549,6 @@ public sealed class PostScrapeOrchestrator
                 var staleScopes = await builder.LoadStaleScopesAsync(ct);
                 if (staleScopes.Count == 0 && !await builder.HasOrphanedProjectionScopesAsync(ct))
                 {
-                    _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(true);
                     enabled = true;
                     _log.LogInformation(
                         "Validated solo current projection for legacy precompute readers; ready scopes match their active snapshot until precompute ends.");
@@ -568,18 +568,14 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
-        try
+        if (!enabled)
         {
             await precompute();
-        }
-        finally
-        {
-            if (enabled)
-                _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
+            return;
         }
 
-        if (!enabled)
-            return;
+        using (InstrumentDatabase.BeginValidatedProjectionReadScope())
+            await precompute();
 
         string? finalFingerprint = null;
         try

@@ -2083,12 +2083,14 @@ public class PostScrapeOrchestratorTests : IDisposable
             ctx,
             () =>
             {
-                duringPrecompute = legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders;
+                duringPrecompute = InstrumentDatabase.IsValidatedProjectionReadScopeActive;
+                Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
                 return Task.CompletedTask;
             },
             CancellationToken.None);
 
         Assert.Equal(expectedDuringPrecompute, duringPrecompute);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
         Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
     }
 
@@ -2133,7 +2135,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             ctx,
             () =>
             {
-                observed.Add(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+                observed.Add(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
                 if (observed.Count == 1)
                 {
                     using var conn = _metaFixture.DataSource.OpenConnection();
@@ -2153,7 +2155,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             CancellationToken.None);
 
         Assert.Equal(new[] { true, false }, observed);
-        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
     }
 
     [Fact]
@@ -2197,13 +2199,13 @@ public class PostScrapeOrchestratorTests : IDisposable
             ctx,
             () =>
             {
-                observed = legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders;
+                observed = InstrumentDatabase.IsValidatedProjectionReadScopeActive;
                 throw new InvalidOperationException("precompute failed");
             },
             CancellationToken.None));
 
         Assert.True(observed);
-        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
     }
 
     [Fact]
