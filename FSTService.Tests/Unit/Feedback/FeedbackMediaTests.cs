@@ -52,7 +52,112 @@ public sealed class FeedbackMediaTests : IDisposable
         Assert.True(FeedbackMediaSniffer.IsVideo(FeedbackMediaFormat.Avi));
     }
 
+    [Theory]
+    [InlineData(FeedbackMediaFormat.Png, "png_pipe", true, ".png", "image/png")]
+    [InlineData(FeedbackMediaFormat.Jpeg, "jpeg_pipe", true, ".jpg", "image/jpeg")]
+    [InlineData(FeedbackMediaFormat.Gif, "gif", true, ".gif", "image/gif")]
+    [InlineData(FeedbackMediaFormat.Webp, "webp_pipe", false, ".mp4", "video/mp4")]
+    [InlineData(FeedbackMediaFormat.Bmp, "bmp_pipe", false, ".mp4", "video/mp4")]
+    [InlineData(FeedbackMediaFormat.Tiff, "tiff_pipe", false, ".mp4", "video/mp4")]
+    [InlineData(FeedbackMediaFormat.IsoVideo, "mov", true, ".mp4", "video/mp4")]
+    [InlineData(FeedbackMediaFormat.WebM, "matroska", true, ".webm", "video/webm")]
+    [InlineData(FeedbackMediaFormat.Matroska, "matroska", false, ".mp4", "video/mp4")]
+    [InlineData(FeedbackMediaFormat.Avi, "avi", false, ".mp4", "video/mp4")]
+    public void Sniffer_MapsFormatsToDemuxerAndGitHubFileType(
+        FeedbackMediaFormat format, string demuxer, bool native, string extension, string contentType)
+    {
+        Assert.Equal(demuxer, FeedbackMediaSniffer.FfmpegDemuxer(format));
+        Assert.Equal(native, FeedbackMediaSniffer.IsGitHubNative(format));
+        Assert.Equal((extension, contentType), FeedbackMediaSniffer.NativeFileType(format));
+    }
+
+    [Theory]
+    [InlineData(".MOV", true)]
+    [InlineData(".avif", true)]
+    [InlineData(".exe", false)]
+    [InlineData(null, false)]
+    public void Sniffer_RecognizesMediaExtensions(string? extension, bool expected)
+        => Assert.Equal(expected, FeedbackMediaSniffer.IsKnownMediaExtension(extension));
+
     // ─── Metadata stripping ─────────────────────────────────────
+
+    [Fact]
+    public void StripJpeg_SkipsFillBytesAndDropsIptc()
+    {
+        var source = Path.Combine(_dir, "fill.jpg");
+        var dest = Path.Combine(_dir, "fill-out.jpg");
+        byte[] iptc = [0xFF, 0xED, 0x00, 0x08, .. "IPTCxx"u8];
+        File.WriteAllBytes(source, SyntheticJpeg([0xFF], iptc));
+
+        Assert.Equal(1, FeedbackMetadataStripper.StripJpeg(source, dest));
+        Assert.Equal(-1, File.ReadAllBytes(dest).AsSpan().IndexOf("IPTC"u8));
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0xFF, 0xD8 })]
+    [InlineData(new byte[] { 0x00, 0xD8, 0xFF, 0xE0 })]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01, 0, 0 })]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x40, 0, 0 })]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0, 0 })]
+    public void StripJpeg_ReturnsNullForTruncatedOrInvalidSegments(byte[] data)
+    {
+        var source = Path.Combine(_dir, $"trunc-{Guid.NewGuid():N}.jpg");
+        File.WriteAllBytes(source, data);
+        Assert.Null(FeedbackMetadataStripper.StripJpeg(source, source + ".out"));
+    }
+
+    [Fact]
+    public void StripPng_RejectsMalformedInput()
+    {
+        var badSignature = Path.Combine(_dir, "bad-sig.png");
+        File.WriteAllBytes(badSignature, "not a png at all"u8.ToArray());
+        Assert.False(FeedbackMetadataStripper.StripPng(badSignature, badSignature + ".out"));
+
+        var overLength = Path.Combine(_dir, "over-length.png");
+        using (var stream = File.Create(overLength))
+        {
+            stream.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+            stream.Write([0x00, 0x00, 0x10, 0x00, .. "IHDR"u8, 0, 0, 0, 0]);
+        }
+        Assert.False(FeedbackMetadataStripper.StripPng(overLength, overLength + ".out"));
+
+        var noEnd = Path.Combine(_dir, "no-end.png");
+        using (var stream = File.Create(noEnd))
+        {
+            stream.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+            WritePngChunk(stream, "IHDR", new byte[13]);
+        }
+        Assert.False(FeedbackMetadataStripper.StripPng(noEnd, noEnd + ".out"));
+    }
+
+    [Fact]
+    public void ReadExifOrientation_HandlesMalformedAndUnrelatedTags()
+    {
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation("II*\0"u8));
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation("XX\0*\0\0\0\u0008"u8));
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation([.. "MM\0*"u8, 0, 0, 0, 0x40]));
+
+        var truncated = Tiff(entryCount: 2, tag: 0x0110, value: 1);
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation(truncated));
+
+        var unrelated = Tiff(entryCount: 1, tag: 0x0110, value: 1);
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation(unrelated));
+
+        var outOfRange = Tiff(entryCount: 1, tag: 0x0112, value: 9);
+        Assert.Null(FeedbackMetadataStripper.ReadExifOrientation(outOfRange));
+
+        static byte[] Tiff(ushort entryCount, ushort tag, ushort value)
+        {
+            var tiff = new byte[22];
+            "MM"u8.CopyTo(tiff);
+            BinaryPrimitives.WriteUInt16BigEndian(tiff.AsSpan(2), 42);
+            BinaryPrimitives.WriteUInt32BigEndian(tiff.AsSpan(4), 8);
+            BinaryPrimitives.WriteUInt16BigEndian(tiff.AsSpan(8), entryCount);
+            BinaryPrimitives.WriteUInt16BigEndian(tiff.AsSpan(10), tag);
+            BinaryPrimitives.WriteUInt16BigEndian(tiff.AsSpan(18), value);
+            return tiff;
+        }
+    }
 
     [Theory]
     [InlineData(false)]
@@ -104,7 +209,11 @@ public sealed class FeedbackMediaTests : IDisposable
 
     [Theory]
     [InlineData(1, null)]
+    [InlineData(2, "hflip")]
     [InlineData(3, "hflip,vflip")]
+    [InlineData(4, "vflip")]
+    [InlineData(5, "transpose=0")]
+    [InlineData(7, "transpose=3")]
     [InlineData(6, "transpose=1")]
     [InlineData(8, "transpose=2")]
     public void OrientationFilter_MapsExifValues(int orientation, string? expected)
