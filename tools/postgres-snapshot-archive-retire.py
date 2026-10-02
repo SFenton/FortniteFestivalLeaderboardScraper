@@ -578,22 +578,27 @@ def command_auto(args: argparse.Namespace) -> int:
     if not is_open:
         print(f"outside the network-bound fetch window ({why}); nothing to do", flush=True)
         return 0
-    cycle = select_auto_cycle(args.max_cycle_age_hours)
-    if cycle is None:
-        print("no agreeing retention cycle is bound to the current publication; nothing to do", flush=True)
-        return 0
-    print(f"{utcnow()} auto: cycle {cycle['cycle_id']} (scrape {cycle['trigger_scrape_id']}, publication "
-          f"{cycle['trigger_publication_id']}) during {why}", flush=True)
-    retire_args = argparse.Namespace(
-        cycle=int(cycle["cycle_id"]), expected_candidate_hash=cycle["candidate_identity_hash"],
-        limit=args.limit, only=None, drill_every=args.drill_every, pause_seconds=args.pause_seconds,
-        stop_file=args.stop_file, archive_only=False)
+
     def window() -> tuple[bool, str]:
         if disable_file.exists():
             return False, f"{disable_file.name} present"
         return probe_window(args.service_info_url)
 
+    cycle_id: int | None = None
     try:
+        # Health, disk, and lock-wait refusals defer before any database selection.
+        preflight()
+        cycle = select_auto_cycle(args.max_cycle_age_hours)
+        if cycle is None:
+            print("no agreeing retention cycle is bound to the current publication; nothing to do", flush=True)
+            return 0
+        cycle_id = int(cycle["cycle_id"])
+        print(f"{utcnow()} auto: cycle {cycle_id} (scrape {cycle['trigger_scrape_id']}, publication "
+              f"{cycle['trigger_publication_id']}) during {why}", flush=True)
+        retire_args = argparse.Namespace(
+            cycle=cycle_id, expected_candidate_hash=str(cycle["candidate_identity_hash"]),
+            limit=args.limit, only=None, drill_every=args.drill_every, pause_seconds=args.pause_seconds,
+            stop_file=args.stop_file, archive_only=False)
         return command_retire(retire_args, window=window)
     except TransientRefusal as error:
         print(f"deferred: {error}", flush=True)
@@ -601,7 +606,7 @@ def command_auto(args: argparse.Namespace) -> int:
     except BaseException as error:
         if isinstance(error, KeyboardInterrupt):
             raise
-        trip_auto(disable_file, int(cycle["cycle_id"]), error)
+        trip_auto(disable_file, cycle_id, error)
         raise
 
 

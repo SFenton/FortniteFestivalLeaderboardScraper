@@ -128,8 +128,10 @@ operator-supplied hash:
 
 Load, health, disk-floor, lock-wait, lock-held, and exhausted detach-contention
 refusals are transient: the run exits successfully and the next timer tick
-retries. Any other error (cycle gate, fingerprint, archive, restore drill,
-non-lock DDL failure) writes `AUTO_DISABLED` with the cycle and error and exits
+retries. The health/disk/lock-wait preflight runs before cycle selection, so an
+unavailable database defers instead of tripping. Any other error (cycle
+selection or gate, fingerprint, archive, restore drill, non-lock DDL failure)
+writes `AUTO_DISABLED` with the cycle (when known) and error and exits
 non-zero, and every later run stays idle until an operator investigates and
 deletes the file.
 

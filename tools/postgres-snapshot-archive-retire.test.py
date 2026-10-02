@@ -162,8 +162,10 @@ class AutoTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.disable = pathlib.Path(self.tmp.name) / "AUTO_DISABLED"
-        self.saved = {name: getattr(retire, name) for name in ("probe_window", "select_auto_cycle", "command_retire")}
+        self.saved = {name: getattr(retire, name) for name in
+                      ("probe_window", "select_auto_cycle", "command_retire", "preflight")}
         self.retire_calls = []
+        retire.preflight = lambda: None
         retire.probe_window = lambda url: (True, "scrape 1457 scrape.leaderboards/fetching_leaderboards")
         retire.select_auto_cycle = lambda hours: {
             "cycle_id": 112, "candidate_identity_hash": self.HASH, "trigger_scrape_id": 1456,
@@ -229,9 +231,44 @@ class AutoTests(unittest.TestCase):
         self.assertEqual(retire.command_auto(self.args()), 0)
         self.assertEqual(self.retire_calls, [])
 
+    def test_selection_failures_trip_and_main_exits_non_zero(self):
+        self.fake_retire()
+
+        def broken_selection(hours):
+            raise retire.RetirementError("psql failed: relation does not exist")
+
+        retire.select_auto_cycle = broken_selection
+        self.assertEqual(retire.main(["auto", "--disable-file", str(self.disable)]), 2)
+        record = json.loads(self.disable.read_text())
+        self.assertIsNone(record["cycle_id"])
+        self.assertIn("relation does not exist", record["error"])
+        self.assertEqual(self.retire_calls, [])
+
+    def test_malformed_selection_trips(self):
+        self.fake_retire()
+        retire.select_auto_cycle = lambda hours: {"cycle_id": 112}
+        with self.assertRaises(KeyError):
+            retire.command_auto(self.args())
+        self.assertEqual(json.loads(self.disable.read_text())["cycle_id"], 112)
+        self.assertEqual(self.retire_calls, [])
+
+    def test_preflight_refusal_defers_before_selection(self):
+        self.fake_retire()
+
+        def unhealthy():
+            raise retire.TransientRefusal("fst-postgres is not running and healthy (running|starting)")
+
+        def must_not_select(hours):
+            raise AssertionError("selection ran after a preflight refusal")
+
+        retire.preflight = unhealthy
+        retire.select_auto_cycle = must_not_select
+        self.assertEqual(retire.command_auto(self.args()), 0)
+        self.assertFalse(self.disable.exists())
+
     def test_retire_stops_before_touching_a_child_when_window_closes(self):
         saved = {name: getattr(retire, name) for name in
-                 ("load_cycle", "preflight", "cycle_dir", "LOCK_PATH")}
+                 ("load_cycle", "cycle_dir", "LOCK_PATH")}
         retire.command_retire = self.saved["command_retire"]
         retire.load_cycle = lambda cycle, digest: [retire.parse_child(IDENTITY)]
         retire.cycle_dir = lambda cycle: pathlib.Path(self.tmp.name) / f"cycle-{cycle}"
