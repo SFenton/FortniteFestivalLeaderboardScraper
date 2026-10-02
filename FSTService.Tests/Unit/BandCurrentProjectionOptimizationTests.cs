@@ -466,6 +466,59 @@ public sealed class BandCurrentProjectionOptimizationTests(
     }
 
     [Fact]
+    public async Task PerSongPublishCancelledAfterGateAdvanceReconcilesStateAndRetryPublishes()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scopes = Seed(fixture, 2, 4);
+        await PrimeAsync(fixture, scopes);
+        var primedGeneration = await GlobalGenerationAsync(fixture);
+        await ExecuteSqlAsync(fixture, """
+            CREATE FUNCTION fst_test_stall_band_publish()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                PERFORM pg_sleep(60);
+                RETURN NEW;
+            END;
+            $$;
+
+            CREATE TRIGGER fst_test_stall_band_publish
+            BEFORE UPDATE OF published_generation ON band_current_projection_scope
+            FOR EACH ROW
+            WHEN (NEW.published_generation IS DISTINCT FROM OLD.published_generation)
+            EXECUTE FUNCTION fst_test_stall_band_publish();
+            """);
+        await MarkSourceChangedAsync(fixture, scopes.Select(static scope => scope.SongId).ToArray());
+        using var cancellation = new CancellationTokenSource();
+
+        var refresh = CreateBuilder(fixture).RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true, publishParallelism: 2),
+            cancellation.Token);
+        await WaitForStalledPublishAsync(fixture);
+        Assert.True(await GlobalGenerationAsync(fixture) > primedGeneration);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
+        Assert.Equal(primedGeneration, await GlobalGenerationAsync(fixture));
+
+        await ExecuteSqlAsync(fixture, """
+            DROP TRIGGER fst_test_stall_band_publish ON band_current_projection_scope;
+            DROP FUNCTION fst_test_stall_band_publish();
+            """);
+        var retry = await CreateBuilder(fixture).RefreshScopesAsync(
+            scopes,
+            ProductionOptions(useCandidate: true, publishParallelism: 2));
+
+        Assert.Equal(2, retry.ScopeCount);
+        Assert.Equal(2, retry.PublishResult.PublishedScopes);
+        Assert.Equal(retry.PublishResult.Generation, await GlobalGenerationAsync(fixture));
+        Assert.Equal(0, await UnpublishedGenerationRowCountAsync(fixture));
+        Assert.Equal(8, await ProjectionRowCountAsync(fixture));
+    }
+
+    [Fact]
     public async Task PerSongPublishFailureRollsBackAndRetryPublishes()
     {
         using var fixture = new InMemoryMetaDatabase();
@@ -1369,6 +1422,31 @@ public sealed class BandCurrentProjectionOptimizationTests(
             "SELECT COUNT(*)::BIGINT FROM current_band_leaderboard_entries";
         return Convert.ToInt64(
             await command.ExecuteScalarAsync());
+    }
+
+    private static async Task WaitForStalledPublishAsync(
+        InMemoryMetaDatabase fixture)
+    {
+        await using var connection =
+            await fixture.DataSource.OpenConnectionAsync();
+        for (var attempt = 0; attempt < 300; attempt++)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND wait_event = 'PgSleep'
+                      AND query LIKE '%WITH Published AS%')
+                """;
+            if (await command.ExecuteScalarAsync() is true)
+                return;
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException("The per-song publish never reached the stalled scope flip.");
     }
 
     private static async Task<long> GlobalGenerationAsync(

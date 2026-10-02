@@ -1281,9 +1281,9 @@ public sealed class BandCurrentProjectionBuilder
         // current_generation, which the legacy single transaction advanced
         // atomically with every scope flip. The caller's final state refresh
         // recomputes it from the published scopes.
-        await AdvanceGlobalGenerationAsync(generation, ct);
         try
         {
+            await AdvanceGlobalGenerationAsync(generation, ct);
             await Parallel.ForEachAsync(
                 songGroups,
                 new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
@@ -1296,9 +1296,20 @@ public sealed class BandCurrentProjectionBuilder
                         logPublished: false,
                         innerCt)));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch
         {
-            await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            // Reconcile on any failure, including cancellation: the advanced
+            // generation must not keep the gate closed when no song (or only
+            // some songs) published. Unpublished ready scopes stay selectable.
+            try
+            {
+                await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, CancellationToken.None);
+            }
+            catch (Exception reconcileFailure)
+            {
+                _log.LogWarning(reconcileFailure, "Failed to reconcile band current projection global state after an interrupted per-song publish.");
+            }
+
             throw;
         }
 

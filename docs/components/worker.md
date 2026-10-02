@@ -740,7 +740,10 @@ leaves no half-published song; songs no longer flip together. Before the
 first song commits, the global `current_generation` advances to the new
 generation, which closes the scrape-publication band gate exactly as the
 single transaction did; the global state row is recomputed from the
-published scopes once afterwards (or after a failure). Cleanup then probes only unsettled
+published scopes once afterwards, or immediately after a failure or
+cancellation. Interrupted songs publish on the next refresh because the
+unchanged-scope filter reselects ready scopes whose candidate was never
+published. Cleanup then probes only unsettled
 scopes (not ready, or `projection_generation` different from
 `published_generation`) through the scope-key index. Each rebuild writes its
 rows and scope state in one transaction, and each publish deletes the scope's
