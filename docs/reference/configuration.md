@@ -303,9 +303,10 @@ durable phase configuration identity. Set it back to `0` for rollback.
 `BAND_CURRENT_PROJECTION_STALE_SCOPE_SWEEP_MAX_SCOPES`) adds a best-effort
 sweep to BandMaintenance's current-projection subphase. It loads every source
 scope and every existing projection scope key, runs the same unchanged-scope
-filter over the non-impacted ones, and adds up to the cap (in the filter's
-deterministic order) to the impacted set. A sweep failure is logged and the
-refresh continues with the impacted scopes. The switch is part of the durable
+filter once over those and the impacted scopes, and refreshes every impacted
+scope that needs it plus up to the cap of the others (in the filter's
+deterministic order) without filtering again. A sweep failure is logged and
+the refresh continues with the impacted scopes. The switch is part of the durable
 phase configuration identity; `0` disables it.
 
 ## Registered-band remaining-work grace

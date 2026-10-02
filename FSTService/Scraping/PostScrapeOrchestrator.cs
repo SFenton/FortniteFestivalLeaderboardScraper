@@ -1539,35 +1539,39 @@ public sealed class PostScrapeOrchestrator
         if (sweepMax <= 0 || _bandCurrentProjectionBuilder is null)
             return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
 
-        var scopes = impactedScopes;
+        BandCurrentProjectionSweepSelection selection;
         try
         {
-            var impacted = impactedScopes.ToHashSet();
             var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
                 .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
-                .Where(scope => !impacted.Contains(scope))
-                .Distinct()
                 .ToArray();
-            var stale = await _bandCurrentProjectionBuilder.SelectScopesNeedingRefreshAsync(
+            // One filter pass selects both the impacted scopes that changed and
+            // the capped stale sweep, so the refresh below skips its own filter.
+            selection = await _bandCurrentProjectionBuilder.SelectImpactedAndStaleScopesAsync(
+                impactedScopes,
                 candidates,
                 sweepMax,
                 ct);
-            _log.LogInformation(
-                "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}).",
-                stale.Count,
-                candidates.Length,
-                sweepMax);
-            if (stale.Count > 0)
-                scopes = MergeCurrentProjectionScopes(impactedScopes, stale);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(
                 ex,
                 "Band current projection stale sweep failed; refreshing only the impacted scopes.");
+            return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
         }
 
-        return await RefreshBandCurrentProjectionScopesAsync(scopes, ct);
+        _log.LogInformation(
+            "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}); {ImpactedSelected:N0}/{ImpactedScopes:N0} impacted scope(s) need a rebuild.",
+            selection.StaleScopes.Count,
+            selection.SweepCandidateCount,
+            sweepMax,
+            selection.ImpactedScopes.Count,
+            impactedScopes.Count);
+        return await RefreshBandCurrentProjectionScopesAsync(
+            MergeCurrentProjectionScopes(selection.ImpactedScopes, selection.StaleScopes),
+            ct,
+            scopesPreselected: true);
     }
 
     internal Task RunBandMaintenanceForTestAsync(
@@ -1685,7 +1689,8 @@ public sealed class PostScrapeOrchestrator
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool scopesPreselected = false)
     {
         const int FallbackChunkSize = 128;
 
@@ -1694,6 +1699,11 @@ public sealed class PostScrapeOrchestrator
 
         var rebuildOptions =
             CreateBandCurrentProjectionRebuildOptions(_options.Value);
+        // Preselected scopes already passed the unchanged-scope filter; the
+        // chunk fallback below keeps filtering so completed scopes are skipped.
+        var initialOptions = scopesPreselected
+            ? rebuildOptions.WithSkipUnchangedScopes(false)
+            : rebuildOptions;
         _log.LogInformation(
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
@@ -1732,7 +1742,7 @@ public sealed class PostScrapeOrchestrator
         {
             result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(
                 scopes,
-                rebuildOptions,
+                initialOptions,
                 ct,
                 OnScopesFinalized,
                 OnScopeCompleted);
