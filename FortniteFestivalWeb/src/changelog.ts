@@ -11,6 +11,12 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
+        title: 'APP',
+        items: [
+          'Added in-app bug reports and feature requests from Settings when feedback is enabled.',
+        ],
+      },
+      {
         title: 'SONGS',
         items: [
           'Added Year, Duration, Item Shop, and Double Bass filters.',

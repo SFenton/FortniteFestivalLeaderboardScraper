@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
+import { FeatureFlagsProvider } from '../../../src/contexts/FeatureFlagsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { ScrollContainerProvider, useHeaderPortalRef, useQuickLinksRailPortalRef, useScrollContainer } from '../../../src/contexts/ScrollContainerContext';
@@ -225,20 +226,23 @@ function createTestQueryClient() {
   });
 }
 
-function renderSettings({ withQuickLinksHarness = false, queryClient = createTestQueryClient() }: { withQuickLinksHarness?: boolean; queryClient?: QueryClient; } = {}) {
+function renderSettings({ withQuickLinksHarness = false, queryClient = createTestQueryClient(), feedbackEnabled = false }: { withQuickLinksHarness?: boolean; queryClient?: QueryClient; feedbackEnabled?: boolean; } = {}) {
+  queryClient.setQueryData(queryKeys.features(), { appManual: false, feedback: feedbackEnabled });
   const view = render(
     <ScrollContainerProvider>
       <ShellRefInjector>
         <MemoryRouter>
           <QueryClientProvider client={queryClient}>
-            <PageQuickLinksProvider>
-              <SettingsProvider>
-                <FirstRunProvider>
-                  <SettingsPage />
-                  {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
-                </FirstRunProvider>
-              </SettingsProvider>
-            </PageQuickLinksProvider>
+            <FeatureFlagsProvider>
+              <PageQuickLinksProvider>
+                <SettingsProvider>
+                  <FirstRunProvider>
+                    <SettingsPage />
+                    {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
+                  </FirstRunProvider>
+                </SettingsProvider>
+              </PageQuickLinksProvider>
+            </FeatureFlagsProvider>
           </QueryClientProvider>
         </MemoryRouter>
       </ShellRefInjector>
@@ -263,6 +267,64 @@ function getToggleButton(label: string) {
   const button = screen.getByText(label).closest('button');
   expect(button).not.toBeNull();
   return button as HTMLButtonElement;
+}
+
+type MockFeedbackXhr = XMLHttpRequest & {
+  requestBody?: FormData;
+  triggerProgress: (loaded: number, total: number) => void;
+  triggerLoad: (status: number, body: unknown, statusText?: string) => void;
+};
+
+function installMockFeedbackXhr() {
+  const instances: MockFeedbackXhr[] = [];
+
+  class MockXhr {
+    upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 0;
+    statusText = '';
+    responseText = '';
+    response: unknown = null;
+    responseType: XMLHttpRequestResponseType = '';
+    requestBody?: FormData;
+    open = vi.fn();
+    setRequestHeader = vi.fn();
+    getResponseHeader = vi.fn().mockReturnValue(null);
+    send = vi.fn((body?: Document | XMLHttpRequestBodyInit | null) => {
+      this.requestBody = body instanceof FormData ? body : undefined;
+      instances.push(this as unknown as MockFeedbackXhr);
+    });
+    triggerProgress(loaded: number, total: number) {
+      this.upload.onprogress?.({ lengthComputable: true, loaded, total } as ProgressEvent);
+    }
+    triggerLoad(status: number, body: unknown, statusText = status < 400 ? 'Accepted' : 'Error') {
+      this.status = status;
+      this.statusText = statusText;
+      this.responseText = typeof body === 'string' ? body : JSON.stringify(body);
+      this.response = body;
+      this.onload?.();
+    }
+  }
+
+  vi.stubGlobal('XMLHttpRequest', MockXhr);
+  return instances;
+}
+
+function mockFeedbackStatusResponse(body: unknown) {
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (typeof url === 'string' && url.includes('/api/feedback/fb-1')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+        headers: new Headers(),
+      });
+    }
+    return baseFetch(url, init);
+  }) as unknown as typeof fetch;
 }
 
 describe('SettingsPage', () => {
@@ -290,6 +352,130 @@ describe('SettingsPage', () => {
   it('renders App Settings section', () => {
     renderSettings();
     expect(screen.getByText('App Settings')).toBeDefined();
+  });
+
+  it('shows feedback settings only when the feedback feature flag is enabled', () => {
+    renderSettings();
+    expect(screen.queryByRole('button', { name: /Report an Issue/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Request a Feature/i })).toBeNull();
+
+    renderSettings({ feedbackEnabled: true });
+    expect(screen.getByRole('button', { name: /Report an Issue/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Request a Feature/i })).toBeDefined();
+  });
+
+  it('opens feedback modals with the expected prefilled fields', async () => {
+    renderSettings({ feedbackEnabled: true });
+
+    fireEvent.click(screen.getByTestId('settings-report-issue'));
+    let dialog = await screen.findByRole('dialog', { name: 'Report an Issue' });
+    expect(within(dialog).getByTestId('settings-feedback-bug-title')).toHaveValue('[Bug] ');
+    expect(within(dialog).getByLabelText('Description')).toBeDefined();
+    expect(within(dialog).getByLabelText('Steps to reproduce')).toBeDefined();
+    expect(within(dialog).getByLabelText('Expected behavior')).toBeDefined();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    fireEvent.transitionEnd(dialog);
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Report an Issue' })).toBeNull());
+    fireEvent.click(screen.getByTestId('settings-request-feature'));
+    dialog = await screen.findByRole('dialog', { name: 'Request a Feature' });
+    expect(within(dialog).getByTestId('settings-feedback-feature-title')).toHaveValue('[Feature] ');
+    expect(within(dialog).getByLabelText('Description')).toBeDefined();
+    expect(within(dialog).queryByLabelText('Steps to reproduce')).toBeNull();
+    expect(within(dialog).queryByLabelText('Expected behavior')).toBeNull();
+  });
+
+  it('shows attached media above the attach button and opens previews in a new tab', async () => {
+    const createObjectUrl = vi.fn().mockReturnValue('blob:feedback-image');
+    const revokeObjectUrl = vi.fn();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl });
+
+    renderSettings({ feedbackEnabled: true });
+    fireEvent.click(screen.getByTestId('settings-report-issue'));
+    const dialog = await screen.findByRole('dialog', { name: 'Report an Issue' });
+    const input = within(dialog).getByTestId('settings-feedback-bug-file-input') as HTMLInputElement;
+    const file = new File(['image'], 'screen.png', { type: 'image/png' });
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const thumbnail = await within(dialog).findByTestId('settings-feedback-attachment-thumbnail');
+    expect(within(dialog).getByAltText('screen.png')).toBeDefined();
+    expectBefore(thumbnail, within(dialog).getByText('Attach Media'));
+    fireEvent.click(thumbnail);
+    expect(openSpy).toHaveBeenCalledWith('blob:feedback-image', '_blank', 'noopener');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove screen.png' }));
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:feedback-image');
+    openSpy.mockRestore();
+  });
+
+  it('submits feedback with upload progress and shows the filed issue number', async () => {
+    const xhrInstances = installMockFeedbackXhr();
+    mockFeedbackStatusResponse({
+      id: 'fb-1',
+      status: 'submitted',
+      issueNumber: 123,
+      attachments: [{ name: 'screen.png', kind: 'image', outcome: 'skipped' }],
+    });
+
+    renderSettings({ feedbackEnabled: true });
+    fireEvent.click(screen.getByTestId('settings-report-issue'));
+    const dialog = await screen.findByRole('dialog', { name: 'Report an Issue' });
+    fireEvent.change(within(dialog).getByTestId('settings-feedback-bug-title'), { target: { value: '[Bug] Upload fails' } });
+    fireEvent.change(within(dialog).getByTestId('settings-feedback-bug-description'), { target: { value: 'Uploads fail at the end.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => expect(xhrInstances).toHaveLength(1));
+    const xhr = xhrInstances[0]!;
+    act(() => xhr.triggerProgress(45, 90));
+    expect(await within(dialog).findByText('Uploading… 50%')).toBeDefined();
+
+    await act(async () => {
+      xhr.triggerLoad(202, { id: 'fb-1', status: 'queued' });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Thanks! Your report was filed as #123. 1 attachment couldn't be attached.")).toBeDefined();
+  });
+
+  it('maps feedback service errors to friendly retryable messages', async () => {
+    const xhrInstances = installMockFeedbackXhr();
+
+    renderSettings({ feedbackEnabled: true });
+    fireEvent.click(screen.getByTestId('settings-request-feature'));
+    const dialog = await screen.findByRole('dialog', { name: 'Request a Feature' });
+    fireEvent.change(within(dialog).getByTestId('settings-feedback-feature-title'), { target: { value: '[Feature] Add filters' } });
+    fireEvent.change(within(dialog).getByTestId('settings-feedback-feature-description'), { target: { value: 'Filtering would help.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => expect(xhrInstances).toHaveLength(1));
+    const xhr = xhrInstances[0]!;
+    await act(async () => {
+      xhr.triggerLoad(413, { error: 'Too large', code: 'payload_too_large', maxBytes: 94371840 }, 'Payload Too Large');
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText('The attached media is too large. Keep the total request under 90 MiB.')).toBeDefined();
+    expect(within(dialog).getByTestId('settings-feedback-feature-title')).toHaveValue('[Feature] Add filters');
+    expect(within(dialog).getByTestId('settings-feedback-feature-description')).toHaveValue('Filtering would help.');
+  });
+
+  it('asks before discarding dirty feedback but closes pristine feedback without confirmation', async () => {
+    renderSettings({ feedbackEnabled: true });
+    fireEvent.click(screen.getByTestId('settings-request-feature'));
+    let dialog = await screen.findByRole('dialog', { name: 'Request a Feature' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alertdialog', { name: 'Discard feedback?' })).toBeNull();
+    fireEvent.transitionEnd(dialog);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Request a Feature' })).toBeNull());
+
+    fireEvent.click(screen.getByTestId('settings-report-issue'));
+    dialog = await screen.findByRole('dialog', { name: 'Report an Issue' });
+    fireEvent.change(within(dialog).getByTestId('settings-feedback-bug-title'), { target: { value: '[Bug] Dirty form' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard feedback?' })).toBeDefined();
   });
 
   it('renders a Licenses navigation row', () => {

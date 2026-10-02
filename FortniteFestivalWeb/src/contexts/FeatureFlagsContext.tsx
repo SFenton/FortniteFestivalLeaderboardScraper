@@ -5,6 +5,7 @@ import { queryKeys } from '../api/queryKeys';
 
 export type FeatureFlags = {
   appManual: boolean;
+  feedback: boolean;
 };
 
 type FeatureFlagsContextValue = {
@@ -14,6 +15,7 @@ type FeatureFlagsContextValue = {
 
 const DEFAULT_FLAGS: FeatureFlags = {
   appManual: false,
+  feedback: false,
 };
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null);
@@ -29,6 +31,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     flags: {
       ...DEFAULT_FLAGS,
       appManual: query.data?.appManual === true,
+      feedback: query.data?.feedback === true,
     },
     resolved: query.status !== 'pending',
   }), [query.data, query.status]);

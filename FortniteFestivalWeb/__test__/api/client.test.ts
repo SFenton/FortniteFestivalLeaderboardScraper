@@ -48,6 +48,52 @@ function jsonResponse(
   });
 }
 
+function installMockXhr() {
+  const instances: Array<{
+    upload: { onprogress: ((event: ProgressEvent) => void) | null };
+    open: ReturnType<typeof vi.fn>;
+    setRequestHeader: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn>;
+    getResponseHeader: ReturnType<typeof vi.fn>;
+    status: number;
+    statusText: string;
+    responseText: string;
+    response: unknown;
+    onload: (() => void) | null;
+    triggerProgress: (loaded: number, total: number) => void;
+    triggerLoad: (status: number, body: unknown, statusText?: string) => void;
+  }> = [];
+
+  class MockXhr {
+    upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
+    open = vi.fn();
+    setRequestHeader = vi.fn();
+    send = vi.fn(() => { instances.push(this); });
+    getResponseHeader = vi.fn().mockReturnValue(null);
+    status = 0;
+    statusText = '';
+    responseText = '';
+    response: unknown = null;
+    responseType: XMLHttpRequestResponseType = '';
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    triggerProgress(loaded: number, total: number) {
+      this.upload.onprogress?.({ lengthComputable: true, loaded, total } as ProgressEvent);
+    }
+    triggerLoad(status: number, body: unknown, statusText = status < 400 ? 'Accepted' : 'Error') {
+      this.status = status;
+      this.statusText = statusText;
+      this.responseText = JSON.stringify(body);
+      this.response = body;
+      this.onload?.();
+    }
+  }
+
+  vi.stubGlobal('XMLHttpRequest', MockXhr);
+  return instances;
+}
+
 describe('api/client', () => {
   describe('getServiceInfo', () => {
     it('uses an abortable no-store reachability request without profile headers', async () => {
@@ -91,6 +137,47 @@ describe('api/client', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountIds: ['acct1', 'acct2'] }),
       });
+    });
+  });
+
+  describe('feedback', () => {
+    it('submits feedback using XMLHttpRequest upload progress', async () => {
+      const xhrInstances = installMockXhr();
+      const progress = vi.fn();
+      const formData = new FormData();
+      formData.append('kind', 'bug');
+
+      const promise = api.submitFeedback(formData, progress);
+      expect(xhrInstances).toHaveLength(1);
+      const xhr = xhrInstances[0]!;
+      expect(xhr.open).toHaveBeenCalledWith('POST', '/api/feedback', true);
+
+      xhr.triggerProgress(50, 100);
+      expect(progress).toHaveBeenCalledWith(50);
+      xhr.triggerLoad(202, { id: 'fb-1', status: 'queued' });
+
+      await expect(promise).resolves.toEqual({ id: 'fb-1', status: 'queued' });
+    });
+
+    it('rejects feedback errors with service error details', async () => {
+      const xhrInstances = installMockXhr();
+      const promise = api.submitFeedback(new FormData());
+
+      xhrInstances[0]!.triggerLoad(413, { error: 'too large', code: 'payload_too_large', maxBytes: 94371840 }, 'Payload Too Large');
+
+      await expect(promise).rejects.toMatchObject({
+        status: 413,
+        code: 'payload_too_large',
+        maxBytes: 94371840,
+      });
+    });
+
+    it('gets feedback status by id', async () => {
+      const response = { id: 'fb-1', status: 'submitted', issueNumber: 123, attachments: [] };
+      mockFetchOk(response);
+
+      await expect(api.getFeedbackStatus('fb-1')).resolves.toEqual(response);
+      expect(global.fetch).toHaveBeenCalledWith('/api/feedback/fb-1', { headers: {} });
     });
   });
 
