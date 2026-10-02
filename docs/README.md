@@ -9,6 +9,7 @@ sources:
   - .github/instructions/documentation.instructions.md
   - docs/architecture/replay-artifacts.md
   - docs/database/StaleSoloRankIndexRetirementRunbook.md
+  - docs/database/RedundantBandProjectionIndexRetirementRunbook.md
   - docs/database/ProBassSnapshotRewritePilot.md
   - docs/database/SnapshotGenerationPartitionMigration.md
   - docs/database/SnapshotGenerationRetentionSafety.md
@@ -79,6 +80,7 @@ again. Verify their preconditions and current code before execution.
 - [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
+- [Redundant band projection index retirement](database/RedundantBandProjectionIndexRetirementRunbook.md)
 - [Stale solo rank index retirement](database/StaleSoloRankIndexRetirementRunbook.md)
 - [Runbook index and lifecycle](operations/runbooks/README.md)
 
