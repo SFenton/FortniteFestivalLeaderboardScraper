@@ -1571,7 +1571,8 @@ public sealed class PostScrapeOrchestrator
         return await RefreshBandCurrentProjectionScopesAsync(
             MergeCurrentProjectionScopes(selection.ImpactedScopes, selection.StaleScopes),
             ct,
-            scopesPreselected: true);
+            preselectedConsideredScopeCount:
+                MergeCurrentProjectionScopes(impactedScopes, selection.StaleScopes).Count);
     }
 
     internal Task RunBandMaintenanceForTestAsync(
@@ -1690,20 +1691,33 @@ public sealed class PostScrapeOrchestrator
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct,
-        bool scopesPreselected = false)
+        int? preselectedConsideredScopeCount = null)
     {
         const int FallbackChunkSize = 128;
 
+        // Preselected scopes already passed the unchanged-scope filter, so the
+        // considered count (impacted plus capped stale scopes) is reported
+        // separately, matching the builder's own filtered accounting.
+        var consideredScopeCount = preselectedConsideredScopeCount ?? scopes.Count;
         if (scopes.Count == 0)
-            return BandMaintenanceTimingMetrics.NoWork;
+        {
+            if (consideredScopeCount == 0)
+                return BandMaintenanceTimingMetrics.NoWork;
+
+            _progress.BeginPhaseProgress(0);
+            return new BandMaintenanceTimingMetrics(
+                RowsRead: consideredScopeCount,
+                RowsWritten: 0,
+                RowsDeleted: 0,
+                ScopeCount: 0);
+        }
 
         var rebuildOptions =
             CreateBandCurrentProjectionRebuildOptions(_options.Value);
-        // Preselected scopes already passed the unchanged-scope filter; the
-        // chunk fallback below keeps filtering so completed scopes are skipped.
-        var initialOptions = scopesPreselected
-            ? rebuildOptions.WithSkipUnchangedScopes(false)
-            : rebuildOptions;
+        // The chunk fallback below keeps filtering so completed scopes are skipped.
+        var initialOptions = preselectedConsideredScopeCount is null
+            ? rebuildOptions
+            : rebuildOptions.WithSkipUnchangedScopes(false);
         _log.LogInformation(
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
@@ -1774,7 +1788,7 @@ public sealed class PostScrapeOrchestrator
                 $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
         }
 
-        return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
+        return GetBandCurrentProjectionTimingMetrics(result, consideredScopeCount);
     }
 
     internal static BandCurrentProjectionRebuildOptions
