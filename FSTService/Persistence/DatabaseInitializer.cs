@@ -3647,12 +3647,10 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_cble_team_song
             ON current_band_leaderboard_entries (band_type, team_key, song_id, ranking_scope, scope_combo_id);
 
-        CREATE INDEX IF NOT EXISTS ix_cble_duets_team_scope_generation
-            ON current_band_leaderboard_entries_duets (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
-        CREATE INDEX IF NOT EXISTS ix_cble_trios_team_scope_generation
-            ON current_band_leaderboard_entries_trios (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
-        CREATE INDEX IF NOT EXISTS ix_cble_quad_team_scope_generation
-            ON current_band_leaderboard_entries_quad (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
+        -- ix_cble_{duets,trios,quad}_team_scope_generation were retired: they only
+        -- extended ix_cble_team_song with projection_generation, and every reader keys
+        -- on the shared (band_type, team_key) prefix. Existing copies are dropped
+        -- concurrently by tools/postgres-retire-redundant-band-projection-indexes.py.
 
         CREATE TABLE IF NOT EXISTS band_current_projection_state (
             id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
