@@ -879,6 +879,16 @@ replacing it. Discovery records impacted teams/scopes immediately after band
 entry persistence, before later registration/checkpoint metadata writes, while
 lookup completion still waits for every required durable write.
 
+Team-level membership rebuilds (band writers, extraction, and prune) take the
+`band_team_membership_rebuild` advisory lock in shared mode plus an exclusive
+per-band-type lock, because membership and configuration rows are keyed by
+band type and concurrent rebuilds of the same teams deadlock only within one
+band type. Account-level rebuilds, which touch every band type for an
+account, take the lock exclusively. BandMaintenance prune therefore rebuilds
+the affected band types' membership summaries concurrently after its delete
+transaction; in scrape `1457` the three sequential rebuilds took about 10 of
+the prune subphase's 16.9 minutes.
+
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative
 overall/ETA metadata, optional per-pass attempt progress, heartbeat, and
