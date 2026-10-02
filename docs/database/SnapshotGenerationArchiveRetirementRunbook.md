@@ -8,11 +8,15 @@ sources:
   - tools/postgres-snapshot-archive-retire.test.py
   - deploy/systemd/fst-snapshot-retire-auto.service
   - deploy/systemd/fst-snapshot-retire-auto.timer
+  - tools/postgres-snapshot-sparse-compact.py
+  - tools/postgres-snapshot-sparse-compact.test.py
+  - tools/postgres-snapshot-sparse-compact-drill.py
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionPlanner.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionOracle.cs
   - FSTService/Persistence/Maintenance/SnapshotGenerationRetentionSchema.cs
   - docs/decisions/0010-snapshot-archive-retirement.md
   - docs/decisions/0011-automatic-snapshot-archive-retirement.md
+  - docs/decisions/0012-sparse-snapshot-child-compaction.md
 update_triggers:
   - Snapshot-generation liveness roots, report-cycle format, partition layout, archive format, or retirement/restore commands change.
   - Scrape phase or sub-operation names, `/api/service-info` `currentUpdate` fields, or the host timer change.
@@ -151,6 +155,75 @@ touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapsh
 Every child still lands in `cycle-<id>/manifest.jsonl` with its archive, so
 rollback is the same `restore` command. Archives are about 8% of the reclaimed
 size (about 3 GiB per day) and are never deleted automatically.
+
+## Sparse-child compaction
+
+With `Features__SkipUnchangedPhysicalLeaderboardSnapshots`, an unchanged scope
+keeps pointing at the snapshot where it last changed, so each child stays live
+for the few songs that have not changed since while most of its rows become
+unreachable. Whole-child retirement cannot touch such a child. On 2026-10-02,
+133 of 217 attached children (196.9 GiB) were at most 50% live by estimated
+rows, with about 186.5 GiB reclaimable; every recent scrape adds more as its
+scopes change. See
+[ADR 0012](../decisions/0012-sparse-snapshot-child-compaction.md).
+
+`tools/postgres-snapshot-sparse-compact.py` compacts one child at a time and
+shares the retirement lock, so it never overlaps a retirement run:
+
+1. **Per-song liveness re-proof** (read-only): the same roots as the retention
+   oracle, per song. A song is live when `leaderboard_snapshot_state`,
+   `solo_current_projection_scope`, or a current/previous/working (or
+   building/current) publication's `leaderboard_published_scope_source` points
+   at this child. Whole-child roots skip the child entirely: a running scrape,
+   a named publication's own scrape, an unreplayed writer failure, any
+   retention-hold history, a publication surface binding, a user trigger, the
+   configured `Scraper:ResumeScrapeId`, or the operator-excluded Solo Bass
+   `1308`. A child with no live songs belongs to retirement, not compaction.
+2. **Measure:** one scan records whole-child and live-subset row counts and
+   order-independent fingerprints. Children above `--max-live-fraction`
+   (default `0.5`) or under `--min-reclaim-bytes` (default 128 MiB) are skipped
+   before any archive.
+3. **Archive and verify** the whole child exactly as retirement does
+   (`compaction/<instrument>/<child>-o<oid>.dump`, TOC and row-count checks,
+   every `--drill-every`th child fully restored).
+4. **Build** `<child>_cnew` (`LIKE` the child, live songs only, ordered by the
+   primary key), add the partition bound as a validated `CHECK` and the
+   instrument parent's index shapes (primary key via `USING INDEX`), analyze,
+   and require the replacement's fingerprint to equal the live subset's.
+5. **Re-prove** liveness; the live set may only shrink, and the run ends
+   before the swap if the network-bound window closed.
+6. **Swap** in one transaction with `lock_timeout=2s` and up to 12 retries:
+   `DETACH` the child, rename it `<child>_cold`, rename the replacement to the
+   child's name, `ATTACH ... FOR VALUES IN (<snapshot>)` (the `CHECK` skips the
+   validation scan and the indexes are adopted, so this is catalog-only), and
+   re-check liveness while holding the instrument parent lock.
+7. **Verify** the attachment, bound, index adoption (every parent index has
+   exactly one adopted child index), and the live fingerprint; then
+   `DROP TABLE <child>_cold RESTRICT` and drop the temporary `CHECK`.
+
+`compaction/manifest.jsonl` records `archived` and `compacted` entries with the
+old and new physical identity, the live song list, and both fingerprints. The
+compacted child has a new OID and relfilenode; later report cycles classify it
+like any other child, and it is compacted again as more of its songs change.
+
+```bash
+python3 tools/postgres-snapshot-sparse-compact.py plan --show 20
+# Only during network-bound fetch; one child, full restore drill
+python3 tools/postgres-snapshot-sparse-compact.py compact --limit 1 --drill-every 1 \
+  --only leaderboard_entries_snapshot_<instrument>_s<id> \
+  --stop-file /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapshot-generations/compaction/STOP
+# Rollback: online re-insert of the archived non-live rows, exact fingerprint check
+python3 tools/postgres-snapshot-sparse-compact.py restore --relation <child>
+```
+
+`restore` requires the child to still be the compacted table recorded in the
+manifest with its compacted fingerprint, reloads the archive's data into a
+standalone `<child>_rfill` table, checks the archived whole-child fingerprint,
+inserts only the non-live songs' rows into the attached child, and requires the
+original whole-child fingerprint. `--no-window` exists only for the isolated
+drill (`tools/postgres-snapshot-sparse-compact-drill.py --work-root <dir>`).
+Compaction obeys the live-safety windows below and exits with code 3 on a
+transient deferral.
 
 ## Live-safety windows
 
