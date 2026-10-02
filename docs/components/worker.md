@@ -270,6 +270,12 @@ selected for their publication. Cleanup precompute must serialize canonical
 service's newer singleton live catalog. A supplied empty catalog fails before
 cache staging.
 
+Cleanup precompute loads each `(song, instrument)` threshold band (scores
+within ±5% of the chart maximum) once, for leeway metadata, and reuses those
+exact arrays as the player band-scores cache. Both previously ran the same
+query over the same scopes with no score writes in between; scrape `1456`
+spent 168.7 seconds on the duplicate load (3,482,397 scores, 5,848 pairs).
+
 ## Continuous loop
 
 After schema readiness, the full worker publishes its actual report-only
