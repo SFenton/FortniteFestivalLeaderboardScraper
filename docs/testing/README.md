@@ -54,6 +54,7 @@ sources:
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
   - tools/postgres-retire-ix-le-song-rank.test.py
+  - tools/postgres-retire-redundant-band-projection-indexes.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.py
   - tools/postgres-snapshot-generation-archive.test.py
@@ -1114,6 +1115,15 @@ PYTHONDONTWRITEBYTECODE=1 \
   python3 tools/postgres-retire-ix-le-song-rank.test.py
 dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests
+```
+
+Redundant band projection index retirement (hermetic: definitions, fallback
+checks, window/blocker refusal, lock-contention deferral, and concurrent
+rollback):
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-redundant-band-projection-indexes.test.py
 ```
 
 The Python suite uses deterministic fake project/catalog probes. It covers
