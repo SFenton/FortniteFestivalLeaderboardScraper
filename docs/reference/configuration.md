@@ -462,8 +462,11 @@ identity, and `1` is the rollback. With `2` in scrape `1460` the snapshots took
 from 16.0 to 33.1 minutes, so ComputeRankings improved only from 51.7 to 49.6
 minutes; peak anonymous memory rose to about 3.9 GiB. In scrape `1461` the
 same setting left Band_Quad's combo inserts at about 8 seconds per combo
-(450 combos) after the snapshots had evicted cached pages, so production
-returned to `1` at the `1461` boundary.
+(450 combos, 66 minutes) after the snapshots had evicted cached pages, and
+ComputeRankings took 103 minutes. With the combo index described below
+(scrape `1462`, still `2`), band team rankings took 12.5 minutes (Band_Quad's
+inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
+production keeps `2`.
 
 `ComboBatched` was adopted when disk headroom was tight (a single monolithic
 insert once failed with `No space left on device`). Its per-combo statements
