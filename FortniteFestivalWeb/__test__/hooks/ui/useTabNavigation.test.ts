@@ -35,6 +35,10 @@ describe('inferTab', () => {
     expect(inferTab('/settings/licenses')).toBe(TabKey.Settings);
     expect(inferTab('/settings/licenses/')).toBe(TabKey.Settings);
   });
+  it('returns settings for the privacy policy modal route', () => {
+    expect(inferTab('/settings/privacy')).toBe(TabKey.Settings);
+    expect(inferTab('/settings/privacy/')).toBe(TabKey.Settings);
+  });
   it('returns null for /player', () => expect(inferTab('/player/abc')).toBeNull());
   it('returns null for /', () => expect(inferTab('/')).toBeNull());
 });

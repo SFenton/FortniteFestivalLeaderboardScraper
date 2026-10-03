@@ -49,6 +49,7 @@ export const Routes = {
   manual: '/manual',
   settings: '/settings',
   settingsLicenses: '/settings/licenses',
+  settingsPrivacy: '/settings/privacy',
 } as const;
 
 function buildBandQuery(context?: { accountId?: string; bandType?: string; teamKey?: string; names?: string }): string {
@@ -99,6 +100,7 @@ export function isKnownRoutePath(pathname: string): boolean {
     || path === Routes.manual
     || path === Routes.settings
     || path === Routes.settingsLicenses
+    || path === Routes.settingsPrivacy
     || RoutePatterns.songDetail.test(path)
     || RoutePatterns.songBandLeaderboard.test(path)
     || RoutePatterns.history.test(path)
@@ -109,4 +111,12 @@ export function isKnownRoutePath(pathname: string): boolean {
     || RoutePatterns.bandRankings.test(path)
     || RoutePatterns.playerBands.test(path)
     || RoutePatterns.bands.test(path);
+}
+
+/**
+ * Page that renders a route. Modal routes such as the Settings privacy policy
+ * resolve to the page behind them so it stays mounted and keeps its scroll.
+ */
+export function getRoutePageOwner(pathname: string): string {
+  return normalizeRoutePathname(pathname) === Routes.settingsPrivacy ? Routes.settings : pathname;
 }
