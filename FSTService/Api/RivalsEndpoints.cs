@@ -440,6 +440,7 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator,
             SoloCurrentProjectionBuilder soloCurrentProjectionBuilder,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
@@ -460,6 +461,22 @@ public static partial class ApiEndpoints
             {
                 var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
                 if (result is not null) return result;
+            }
+
+            if (rivalsCache.RequiresCachedReads && !liveGapsRequested)
+            {
+                var published = TryServePublishedRivalDetail(
+                    httpContext,
+                    precomputer,
+                    festivalService,
+                    accountId,
+                    rivalId,
+                    resolvedCombo.Value,
+                    effectiveLimit,
+                    effectiveOffset,
+                    sortMode,
+                    liveFallbackAllowed);
+                if (published is not null) return published;
             }
 
             {
@@ -506,26 +523,9 @@ public static partial class ApiEndpoints
             }
 
             if (allSamples.Count == 0)
-                return Results.NotFound(new { error = "No precomputed song data for this rival.", reason = "not_precomputed" });
+                return RivalDetailNotPrecomputed();
 
-            // Sort
-            IEnumerable<RivalSongSampleRow> sorted = sortMode switch
-            {
-                "they_lead" => allSamples.OrderBy(s => s.RankDelta),
-                "you_lead" => allSamples.OrderByDescending(s => s.RankDelta),
-                _ => allSamples.OrderBy(s => Math.Abs(s.RankDelta)),
-            };
-
-            var total = allSamples.Count;
-
-            // limit=0 means all
-            var page = effectiveLimit == 0
-                ? sorted.Skip(effectiveOffset).ToList()
-                : sorted.Skip(effectiveOffset).Take(effectiveLimit).ToList();
-
-            var songLookup = festivalService.Songs
-                .Where(s => s.track?.su is not null)
-                .ToDictionary(s => s.track.su, StringComparer.OrdinalIgnoreCase);
+            var songLookup = BuildRivalSongLookup(festivalService);
             var rivalName = metaDb.GetDisplayName(rivalId);
 
             IReadOnlyList<object> songsToCompete = Array.Empty<object>();
@@ -570,40 +570,19 @@ public static partial class ApiEndpoints
                 usedLiveComputation = true;
             }
 
-            var payload = new
-            {
-                rival = new { accountId = rivalId, displayName = rivalName },
+            var jsonBytes = SerializeRivalDetail(
+                httpContext,
+                rivalId,
+                rivalName,
                 combo,
-                source = usedLiveComputation ? "live" : "precomputed",
-                totalSongs = total,
-                offset = effectiveOffset,
-                limit = effectiveLimit,
-                sort = sortMode,
-                songs = page.Select(s =>
-                {
-                    songLookup.TryGetValue(s.SongId, out var song);
-                    return new
-                    {
-                        s.SongId,
-                        title = song?.track?.tt,
-                        artist = song?.track?.an,
-                        s.Instrument,
-                        s.UserInstrument,
-                        s.RivalInstrument,
-                        s.UserRank,
-                        s.RivalRank,
-                        s.RankDelta,
-                        s.UserScore,
-                        s.RivalScore,
-                    };
-                }).ToList(),
+                usedLiveComputation ? "live" : "precomputed",
+                allSamples,
+                effectiveLimit,
+                effectiveOffset,
+                sortMode,
+                songLookup,
                 songsToCompete,
-                yourExclusiveSongs,
-            };
-            var jsonOpts = httpContext.RequestServices
-                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
-                .Value.SerializerOptions;
-            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+                yourExclusiveSongs);
             var etag = rivalsCache.Set(cacheKey, jsonBytes);
 
             httpContext.Response.Headers.ETag = etag;
@@ -714,6 +693,129 @@ public static partial class ApiEndpoints
         .WithTags("Rivals")
         .RequireRateLimiting("protected")
         .RequireAuthorization();
+    }
+
+    /// <summary>
+    /// Serves a frozen-read rival detail from the published <c>rivals-all</c>
+    /// precompute. Returns null when that payload cannot answer the request, so
+    /// the caller keeps the fail-closed 503.
+    /// </summary>
+    private static IResult? TryServePublishedRivalDetail(
+        HttpContext httpContext,
+        ScrapeTimePrecomputer precomputer,
+        FestivalService festivalService,
+        string accountId,
+        string rivalId,
+        ResolvedRivalCombo resolvedCombo,
+        int limit,
+        int offset,
+        string sortMode,
+        bool liveFallbackAllowed)
+    {
+        var rivalsAll = precomputer.TryGet($"rivals-all:{accountId}");
+        if (rivalsAll is null)
+            return null;
+
+        var rival = PublishedRivalSamples.TryRead(rivalsAll.Value, accountId, rivalId);
+        if (rival is null)
+            return null;
+
+        var samples = new List<RivalSongSampleRow>();
+        foreach (var instrument in resolvedCombo.Instruments)
+        {
+            samples.AddRange(rival.Samples.Where(s =>
+                string.Equals(s.Instrument, instrument, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        if (samples.Count == 0)
+            return liveFallbackAllowed ? null : RivalDetailNotPrecomputed();
+
+        var jsonBytes = SerializeRivalDetail(
+            httpContext,
+            rivalId,
+            rival.DisplayName,
+            resolvedCombo.CanonicalCombo,
+            "precomputed",
+            samples,
+            limit,
+            offset,
+            sortMode,
+            BuildRivalSongLookup(festivalService),
+            Array.Empty<object>(),
+            Array.Empty<object>());
+        return CacheHelper.ServeIfCached(
+            httpContext,
+            (jsonBytes, ResponseCacheService.ComputeETag(jsonBytes)));
+    }
+
+    private static IResult RivalDetailNotPrecomputed()
+        => Results.NotFound(new { error = "No precomputed song data for this rival.", reason = "not_precomputed" });
+
+    private static Dictionary<string, FortniteFestival.Core.Song> BuildRivalSongLookup(FestivalService festivalService)
+        => festivalService.Songs
+            .Where(s => s.track?.su is not null)
+            .ToDictionary(s => s.track.su, StringComparer.OrdinalIgnoreCase);
+
+    private static byte[] SerializeRivalDetail(
+        HttpContext httpContext,
+        string rivalId,
+        string? rivalName,
+        string combo,
+        string source,
+        List<RivalSongSampleRow> samples,
+        int limit,
+        int offset,
+        string sortMode,
+        Dictionary<string, FortniteFestival.Core.Song> songLookup,
+        IReadOnlyList<object> songsToCompete,
+        IReadOnlyList<object> yourExclusiveSongs)
+    {
+        IEnumerable<RivalSongSampleRow> sorted = sortMode switch
+        {
+            "they_lead" => samples.OrderBy(s => s.RankDelta),
+            "you_lead" => samples.OrderByDescending(s => s.RankDelta),
+            _ => samples.OrderBy(s => Math.Abs(s.RankDelta)),
+        };
+
+        // limit=0 means all
+        var page = limit == 0
+            ? sorted.Skip(offset).ToList()
+            : sorted.Skip(offset).Take(limit).ToList();
+
+        var payload = new
+        {
+            rival = new { accountId = rivalId, displayName = rivalName },
+            combo,
+            source,
+            totalSongs = samples.Count,
+            offset,
+            limit,
+            sort = sortMode,
+            songs = page.Select(s =>
+            {
+                songLookup.TryGetValue(s.SongId, out var song);
+                return new
+                {
+                    s.SongId,
+                    title = song?.track?.tt,
+                    artist = song?.track?.an,
+                    s.Instrument,
+                    s.UserInstrument,
+                    s.RivalInstrument,
+                    s.UserRank,
+                    s.RivalRank,
+                    s.RankDelta,
+                    s.UserScore,
+                    s.RivalScore,
+                };
+            }).ToList(),
+            songsToCompete,
+            yourExclusiveSongs,
+        };
+        var jsonOpts = httpContext.RequestServices
+            .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+            .Value.SerializerOptions;
+        return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
     }
 
     private static object MapRivalSummary(UserRivalRow r, Dictionary<string, string> names)
