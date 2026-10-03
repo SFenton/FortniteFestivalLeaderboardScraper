@@ -610,6 +610,19 @@ revalidates after the refresh and, when no stale or orphaned scope remains,
 lets Rivals, LeaderboardRivals, and PlayerStatsTiers match ready scopes against
 the active snapshot; it is cleared before snapshot activation. See
 [configuration](../reference/configuration.md#player-rivals).
+`Scraper:UseValidatedSoloProjectionForLegacyPrecompute` (default `false`)
+applies the same rule to `Cleanup.PrecomputeAll`: after publication cleanup's
+projection refresh succeeds and no stale or orphaned scope remains, precompute's
+current-state readers (leeway metadata, player profiles) match ready scopes
+against the active snapshot until precompute ends. The match is scoped to
+precompute's own async flow, so other worker operations keep published-scrape
+matching. Readiness compares only snapshot identities, so overlay rows and
+snapshot-state pointers are fingerprinted before and after; if a concurrent
+write (for example registration backfill) changed them, precompute reruns with
+the default matching. Without it, every scope
+whose active snapshot is not the published scrape re-resolves snapshot and
+overlay rows for the active snapshot, which is what the projection already
+holds; that resolution dominated precompute database time in scrape `1457`.
 
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
@@ -691,7 +704,8 @@ refresh normally runs every band type in one transaction (8.2 minutes on one
 backend in scrape `1457`, mostly member and team projection inserts);
 `Scraper:BandSearchProjectionParallelBandTypes` runs each band type in its own
 concurrent transaction with a shared cutoff that advances only after all of
-them commit.
+them commit; in scrape `1460` that took 7.6 minutes (7.9 in `1459`), because the
+inserts are bound by the same random reads either way.
 `current_projection_refresh` is the only subphase with an honest final
 denominator, but that denominator is not known when the subphase starts: the
 extraction-plus-prune impacted-scope set merged before the subphase begins is
@@ -791,7 +805,12 @@ other generations, so rows that are neither published nor the ready candidate
 can exist only for such scopes. Full rebuilds keep the whole-projection scan.
 Isolated PostgreSQL tests keep projection, scope-state, and global-state
 hashes and published/deleted counts identical to the single-transaction
-publish. Promotion needs a full-scrape A/B.
+publish. In scrape `1460` (production worker env `6`, with the one-pass stale
+sweep) the subphase rebuilt and published 8,708 scopes and 12.9 million rows in
+18.1 minutes, against 23.8 minutes for 3,667 scopes and 9.9 million rows in
+`1459`; 704 song transactions deleted 13.0 million old rows and the
+unsettled-scope cleanup probed no scopes. That run also republished the 3,409
+combo scopes whose candidates had never been published.
 
 Only scopes in a scrape's impacted set (band extraction plus prune) are
 considered for refresh, so scopes whose sources change through other paths
@@ -894,7 +913,12 @@ number of band types) flushes up to that many band types at once. Chunk
 transactions write `band_entries`, `band_member_stats`, and `band_members`
 rows keyed by band type, so band types never contend for the same rows;
 chunks within a band type stay ordered. Flush progress totals stay monotonic,
-and a failed chunk is retained for replay exactly as before.
+and a failed chunk is retained for replay exactly as before. With `3` in
+scrape `1460` the flush took 28.7 minutes versus 33.0 sequentially in `1459`:
+each band type ran about twice as slowly concurrently (Quad 14.8, Trios 25.2,
+Duets 28.7 minutes) because the chunk pre-filter and upserts are bound by
+random reads of `band_entries`, `band_member_stats`, and `band_members`, so the
+gain is about 13%.
 
 `BandExtraction` intentionally has no exact parent percentage because song
 extraction and membership-summary rebuild use unrelated units. Its subphase
@@ -978,7 +1002,8 @@ band type. Account-level rebuilds, which touch every band type for an
 account, take the lock exclusively. BandMaintenance prune therefore rebuilds
 the affected band types' membership summaries concurrently after its delete
 transaction; in scrape `1457` the three sequential rebuilds took about 10 of
-the prune subphase's 16.9 minutes.
+the prune subphase's 16.9 minutes. With concurrent rebuilds the subphase took
+10.9 minutes in scrape `1460` (15.5 in `1459`).
 
 One current-operation bridge preserves all version-1 JSON fields and adds
 contract version 2 identifiers, units, exact phase percent, conservative

@@ -332,6 +332,16 @@ public sealed class ScraperOptions
     public bool UseValidatedSoloProjectionForLegacyDerivedReaders { get; set; }
 
     /// <summary>
+    /// With legacy worker readers, once publication cleanup's solo projection
+    /// refresh leaves no stale or orphaned scopes, let precompute's current-state
+    /// readers match ready projection scopes against the active snapshot during
+    /// the public-read freeze instead of re-resolving snapshot and overlay rows.
+    /// Cleared when precompute ends. Default false. Set via
+    /// <c>Scraper__UseValidatedSoloProjectionForLegacyPrecompute</c>.
+    /// </summary>
+    public bool UseValidatedSoloProjectionForLegacyPrecompute { get; set; }
+
+    /// <summary>
     /// Maximum number of solo current projection scopes refreshed concurrently during cleanup.
     /// </summary>
     public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;

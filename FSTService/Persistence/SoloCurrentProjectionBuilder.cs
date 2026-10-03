@@ -586,6 +586,29 @@ public sealed class SoloCurrentProjectionBuilder
         return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
     }
 
+    /// <summary>
+    /// Fingerprint of the projection's mutable inputs that staleness checks do not
+    /// see: every overlay row and every snapshot-state pointer. Readiness compares
+    /// only snapshot identities, so an overlay write after a refresh leaves a scope
+    /// ready while its rows no longer equal the resolved current state.
+    /// </summary>
+    public async Task<string> GetSourceFingerprintAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT concat_ws('|',
+                (SELECT count(*) FROM leaderboard_entries_overlay),
+                (SELECT coalesce(sum(hashtextextended(concat_ws('|', song_id, instrument, account_id, score, accuracy,
+                        is_full_combo, stars, season, end_time, source, source_priority, last_updated_at), 0)), 0)
+                 FROM leaderboard_entries_overlay),
+                (SELECT count(*) FROM leaderboard_snapshot_state),
+                (SELECT coalesce(sum(hashtextextended(concat_ws('|', song_id, instrument, active_snapshot_id, is_finalized), 0)), 0)
+                 FROM leaderboard_snapshot_state))
+            """;
+        return Convert.ToString(await cmd.ExecuteScalarAsync(ct)) ?? string.Empty;
+    }
+
     public async Task<bool> HasOrphanedProjectionScopesAsync(CancellationToken ct = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
