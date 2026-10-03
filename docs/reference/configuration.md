@@ -435,6 +435,43 @@ neighbor radius, sample caps, persistence shape, or publication behavior.
 Direct single-user calls and max-score maintenance keep their separate
 on-demand and maintenance-lease paths.
 
+## Rankings concurrency
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `BandTeamRankings:WriteMode` | `ComboBatched` | Insert overall rows, then each combo's rows in its own statement (`Monolithic` inserts all rows in one statement) |
+| `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
+| `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
+| `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
+
+Per-instrument solo rankings always run at most two instruments at once to
+bound PostgreSQL memory. The production worker env sets
+`BandTeamRankings__MaxParallelBandTypes=2` and
+`BandTeamRankings__OverlapRankHistorySnapshotsWithBandRankings=true`. With the
+band rank-history schema ensured once per instance, scrape `1459` rebuilt the
+three band types in 16.0 minutes (39.0 in `1458`, when the schema lock
+serialized them), which left the sequential rank-history snapshots (about 35
+minutes) as the longest branch of ComputeRankings. Peak PostgreSQL anonymous
+memory during that overlap was about 2.9 GiB on top of 4.2 GiB of shared
+buffers in the 16 GiB container. Raising
+`Scraper__RankHistorySnapshotMaxDegreeOfParallelism` (template variable
+`RANK_HISTORY_SNAPSHOT_MAX_DOP`) runs that many snapshot writers at once and
+adds WAL and data-file pressure; it is part of the durable phase configuration
+identity, and `1` is the rollback. With `2` in scrape `1460` the snapshots took
+23.5 minutes (34.3 in `1459`), but the concurrent band team rankings slowed
+from 16.0 to 33.1 minutes, so ComputeRankings improved only from 51.7 to 49.6
+minutes; peak anonymous memory rose to about 3.9 GiB. In scrape `1461` the
+same setting left Band_Quad's combo inserts at about 8 seconds per combo
+(450 combos) after the snapshots had evicted cached pages, so production
+returned to `1` at the `1461` boundary.
+
+`ComboBatched` was adopted when disk headroom was tight (a single monolithic
+insert once failed with `No space left on device`). Its per-combo statements
+filter the materialized results temp table by `combo_id`; that table now gets
+a partial `(combo_id)` index for combo rows and is analyzed before the combo
+loop, so each statement reads only its combo instead of scanning every result
+row (millions for Band_Quad).
+
 ## Role differences
 
 `deploy/config/fstservice-role.env` enables published-source reads while

@@ -167,12 +167,17 @@ idle scrape boundaries through the guarded worker deploy: one immutable image
 for both API and worker, labelled with the exact bundle revision, built from a
 `deploy/loop-bundle*` branch that merges reviewed PRs onto `master`. Bundle
 content merges to `master` only after the next scrape on it passes leaderboard
-and band fetch. Since the scrape `1458` boundary (2026-10-02) production runs
-`deploy/loop-bundle2-20261002` (`bf4c4765`: #133–#136, now merged, plus
-#138–#141). The worker env additionally sets
-`Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=true` and adds US
-East as an eighth egress-refresh region (see
-[VPN/proxy pool](vpn-proxy-pool.md)). Check the running image's
+and band fetch. Since the scrape `1460` boundary (2026-10-03) production runs
+`deploy/loop-bundle4-20261002` (`1dabb29c`: everything merged through #154
+plus #155). The worker env additionally sets
+`Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=true`,
+`Scraper__UseValidatedSoloProjectionForLegacyPrecompute=true`,
+`Scraper__BandCurrentProjectionPublishParallelism=6`,
+`Scraper__BandSearchProjectionParallelBandTypes=true`,
+`Scraper__BandSpoolFlushMaxParallelBandTypes=3`, and
+`Scraper__RankHistorySnapshotMaxDegreeOfParallelism=2`, and adds US East as an
+eighth egress-refresh region (see [VPN/proxy pool](vpn-proxy-pool.md)). These
+remain production canaries, not accepted defaults. Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
 a newer master build can lack bundle changes that are not merged yet.
 
