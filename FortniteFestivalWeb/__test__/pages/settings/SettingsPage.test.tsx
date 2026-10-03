@@ -22,6 +22,7 @@ vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
 import { Colors, Opacity } from '@festival/theme';
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
+import { APP_VERSION_LABEL } from '../../../src/hooks/data/useVersions';
 
 const defaultServiceInfo = {
   lastCompletedUpdate: {
@@ -1044,6 +1045,7 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Festival Score Tracker Version')).toBeDefined();
     expect(screen.getByText('App Version')).toBeDefined();
     expect(screen.getByText('Service Version')).toBeDefined();
+    expect(screen.getByTestId('settings-app-version').textContent).toBe(APP_VERSION_LABEL);
   });
 
   it('renders ToggleRow-style service state and publication rows', async () => {

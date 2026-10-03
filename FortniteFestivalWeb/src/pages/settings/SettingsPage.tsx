@@ -49,7 +49,7 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import FeedbackModal from './feedback/FeedbackModal';
 
-import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
+import { APP_VERSION_LABEL, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 import './settingsEnglish';
 import '../../components/firstRun/firstRunEnglish';
 
@@ -759,7 +759,7 @@ export default function SettingsPage() {
               <Card>
                 <div style={st.versionRow}>
                   <span>{t('settings.appVersion')}</span>
-                  <span style={st.versionValue}>{APP_VERSION}</span>
+                  <span style={st.versionValue} data-testid="settings-app-version">{APP_VERSION_LABEL}</span>
                 </div>
                 <div style={st.versionRow}>
                   <span>{t('settings.serviceVersion')}</span>

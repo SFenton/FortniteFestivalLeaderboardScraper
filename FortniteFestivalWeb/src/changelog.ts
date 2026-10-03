@@ -11,12 +11,6 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
-        title: 'APP',
-        items: [
-          'Added in-app bug reports and feature requests from Settings when feedback is enabled.',
-        ],
-      },
-      {
         title: 'SONGS',
         items: [
           'Added Year, Duration, Item Shop, and Double Bass filters.',
@@ -31,6 +25,13 @@ export const changelog: ChangelogEntry[] = [
           'Maximum scores now update automatically when song charts change.',
           'Fixed chart generation for The Other Promise.',
           'Corrected Pro Drums maximum scores for I Wanna Get Better and Gangnam Style.',
+        ],
+      },
+      {
+        title: 'SETTINGS',
+        items: [
+          'App Version now increases automatically with every release and shows the build it came from.',
+          'Report an Issue or Request a Feature, with media attachments, right from App Settings when feedback is enabled.',
         ],
       },
     ],

@@ -1488,10 +1488,15 @@ markers, at most one pointer geometry read, no list-growth long task above
 ## Merge and release gates
 
 `master` is PR-only with no push bypass. The legacy `version-bump` job name is
-retained as a stable required-check context, but the job now only detects
-affected images and exposes the workflow SHA. Version changes, generated
-license metadata, and the embedded web bundle must be included in the pull
-request; the workflow never writes back to `master`.
+retained as a stable required-check context. The job detects affected
+images, exposes the workflow SHA, and exposes the first-parent `master` commit
+count as `app_build_number`. The web image build stamps that count and the SHA
+into the app version; see the
+[web app version contract](../components/web-app.md#app-version). Generated
+license metadata and the embedded web bundle must be included in the pull
+request. The workflow never writes back to `master`, and
+`tools/validate-publish-image-workflow.mjs` rejects removing the build-number
+step or the web image build args.
 
 Every pull request targeting `master` and every update to `master` runs the
 same validation workflow without path filtering:
