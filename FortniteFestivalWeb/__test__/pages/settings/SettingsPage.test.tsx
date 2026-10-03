@@ -355,13 +355,14 @@ describe('SettingsPage', () => {
   });
 
   it('shows feedback settings only when the feedback feature flag is enabled', () => {
-    renderSettings();
-    expect(screen.queryByRole('button', { name: /Report an Issue/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Request a Feature/i })).toBeNull();
+    const disabled = renderSettings();
+    expect(screen.queryByTestId('settings-report-issue')).toBeNull();
+    expect(screen.queryByTestId('settings-request-feature')).toBeNull();
+    disabled.unmount();
 
     renderSettings({ feedbackEnabled: true });
-    expect(screen.getByRole('button', { name: /Report an Issue/i })).toBeDefined();
-    expect(screen.getByRole('button', { name: /Request a Feature/i })).toBeDefined();
+    expect(screen.getByTestId('settings-report-issue')).toHaveTextContent(/Report an Issue/i);
+    expect(screen.getByTestId('settings-request-feature')).toHaveTextContent(/Request a Feature/i);
   });
 
   it('opens feedback modals with the expected prefilled fields', async () => {
