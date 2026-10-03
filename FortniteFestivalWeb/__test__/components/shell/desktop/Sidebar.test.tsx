@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 let mockAppManual = false;
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ appManual: mockAppManual }),
+  useFeatureFlags: () => ({ appManual: mockAppManual, feedback: false }),
 }));
 
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';

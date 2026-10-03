@@ -31,6 +31,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'SETTINGS',
         items: [
           'App Version now increases automatically with every release and shows the build it came from.',
+          'Report an Issue or Request a Feature, with media attachments, right from App Settings when feedback is enabled.',
         ],
       },
     ],

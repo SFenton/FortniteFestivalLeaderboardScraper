@@ -8,7 +8,7 @@ vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
   useScrollContainer: () => mockScrollRef,
 }));
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ appManual: mockAppManual }),
+  useFeatureFlags: () => ({ appManual: mockAppManual, feedback: false }),
 }));
 
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';

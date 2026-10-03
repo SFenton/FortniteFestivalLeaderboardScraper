@@ -16,7 +16,7 @@ test('direct Manual URL migrates to the hash route and renders the Manual', asyn
 });
 
 test('disabled Manual redirects to Songs', async ({ page }) => {
-  await page.route('**/api/features', route => json(route, { appManual: false }));
+  await page.route('**/api/features', route => json(route, { appManual: false, feedback: false }));
 
   await page.goto('/#/manual', { waitUntil: 'load' });
 
@@ -183,7 +183,7 @@ async function installApiMocks(page: Page) {
         workerStatus: { status: 'offline', rawStatus: 'offline' },
       });
     }
-    if (path === '/api/features') return json(route, { appManual: true });
+    if (path === '/api/features') return json(route, { appManual: true, feedback: false });
     if (path === '/api/songs') {
       return json(route, {
         count: 1,

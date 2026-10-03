@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-10-01
-last_verified_commit: 598965ef
+last_verified: 2026-10-02
+last_verified_commit: afaaa6be
 sources:
   - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
@@ -53,6 +53,7 @@ sources:
   - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/feedback/FeedbackModal.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
@@ -87,6 +88,7 @@ sources:
   - FortniteFestivalWeb/src/components/page/RouteBoundary.tsx
   - FortniteFestivalWeb/src/components/page/RouteGuards.tsx
   - FortniteFestivalWeb/src/contexts/
+  - FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
@@ -192,8 +194,9 @@ the eager Songs page, the standard recoverable error UI. `RequirePlayer` and
 `RequireSelection` own access redirects with replace semantics, and the
 wildcard route uses the same replacement redirect for unsupported URLs so they
 land on `/songs`. Route and tab ownership normalize trailing slashes, and
-Licenses remains owned by the Settings tab. The manual is the only feature
-currently exposed through `/api/features`.
+Licenses remains owned by the Settings tab. App Manual and in-app feedback are
+the web features exposed through `/api/features`; feedback controls are hidden
+unless the public `feedback` flag is true.
 
 ## State ownership
 
@@ -403,6 +406,12 @@ domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
+The web feedback client exposes `submitFeedback` and `getFeedbackStatus`.
+`submitFeedback` sends multipart `POST /api/feedback` requests through
+`XMLHttpRequest` so upload progress is available to the UI, while status
+polling remains a normal React/API-client JSON read against
+`GET /api/feedback/{id}`.
+
 ### Song filters
 
 The Songs sort modal offers Has FC only when a player or band profile is
@@ -527,6 +536,18 @@ rival/sync status are not rendered. Settings therefore does not add a
 selected-profile sync polling loop; profile-name refresh and export controls
 keep their existing selected-profile ownership.
 
+When `/api/features` returns `feedback: true`, App Settings also shows
+`Report an Issue` and `Request a Feature`. Each entry opens an accessible modal
+that keeps the `[Bug] ` or `[Feature] ` title prefix editable, collects the
+required description, and lets users attach up to four image/video files with a
+90 MiB total request budget. Attachments render as local object-URL thumbnails
+above the Attach Media button, open in a new browser tab, and revoke object
+URLs on removal or unmount. Closing a dirty form uses the shared confirm alert;
+successful submissions can close without confirmation. The modal submits
+multipart data with upload progress, then polls feedback status until an issue
+number is available, failure is reported, or the five-minute client timeout is
+reached.
+
 English shell/common/Songs resources remain eager in the i18next `translation`
 namespace. App Manual, Settings, and First Run resources use named namespaces
 registered synchronously by their lazy page/carousel owners. The Settings
@@ -618,7 +639,10 @@ that exact Node patch. The preferred production image builds the SPA with Node
 and serves static files through Nginx. Nginx re-resolves the `fstservice`
 container name, proxies
 `/api`, `/healthz`, and `/readyz`, supports WebSockets, applies immutable asset
-caching, and falls back to `index.html` for client routes.
+caching, and falls back to `index.html` for client routes. A dedicated
+`^~ /api/feedback` location precedes the general API proxy so feedback uploads
+can stream without request buffering and can use a 92 MiB Nginx body limit plus
+300-second proxy send/read timeouts.
 
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
