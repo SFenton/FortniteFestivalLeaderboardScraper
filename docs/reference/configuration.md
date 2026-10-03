@@ -439,6 +439,7 @@ on-demand and maintenance-lease paths.
 
 | Key | Default | Purpose |
 |---|---:|---|
+| `BandTeamRankings:WriteMode` | `ComboBatched` | Insert overall rows, then each combo's rows in its own statement (`Monolithic` inserts all rows in one statement) |
 | `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
 | `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
 | `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
@@ -459,7 +460,17 @@ adds WAL and data-file pressure; it is part of the durable phase configuration
 identity, and `1` is the rollback. With `2` in scrape `1460` the snapshots took
 23.5 minutes (34.3 in `1459`), but the concurrent band team rankings slowed
 from 16.0 to 33.1 minutes, so ComputeRankings improved only from 51.7 to 49.6
-minutes; peak anonymous memory rose to about 3.9 GiB.
+minutes; peak anonymous memory rose to about 3.9 GiB. In scrape `1461` the
+same setting left Band_Quad's combo inserts at about 8 seconds per combo
+(450 combos) after the snapshots had evicted cached pages, so production
+returned to `1` at the `1461` boundary.
+
+`ComboBatched` was adopted when disk headroom was tight (a single monolithic
+insert once failed with `No space left on device`). Its per-combo statements
+filter the materialized results temp table by `combo_id`; that table now gets
+a partial `(combo_id)` index for combo rows and is analyzed before the combo
+loop, so each statement reads only its combo instead of scanning every result
+row (millions for Band_Quad).
 
 ## Role differences
 

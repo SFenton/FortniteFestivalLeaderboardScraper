@@ -8509,6 +8509,18 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (comboIds.Count == 0)
             return insertedRows;
 
+        // Each combo statement below would otherwise scan the whole results temp
+        // table (millions of rows for Band_Quad's 450 combos); under page-cache
+        // pressure those repeated scans dominated the rebuild.
+        using (var indexCmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(indexCmd, tx, options);
+            indexCmd.CommandText = @"
+                CREATE INDEX ON _band_rank_results (combo_id) WHERE ranking_scope = 'combo';
+                ANALYZE _band_rank_results;";
+            indexCmd.ExecuteNonQuery();
+        }
+
         using var insertCmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(insertCmd, tx, options);
         insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
