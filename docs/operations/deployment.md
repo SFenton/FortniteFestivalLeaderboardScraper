@@ -191,8 +191,9 @@ songs response matched before/after recovery. All candidate staging and
 artifacts were retained, so this fact grants no cleanup or deletion authority.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
-requires all 30 canonical service definitions, permits an effective count up to
-30, validates aligned arrays and worker dependencies, rejects static effective
+requires every canonical service definition (`pia-gluetun-1` through the
+canonical count, which may be 30 to 60), permits an effective count up to the
+canonical count, validates aligned arrays and worker dependencies, rejects static effective
 PIA endpoint-IP pins, and provides the bounded production startup handoff.
 Canonical effective-service membership and static-pin rejection intentionally
 apply to every guard action, including checks and existing recreate flows. The
