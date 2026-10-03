@@ -2040,6 +2040,190 @@ public class PostScrapeOrchestratorTests : IDisposable
             Assert.Equal(-1, validatedIndex);
     }
 
+    [Theory]
+    [InlineData(true, true, false, true)]
+    [InlineData(false, true, false, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, true, false)]
+    public async Task Precompute_UsesValidatedLegacyProjectionOnlyWhenEnabledRefreshedAndFresh(
+        bool enabled,
+        bool refreshedForPublication,
+        bool makeStale,
+        bool expectedDuringPrecompute)
+    {
+        const string songId = "song_precompute_validated";
+        const string instrument = "Solo_Guitar";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, "acct_precompute_validated", 120_000);
+        await builder.RefreshScopesAsync(
+            [new SoloCurrentProjectionScopeKey(songId, instrument)],
+            new SoloCurrentProjectionRebuildOptions());
+        Assert.Empty(await builder.LoadStaleScopesAsync());
+        if (makeStale)
+        {
+            InsertSnapshotState(songId, instrument, 43);
+            InsertSnapshotEntry(43, songId, instrument, "acct_precompute_validated", 125_000);
+        }
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions
+            {
+                UseValidatedSoloProjectionForLegacyPrecompute = enabled,
+            },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var ctx = CreateContext();
+        ctx.SoloCurrentProjectionRefreshedForPublication = refreshedForPublication;
+        bool? duringPrecompute = null;
+
+        await sut.RunWithValidatedLegacyProjectionForPrecomputeAsync(
+            ctx,
+            () =>
+            {
+                duringPrecompute = InstrumentDatabase.IsValidatedProjectionReadScopeActive;
+                Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal(expectedDuringPrecompute, duringPrecompute);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
+        Assert.False(legacyPersistence.UseValidatedCurrentProjectionForLegacyWorkerReaders);
+    }
+
+    [Fact]
+    public async Task Precompute_RerunsWithPublishedMatchingWhenOverlayChangesDuringPrecompute()
+    {
+        const string songId = "song_precompute_overlay_change";
+        const string instrument = "Solo_Guitar";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, "acct_precompute_overlay_a", 120_000);
+        await builder.RefreshScopesAsync(
+            [new SoloCurrentProjectionScopeKey(songId, instrument)],
+            new SoloCurrentProjectionRebuildOptions());
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions { UseValidatedSoloProjectionForLegacyPrecompute = true },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var ctx = CreateContext();
+        ctx.SoloCurrentProjectionRefreshedForPublication = true;
+        var observed = new List<bool>();
+
+        await sut.RunWithValidatedLegacyProjectionForPrecomputeAsync(
+            ctx,
+            () =>
+            {
+                observed.Add(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
+                if (observed.Count == 1)
+                {
+                    using var conn = _metaFixture.DataSource.OpenConnection();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = """
+                        INSERT INTO leaderboard_entries_overlay
+                        (song_id, instrument, account_id, score, source, first_seen_at, last_updated_at, source_priority)
+                        VALUES (@songId, @instrument, 'acct_precompute_overlay_b', 130000, 'backfill', now(), now(), 1)
+                        """;
+                    cmd.Parameters.AddWithValue("songId", songId);
+                    cmd.Parameters.AddWithValue("instrument", instrument);
+                    cmd.ExecuteNonQuery();
+                }
+
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal(new[] { true, false }, observed);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
+    }
+
+    [Fact]
+    public async Task Precompute_ClearsValidatedLegacyProjectionWhenPrecomputeFails()
+    {
+        const string songId = "song_precompute_validated_fail";
+        const string instrument = "Solo_Guitar";
+
+        using var legacyMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var legacyPersistence = new GlobalLeaderboardPersistence(
+            legacyMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
+        legacyPersistence.Initialize();
+        var builder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions()));
+        await builder.EnsureSchemaAsync();
+        InsertSnapshotState(songId, instrument, 42);
+        InsertSnapshotEntry(42, songId, instrument, "acct_precompute_validated_fail", 120_000);
+        await builder.RefreshScopesAsync(
+            [new SoloCurrentProjectionScopeKey(songId, instrument)],
+            new SoloCurrentProjectionRebuildOptions());
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            options: new ScraperOptions { UseValidatedSoloProjectionForLegacyPrecompute = true },
+            persistence: legacyPersistence,
+            soloCurrentProjectionBuilder: builder);
+        var ctx = CreateContext();
+        ctx.SoloCurrentProjectionRefreshedForPublication = true;
+        var observed = false;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.RunWithValidatedLegacyProjectionForPrecomputeAsync(
+            ctx,
+            () =>
+            {
+                observed = InstrumentDatabase.IsValidatedProjectionReadScopeActive;
+                throw new InvalidOperationException("precompute failed");
+            },
+            CancellationToken.None));
+
+        Assert.True(observed);
+        Assert.False(InstrumentDatabase.IsValidatedProjectionReadScopeActive);
+    }
+
     [Fact]
     public void BandExtraction_DoesNotActivateSoloSnapshots()
     {
