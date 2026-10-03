@@ -7542,6 +7542,150 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(2, json.GetProperty("songs").GetArrayLength());
     }
 
+    private async Task WithPublishedRivalsAllWhileFrozen(string accountId, Func<Task> assertions)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            songs = new[] { "pub_song_a", "pub_song_b", "pub_song_c" },
+            combos = new object[]
+            {
+                new
+                {
+                    combo = "03",
+                    above = new object[]
+                    {
+                        new
+                        {
+                            accountId = "Pub_Rival",
+                            displayName = "Published Rival",
+                            direction = "above",
+                            sharedSongCount = 3,
+                            aheadCount = 1,
+                            behindCount = 2,
+                            rivalScore = 12.5,
+                            samples = new object[]
+                            {
+                                new { s = 0, i = "Solo_Guitar", ur = 10, rr = 8, us = 9000, rs = 9100 },
+                                new { s = 1, i = "Solo_Guitar", ur = 50, rr = 100, us = 8000, rs = 7000 },
+                                new { s = 2, i = "Solo_Bass", ur = 20, rr = 25, us = 5000, rs = 4900 },
+                                new { s = 2, i = "Solo_Drums", ur = 30, rr = 31, us = (int?)null, rs = (int?)null },
+                            },
+                        },
+                    },
+                    below = Array.Empty<object>(),
+                },
+            },
+        });
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var gate = _factory.Services.GetRequiredService<PublicReadGateService>();
+        metaDb.BulkSetCachedResponses(
+        [
+            ($"rivals-all:{accountId}", payload, ResponseCacheService.ComputeETag(payload)),
+        ]);
+        metaDb.SetPublicReadFreeze(true, reason: "scrape");
+        gate.Invalidate();
+
+        try
+        {
+            await assertions();
+        }
+        finally
+        {
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_WhileFrozen_ServesPublishedRivalsAllSamples()
+    {
+        const string accountId = "frozen_detail_acct";
+        await WithPublishedRivalsAllWhileFrozen(accountId, async () =>
+        {
+            // Native clients send sort/limit/offset; web sends limit=0&sort=closest.
+            var response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/03/pub_rival?sort=closest&limit=0&offset=0");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("precomputed", json.GetProperty("source").GetString());
+            Assert.Equal("03", json.GetProperty("combo").GetString());
+            Assert.Equal("pub_rival", json.GetProperty("rival").GetProperty("accountId").GetString());
+            Assert.Equal("Published Rival", json.GetProperty("rival").GetProperty("displayName").GetString());
+            Assert.Equal(3, json.GetProperty("totalSongs").GetInt32());
+            var songs = json.GetProperty("songs");
+            Assert.Equal(3, songs.GetArrayLength());
+            Assert.Equal("pub_song_a", songs[0].GetProperty("songId").GetString());
+            Assert.Equal(-2, songs[0].GetProperty("rankDelta").GetInt32());
+            Assert.Equal(9000, songs[0].GetProperty("userScore").GetInt32());
+            Assert.Equal(9100, songs[0].GetProperty("rivalScore").GetInt32());
+            Assert.Equal("Solo_Bass", songs[1].GetProperty("instrument").GetString());
+            Assert.Equal(5, songs[1].GetProperty("rankDelta").GetInt32());
+            Assert.Equal(50, songs[2].GetProperty("rankDelta").GetInt32());
+            Assert.Empty(json.GetProperty("songsToCompete").EnumerateArray());
+            Assert.Empty(json.GetProperty("yourExclusiveSongs").EnumerateArray());
+            Assert.NotNull(response.Headers.ETag);
+
+            response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/Solo_Guitar/pub_rival?sort=you_lead&limit=1");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
+            songs = json.GetProperty("songs");
+            Assert.Single(songs.EnumerateArray());
+            Assert.Equal("pub_song_b", songs[0].GetProperty("songId").GetString());
+
+            response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/Solo_Drums/pub_rival?limit=0");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(1, json.GetProperty("songs")[0].GetProperty("rankDelta").GetInt32());
+            var drumsSong = json.GetProperty("songs")[0];
+            Assert.True(!drumsSong.TryGetProperty("userScore", out var userScore)
+                || userScore.ValueKind == JsonValueKind.Null);
+        });
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_WhileFrozen_PublishedRivalWithoutComboSamples_ReturnsNotPrecomputed()
+    {
+        const string accountId = "frozen_detail_empty";
+        await WithPublishedRivalsAllWhileFrozen(accountId, async () =>
+        {
+            var response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/Solo_Vocals/pub_rival?limit=0");
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("not_precomputed", json.GetProperty("reason").GetString());
+
+            // Live fallback cannot run while frozen, so the fail-closed 503 remains.
+            response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/Solo_Vocals/pub_rival?limit=0&allowLiveFallback=true");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_WhileFrozen_UnpublishedRivalOrGaps_StaysUnavailable()
+    {
+        const string accountId = "frozen_detail_miss";
+        await WithPublishedRivalsAllWhileFrozen(accountId, async () =>
+        {
+            var response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/01/unknown_rival?limit=0");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+
+            response = await _client.GetAsync(
+                $"/api/player/{accountId}/rivals/01/pub_rival?limit=0&includeGaps=true");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+
+            response = await _client.GetAsync(
+                "/api/player/frozen_detail_no_payload/rivals/01/pub_rival?limit=0");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        });
+    }
+
     [Fact]
     public async Task Rivals_GetComboDetail_WithoutStoredSamples_LiveComputesSharedSongs()
     {
