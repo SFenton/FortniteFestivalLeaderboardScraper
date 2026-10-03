@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within, configure } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api';
@@ -17,6 +17,10 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('../../../../src/api/client', () => ({
   api: apiMock,
 }));
+
+// Role queries over the full filter modal DOM are slow under v8 coverage instrumentation.
+vi.setConfig({ testTimeout: 15_000 });
+configure({ asyncUtilTimeout: 5_000 });
 
 /* ── Helpers ── */
 
