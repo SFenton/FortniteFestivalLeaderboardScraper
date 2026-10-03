@@ -326,12 +326,17 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 30 canonical services, 24 effective aligned endpoints as of 2026-09-26 |
+| Standard PIA overlay | 30 canonical services and 30 effective aligned endpoints as of 2026-10-03 (24 effective on 2026-09-26) |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
-The PIA guard requires the overlay filename `docker-compose.pia-30.yml`,
-canonical count 30, effective count no greater than 30, exact service names,
-aligned arrays, PIA provider labels, and matching worker dependencies. The
+The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
+historical name), a canonical count `Scraper:CanonicalProxyServiceCount`
+between 30 and 60 with exactly `pia-gluetun-1` through `pia-gluetun-N`
+defined, an effective count no greater than the canonical count, exact service
+names, aligned arrays, PIA provider labels, and matching worker dependencies.
+Canonical services beyond the effective arrays are spares the worker does not
+use; define and qualify new exits that way before adding them to the arrays.
+The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
 
