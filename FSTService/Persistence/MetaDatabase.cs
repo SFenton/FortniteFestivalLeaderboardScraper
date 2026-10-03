@@ -63,6 +63,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         _catalogPublicationLagCache;
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
+    private int _bandRankHistoryTablesEnsured;
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
     internal Func<Exception?>?
@@ -7541,7 +7542,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         try
         {
             currentStage = "ensure_vnext_schema";
-            EnsureBandRankHistoryTables(conn, tx);
+            EnsureBandRankHistoryTablesOnce();
             lastCompletedStage = "ensure_vnext_schema";
 
             if (resolvedOptions.DisableSynchronousCommit)
@@ -8507,6 +8508,18 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
         if (comboIds.Count == 0)
             return insertedRows;
+
+        // Each combo statement below would otherwise scan the whole results temp
+        // table (millions of rows for Band_Quad's 450 combos); under page-cache
+        // pressure those repeated scans dominated the rebuild.
+        using (var indexCmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(indexCmd, tx, options);
+            indexCmd.CommandText = @"
+                CREATE INDEX ON _band_rank_results (combo_id) WHERE ranking_scope = 'combo';
+                ANALYZE _band_rank_results;";
+            indexCmd.ExecuteNonQuery();
+        }
 
         using var insertCmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(insertCmd, tx, options);
@@ -16214,6 +16227,24 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("comboId", comboId);
         var result = cmd.ExecuteScalar();
         return result is DBNull or null ? 0 : Convert.ToInt32(result);
+    }
+
+    /// <summary>
+    /// Ensures the band rank-history schema in its own short transaction, once per
+    /// instance. The schema DDL takes a transaction-scoped advisory lock and table
+    /// locks; inside a band-ranking rebuild those were held for the whole rebuild,
+    /// which serialized the per-band-type rebuilds.
+    /// </summary>
+    private void EnsureBandRankHistoryTablesOnce()
+    {
+        if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        EnsureBandRankHistoryTables(conn, tx);
+        tx.Commit();
+        Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
     }
 
     private static void EnsureBandRankHistoryTables(NpgsqlConnection conn, NpgsqlTransaction tx)

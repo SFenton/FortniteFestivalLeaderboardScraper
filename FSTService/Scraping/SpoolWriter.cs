@@ -206,11 +206,16 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     /// <param name="onInstrumentFlush">Optional callback invoked before each instrument flush with (instrument, completedSoFar, totalInstruments).</param>
     /// <param name="onProgress">Optional callback invoked at instrument/chunk boundaries and every heartbeat interval while a chunk is being flushed.</param>
     /// <param name="heartbeatInterval">How often to invoke <paramref name="onProgress"/> while a chunk flush is in-flight. Defaults to one second.</param>
+    /// <param name="maxParallelInstruments">How many instruments flush at once. 1 (default) flushes them in order;
+    /// larger values flush different instruments concurrently, which is safe only when the flush delegate writes
+    /// rows keyed by instrument so instruments never contend for the same rows. Chunks within one instrument
+    /// always flush in order.</param>
     public WriterDrainResult FlushAll(
         int maxBatchPages = 0,
         Action<string, int, int>? onInstrumentFlush = null,
         Action<FlushProgress>? onProgress = null,
-        TimeSpan? heartbeatInterval = null)
+        TimeSpan? heartbeatInterval = null,
+        int maxParallelInstruments = 1)
     {
         if (!_completed)
             throw new InvalidOperationException("Call Complete() before FlushAll().");
@@ -218,23 +223,67 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
         var heartbeatEvery = heartbeatInterval ?? TimeSpan.FromSeconds(1);
         long flushedPages = 0;
         long flushedEntries = 0;
+        int instrumentsCompleted = 0;
         var totalPages = RecordCount;
         var totalEntries = EntryCount;
+        var progressLock = new object();
+        var failureLock = new object();
 
         lock (_spoolsLock)
         {
-            int instrumentIndex = 0;
-            int instrumentCount = _spools.Count;
+            var instrumentCount = _spools.Count;
+            var work = _spools
+                .Select(static (kvp, index) => (Instrument: kvp.Key, Spool: kvp.Value, Index: index))
+                .ToArray();
 
-            foreach (var (instrument, spool) in _spools)
+            if (maxParallelInstruments <= 1 || work.Length <= 1)
             {
+                foreach (var (instrument, spool, index) in work)
+                    FlushInstrument(instrument, spool, index);
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Spool [{Label}] flushing {Instruments} instruments with up to {Parallelism} at once.",
+                    _label,
+                    work.Count(static item => item.Spool.FlushedPosition > 0),
+                    maxParallelInstruments);
+                try
+                {
+                    Parallel.ForEach(
+                        work,
+                        new ParallelOptions { MaxDegreeOfParallelism = maxParallelInstruments },
+                        item => FlushInstrument(item.Instrument, item.Spool, item.Index));
+                }
+                catch (AggregateException aggregate)
+                {
+                    // Surface the same exception type the sequential loop would:
+                    // cancellation when every failure is cancellation, otherwise
+                    // the first fault.
+                    var inner = aggregate.Flatten().InnerExceptions;
+                    var surfaced = inner.All(static ex => ex is OperationCanceledException)
+                        ? inner[0]
+                        : inner.First(static ex => ex is not OperationCanceledException);
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(surfaced).Throw();
+                    throw;
+                }
+            }
+
+            void FlushInstrument(string instrument, InstrumentSpool spool, int sequentialIndex)
+            {
+                // Sequential flushes report their position in the instrument order;
+                // concurrent flushes report how many instruments have finished.
+                int ProgressIndex() => maxParallelInstruments <= 1
+                    ? sequentialIndex
+                    : Volatile.Read(ref instrumentsCompleted);
+
                 if (spool.FlushedPosition == 0)
                 {
-                    instrumentIndex++;
-                    continue;
+                    Interlocked.Increment(ref instrumentsCompleted);
+                    return;
                 }
 
-                onInstrumentFlush?.Invoke(instrument, instrumentIndex, instrumentCount);
+                onInstrumentFlush?.Invoke(instrument, ProgressIndex(), instrumentCount);
 
                 _log.LogInformation("Spool [{Label}] flushing {Instrument}: {Size:N0} bytes...",
                     _label, instrument, spool.FlushedPosition);
@@ -247,15 +296,9 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                 long instrumentPagesFlushed = 0;
                 long instrumentEntriesFlushed = 0;
 
-                EmitFlushProgress(
-                    onProgress,
+                Emit(
                     instrument,
-                    instrumentIndex,
-                    instrumentCount,
-                    flushedPages,
-                    totalPages,
-                    flushedEntries,
-                    totalEntries,
+                    ProgressIndex(),
                     instrumentPagesFlushed,
                     instrumentTotalPages,
                     instrumentEntriesFlushed,
@@ -311,15 +354,12 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                     _label, instrument, instrumentPages, instrumentEntries,
                     chunkIndex > 0 ? $" in {chunkIndex} chunks" : "");
 
-                EmitFlushProgress(
-                    onProgress,
+                var completedIndex = maxParallelInstruments <= 1
+                    ? sequentialIndex + 1
+                    : Interlocked.Increment(ref instrumentsCompleted);
+                Emit(
                     instrument,
-                    instrumentIndex + 1,
-                    instrumentCount,
-                    flushedPages,
-                    totalPages,
-                    flushedEntries,
-                    totalEntries,
+                    completedIndex,
                     instrumentPagesFlushed,
                     instrumentTotalPages,
                     instrumentEntriesFlushed,
@@ -330,8 +370,6 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                     chunkEntries: 0,
                     state: "instrument_completed",
                     activeChunkElapsed: TimeSpan.Zero);
-
-                instrumentIndex++;
 
                 void FlushChunk(
                     string currentInstrument,
@@ -362,10 +400,10 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                             onProgress is not null);
                         chunkStopwatch.Stop();
 
-                        flushedPages += chunkPages;
-                        flushedEntries += chunkEntries;
-                        instrumentPagesFlushed += chunkPages;
-                        instrumentEntriesFlushed += chunkEntries;
+                        Interlocked.Add(ref flushedPages, chunkPages);
+                        Interlocked.Add(ref flushedEntries, chunkEntries);
+                        Interlocked.Add(ref instrumentPagesFlushed, chunkPages);
+                        Interlocked.Add(ref instrumentEntriesFlushed, chunkEntries);
                         ReportChunkProgress("completed", chunkStopwatch.Elapsed);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
@@ -388,13 +426,17 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                             ex.Message,
                             _spoolDir,
                             DateTime.UtcNow);
-                        _failures.Add(failure);
-                        _failedBatches.Add((
-                            currentInstrument,
-                            currentBatch
-                                .Select(static item => (item.SongId, item.Entries))
-                                .ToList()));
-                        WriteFailureManifest();
+                        lock (failureLock)
+                        {
+                            _failures.Add(failure);
+                            _failedBatches.Add((
+                                currentInstrument,
+                                currentBatch
+                                    .Select(static item => (item.SongId, item.Entries))
+                                    .ToList()));
+                            WriteFailureManifest();
+                        }
+
                         ReportChunkProgress("failed", chunkStopwatch.Elapsed);
                         _log.LogError(
                             ex,
@@ -410,18 +452,12 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
                     void ReportChunkProgress(string state, TimeSpan elapsed)
                     {
-                        EmitFlushProgress(
-                            onProgress,
+                        Emit(
                             currentInstrument,
-                            instrumentIndex,
-                            instrumentCount,
-                            flushedPages,
-                            totalPages,
-                            flushedEntries,
-                            totalEntries,
-                            instrumentPagesFlushed,
+                            ProgressIndex(),
+                            Interlocked.Read(ref instrumentPagesFlushed),
                             instrumentTotalPages,
-                            instrumentEntriesFlushed,
+                            Interlocked.Read(ref instrumentEntriesFlushed),
                             instrumentTotalEntries,
                             currentChunkIndex,
                             currentChunkTotal,
@@ -430,6 +466,46 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                             state,
                             elapsed);
                     }
+                }
+            }
+
+            void Emit(
+                string instrument,
+                int instrumentsDone,
+                long instrumentPagesFlushed,
+                long instrumentPagesTotal,
+                long instrumentEntriesFlushed,
+                long instrumentEntriesTotal,
+                int chunkIndex,
+                int chunkTotal,
+                int chunkPages,
+                long chunkEntries,
+                string state,
+                TimeSpan activeChunkElapsed)
+            {
+                // Serialized so concurrent instruments and heartbeats publish
+                // monotonic totals read at emission time.
+                lock (progressLock)
+                {
+                    EmitFlushProgress(
+                        onProgress,
+                        instrument,
+                        instrumentsDone,
+                        instrumentCount,
+                        Interlocked.Read(ref flushedPages),
+                        totalPages,
+                        Interlocked.Read(ref flushedEntries),
+                        totalEntries,
+                        instrumentPagesFlushed,
+                        instrumentPagesTotal,
+                        instrumentEntriesFlushed,
+                        instrumentEntriesTotal,
+                        chunkIndex,
+                        chunkTotal,
+                        chunkPages,
+                        chunkEntries,
+                        state,
+                        activeChunkElapsed);
                 }
             }
         }

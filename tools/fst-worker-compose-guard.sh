@@ -41,7 +41,8 @@ Usage: tools/fst-worker-compose-guard.sh [options]
 
 Validates the canonical production PIA overlay before any fstworker recreate.
 The resolved compose config must declare the expected effective proxy arrays,
-all 30 canonical PIA services, aligned provider/control/container metadata,
+every canonical PIA service (30 to 60, pia-gluetun-1..N in the historically
+named docker-compose.pia-30.yml overlay), aligned provider/control/container metadata,
 the guard-only worker profile/restart policy, healthy unique egresses, and the
 selected fail-closed throughput profile.
 
@@ -1299,10 +1300,10 @@ if data_profile == "legacy-reader-migration":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile legacy-reader-migration requires {name}=false")
-if canonical != 30:
+if not 30 <= canonical <= 60:
     validation_error(
-        "canonical PIA service count must be 30",
-        f"canonical PIA service count must be 30, found {canonical}")
+        "canonical PIA service count must be between 30 and 60",
+        f"canonical PIA service count must be between 30 and 60, found {canonical}")
 if expected > canonical:
     validation_error(
         "effective proxy count exceeds the canonical count",
