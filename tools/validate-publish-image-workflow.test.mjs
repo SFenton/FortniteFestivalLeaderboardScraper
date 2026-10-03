@@ -251,6 +251,55 @@ test('target commit cannot be replaced by a generated commit', () => {
   );
 });
 
+test('version-bump cannot drop the first-parent app build number', () => {
+  for (const [marker, replacement] of [
+    ['git rev-list --count --first-parent "$GITHUB_SHA"', 'git rev-list --count "$GITHUB_SHA"'],
+    ['echo "app_build_number=$APP_BUILD_NUMBER" >> "$GITHUB_OUTPUT"', 'echo "$APP_BUILD_NUMBER"'],
+    ['id: build-number', 'id: build'],
+  ]) {
+    const mutated = mutateStep(
+      workflow,
+      'version-bump',
+      'Compute app build number',
+      block => block.replace(marker, replacement),
+    );
+    assert.ok(
+      validatePublishImageWorkflow(mutated, dockerfile)
+        .some(error => error.includes('first-parent master commit count')),
+      marker,
+    );
+  }
+  const unexposed = workflow.replace(
+    '      app_build_number: ${{ steps.build-number.outputs.app_build_number }}\n',
+    '',
+  );
+  assert.ok(
+    validatePublishImageWorkflow(unexposed, dockerfile)
+      .some(error => error.includes('app build number output')),
+  );
+});
+
+test('web image build cannot drop the app version stamp', () => {
+  for (const arg of ['FST_APP_BUILD_NUMBER', 'FST_APP_COMMIT']) {
+    const mutated = mutateJob(
+      workflow,
+      'build-and-push-web',
+      block => block.replace(new RegExp(`\\n {12}${arg}=[^\\n]*`), ''),
+    );
+    assert.ok(
+      validatePublishImageWorkflow(mutated, dockerfile)
+        .some(error => error.includes(`build-arg ${arg}`)),
+      arg,
+    );
+    const dockerMutated = dockerfile.replace(`${arg}="$${arg}" `, '');
+    assert.ok(
+      validatePublishImageWorkflow(workflow, dockerMutated)
+        .some(error => error.includes(`does not pass ${arg}`)),
+      `Dockerfile ${arg}`,
+    );
+  }
+});
+
 function mutateJob(source, jobName, mutate) {
   const marker = `  ${jobName}:\n`;
   const start = source.indexOf(marker);

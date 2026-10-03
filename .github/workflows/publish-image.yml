@@ -19,6 +19,7 @@ jobs:
     outputs:
       bumped: ${{ steps.commit.outputs.bumped }}
       commit_sha: ${{ steps.commit.outputs.commit_sha }}
+      app_build_number: ${{ steps.build-number.outputs.app_build_number }}
       service_changed: ${{ steps.changes.outputs.service }}
       web_changed: ${{ steps.changes.outputs.web }}
       core_ts_changed: ${{ steps.changes.outputs.core_ts }}
@@ -108,6 +109,15 @@ jobs:
         run: |
           echo "bumped=false" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      # Every merge adds at least one first-parent commit to master, so this
+      # count gives each published web build a distinct, increasing version.
+      - name: Compute app build number
+        id: build-number
+        run: |
+          APP_BUILD_NUMBER=$(git rev-list --count --first-parent "$GITHUB_SHA")
+          echo "App build number: $APP_BUILD_NUMBER"
+          echo "app_build_number=$APP_BUILD_NUMBER" >> "$GITHUB_OUTPUT"
 
   test:
     needs: [version-bump]
@@ -378,3 +388,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
+          build-args: |
+            FST_APP_BUILD_NUMBER=${{ needs.version-bump.outputs.app_build_number }}
+            FST_APP_COMMIT=${{ needs.version-bump.outputs.commit_sha || github.sha }}

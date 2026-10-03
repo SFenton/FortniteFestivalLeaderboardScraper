@@ -10,6 +10,12 @@ const serviceImageIf = "always() && !failure() && !cancelled() && ( github.event
 const webImageIf = "always() && !failure() && !cancelled() && ( github.event_name == 'workflow_dispatch' || needs.version-bump.outputs.web_changed == 'true' || needs.version-bump.outputs.core_ts_changed == 'true' || needs.version-bump.outputs.theme_ts_changed == 'true' || needs.version-bump.outputs.ui_utils_changed == 'true' )";
 const imagePush = "${{ github.event_name != 'pull_request' }}";
 const registryLoginIf = "github.event_name != 'pull_request'";
+const buildNumberCommand = 'git rev-list --count --first-parent "$GITHUB_SHA"';
+const buildNumberOutput = 'echo "app_build_number=$APP_BUILD_NUMBER" >> "$GITHUB_OUTPUT"';
+const webBuildArgs = [
+  'FST_APP_BUILD_NUMBER=${{ needs.version-bump.outputs.app_build_number }}',
+  `FST_APP_COMMIT=${targetSha}`,
+];
 
 export function validatePublishImageWorkflow(workflow, webDockerfile) {
   const errors = [];
@@ -65,7 +71,16 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
         || !target?.run.includes('echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"')) {
       errors.push('Select target commit must expose the unmodified workflow SHA');
     }
+
+    const buildNumber = requireStep(versionJob, 'Compute app build number', errors);
+    if (buildNumber?.id !== 'build-number'
+        || !buildNumber.run.includes(`APP_BUILD_NUMBER=$(${buildNumberCommand})`)
+        || !buildNumber.run.includes(buildNumberOutput)) {
+      errors.push('Compute app build number must publish the first-parent master commit count');
+    }
+    requireStepOrder(versionJob, errors, 'Checkout', 'Compute app build number');
   }
+  requireRaw(workflow, errors, 'version-bump app build number output', 'app_build_number: ${{ steps.build-number.outputs.app_build_number }}');
 
   validateDownstreamTestJob(testJob, 'test', '[version-bump]', errors);
   validateDownstreamTestJob(webTestJob, 'test-web', '[version-bump]', errors);
@@ -109,6 +124,21 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     condition: webImageIf,
   }, errors);
 
+  if (webImageJob) {
+    const build = webImageJob.steps.find(step => step.name === 'Build and push FestivalWeb');
+    for (const arg of webBuildArgs) {
+      if (!exactBlockLine(build?.with['build-args'], arg)) {
+        errors.push(`build-and-push-web must stamp the app version with build-arg ${arg.split('=')[0]}`);
+      }
+    }
+  }
+
+  for (const arg of ['FST_APP_BUILD_NUMBER', 'FST_APP_COMMIT']) {
+    if (!webDockerfile.includes(`ARG ${arg}`)
+        || !webDockerfile.includes(`${arg}="$${arg}"`)) {
+      errors.push(`web image does not pass ${arg} to the web build`);
+    }
+  }
   if (!webDockerfile.includes('FST_WEB_OUT_DIR=/webapp-dist yarn build')) {
     errors.push('web image does not use the canonical yarn build command');
   }
@@ -401,7 +431,7 @@ function runCli() {
     for (const error of errors) console.error(`[workflow] ${error}`);
     process.exit(1);
   }
-  console.log('[workflow] structured range, SHA, test, Playwright, and image-job contract is valid.');
+  console.log('[workflow] structured range, SHA, build-number, test, Playwright, and image-job contract is valid.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

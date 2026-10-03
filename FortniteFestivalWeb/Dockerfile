@@ -9,8 +9,11 @@ WORKDIR /src/FortniteFestivalWeb
 # Use node-modules linker in Docker (local dev uses PnP with global cache)
 RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install --immutable
 COPY FortniteFestivalWeb/ .
+# Release stamp from the publish workflow; empty values keep the package.json version.
+ARG FST_APP_BUILD_NUMBER=""
+ARG FST_APP_COMMIT=""
 # Overwrite .yarnrc.yml again after COPY brings in project files
-RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && FST_WEB_OUT_DIR=/webapp-dist yarn build
+RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && FST_APP_BUILD_NUMBER="$FST_APP_BUILD_NUMBER" FST_APP_COMMIT="$FST_APP_COMMIT" FST_WEB_OUT_DIR=/webapp-dist yarn build
 
 # ── Stage 2: Serve with Nginx ─────────────────────────────────
 FROM nginx:stable-alpine AS runtime
