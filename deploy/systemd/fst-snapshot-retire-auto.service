@@ -1,0 +1,17 @@
+[Unit]
+Description=FST snapshot-generation archive retirement and sparse compaction (network-bound fetch windows only)
+Documentation=file:///mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/ops/snapshot-retire-checkout/docs/database/SnapshotGenerationArchiveRetirementRunbook.md
+
+[Service]
+Type=oneshot
+# A git worktree of this repository detached at the accepted master commit.
+WorkingDirectory=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/ops/snapshot-retire-checkout
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Whole-child retirement first; compaction then uses the rest of the window.
+# The leading "-" keeps a tripped retirement from skipping compaction, which has
+# its own AUTO_DISABLED tripwire.
+ExecStart=-/usr/bin/python3 tools/postgres-snapshot-archive-retire.py auto
+ExecStart=/usr/bin/python3 tools/postgres-snapshot-sparse-compact.py auto
+Nice=10
+# Each step ends when the fetch window closes; compaction also stops after 150 minutes.
+TimeoutStartSec=6h

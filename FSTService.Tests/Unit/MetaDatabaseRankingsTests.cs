@@ -397,6 +397,39 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public async Task RebuildBandTeamRankings_DoesNotHoldTheSchemaLockAfterFirstEnsure()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        // Another session holds the schema advisory lock; a rebuild that still took
+        // it per transaction would block until this session released it.
+        await using var holder = await _fixture.DataSource.OpenConnectionAsync();
+        await using (var lockCmd = holder.CreateCommand())
+        {
+            lockCmd.CommandText = "SELECT pg_advisory_lock(hashtextextended('fst.band_rank_history_schema', 0))";
+            await lockCmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var rebuild = Task.Run(() => Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2));
+            var finished = await Task.WhenAny(rebuild, Task.Delay(TimeSpan.FromSeconds(60)));
+            Assert.Same(rebuild, finished);
+            await rebuild;
+        }
+        finally
+        {
+            await using var unlockCmd = holder.CreateCommand();
+            unlockCmd.CommandText = "SELECT pg_advisory_unlock_all()";
+            await unlockCmd.ExecuteNonQueryAsync();
+        }
+
+        var (_, totalTeams) = Db.GetBandTeamRankings("Band_Duets");
+        Assert.Equal(3, totalTeams);
+    }
+
+    [Fact]
     public void RebuildBandTeamRankings_DoesNotLeakOldBackupTables()
     {
         // Regression test: SwapBandCurrentTables previously checked backup
@@ -2366,6 +2399,37 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.True(result.PublishResult.Published);
         Assert.Equal(generation, GetCurrentBandProjectionPublishedGeneration(scope));
         Assert.True(CountCurrentBandProjectionRows(scope, generation) > 0);
+    }
+
+    [Fact]
+    public async Task RefreshScopes_SkipUnchangedSelectsReadyCandidateThatWasNeverPublished()
+    {
+        SeedBandRankingsSource();
+        var scope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var published = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        var staged = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { PublishOnSuccess = false, SkipUnchangedScopes = false });
+        var stagedGeneration = Assert.Single(staged.Scopes.Select(static result => result.Generation).Distinct());
+        Assert.Equal(published.Generation, GetCurrentBandProjectionPublishedGeneration(scope));
+
+        var refreshed = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = true });
+        var refreshedGeneration = Assert.Single(refreshed.Scopes.Select(static result => result.Generation).Distinct());
+        var (entries, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+
+        Assert.Equal(1, refreshed.ScopeCount);
+        Assert.True(refreshed.PublishResult.Published);
+        Assert.Equal(refreshedGeneration, GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.Equal(0, CountCurrentBandProjectionRows(scope, published.Generation));
+        Assert.Equal(0, CountCurrentBandProjectionRows(scope, stagedGeneration));
+        Assert.Equal("p3:p4", entries[0].TeamKey);
+        Assert.Equal(9999, entries[0].Score);
+
+        var steady = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = true });
+        Assert.Equal(0, steady.ScopeCount);
     }
 
     [Fact]

@@ -14,6 +14,9 @@ concurrently and dropped without CASCADE. Rollback for any child is one
 Commands:
   plan     report eligible children and bytes; no mutation
   retire   archive and drop eligible children (bounded by --limit)
+  auto     retire the newest agreeing cycle bound to the current publication,
+           only while the live scrape is network-bound; integrity failures
+           write a disable file that only an operator clears
   restore  restore one retired child from its archive and re-attach it
 """
 
@@ -30,6 +33,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 
 PG_CONTAINER = "fst-postgres"
 DB_USER = "fst"
@@ -45,10 +49,21 @@ ROOT_RELATION = "leaderboard_entries_snapshot"
 NEVER = {("Solo_Bass", 1308)}
 IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SERVICE_INFO_URL = "http://127.0.0.1:8081/api/service-info"
+AUTO_DISABLE_FILE = ARCHIVE_ROOT / "AUTO_DISABLED"
+# Network-bound leaderboard fetch sub-operations. Spool drains, index drops,
+# flushes, index builds, and every later phase read or write snapshots heavily,
+# so anything outside this allow-list closes the window.
+NETWORK_BOUND_PHASE = "scrape.leaderboards"
+NETWORK_BOUND_SUB_OPERATIONS = frozenset({"fetching_leaderboards", "fetching_pages", "awaiting_band"})
 
 
 class RetirementError(RuntimeError):
     pass
+
+
+class TransientRefusal(RetirementError):
+    """A live-safety deferral (load, health, disk, contention); retry later."""
 
 
 def utcnow() -> str:
@@ -205,17 +220,17 @@ def quote(value: str) -> str:
 def preflight() -> None:
     usage = os.statvfs(FST_DRIVE)
     if usage.f_bavail * usage.f_frsize < MIN_FREE_BYTES:
-        raise RetirementError("FST drive free space is below the safety floor")
+        raise TransientRefusal("FST drive free space is below the safety floor")
     for container in ("fst-postgres", "fstservice"):
         state = subprocess.run(
             ["docker", "inspect", container, "--format",
              "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"],
             capture_output=True, text=True, timeout=20).stdout.strip()
         if state != "running|healthy":
-            raise RetirementError(f"{container} is not running and healthy ({state})")
+            raise TransientRefusal(f"{container} is not running and healthy ({state})")
     waiting = int(psql("SELECT count(*) FROM pg_locks WHERE NOT granted;") or 0)
     if waiting > 20:
-        raise RetirementError(f"{waiting} lock waits are active; deferring")
+        raise TransientRefusal(f"{waiting} lock waits are active; deferring")
 
 
 def content_fingerprint(child: dict) -> tuple[int, str]:
@@ -318,8 +333,11 @@ def detach_and_drop(child: dict, sleep=time.sleep) -> int:
                  f"ALTER TABLE {parent} DETACH PARTITION {relation};", timeout=120)
             break
         except RetirementError as error:
-            if "lock timeout" not in str(error) or attempt == DETACH_ATTEMPTS:
+            if "lock timeout" not in str(error):
                 raise
+            if attempt == DETACH_ATTEMPTS:
+                raise TransientRefusal(
+                    f"detach of {relation} stayed lock-contended after {attempt} attempts") from error
             sleep(min(60, 5 * attempt))
     still_attached = psql(f"SELECT relispartition FROM pg_class WHERE oid = to_regclass('{relation}');")
     if still_attached != "f":
@@ -367,7 +385,8 @@ def command_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_retire(args: argparse.Namespace) -> int:
+def command_retire(args: argparse.Namespace, window=None) -> int:
+    """Retires one cycle; ``window`` returns (open, reason) and is checked before each child."""
     directory = cycle_dir(args.cycle)
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "manifest.jsonl"
@@ -376,7 +395,7 @@ def command_retire(args: argparse.Namespace) -> int:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RetirementError("another retirement run holds the lock")
+            raise TransientRefusal("another retirement run holds the lock")
         children = load_cycle(args.cycle, args.expected_candidate_hash)
         if args.only:
             children = [c for c in children if c["relation"] in set(args.only)]
@@ -392,6 +411,11 @@ def command_retire(args: argparse.Namespace) -> int:
             if args.stop_file and pathlib.Path(args.stop_file).exists():
                 print("stop file present; ending run", flush=True)
                 break
+            if window is not None:
+                is_open, why = window()
+                if not is_open:
+                    print(f"window closed ({why}); ending run", flush=True)
+                    break
             preflight()
             status = live_status([child])[0]
             if not status["eligible"]:
@@ -494,6 +518,98 @@ def command_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def fetch_service_info(url: str, timeout: float = 10) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return json.load(response)
+
+
+def network_bound_window(info: dict) -> tuple[bool, str]:
+    """True only while the live scrape fetches leaderboard pages."""
+    update = info.get("currentUpdate") or {}
+    status = update.get("status") or "idle"
+    phase = update.get("phaseId") or "none"
+    sub_operation = update.get("subOperation") or ""
+    if status == "idle":
+        return False, "worker idle"
+    if phase != NETWORK_BOUND_PHASE:
+        return False, f"phase {phase}"
+    if sub_operation not in NETWORK_BOUND_SUB_OPERATIONS:
+        return False, f"sub-operation {sub_operation or 'none'}"
+    return True, f"scrape {update.get('scrapeId')} {phase}/{sub_operation}"
+
+
+def probe_window(url: str) -> tuple[bool, str]:
+    try:
+        return network_bound_window(fetch_service_info(url))
+    except Exception as error:  # an unreachable API is never a safe window
+        return False, f"service-info unavailable: {error}"
+
+
+def select_auto_cycle(max_age_hours: float) -> dict | None:
+    """Newest agreeing report-only cycle observed for the current publication."""
+    out = psql(f"""
+        SELECT coalesce(row_to_json(c)::text, '') FROM (
+          SELECT r.cycle_id, r.candidate_identity_hash, r.trigger_scrape_id, r.trigger_publication_id
+          FROM snapshot_generation_retention_cycles r
+          WHERE r.report_only AND r.status = 'observed' AND r.oracle_agreement
+            AND coalesce(r.global_blockers::text, '[]') IN ('[]', 'null')
+            AND r.created_at > now() - make_interval(secs => {float(max_age_hours) * 3600})
+            AND r.trigger_publication_id = (
+              SELECT current_publication_id FROM scrape_publication_state WHERE id)
+          ORDER BY r.cycle_id DESC LIMIT 1) c;""")
+    return json.loads(out) if out else None
+
+
+def trip_auto(disable_file: pathlib.Path, cycle_id: int | None, error: BaseException) -> None:
+    disable_file.parent.mkdir(parents=True, exist_ok=True)
+    disable_file.write_text(json.dumps({
+        "at": utcnow(), "cycle_id": cycle_id, "error": f"{type(error).__name__}: {error}"[:2000],
+        "clear": "investigate, then delete this file to re-enable automatic retirement"},
+        indent=1) + "\n")
+
+
+def command_auto(args: argparse.Namespace) -> int:
+    disable_file = pathlib.Path(args.disable_file)
+    if disable_file.exists():
+        print(f"automatic retirement disabled by {disable_file}; operator must investigate and clear it",
+              flush=True)
+        return 0
+    is_open, why = probe_window(args.service_info_url)
+    if not is_open:
+        print(f"outside the network-bound fetch window ({why}); nothing to do", flush=True)
+        return 0
+
+    def window() -> tuple[bool, str]:
+        if disable_file.exists():
+            return False, f"{disable_file.name} present"
+        return probe_window(args.service_info_url)
+
+    cycle_id: int | None = None
+    try:
+        # Health, disk, and lock-wait refusals defer before any database selection.
+        preflight()
+        cycle = select_auto_cycle(args.max_cycle_age_hours)
+        if cycle is None:
+            print("no agreeing retention cycle is bound to the current publication; nothing to do", flush=True)
+            return 0
+        cycle_id = int(cycle["cycle_id"])
+        print(f"{utcnow()} auto: cycle {cycle_id} (scrape {cycle['trigger_scrape_id']}, publication "
+              f"{cycle['trigger_publication_id']}) during {why}", flush=True)
+        retire_args = argparse.Namespace(
+            cycle=cycle_id, expected_candidate_hash=str(cycle["candidate_identity_hash"]),
+            limit=args.limit, only=None, drill_every=args.drill_every, pause_seconds=args.pause_seconds,
+            stop_file=args.stop_file, archive_only=False)
+        return command_retire(retire_args, window=window)
+    except TransientRefusal as error:
+        print(f"deferred: {error}", flush=True)
+        return 0
+    except BaseException as error:
+        if isinstance(error, KeyboardInterrupt):
+            raise
+        trip_auto(disable_file, cycle_id, error)
+        raise
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -510,6 +626,14 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--pause-seconds", type=float, default=5)
             cmd.add_argument("--stop-file")
             cmd.add_argument("--archive-only", action="store_true")
+    auto = sub.add_parser("auto")
+    auto.add_argument("--service-info-url", default=SERVICE_INFO_URL)
+    auto.add_argument("--max-cycle-age-hours", type=float, default=12)
+    auto.add_argument("--limit", type=int, default=1000)
+    auto.add_argument("--drill-every", type=int, default=25)
+    auto.add_argument("--pause-seconds", type=float, default=3)
+    auto.add_argument("--stop-file")
+    auto.add_argument("--disable-file", default=str(AUTO_DISABLE_FILE))
     restore = sub.add_parser("restore")
     restore.add_argument("--cycle", type=int, required=True)
     restore.add_argument("--relation", required=True)
@@ -523,6 +647,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_plan(args)
         if args.command == "retire":
             return command_retire(args)
+        if args.command == "auto":
+            return command_auto(args)
         return command_restore(args)
     except RetirementError as error:
         print(f"refused: {error}", file=sys.stderr, flush=True)

@@ -32,6 +32,7 @@ public class HistoryReconstructor
     public const int CurrentReconstructionVersion = 2;
 
     private static readonly TimeSpan DefaultSeasonWindowDiscoveryTimeout = TimeSpan.FromSeconds(45);
+    internal static readonly TimeSpan DefaultSeasonWindowReuseInterval = TimeSpan.FromMinutes(30);
 
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -42,6 +43,14 @@ public class HistoryReconstructor
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<HistoryReconstructor> _log;
     private readonly TimeSpan _seasonWindowDiscoveryTimeout;
+    private readonly TimeSpan _seasonWindowReuseInterval;
+    private readonly TimeProvider _timeProvider;
+    private RecentSeasonWindowDiscovery? _recentSeasonWindowDiscovery;
+
+    private sealed record RecentSeasonWindowDiscovery(
+        string CallerAccountId,
+        DateTimeOffset DiscoveredAt,
+        IReadOnlyList<SeasonWindowInfo> Windows);
 
     public HistoryReconstructor(
         ILeaderboardQuerier scraper,
@@ -62,7 +71,9 @@ public class HistoryReconstructor
         UserSyncProgressTracker syncTracker,
         ILogger<HistoryReconstructor> log,
         IProxyHealthReporter? proxyHealth,
-        TimeSpan? seasonWindowDiscoveryTimeout = null)
+        TimeSpan? seasonWindowDiscoveryTimeout = null,
+        TimeSpan? seasonWindowReuseInterval = null,
+        TimeProvider? timeProvider = null)
     {
         _scraper = scraper;
         _persistence = persistence;
@@ -75,20 +86,49 @@ public class HistoryReconstructor
         _seasonWindowDiscoveryTimeout = seasonWindowDiscoveryTimeout is { } timeout && timeout > TimeSpan.Zero
             ? timeout
             : DefaultSeasonWindowDiscoveryTimeout;
+        _seasonWindowReuseInterval = seasonWindowReuseInterval ?? DefaultSeasonWindowReuseInterval;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     // ─── Season Window Discovery ────────────────────────────────
 
     /// <summary>
     /// Discover season windows from the Epic events API and cache them in the DB.
-    /// Always consults the events API so new seasons (e.g. a S13→S14 rollover) are picked
-    /// up without requiring a manual cache wipe. Falls back to the cached list when the
-    /// API call fails, and to convention-based probing only when no cache exists.
+    /// Consults the events API so new seasons (e.g. a S13→S14 rollover) are picked
+    /// up without requiring a manual cache wipe, but reuses this instance's last
+    /// result for the same caller for 30 minutes. Falls back to the cached list
+    /// when the API call fails, and to convention-based probing only when no
+    /// cache exists.
     /// </summary>
     public virtual async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsAsync(
         string accessToken,
         string callerAccountId,
         CancellationToken ct = default)
+    {
+        // Registration history reconstruction polls every 30 seconds; season
+        // windows change only at season rollovers, so reuse a recent discovery
+        // instead of calling the events API on every poll.
+        var recent = _recentSeasonWindowDiscovery;
+        if (recent is not null
+            && _seasonWindowReuseInterval > TimeSpan.Zero
+            && string.Equals(recent.CallerAccountId, callerAccountId, StringComparison.Ordinal)
+            && _timeProvider.GetUtcNow() - recent.DiscoveredAt < _seasonWindowReuseInterval)
+        {
+            return recent.Windows;
+        }
+
+        var windows = await DiscoverSeasonWindowsUncachedAsync(accessToken, callerAccountId, ct);
+        _recentSeasonWindowDiscovery = new RecentSeasonWindowDiscovery(
+            callerAccountId,
+            _timeProvider.GetUtcNow(),
+            windows);
+        return windows;
+    }
+
+    private async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsUncachedAsync(
+        string accessToken,
+        string callerAccountId,
+        CancellationToken ct)
     {
         var cached = _metaDb.GetSeasonWindows();
 

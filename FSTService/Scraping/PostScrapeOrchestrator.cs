@@ -419,6 +419,11 @@ public sealed class PostScrapeOrchestrator
                 await RunPhaseAsync(ctx, "PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
             }
 
+            // Snapshot activation changes active sources; legacy readers return
+            // to published-scrape matching for the rest of the pass.
+            if (_persistence.UseValidatedCurrentProjectionForLegacyWorkerReaders)
+                _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
+
             // ── Solo finalize ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
             {
@@ -498,12 +503,96 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync(
                 ctx,
                 "Cleanup.PrecomputeAll",
-                () => PrecomputeAllForCleanupAsync(
+                () => RunWithValidatedLegacyProjectionForPrecomputeAsync(
                     ctx,
-                    ctx.EpicReportedOver100Pages,
+                    () => PrecomputeAllForCleanupAsync(
+                        ctx,
+                        ctx.EpicReportedOver100Pages,
+                        ct),
                     ct),
                 alwaysPropagateFailure: true);
         }
+    }
+
+    /// <summary>
+    /// With legacy worker readers, precompute's current-state reads match ready
+    /// solo projection scopes against the published scrape during the
+    /// public-read freeze, so after snapshot activation every scope fails
+    /// readiness and each read re-resolves snapshot and overlay rows for the
+    /// active snapshot. Once the cleanup refresh has left no stale or orphaned
+    /// scope, the projection equals that resolution, so when
+    /// <see cref="ScraperOptions.UseValidatedSoloProjectionForLegacyPrecompute"/>
+    /// is set the projection is matched against the active snapshot for
+    /// precompute's own async flow only (other worker operations keep
+    /// published-scrape matching). Scopes that still differ fall back as before.
+    /// Readiness does not see overlay writes (registration backfill can write at
+    /// any time), so overlay and snapshot-state inputs are fingerprinted before
+    /// and after; if they changed, precompute reruns with published-scrape
+    /// matching so its output equals the default path.
+    /// </summary>
+    internal async Task RunWithValidatedLegacyProjectionForPrecomputeAsync(
+        ScrapePassContext ctx,
+        Func<Task> precompute,
+        CancellationToken ct)
+    {
+        var enabled = false;
+        string? sourceFingerprint = null;
+        if (_options.Value.UseValidatedSoloProjectionForLegacyPrecompute
+            && ctx.SoloCurrentProjectionRefreshedForPublication
+            && !_persistence.UsePublishedScopeSources
+            && !_persistence.UseSnapshotOverlayWorkerReaders
+            && _soloCurrentProjectionBuilder is { } builder)
+        {
+            try
+            {
+                sourceFingerprint = await builder.GetSourceFingerprintAsync(ct);
+                var staleScopes = await builder.LoadStaleScopesAsync(ct);
+                if (staleScopes.Count == 0 && !await builder.HasOrphanedProjectionScopesAsync(ct))
+                {
+                    enabled = true;
+                    _log.LogInformation(
+                        "Validated solo current projection for legacy precompute readers; ready scopes match their active snapshot until precompute ends.");
+                }
+                else
+                {
+                    _log.LogWarning(
+                        "Solo current projection is not fully validated before precompute (stale={StaleScopeCount:N0}); legacy readers keep published-scrape matching.",
+                        staleScopes.Count);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Solo current projection validation before precompute failed; legacy readers keep published-scrape matching.");
+            }
+        }
+
+        if (!enabled)
+        {
+            await precompute();
+            return;
+        }
+
+        using (InstrumentDatabase.BeginValidatedProjectionReadScope())
+            await precompute();
+
+        string? finalFingerprint = null;
+        try
+        {
+            finalFingerprint = await _soloCurrentProjectionBuilder!.GetSourceFingerprintAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Could not re-fingerprint solo projection inputs after precompute; rerunning precompute with published-scrape matching.");
+        }
+
+        if (string.Equals(finalFingerprint, sourceFingerprint, StringComparison.Ordinal))
+            return;
+
+        _log.LogWarning(
+            "Solo projection inputs changed during precompute (overlay or snapshot state); rerunning precompute with published-scrape matching.");
+        await precompute();
     }
 
     /// <summary>
@@ -1140,26 +1229,44 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogInformation(
                     "Solo current projection is already fresh before rivals/player stats.");
-                return;
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Refreshing {ScopeCount:N0} stale solo projection scope(s) before rivals/player stats; publication cleanup still revalidates.",
+                    scopes.Count);
+                var result = await builder.RefreshScopesAsync(scopes, rebuildOptions, ct);
+                if (result.FailedScopeCount > 0)
+                {
+                    _log.LogWarning(
+                        "Early solo projection refresh left {FailedScopeCount:N0}/{ScopeCount:N0} scope(s) stale; readers fall back for them and cleanup retries.",
+                        result.FailedScopeCount,
+                        result.ScopeCount);
+                    return;
+                }
+
+                _log.LogInformation(
+                    "Refreshed {ScopeCount:N0} solo projection scope(s) before rivals/player stats in {ElapsedMs:N0} ms.",
+                    result.SucceededScopeCount,
+                    result.TotalElapsedMs);
             }
 
-            _log.LogInformation(
-                "Refreshing {ScopeCount:N0} stale solo projection scope(s) before rivals/player stats; publication cleanup still revalidates.",
-                scopes.Count);
-            var result = await builder.RefreshScopesAsync(scopes, rebuildOptions, ct);
-            if (result.FailedScopeCount > 0)
+            if (!_options.Value.UseValidatedSoloProjectionForLegacyDerivedReaders)
+                return;
+
+            var remainingStaleScopes = await builder.LoadStaleScopesAsync(ct);
+            if (remainingStaleScopes.Count > 0
+                || await builder.HasOrphanedProjectionScopesAsync(ct))
             {
                 _log.LogWarning(
-                    "Early solo projection refresh left {FailedScopeCount:N0}/{ScopeCount:N0} scope(s) stale; readers fall back for them and cleanup retries.",
-                    result.FailedScopeCount,
-                    result.ScopeCount);
+                    "Solo current projection is not fully validated before rivals/player stats (stale={StaleScopeCount:N0}); legacy readers keep published-scrape matching.",
+                    remainingStaleScopes.Count);
                 return;
             }
 
+            _persistence.SetValidatedCurrentProjectionForLegacyWorkerReaders(true);
             _log.LogInformation(
-                "Refreshed {ScopeCount:N0} solo projection scope(s) before rivals/player stats in {ElapsedMs:N0} ms.",
-                result.SucceededScopeCount,
-                result.TotalElapsedMs);
+                "Validated solo current projection for legacy rivals/player stats readers; ready scopes now match their active snapshot until snapshot activation.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1477,7 +1584,8 @@ public sealed class PostScrapeOrchestrator
 
                 return await _bandSearchProjectionBuilder.RefreshIncrementalAsync(
                     impactedTeams,
-                    ct);
+                    ct,
+                    _options.Value.BandSearchProjectionParallelBandTypes);
             },
             GetBandSearchProjectionTimingMetrics);
 
@@ -1539,35 +1647,40 @@ public sealed class PostScrapeOrchestrator
         if (sweepMax <= 0 || _bandCurrentProjectionBuilder is null)
             return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
 
-        var scopes = impactedScopes;
+        BandCurrentProjectionSweepSelection selection;
         try
         {
-            var impacted = impactedScopes.ToHashSet();
             var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
                 .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
-                .Where(scope => !impacted.Contains(scope))
-                .Distinct()
                 .ToArray();
-            var stale = await _bandCurrentProjectionBuilder.SelectScopesNeedingRefreshAsync(
+            // One filter pass selects both the impacted scopes that changed and
+            // the capped stale sweep, so the refresh below skips its own filter.
+            selection = await _bandCurrentProjectionBuilder.SelectImpactedAndStaleScopesAsync(
+                impactedScopes,
                 candidates,
                 sweepMax,
                 ct);
-            _log.LogInformation(
-                "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}).",
-                stale.Count,
-                candidates.Length,
-                sweepMax);
-            if (stale.Count > 0)
-                scopes = MergeCurrentProjectionScopes(impactedScopes, stale);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(
                 ex,
                 "Band current projection stale sweep failed; refreshing only the impacted scopes.");
+            return await RefreshBandCurrentProjectionScopesAsync(impactedScopes, ct);
         }
 
-        return await RefreshBandCurrentProjectionScopesAsync(scopes, ct);
+        _log.LogInformation(
+            "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}); {ImpactedSelected:N0}/{ImpactedScopes:N0} impacted scope(s) need a rebuild.",
+            selection.StaleScopes.Count,
+            selection.SweepCandidateCount,
+            sweepMax,
+            selection.ImpactedScopes.Count,
+            impactedScopes.Count);
+        return await RefreshBandCurrentProjectionScopesAsync(
+            MergeCurrentProjectionScopes(selection.ImpactedScopes, selection.StaleScopes),
+            ct,
+            preselectedConsideredScopeCount:
+                MergeCurrentProjectionScopes(impactedScopes, selection.StaleScopes).Count);
     }
 
     internal Task RunBandMaintenanceForTestAsync(
@@ -1685,15 +1798,34 @@ public sealed class PostScrapeOrchestrator
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? preselectedConsideredScopeCount = null)
     {
         const int FallbackChunkSize = 128;
 
+        // Preselected scopes already passed the unchanged-scope filter, so the
+        // considered count (impacted plus capped stale scopes) is reported
+        // separately, matching the builder's own filtered accounting.
+        var consideredScopeCount = preselectedConsideredScopeCount ?? scopes.Count;
         if (scopes.Count == 0)
-            return BandMaintenanceTimingMetrics.NoWork;
+        {
+            if (consideredScopeCount == 0)
+                return BandMaintenanceTimingMetrics.NoWork;
+
+            _progress.BeginPhaseProgress(0);
+            return new BandMaintenanceTimingMetrics(
+                RowsRead: consideredScopeCount,
+                RowsWritten: 0,
+                RowsDeleted: 0,
+                ScopeCount: 0);
+        }
 
         var rebuildOptions =
             CreateBandCurrentProjectionRebuildOptions(_options.Value);
+        // The chunk fallback below keeps filtering so completed scopes are skipped.
+        var initialOptions = preselectedConsideredScopeCount is null
+            ? rebuildOptions
+            : rebuildOptions with { SkipUnchangedScopes = false };
         _log.LogInformation(
             "Refreshing band current projection for {ScopeCount:N0} impacted scope(s); batchedMemberStatsAggregation={BatchedMemberStatsAggregation}.",
             scopes.Count,
@@ -1732,7 +1864,7 @@ public sealed class PostScrapeOrchestrator
         {
             result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(
                 scopes,
-                rebuildOptions,
+                initialOptions,
                 ct,
                 OnScopesFinalized,
                 OnScopeCompleted);
@@ -1747,6 +1879,7 @@ public sealed class PostScrapeOrchestrator
                 planFinalized,
                 completedScopeKeys,
                 completedLock,
+                consideredScopeCount,
                 ct);
         }
 
@@ -1764,7 +1897,7 @@ public sealed class PostScrapeOrchestrator
                 $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
         }
 
-        return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
+        return GetBandCurrentProjectionTimingMetrics(result, consideredScopeCount);
     }
 
     internal static BandCurrentProjectionRebuildOptions
@@ -1777,6 +1910,8 @@ public sealed class PostScrapeOrchestrator
                     .BandCurrentProjectionUseBatchedMemberStatsAggregation,
             MaxParallelScopes =
                 options.BandCurrentProjectionMaxParallelScopes,
+            PublishParallelism =
+                options.BandCurrentProjectionPublishParallelism,
         };
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(
@@ -1786,6 +1921,7 @@ public sealed class PostScrapeOrchestrator
         bool planFinalized,
         HashSet<BandCurrentProjectionScopeKey> completedScopeKeys,
         object completedLock,
+        int consideredScopeCount,
         CancellationToken ct)
     {
         var scopeChunks = scopes
@@ -1874,7 +2010,7 @@ public sealed class PostScrapeOrchestrator
         }
 
         return new BandMaintenanceTimingMetrics(
-            RowsRead: scopes.Count,
+            RowsRead: consideredScopeCount,
             RowsWritten: insertedRows,
             RowsDeleted: deletedRows,
             ScopeCount: refreshedScopes);

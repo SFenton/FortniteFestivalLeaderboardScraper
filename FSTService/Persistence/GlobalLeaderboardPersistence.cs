@@ -28,6 +28,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private const int MaxBandSearchCandidateAccounts = 32;
     private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
     private volatile bool _useValidatedCurrentProjectionForWorkerReaders;
+    private volatile bool _useValidatedCurrentProjectionForLegacyWorkerReaders;
     private int _maxScoreMaintenancePublishedReadPass;
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
@@ -98,6 +99,19 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         UseSnapshotOverlayWorkerReaders
         && _useValidatedCurrentProjectionForWorkerReaders;
 
+    /// <summary>
+    /// True when legacy (non-overlay, non-published-source) worker readers may
+    /// match ready solo projection scopes against the active snapshot during a
+    /// public-read freeze, because this pass refreshed and revalidated the
+    /// legacy-compatible projection.
+    /// </summary>
+    public bool UseValidatedCurrentProjectionForLegacyWorkerReaders =>
+        UseLegacyWorkerReaders
+        && _useValidatedCurrentProjectionForLegacyWorkerReaders;
+
+    private bool UseLegacyWorkerReaders =>
+        !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders;
+
     private bool UsePublishedScopeSourcesForCurrentRead =>
         UsePublishedScopeSources
         || Volatile.Read(
@@ -123,13 +137,37 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         _useValidatedCurrentProjectionForWorkerReaders = enabled;
         foreach (var database in _instrumentDbs.Values.Cast<InstrumentDatabase>())
         {
-            database.UseValidatedCurrentProjectionForWorkerReaders = enabled;
+            database.UseValidatedCurrentProjectionForWorkerReaders = enabled
+                || !UsePublishedScopeSourcesForCurrentRead
+                    && UseLegacyWorkerReaders
+                    && _useValidatedCurrentProjectionForLegacyWorkerReaders;
+        }
+    }
+
+    /// <summary>
+    /// Enables or clears active-snapshot projection matching for legacy worker
+    /// readers. Readiness still requires every scope's projection source to
+    /// equal its active snapshot; scopes that differ fall back as before.
+    /// </summary>
+    public void SetValidatedCurrentProjectionForLegacyWorkerReaders(bool enabled)
+    {
+        if (enabled && !UseLegacyWorkerReaders)
+        {
+            throw new InvalidOperationException(
+                "Legacy validated projection reads require legacy worker readers.");
+        }
+
+        _useValidatedCurrentProjectionForLegacyWorkerReaders = enabled;
+        foreach (var database in _instrumentDbs.Values.Cast<InstrumentDatabase>())
+        {
+            ConfigureInstrumentDatabaseCurrentRead(database);
         }
     }
 
     internal IDisposable BeginValidatedCurrentProjectionReadPass()
     {
         SetValidatedCurrentProjectionForWorkerReaders(false);
+        SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
         return new ValidatedCurrentProjectionReadPass(this);
     }
 
@@ -175,8 +213,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         public void Dispose()
         {
-            Interlocked.Exchange(ref _owner, null)
-                ?.SetValidatedCurrentProjectionForWorkerReaders(false);
+            var owner = Interlocked.Exchange(ref _owner, null);
+            owner?.SetValidatedCurrentProjectionForWorkerReaders(false);
+            owner?.SetValidatedCurrentProjectionForLegacyWorkerReaders(false);
         }
     }
 
@@ -396,7 +435,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             UseSnapshotOverlayWorkerReadersForCurrentRead;
         database.UseValidatedCurrentProjectionForWorkerReaders =
             UseSnapshotOverlayWorkerReadersForCurrentRead
-            && _useValidatedCurrentProjectionForWorkerReaders;
+                && _useValidatedCurrentProjectionForWorkerReaders
+            || !UsePublishedScopeSourcesForCurrentRead
+                && UseLegacyWorkerReaders
+                && _useValidatedCurrentProjectionForLegacyWorkerReaders;
         database.BypassCurrentProjectionForMaintenance =
             Volatile.Read(
                 ref _maxScoreMaintenancePublishedReadPass) != 0;

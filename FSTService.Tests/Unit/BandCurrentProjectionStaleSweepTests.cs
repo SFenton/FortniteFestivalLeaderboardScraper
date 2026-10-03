@@ -56,6 +56,40 @@ public sealed class BandCurrentProjectionStaleSweepTests
     }
 
     [Fact]
+    public async Task OnePassSelectionMatchesSeparateImpactedAndStaleFilters()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        foreach (var song in new[] { "song-a", "song-b", "song-c", "song-d" })
+            Seed(fixture, song, teams: 3);
+        var builder = CreateBuilder(fixture);
+        await builder.RefreshScopesAsync(await builder.LoadCurrentScopesAsync(), Options());
+
+        await Task.Delay(20);
+        Seed(fixture, "song-b", teams: 5);
+        Seed(fixture, "song-c", teams: 6);
+        Seed(fixture, "song-d", teams: 7);
+        // song-a is impacted but unchanged; song-b is impacted and changed;
+        // song-c and song-d drifted outside the impacted set.
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impacted = [Overall("song-a"), Overall("song-b")];
+        var candidates = (await builder.LoadCurrentScopesAsync())
+            .Concat(await builder.LoadProjectionScopeKeysAsync())
+            .ToArray();
+
+        var selection = await builder.SelectImpactedAndStaleScopesAsync(impacted, candidates, maxStaleScopes: 1);
+
+        Assert.Equal([Overall("song-b")], selection.ImpactedScopes);
+        Assert.Equal(
+            await builder.SelectScopesNeedingRefreshAsync(
+                candidates.Where(scope => !impacted.Contains(scope)).Distinct().ToArray(),
+                1),
+            selection.StaleScopes);
+        // song-b's combo scope changed but is not in the impacted set.
+        Assert.Equal(new BandCurrentProjectionScopeKey("song-b", BandType, "combo", Assert.Single(selection.StaleScopes).ScopeComboId), selection.StaleScopes[0]);
+        Assert.Equal(candidates.Distinct().Count() - impacted.Count, selection.SweepCandidateCount);
+        Assert.Empty((await builder.SelectImpactedAndStaleScopesAsync(impacted, candidates, maxStaleScopes: 0)).StaleScopes);
+    }
+
+    [Fact]
     public async Task ScopeKeyAndSourceLoadersCoverProjectionAndSourceScopes()
     {
         using var fixture = new InMemoryMetaDatabase();

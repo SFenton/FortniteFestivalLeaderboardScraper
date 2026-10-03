@@ -744,6 +744,8 @@ os.execve(
 
 function buildComposeConfig({
   effectiveCount = 2,
+  canonicalCount = 30,
+  definedCanonicalCount = canonicalCount,
   pinnedEffectiveIp = null,
   runOnce = false,
   restartPolicy = null,
@@ -752,7 +754,7 @@ function buildComposeConfig({
 } = {}) {
   const workerEnvironment = {
     Scraper__ExpectedProxyEndpointCount: String(effectiveCount),
-    Scraper__CanonicalProxyServiceCount: "30",
+    Scraper__CanonicalProxyServiceCount: String(canonicalCount),
     Scraper__MaxRequestsPerSecond: "800",
     Scraper__ProxyMaxRequestsPerSecondPerEndpoint: "32",
     Scraper__ProxyMaxConcurrentRequestsPerEndpoint: "4",
@@ -788,7 +790,7 @@ function buildComposeConfig({
     }
   };
 
-  for (let index = 1; index <= 30; index += 1) {
+  for (let index = 1; index <= definedCanonicalCount; index += 1) {
     const name = `pia-gluetun-${index}`;
     const environment = {
       VPN_SERVICE_PROVIDER: "private internet access",
@@ -1551,6 +1553,63 @@ describe("fstworker Compose startup recovery", () => {
       const result = await harness.run();
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts a 40-exit canonical overlay with all exits effective", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ canonicalCount: 40, effectiveCount: 40 })
+    });
+    try {
+      const result = await harness.run();
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(result.stdout, /egress=distinct/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts canonical spares beyond the effective exits", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ canonicalCount: 40, effectiveCount: 30 })
+    });
+    try {
+      const result = await harness.run();
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  for (const canonicalCount of [29, 61]) {
+    it(`rejects a canonical PIA service count of ${canonicalCount}`, async () => {
+      const harness = await createHarness({
+        config: buildComposeConfig({ canonicalCount })
+      });
+      try {
+        const result = await harness.run();
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(result.stderr, /canonical PIA service count must be between 30 and 60/);
+      } finally {
+        await harness.cleanup();
+      }
+    });
+  }
+
+  it("rejects a canonical count with missing PIA service definitions", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ canonicalCount: 40, definedCanonicalCount: 35 })
+    });
+    try {
+      const result = await harness.run();
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(result.stderr, /canonical PIA service definitions are incomplete/);
     } finally {
       await harness.cleanup();
     }
