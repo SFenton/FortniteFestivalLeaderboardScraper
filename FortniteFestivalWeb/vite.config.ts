@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { readFileSync } from 'fs';
 import { sharedPackageBoundaryPlugin } from './scripts/shared-package-boundary-plugin.mjs';
+import { resolveAppCommit, resolveAppVersion } from './scripts/app-version.mjs';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
 const corePkg = JSON.parse(readFileSync(path.resolve(__dirname, '../packages/core/package.json'), 'utf-8'));
@@ -25,7 +26,8 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      __APP_VERSION__: JSON.stringify(resolveAppVersion(pkg.version, process.env.FST_APP_BUILD_NUMBER)),
+      __APP_COMMIT__: JSON.stringify(resolveAppCommit(process.env.FST_APP_COMMIT)),
       __CORE_VERSION__: JSON.stringify(corePkg.version),
       __THEME_VERSION__: JSON.stringify(themePkg.version),
     },
