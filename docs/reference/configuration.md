@@ -456,7 +456,10 @@ buffers in the 16 GiB container. Raising
 `Scraper__RankHistorySnapshotMaxDegreeOfParallelism` (template variable
 `RANK_HISTORY_SNAPSHOT_MAX_DOP`) runs that many snapshot writers at once and
 adds WAL and data-file pressure; it is part of the durable phase configuration
-identity, and `1` is the rollback.
+identity, and `1` is the rollback. With `2` in scrape `1460` the snapshots took
+23.5 minutes (34.3 in `1459`), but the concurrent band team rankings slowed
+from 16.0 to 33.1 minutes, so ComputeRankings improved only from 51.7 to 49.6
+minutes; peak anonymous memory rose to about 3.9 GiB.
 
 ## Role differences
 
