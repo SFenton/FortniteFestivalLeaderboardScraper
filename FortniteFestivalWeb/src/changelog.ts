@@ -33,6 +33,12 @@ export const changelog: ChangelogEntry[] = [
           'Corrected Pro Drums maximum scores for I Wanna Get Better and Gangnam Style.',
         ],
       },
+      {
+        title: 'SETTINGS',
+        items: [
+          'App Version now increases automatically with every release and shows the build it came from.',
+        ],
+      },
     ],
   },
 ];

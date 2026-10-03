@@ -99,6 +99,9 @@ sources:
   - FortniteFestivalWeb/e2e/README.md
   - FortniteFestivalWeb/nginx.conf
   - FortniteFestivalWeb/scripts/verify-embedded-bundle.mjs
+  - FortniteFestivalWeb/scripts/app-version.mjs
+  - FortniteFestivalWeb/src/hooks/data/useVersions.ts
+  - .github/workflows/publish-image.yml
 update_triggers:
   - Routes, providers, state ownership, publication handling, styling conventions, package boundaries, or web deployment changes.
 ---
@@ -630,6 +633,31 @@ caching, and falls back to `index.html` for client routes.
 
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
+
+### App version
+
+Every published web image carries an automatic app version. The publish
+workflow's `version-bump` job counts the first-parent commits on `master` at
+the target SHA (`git rev-list --count --first-parent`). Every merge adds at
+least one first-parent commit, so consecutive releases get distinct,
+increasing counts. `build-and-push-web` passes that count and the target SHA to
+the web Dockerfile as `FST_APP_BUILD_NUMBER` and `FST_APP_COMMIT`.
+`scripts/app-version.mjs` then:
+
+- replaces the `package.json` patch with the build number (`0.1.135` with build
+  `1603` becomes `0.1.1603`);
+- shortens the commit to seven characters.
+
+Settings → App Version shows `<version> · <commit>`, and the What's New title
+shows the same version.
+
+Builds without a valid build number keep the plain `package.json` version and
+omit the commit. That covers local development, tests, and the committed
+embedded `wwwroot`. As a result, `embedded:check` stays deterministic and the
+workflow never writes back to `master`. Only `package.json` major/minor changes
+are meaningful; the patch is a local fallback. The web image is published only
+when web-affecting paths change, so a service-only merge does not change the
+deployed web version.
 
 The component gallery is a Vite development/test input, not a production build
 entry. Standalone production Nginx returns 404 for `/playwright/gallery` and
