@@ -162,6 +162,25 @@ refresh plus `Scraper__BandCurrentProjectionMaxParallelScopes=6`,
 `.env` enables `BAND_CURRENT_PROJECTION_USE_BATCHED_MEMBER_STATS_AGGREGATION`.
 These remain production canaries, not accepted defaults.
 
+Between master releases, the improvement loop deploys local bundle images at
+idle scrape boundaries through the guarded worker deploy: one immutable image
+for both API and worker, labelled with the exact bundle revision, built from a
+`deploy/loop-bundle*` branch that merges reviewed PRs onto `master`. Bundle
+content merges to `master` only after the next scrape on it passes leaderboard
+and band fetch. Since the scrape `1460` boundary (2026-10-03) production runs
+`deploy/loop-bundle4-20261002` (`1dabb29c`: everything merged through #154
+plus #155). The worker env additionally sets
+`Scraper__UseValidatedSoloProjectionForLegacyDerivedReaders=true`,
+`Scraper__UseValidatedSoloProjectionForLegacyPrecompute=true`,
+`Scraper__BandCurrentProjectionPublishParallelism=6`,
+`Scraper__BandSearchProjectionParallelBandTypes=true`,
+`Scraper__BandSpoolFlushMaxParallelBandTypes=3`, and
+`Scraper__RankHistorySnapshotMaxDegreeOfParallelism=2`, and adds US East as an
+eighth egress-refresh region (see [VPN/proxy pool](vpn-proxy-pool.md)). These
+remain production canaries, not accepted defaults. Check the running image's
+`org.opencontainers.image.revision` label before deploying a master image:
+a newer master build can lack bundle changes that are not merged yet.
+
 The operator-authorized frozen acquisition recovery on 2026-09-29 failed
 scrape `1448` and candidate publication `379` through the qualified native
 command, preserving publication `377` / published scrape `1447` and retained
@@ -172,8 +191,9 @@ songs response matched before/after recovery. All candidate staging and
 artifacts were retained, so this fact grants no cleanup or deletion authority.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
-requires all 30 canonical service definitions, permits an effective count up to
-30, validates aligned arrays and worker dependencies, rejects static effective
+requires every canonical service definition (`pia-gluetun-1` through the
+canonical count, which may be 30 to 60), permits an effective count up to the
+canonical count, validates aligned arrays and worker dependencies, rejects static effective
 PIA endpoint-IP pins, and provides the bounded production startup handoff.
 Canonical effective-service membership and static-pin rejection intentionally
 apply to every guard action, including checks and existing recreate flows. The

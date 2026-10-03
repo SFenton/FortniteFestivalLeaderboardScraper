@@ -23,6 +23,7 @@ sources:
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
+  - FSTService/Api/PublishedRivalSamples.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Api/SongsCacheService.cs
@@ -325,6 +326,21 @@ Aggregate player scopes intentionally use different formulas:
   band/member set until maintenance releases the gate/freeze.
 - Freeze release invalidates path-maxima, song, and response caches and forces
   a WebSocket same-publication refresh.
+- During any public-read freeze, the rivals and leaderboard-rivals endpoint
+  caches serve only entries cached before the freeze and never compute from
+  live rival tables, which post-processing may be rebuilding. Rival lists and
+  `rivals/all` read their published precomputed rows. Player rival detail
+  (`GET /api/player/{accountId}/rivals/{combo}/{rivalId}`) has no precomputed
+  row of its own. On a cache miss it projects the requested rival's samples
+  from the published `rivals-all:{accountId}` row: it filters them to the combo's
+  instruments, uses `rankDelta = rivalRank - userRank`, applies the normal
+  sort/offset/limit, sets `source: "precomputed"`, and returns empty gap
+  lists. A listed rival with no samples for the combo returns `404`
+  `not_precomputed`. The request returns `503` "Published data unavailable" instead
+  when the row is missing, the rival is not listed, `includeGaps=true` is
+  requested, or `allowLiveFallback=true` would need live computation.
+  Leaderboard-rival detail has no published source and still returns that `503` on
+  a frozen cache miss, so clients must offer retry.
 - Operational-live endpoints expose current process/coordination state.
 - Admin/private endpoints must not be reclassified as public data accidentally.
 

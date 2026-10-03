@@ -54,6 +54,7 @@ sources:
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
   - tools/postgres-tier1-replay-drill.test.mjs
   - tools/postgres-retire-ix-le-song-rank.test.py
+  - tools/postgres-retire-redundant-band-projection-indexes.test.py
   - tools/postgres-pro-bass-snapshot-rewrite.test.py
   - tools/postgres-pro-bass-snapshot-rewrite-drill.py
   - tools/postgres-snapshot-generation-archive.test.py
@@ -96,6 +97,8 @@ sources:
   - tools/postgres-snapshot-generation-restore.py
   - tools/postgres-snapshot-generation-restore.test.py
   - tools/postgres-snapshot-archive-retire.test.py
+  - tools/postgres-snapshot-sparse-compact.test.py
+  - tools/postgres-snapshot-sparse-compact-drill.py
   - tools/postgres-snapshot-generation-drop-drill.py
   - tools/capture-snapshot-generation-drop-health.py
   - tools/capture-publication-route-contract.sh
@@ -589,7 +592,20 @@ cycle binding, transient deferral, and the `AUTO_DISABLED` tripwire:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-snapshot-archive-retire.test.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-snapshot-sparse-compact.test.py
+# Isolated end-to-end compaction drill (throwaway postgres:17, never production)
+python3 tools/postgres-snapshot-sparse-compact-drill.py \
+  --work-root /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/sparse-compaction-drill-<run>
 ```
+
+Sparse compaction unit tests cover per-song and whole-child liveness blockers,
+OID-keyed object names, replacement DDL that mirrors the parent indexes and
+partition bound, lock-bounded swap retries, and dense/small skips before any
+archive. The drill proves plan selection, a catalog-only swap with adopted
+indexes, partition pruning, the archive restore drill, refusal on a non-empty
+DEFAULT partition with nothing left behind, exact-fingerprint
+rollback, refusal of a repeated rollback, and re-compaction that keeps a newly
+live song.
 
 Snapshot-generation DROP and logical-restore validation:
 
@@ -1124,6 +1140,15 @@ PYTHONDONTWRITEBYTECODE=1 \
   python3 tools/postgres-retire-ix-le-song-rank.test.py
 dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter FullyQualifiedName~DatabaseMaintenanceDryRunReporterTests
+```
+
+Redundant band projection index retirement (hermetic: definitions, fallback
+checks, window/blocker refusal, lock-contention deferral, and concurrent
+rollback):
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 tools/postgres-retire-redundant-band-projection-indexes.test.py
 ```
 
 The Python suite uses deterministic fake project/catalog probes. It covers

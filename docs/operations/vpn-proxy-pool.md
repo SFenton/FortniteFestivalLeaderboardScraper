@@ -250,6 +250,18 @@ every OpenVPN TLS handshake; CA Toronto, US Ohio, US Salt Lake City,
 Switzerland, and France were intermittent. Requalify before relying on these
 lists; PIA server health changes.
 
+On 2026-10-02 a disposable spare Gluetun clone (UDP, eight region changes
+each, real IP-echo egress) qualified US East: 8/8 healthy reconnects with 5
+distinct egress addresses; the embedded server list carries 6 US East servers
+and 96 addresses, comparable to the existing regions (73-109). US Michigan and
+CA Ontario reached healthy egress on only 2/8 attempts and US Ohio on 1/8, so
+they stay excluded. Traceroutes and TCP probes from the host showed many large
+PIA ranges failing at the ISP's first upstream hop (ICMP network-unreachable
+or TCP timeouts) with no gateway block rule, so unreachable regions reflect the
+path from this site rather than Gluetun's server list. Because throughput is
+bounded by how many distinct, non-rate-limited egress addresses the refresh
+can reach, each added qualified region widens that pool.
+
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
 kept none of US Las Vegas's 86 or CA Toronto's 74 addresses, but loading a
@@ -270,6 +282,13 @@ Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
 `DisabledProxyContainerRecycler`, which rejects restart requests. The recycler
 normally restarts a container without rewriting provider selectors; legacy
 recreate/city-selection support exists for provider-specific workflows.
+Once a restart has requested the stop, it always finishes with a start on its
+own bounded token, waiting for a canceled stop to settle first. Docker records
+an API stop as explicit, so the `unless-stopped` policy never revives the
+container. On 2026-10-02 a restoration deadline fired between stop and start
+during scrape `1458`, and `pia-gluetun-14` stayed exited, while its quarantine
+retries (control-API only) could not reach it, until an operator ran
+`docker start`.
 The PIA-only control API change above never writes `SERVER_CITIES` or
 `SERVER_NAMES`, so it does not reuse AirVPN's legacy Docker recreate path.
 
@@ -307,12 +326,17 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 30 canonical services, 24 effective aligned endpoints as of 2026-09-26 |
+| Standard PIA overlay | 30 canonical services and 30 effective aligned endpoints as of 2026-10-03 (24 effective on 2026-09-26) |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
-The PIA guard requires the overlay filename `docker-compose.pia-30.yml`,
-canonical count 30, effective count no greater than 30, exact service names,
-aligned arrays, PIA provider labels, and matching worker dependencies. The
+The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
+historical name), a canonical count `Scraper:CanonicalProxyServiceCount`
+between 30 and 60 with exactly `pia-gluetun-1` through `pia-gluetun-N`
+defined, an effective count no greater than the canonical count, exact service
+names, aligned arrays, PIA provider labels, and matching worker dependencies.
+Canonical services beyond the effective arrays are spares the worker does not
+use; define and qualify new exits that way before adding them to the arrays.
+The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
 
@@ -340,7 +364,8 @@ Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
 workers could not record an interrupted attempt within the shutdown window
 (see [Deployment](deployment.md)); publication pointers were unchanged
 throughout. The production worker env now enables refresh with the seven
-qualified regions above, reconnect-in-place, a one-429 trigger, 10-second
+qualified regions above (eight with US East from scrape `1459`),
+reconnect-in-place, a one-429 trigger, 10-second
 per-exit interval, 1-second global spacing, twelve concurrent refreshes, four
 12-second attempts within 90 seconds, a 300-second rate-limited egress window,
 and a 5-second drain.
