@@ -95,6 +95,9 @@ internal sealed class ProxyPool :
     private readonly TimeSpan _regionRotationDrain;
     private readonly TimeSpan _quarantineRetry;
     private readonly bool _targetEndpoints;
+    private readonly TimeSpan _targetMinRest;
+    private readonly bool _seedServerCatalog;
+    internal TimeSpan CatalogSeedInterval { get; set; } = TimeSpan.FromHours(1);
     private readonly HashSet<string> _qualifiedRegions;
     private readonly Dictionary<IPAddress, KnownServer> _knownServers = new();
     private const int MaxKnownServers = 8192;
@@ -174,6 +177,10 @@ internal sealed class ProxyPool :
         _quarantineRetry = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationQuarantineRetrySeconds));
         _targetEndpoints = options.ProxyRegionRotationEnabled
             && options.ProxyRegionRotationTargetEndpoints;
+        _seedServerCatalog = _targetEndpoints
+            && options.ProxyRegionRotationSeedServerCatalog;
+        _targetMinRest = TimeSpan.FromSeconds(
+            Math.Max(0, options.ProxyRegionRotationTargetMinRestSeconds));
         _qualifiedRegions = new HashSet<string>(
             options.ProxyRegionRotationRegions, StringComparer.OrdinalIgnoreCase);
         RequestTimeout = options.ProxyRequestTimeoutSeconds > 0
@@ -232,6 +239,8 @@ internal sealed class ProxyPool :
                     _regionRotationGlobalInterval.TotalSeconds,
                     _burnedEgressTtl.TotalSeconds);
                 _ = Task.Run(() => EgressCensusLoopAsync(_regionRotationCancellation.Token));
+                if (_seedServerCatalog && _containerRecycler is not null)
+                    _ = Task.Run(() => ServerCatalogSeedLoopAsync(_regionRotationCancellation.Token));
             }
 
             _summaryTimer = new Timer(
@@ -1118,6 +1127,88 @@ internal sealed class ProxyPool :
             server.LastUsedAt = at;
     }
 
+    /// <summary>
+    /// Adds every qualified-region address from the exit containers' Gluetun
+    /// server lists that the catalog does not know yet. Learned entries keep
+    /// their verified region, use time, and failure state.
+    /// </summary>
+    internal async Task<int> SeedServerCatalogAsync(CancellationToken ct)
+    {
+        if (!_seedServerCatalog || _containerRecycler is null)
+            return 0;
+        List<string> containers;
+        lock (_lock)
+        {
+            if (_disposed)
+                return 0;
+            containers = _endpoints
+                .Select(endpoint => endpoint.ContainerName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        int lists = 0, added = 0, known;
+        foreach (var container in containers)
+        {
+            var servers = await _containerRecycler.ReadPiaServerListAsync(container, ct);
+            if (servers.Count == 0)
+                continue;
+            lists++;
+            lock (_lock)
+            {
+                if (_disposed)
+                    return added;
+                foreach (var server in servers)
+                {
+                    if (!_qualifiedRegions.Contains(server.Region)
+                        || _knownServers.ContainsKey(server.Address)
+                        || _knownServers.Count >= MaxKnownServers)
+                        continue;
+                    _knownServers[server.Address] = new KnownServer
+                    {
+                        Region = server.Region,
+                        LastUsedAt = _rateLimitedEgress.TryGetValue(server.Address, out var limitedAt)
+                            ? limitedAt
+                            : default,
+                    };
+                    added++;
+                }
+            }
+        }
+
+        lock (_lock)
+            known = _knownServers.Count;
+        _log.LogInformation(
+            "Seeded the PIA server catalog from {Lists} of {Containers} exit server list(s): {Added} new qualified address(es), {Known} known.",
+            lists, containers.Count, added, known);
+        return added;
+    }
+
+    private async Task ServerCatalogSeedLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(CensusInitialDelay, ct);
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await SeedServerCatalogAsync(ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(
+                        "PIA server catalog seeding failed: {Reason}", ex.GetType().Name);
+                }
+                await Task.Delay(CatalogSeedInterval, ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+    }
+
     internal int KnownServerCount
     {
         get
@@ -1151,7 +1242,9 @@ internal sealed class ProxyPool :
                 if (!IsTargetableLocked(address, server, inUse, now)
                     || exclude.Contains(address))
                     continue;
-                if (best is null || server.LastUsedAt < best.LastUsedAt)
+                if (best is null
+                    || server.LastUsedAt < best.LastUsedAt
+                    || (server.LastUsedAt == best.LastUsedAt && server.Tiebreak < best.Tiebreak))
                 {
                     best = server;
                     bestAddress = address;
@@ -1203,6 +1296,7 @@ internal sealed class ProxyPool :
         IPAddress address, KnownServer server, HashSet<IPAddress> inUse, DateTimeOffset now)
         => _qualifiedRegions.Contains(server.Region)
             && server.FailedUntil <= now
+            && now - server.LastUsedAt >= _targetMinRest
             && !inUse.Contains(address)
             && !(_rateLimitedEgress.TryGetValue(address, out var limitedAt)
                 && now - limitedAt < _burnedEgressTtl);
@@ -1210,6 +1304,8 @@ internal sealed class ProxyPool :
     private sealed class KnownServer
     {
         public required string Region { get; set; }
+        /// <summary>Spreads equally rested (e.g. never-used seeded) servers across regions.</summary>
+        public int Tiebreak { get; } = Random.Shared.Next();
         public DateTimeOffset LastUsedAt { get; set; }
         public DateTimeOffset FailedUntil { get; set; }
         public int Failures { get; set; }
@@ -1606,6 +1702,17 @@ internal sealed class ProxyPool :
         {
             throw new InvalidOperationException(
                 "Targeted PIA egress refresh requires worker region rotation with at least one qualified region.");
+        }
+        if (options.ProxyRegionRotationSeedServerCatalog
+            && !options.ProxyRegionRotationTargetEndpoints)
+        {
+            throw new InvalidOperationException(
+                "Seeding the PIA server catalog requires targeted egress refresh.");
+        }
+        if (options.ProxyRegionRotationTargetMinRestSeconds is < 0 or > 3_600)
+        {
+            throw new InvalidOperationException(
+                "Targeted PIA egress refresh minimum rest must be 0-3600 seconds.");
         }
         if (expected == 0)
         {

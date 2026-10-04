@@ -286,6 +286,26 @@ public sealed class ScraperOptions
     public bool ProxyRegionRotationTargetEndpoints { get; set; }
 
     /// <summary>
+    /// Minimum seconds since a known server address was last used before it
+    /// can be targeted (0-3600; 0 relies only on the rate-limited window).
+    /// Epic's per-address budget refills gradually, so a longer rest yields
+    /// more successful requests per targeted egress, while addresses that are
+    /// not yet rested leave the refresh to random selection, which also
+    /// discovers new servers.
+    /// </summary>
+    public int ProxyRegionRotationTargetMinRestSeconds { get; set; }
+
+    /// <summary>
+    /// When true (with targeting), the worker reads, read-only through the
+    /// Docker API, each exit container's Gluetun PIA server list at startup
+    /// and hourly, and adds its qualified-region UDP addresses to the target
+    /// catalog. Gluetun's random choice reaches only a fraction of these
+    /// addresses, and each container's list differs, so learning alone keeps
+    /// the catalog small.
+    /// </summary>
+    public bool ProxyRegionRotationSeedServerCatalog { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;
