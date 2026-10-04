@@ -192,39 +192,47 @@ backing off after a failed pin (10 minutes, doubling to 6 hours; a verified
 use or a corrected region clears it). With
 `ProxyRegionRotationTargetMinRestSeconds`, a target must also have been
 unused for that long. Equally rested servers (for example never-used seeded
-ones) are chosen in random order.
-
-Learning alone keeps the catalog small, because Gluetun's random choice
-reaches only part of each list. With
-`ProxyRegionRotationSeedServerCatalog`, the worker also reads every exit
-container's runtime server list through the Docker archive API (read-only)
-at startup and hourly, and adds qualified-region UDP addresses it does not
-know yet; learned entries keep their verified region, use time, and failure
-state. On 2026-10-04 the 50 lists plus the image list held 4,222 distinct
-addresses in the eight qualified regions, and 24 of 24 randomly sampled ones
-connected when pinned on a disposable clone.
-
-The first targeted canary (scrape `1468`, 50 exits, learning only) needed
-about five minutes for learned servers to leave the rate-limited window, then
-pinned 60–135 servers per minute, refreshed in about 4–6 seconds instead of
-10–12, and completed 90–140 refreshes per minute. Minutes 10–30 averaged about
-8,200 successful requests per minute against 6,200–6,300 for random refresh
-on scrapes `1466`–`1467` (+29–32%), with no quarantines or retry exhaustion.
-Per-minute throughput oscillated (about 3,500–12,800) because the learned
-catalog (about 450–600 servers) cycled every five to seven minutes: a
-server reused after 300–450 seconds of rest averaged about 76 successful
-requests against about 92 on first use, so the catalog's size, not exit
-count, bounded throughput. The attempt pins the exit to that
-server and verifies it exactly like any candidate. When nothing qualifies (for
+ones) are chosen in random order. The attempt pins the exit to that server
+and verifies it exactly like any candidate. When nothing qualifies (for
 example right after a worker start, before the catalog has learned
 addresses), the attempt falls back to the random candidate list; on a pinned
 exit (or after a pin request whose outcome is ambiguous) that fallback and the
 restoration rollback clear the pin instead of reconnecting, because an
 in-place reconnect would return to the same server. Restoration may still
 keep a working pinned tunnel, which is the normal state after a targeted
-refresh. Container
-restarts and the Compose selector never carry a pin, and the guard's static
-`OPENVPN_ENDPOINT_IP` rejection is unchanged.
+refresh. Container restarts and the Compose selector never carry a pin, and
+the guard's static `OPENVPN_ENDPOINT_IP` rejection is unchanged.
+
+Learning alone keeps the catalog small, because Gluetun's random choice
+reaches only part of each list. With
+`ProxyRegionRotationSeedServerCatalog`, the worker also reads every exit
+container's runtime server list through the Docker archive API (read-only;
+the archive is buffered in memory, because Docker.DotNet's stream ends early
+under `TarReader`) at startup and hourly, and adds qualified-region UDP
+addresses it does not know yet; learned entries keep their verified region,
+use time, and failure state. On 2026-10-04 the 50 lists plus the image list
+held 4,222 distinct addresses in the eight qualified regions, and 24 of 24
+randomly sampled ones connected when pinned on a disposable clone.
+
+Live canaries on 2026-10-04 (50 exits, full leaderboard network windows):
+
+| Scrapes | Refresh | Successful requests/min | Network window | Successes per retired egress | Refresh time |
+|---|---|---:|---:|---:|---:|
+| 1466–1467 | random | 6,011–6,323 | 104–109 min | ~100 | 10–12 s |
+| 1468–1469 | targeted, learned catalog | 8,210–8,398 | 77–79 min | 83 | 4–6 s |
+| 1470 | targeted, seeded catalog | 12,494 | 51 min | 103 | ~5 s |
+
+With learning only, learned servers first had to leave the rate-limited
+window (about five minutes), and per-minute throughput then oscillated
+(about 3,500–12,800) because the learned catalog (about 450–600 servers)
+cycled every five to seven minutes: a server reused after 300–450 seconds of
+rest averaged about 76 successful requests against about 92 on first use. The
+seeded catalog (4,222 servers) removed that limit: about 120 targeted
+refreshes per minute, 0–6 failed pins per minute, no random reconnects,
+restorations, or quarantines, about 36 of 50 exits selectable, and HTTP 429s
+at 3.2%. Seeded scrape `1470` logged about 1,400 retried curl
+`wrong version number` (TLS) errors through its exits, against about 300 per
+learned-catalog scrape; none exhausted a retry budget.
 
 A rotated exit is immediately selectable (its old cooldown belonged to the
 spent egress); an explicit `Retry-After` is still honored. While refresh is
@@ -400,7 +408,7 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 30 canonical services and 30 effective aligned endpoints as of 2026-10-03 (24 effective on 2026-09-26) |
+| Standard PIA overlay | 60 canonical services and 50 effective aligned endpoints as of 2026-10-04 (30 effective on 2026-10-03, 24 on 2026-09-26) |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
@@ -437,12 +445,13 @@ stopped misreading Gluetun control timeouts as the restoration deadline.
 Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
 workers could not record an interrupted attempt within the shutdown window
 (see [Deployment](deployment.md)); publication pointers were unchanged
-throughout. The production worker env now enables refresh with the seven
-qualified regions above (eight with US East from scrape `1459`),
-reconnect-in-place, a one-429 trigger, 10-second
-per-exit interval, 1-second global spacing, twelve concurrent refreshes, four
-12-second attempts within 90 seconds, a 300-second rate-limited egress window,
-and a 5-second drain.
+throughout. As of scrape `1470` (2026-10-04) the production worker env
+enables refresh with the eight qualified regions above, reconnect-in-place,
+a one-429 trigger, a 10-second per-exit interval, no global spacing, 25
+concurrent refreshes, four 12-second attempts within 90 seconds, a
+300-second rate-limited egress window, a 5-second drain, targeted server
+selection, and catalog seeding (earlier: 1-second global spacing and twelve
+concurrent refreshes).
 
 Against the prior worker's last five minutes (about 390 successful
 leaderboard requests and 6–7 progress units per minute), the refresh builds

@@ -146,6 +146,11 @@ Sanitized configuration inspection on 2026-09-26 found:
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
 
+On 2026-10-04 the production overlay defined 60 canonical PIA services
+(`.env` canonical count 60) with 50 effective aligned endpoints; see
+[VPN and proxy pool](vpn-proxy-pool.md) for the exit-scaling and refresh
+measurements.
+
 This describes configured files, not a claim about currently running
 containers. Never copy resolved credentials, endpoints, account metadata, or
 provider keys into the repository.
