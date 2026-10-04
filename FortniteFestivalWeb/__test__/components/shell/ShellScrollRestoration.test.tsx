@@ -22,6 +22,8 @@ function Harness({
   return (
     <>
       <button type="button" onClick={() => navigate('/settings')}>Settings</button>
+      <button type="button" onClick={() => navigate('/settings/privacy')}>Privacy</button>
+      <button type="button" onClick={() => navigate('/settings/licenses')}>Licenses</button>
       <ShellScrollRestoration
         layoutKey="standard"
         loadSuggestionsPage={loadSuggestionsPage}
@@ -71,6 +73,29 @@ describe('ShellScrollRestoration', () => {
 
     await waitFor(() => {
       expect(cleanup).toHaveBeenCalled();
+      expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    });
+  });
+
+  it('keeps the owner page scroll when its modal route opens and closes', async () => {
+    const loadSuggestionsPage = vi.fn();
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <Harness loadSuggestionsPage={loadSuggestionsPage} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    });
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Privacy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Licenses' }));
+    await waitFor(() => {
       expect(scrollTo).toHaveBeenCalledWith(0, 0);
     });
   });

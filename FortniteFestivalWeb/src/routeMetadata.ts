@@ -25,6 +25,7 @@ const META = {
   compete: ['compete.title', 'Compete'],
   settings: ['settings.title', 'Settings'],
   licenses: ['settings.licenses.title', 'Licenses'],
+  privacy: ['settings.privacyPolicy.title', 'Privacy Policy'],
 } as const satisfies Record<string, RouteMetadata>;
 
 export function matchRouteMetadata(pathname: string): RouteMetadata {
@@ -34,6 +35,7 @@ export function matchRouteMetadata(pathname: string): RouteMetadata {
   if (RoutePatterns.leaderboard.test(path)) return META.leaderboard;
   if (RoutePatterns.songDetail.test(path)) return META.songDetail;
   if (path === Routes.settingsLicenses) return META.licenses;
+  if (path === Routes.settingsPrivacy) return META.privacy;
   if (RoutePatterns.rivalry.test(path)) return META.rivalry;
   if (RoutePatterns.allRivals.test(path)) return META.allRivals;
   if (RoutePatterns.rivalDetail.test(path)) return META.rivalDetail;

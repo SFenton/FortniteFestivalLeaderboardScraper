@@ -1,3 +1,4 @@
+import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
@@ -24,6 +25,23 @@ function RecoveryHarness() {
       <RouteBoundary>
         {location.pathname === '/broken' ? <ThrowingChild /> : <div>Songs content</div>}
       </RouteBoundary>
+    </>
+  );
+}
+
+let ownerMounts = 0;
+function MountCounter() {
+  const [mountId] = React.useState(() => ++ownerMounts);
+  return <div data-testid="mount-id">{mountId}</div>;
+}
+
+function ModalRouteHarness() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button type="button" onClick={() => navigate('/settings/privacy')}>Open privacy</button>
+      <button type="button" onClick={() => navigate('/settings')}>Close privacy</button>
+      <RouteBoundary><MountCounter /></RouteBoundary>
     </>
   );
 }
@@ -56,5 +74,21 @@ describe('RouteBoundary', () => {
 
     expect(screen.getByText('Songs content')).toBeDefined();
     consoleSpy.mockRestore();
+  });
+
+  it('keeps the page owner mounted while its modal route opens and closes', () => {
+    ownerMounts = 0;
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <ModalRouteHarness />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('mount-id')).toHaveTextContent('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open privacy' }));
+    expect(screen.getByTestId('mount-id')).toHaveTextContent('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close privacy' }));
+    expect(screen.getByTestId('mount-id')).toHaveTextContent('1');
   });
 });

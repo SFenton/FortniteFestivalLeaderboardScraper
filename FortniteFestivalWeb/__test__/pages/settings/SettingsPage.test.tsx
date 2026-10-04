@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
@@ -226,16 +226,26 @@ function createTestQueryClient() {
   });
 }
 
-function renderSettings({ withQuickLinksHarness = false, queryClient = createTestQueryClient() }: { withQuickLinksHarness?: boolean; queryClient?: QueryClient; } = {}) {
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="test-location">{location.pathname}</div>;
+}
+
+function renderSettings({
+  withQuickLinksHarness = false,
+  queryClient = createTestQueryClient(),
+  initialEntries = ['/settings'],
+}: { withQuickLinksHarness?: boolean; queryClient?: QueryClient; initialEntries?: string[]; } = {}) {
   const view = render(
     <ScrollContainerProvider>
       <ShellRefInjector>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
           <QueryClientProvider client={queryClient}>
             <PageQuickLinksProvider>
               <SettingsProvider>
                 <FirstRunProvider>
                   <SettingsPage />
+                  <LocationProbe />
                   {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
                 </FirstRunProvider>
               </SettingsProvider>
@@ -303,6 +313,50 @@ describe('SettingsPage', () => {
     expect(licensesChevron).toHaveAttribute('width', '20');
     expect(licensesChevron).toHaveAttribute('height', '20');
     expect(licensesChevron).toHaveStyle({ color: Colors.textPrimary });
+  });
+
+  it('renders a Privacy Policy row that opens the modal route', async () => {
+    renderSettings();
+    const privacyLink = screen.getByRole('link', { name: 'Privacy Policy' });
+    expect(privacyLink).toHaveAttribute('href', '/settings/privacy');
+    expect(privacyLink).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(screen.getByText('What data Festival Score Tracker uses and your choices.')).toBeDefined();
+    expect(screen.queryByRole('dialog', { name: 'Privacy Policy' })).toBeNull();
+
+    fireEvent.click(privacyLink);
+
+    expect(screen.getByTestId('test-location')).toHaveTextContent('/settings/privacy');
+    const content = await screen.findByTestId('privacy-policy-content', {}, { timeout: 5000 });
+    const dialog = screen.getByRole('dialog', { name: 'Privacy Policy' });
+    expect(dialog).toContainElement(content);
+    expect(within(dialog).getByText(/^Effective date:/)).toBeDefined();
+    expect(within(dialog).getByRole('heading', { level: 3, name: 'Information we collect' })).toBeDefined();
+    expect(within(dialog).getByRole('heading', { level: 3, name: 'Third parties and data sources' })).toBeDefined();
+    expect(within(dialog).getByRole('heading', { level: 3, name: 'Contact us' })).toBeDefined();
+    expect(screen.getByText('App Settings')).toBeDefined();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location')).toHaveTextContent(/^\/settings$/);
+    });
+  });
+
+  it('opens the Privacy Policy modal on a direct visit and replaces the URL with Settings on close', async () => {
+    renderSettings({ initialEntries: ['/settings/privacy'] });
+
+    await screen.findByTestId('privacy-policy-content', {}, { timeout: 5000 });
+    const dialog = screen.getByRole('dialog', { name: 'Privacy Policy' });
+    expect(within(dialog).getByRole('heading', { level: 3, name: 'Your choices and rights' })).toBeDefined();
+    const contactLink = within(dialog).getAllByRole('link').find(link => link.getAttribute('href')?.includes('github.com'));
+    expect(contactLink).toHaveAttribute('target', '_blank');
+    expect(contactLink).toHaveAttribute('rel', expect.stringContaining('noopener'));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location')).toHaveTextContent(/^\/settings$/);
+    });
   });
 
   it('renders debug diagnostics toggles and persists them for mobile PWA sessions', () => {
@@ -392,6 +446,8 @@ describe('SettingsPage', () => {
     expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
     expect(within(list).getByTestId('settings-quick-link-licenses')).toHaveTextContent('Licenses');
+    expect(within(list).getByTestId('settings-quick-link-privacy')).toHaveTextContent('Privacy Policy');
+    expectBefore(within(list).getByTestId('settings-quick-link-licenses'), within(list).getByTestId('settings-quick-link-privacy'));
     expect(within(list).queryByTestId('settings-quick-link-profile-sync')).toBeNull();
     expect(within(list).queryByTestId('settings-quick-link-refresh-profile-name')).toBeNull();
     expect(within(list).getByTestId('settings-quick-link-export')).toHaveTextContent('Export Data');
