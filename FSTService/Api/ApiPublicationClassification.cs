@@ -174,6 +174,8 @@ public static class ApiPublicationRouteCatalog
         Private(HttpMethods.Get, "/api/diag/inflight", "Protected service diagnostics."),
         Private(HttpMethods.Get, "/api/diag/improvement-notifications", "Protected notification publication diagnostics."),
         Private(HttpMethods.Post, "/api/debug/client-interactions", "Client diagnostic telemetry ingestion."),
+        Private(HttpMethods.Post, "/api/feedback", "In-app bug report/feature request intake filed to the private issue tracker."),
+        Private(HttpMethods.Get, "/api/feedback/{id}", "Per-submission feedback processing status; not publication data."),
         Private(HttpMethods.Post, "/api/player/{accountId}/leaderboard-rivals/recompute", "Protected derived-data recomputation command."),
         Private(HttpMethods.Post, "/api/player/{accountId}/rivals/recompute", "Protected derived-data recomputation command."),
         Private(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics", "Protected rivals diagnostics."),
