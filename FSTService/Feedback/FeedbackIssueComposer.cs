@@ -19,6 +19,27 @@ public static partial class FeedbackIssueComposer
 {
     public const string NoResponse = "_No response_";
 
+    /// <summary>
+    /// Exact last line of every filed body. The tracker's triage recognizes anonymous
+    /// app submissions (filed with the owner's token) only by this line.
+    /// </summary>
+    public const string SubmissionMarker = "<!-- fst-feedback:v1 -->";
+
+    /// <summary>Label applied to every in-app submission.</summary>
+    public const string AppSubmissionLabel = "From App";
+
+    /// <summary>Labels for a submission: <see cref="AppSubmissionLabel"/> plus the mapped platform label, if any.</summary>
+    public static IReadOnlyList<string> ComposeLabels(string platform, IReadOnlyDictionary<string, string>? platformLabels)
+    {
+        var labels = new List<string> { AppSubmissionLabel };
+        if (platformLabels is not null
+            && platformLabels.TryGetValue(platform, out var platformLabel)
+            && !string.IsNullOrWhiteSpace(platformLabel)
+            && !labels.Contains(platformLabel.Trim(), StringComparer.Ordinal))
+            labels.Add(platformLabel.Trim());
+        return labels;
+    }
+
     public static string ComposeBody(FeedbackSubmission submission, IReadOnlyList<FeedbackIssueAttachment> attachments)
     {
         FeedbackPlatforms.TryGetLabel(submission.Platform, out var platformLabel);
@@ -59,7 +80,7 @@ public static partial class FeedbackIssueComposer
 
             var notes = attachments.Where(static a => a.Note is not null).ToList();
             foreach (var attachment in notes)
-                body.Append("- ").Append(InlineCode(attachment.Name)).Append(": ").Append(attachment.Note).Append('\n');
+                body.Append("- ").Append(InlineCode(attachment.Name)).Append(": ").Append(NeutralizeHtmlComments(attachment.Note!)).Append('\n');
             if (notes.Count > 0)
                 body.Append('\n');
         }
@@ -71,26 +92,38 @@ public static partial class FeedbackIssueComposer
         if (submission.ClientInfo is not null)
             body.Append("- Client: ").Append(InlineCode(submission.ClientInfo)).Append('\n');
 
-        return body.ToString().TrimEnd() + "\n";
+        return body.ToString().TrimEnd() + "\n\n" + SubmissionMarker;
     }
 
     private static void AppendSection(StringBuilder body, string heading, string? text)
     {
         body.Append("### ").Append(heading).Append("\n\n");
-        body.Append(text is null ? NoResponse : NeutralizeMentions(text)).Append("\n\n");
+        body.Append(text is null ? NoResponse : NeutralizeUserText(text)).Append("\n\n");
     }
 
     /// <summary>Prevents user text from pinging GitHub users or teams.</summary>
     public static string NeutralizeMentions(string text)
         => MentionRegex().Replace(text, "@\u200B");
 
-    public static string NeutralizeTitle(string title) => NeutralizeMentions(title);
+    /// <summary>
+    /// Escapes HTML comment delimiters so user text can neither hide content nor
+    /// forge <see cref="SubmissionMarker"/>.
+    /// </summary>
+    public static string NeutralizeHtmlComments(string text)
+        => text.Replace("<!--", "&lt;!--", StringComparison.Ordinal)
+               .Replace("-->", "--&gt;", StringComparison.Ordinal);
+
+    /// <summary>Applies every neutralization required for untrusted user text.</summary>
+    public static string NeutralizeUserText(string text)
+        => NeutralizeMentions(NeutralizeHtmlComments(text));
+
+    public static string NeutralizeTitle(string title) => NeutralizeUserText(title);
 
     private static string InlineCode(string value)
-        => "`" + value.Replace("`", "'") + "`";
+        => "`" + NeutralizeHtmlComments(value.Replace("`", "'")) + "`";
 
     private static string EscapeLinkText(string value)
-        => value.Replace("[", "(").Replace("]", ")").Replace("\n", " ");
+        => NeutralizeUserText(value.Replace("[", "(").Replace("]", ")").Replace("\n", " "));
 
     [GeneratedRegex(@"(?<![\w@`])@(?=[A-Za-z0-9])")]
     private static partial Regex MentionRegex();

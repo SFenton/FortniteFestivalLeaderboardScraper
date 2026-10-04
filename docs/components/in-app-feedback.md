@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-10-01
-last_verified_commit: afaaa6be
+last_verified: 2026-10-03
+last_verified_commit: 1c4c21a6
 sources:
   - FSTService/Api/FeedbackEndpoints.cs
   - FSTService/FeedbackOptions.cs
@@ -120,9 +120,22 @@ One background consumer processes submissions in order.
 5. The issue is created with the `[Bug]`/`[Feature]` title, a body using the
    tracker's issue-form headings (with the submitting platform's checkbox
    ticked), embedded media, per-file notes, and app version/client details.
-   `@` mentions are neutralized. The issue gets the label
-   `<PlatformLabelPrefix><platform>` (default `surface:web` etc.). If GitHub
-   rejects the label, the issue is filed without it.
+   The body's exact last line is the untrusted-submission marker
+   `<!-- fst-feedback:v1 -->`. Issues are filed with the owner's token, so the
+   tracker's triage relies on this line alone to treat the issue as anonymous
+   app text rather than owner-written instructions.
+6. User-supplied text (the title, every form field, and attachment file names)
+   is neutralized before it is written: `<!--` becomes `&lt;!--` and `-->`
+   becomes `--&gt;`, so users can neither hide content in HTML comments nor
+   forge the marker, and `@` mentions are broken with a zero-width space.
+   The appended marker is therefore the only HTML comment in the body.
+7. The issue is labeled `From App` plus the plain label that `PlatformLabels`
+   maps the submitting platform to (`web`→`Web`, `ios`→`iOS`,
+   `iphone-duo`→`iPhone Duo`, `ipados`→`iPadOS`, `macos`→`macOS`,
+   `android`→`Android`, `windows`→`Windows`). The tracker does not use
+   `prefix:value` labels, so no `surface:*` label is applied. A platform with
+   no or an empty map entry gets only `From App`. If GitHub rejects the labels,
+   the issue is filed without them; the marker still identifies it.
 
 An attachment that cannot be converted or uploaded is skipped and listed in
 the issue; the issue is still filed. If the issue cannot be created, the job
@@ -145,7 +158,7 @@ Section `Feedback` (see `FSTService/appsettings.json`):
 | `GitHubToken` | empty | secret token; set via environment only |
 | `GitHubApiBaseUrl` | `https://api.github.com` | REST base |
 | `GitHubUploadsBaseUrl` | `https://uploads.github.com` | user-attachment upload base |
-| `PlatformLabelPrefix` | `surface:` | platform label prefix; empty disables labels |
+| `PlatformLabels` | `web`→`Web`, `ios`→`iOS`, `iphone-duo`→`iPhone Duo`, `ipados`→`iPadOS`, `macos`→`macOS`, `android`→`Android`, `windows`→`Windows` | platform → plain issue label; an empty value omits that platform's label (`From App` is always applied) |
 | `MaxRequestBytes` | 94371840 | whole-request cap |
 | `MaxAttachments` | 4 | files per submission |
 | `GitHubAttachmentMaxBytes` | 10485760 | per-file target after conversion |

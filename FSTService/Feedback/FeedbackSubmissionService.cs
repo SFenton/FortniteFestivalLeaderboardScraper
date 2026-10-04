@@ -170,9 +170,7 @@ public sealed class FeedbackSubmissionService : IDisposable
             }
         }
 
-        var labels = new List<string>();
-        if (!string.IsNullOrWhiteSpace(_options.Value.PlatformLabelPrefix))
-            labels.Add(_options.Value.PlatformLabelPrefix + submission.Platform);
+        var labels = FeedbackIssueComposer.ComposeLabels(submission.Platform, _options.Value.PlatformLabels);
 
         try
         {

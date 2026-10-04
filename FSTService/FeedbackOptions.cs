@@ -20,8 +20,21 @@ public sealed class FeedbackOptions
 
     public string GitHubUploadsBaseUrl { get; set; } = "https://uploads.github.com";
 
-    /// <summary>Prefix of the label applied for the submitting platform, e.g. <c>surface:web</c>.</summary>
-    public string PlatformLabelPrefix { get; set; } = "surface:";
+    /// <summary>
+    /// Submitting platform (wire value) to the plain tracker label applied to its issues.
+    /// Platforms without a non-empty entry get no platform label; every submission
+    /// is also labeled <c>From App</c>.
+    /// </summary>
+    public Dictionary<string, string> PlatformLabels { get; set; } = new(StringComparer.Ordinal)
+    {
+        ["web"] = "Web",
+        ["ios"] = "iOS",
+        ["iphone-duo"] = "iPhone Duo",
+        ["ipados"] = "iPadOS",
+        ["macos"] = "macOS",
+        ["android"] = "Android",
+        ["windows"] = "Windows",
+    };
 
     /// <summary>Maximum accepted multipart request size in bytes (default 90 MiB).</summary>
     public long MaxRequestBytes { get; set; } = 90L * 1024 * 1024;

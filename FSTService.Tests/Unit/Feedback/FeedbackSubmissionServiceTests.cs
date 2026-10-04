@@ -79,8 +79,9 @@ public sealed class FeedbackSubmissionServiceTests : IDisposable
         Assert.Equal("video", attachment.Kind);
         await _issues.Received(1).CreateIssueAsync(
             "[Bug] Crash",
-            Arg.Is<string>(body => body.Contains("https://github.com/user-attachments/assets/abc") && body.Contains("- [x] Android")),
-            Arg.Is<IReadOnlyList<string>>(labels => labels.SequenceEqual(new[] { "surface:android" })),
+            Arg.Is<string>(body => body.Contains("https://github.com/user-attachments/assets/abc") && body.Contains("- [x] Android")
+                                   && body.EndsWith("\n" + FeedbackIssueComposer.SubmissionMarker, StringComparison.Ordinal)),
+            Arg.Is<IReadOnlyList<string>>(labels => labels.SequenceEqual(new[] { "From App", "Android" })),
             Arg.Any<CancellationToken>());
         Assert.False(Directory.Exists(Path.GetDirectoryName(upload.FilePath)));
     }
