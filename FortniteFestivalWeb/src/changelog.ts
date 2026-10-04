@@ -11,6 +11,12 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
+        title: 'SETTINGS',
+        items: [
+          'Added a Privacy Policy to Settings, also available directly at /settings/privacy.',
+        ],
+      },
+      {
         title: 'SONGS',
         items: [
           'Added Year, Duration, Item Shop, and Double Bass filters.',

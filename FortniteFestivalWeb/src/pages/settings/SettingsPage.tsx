@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -15,6 +15,7 @@ import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import type { ColumnKey } from '../songinfo/components/path/pathTableColumns';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
+import LazyModalBoundary from '../../components/common/LazyModalBoundary';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
@@ -43,8 +44,8 @@ import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks'
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useServiceInfo } from '../../hooks/data/useServiceInfo';
 import { SettingsServiceProgressCard } from './SettingsServiceProgress';
-import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
-import { Routes as AppRoutes } from '../../routes';
+import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoShieldCheckmark, IoSparkles, IoTrash } from 'react-icons/io5';
+import { normalizeRoutePathname, Routes as AppRoutes } from '../../routes';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 import { APP_VERSION_LABEL, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
@@ -52,9 +53,17 @@ import './settingsEnglish';
 import '../../components/firstRun/firstRunEnglish';
 
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
+const loadPrivacyPolicyModal = () => import('./PrivacyPolicyModal');
+const PrivacyPolicyModal = lazy(loadPrivacyPolicyModal);
+
+type PrivacyPolicyLinkState = {
+  privacyPolicyFromSettings?: boolean;
+};
+
+const PRIVACY_POLICY_LINK_STATE: PrivacyPolicyLinkState = { privacyPolicyFromSettings: true };
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
-type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
+type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'privacy' | 'refresh-profile-name' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -210,6 +219,23 @@ export default function SettingsPage() {
   const scrollContainerRef = useScrollContainer();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const privacyPolicyOpen = normalizeRoutePathname(location.pathname) === AppRoutes.settingsPrivacy;
+  const privacyPolicyCloseRequestedRef = useRef(false);
+  useEffect(() => {
+    privacyPolicyCloseRequestedRef.current = false;
+  }, [privacyPolicyOpen]);
+  const closePrivacyPolicy = useCallback(() => {
+    if (!privacyPolicyOpen || privacyPolicyCloseRequestedRef.current) return;
+    privacyPolicyCloseRequestedRef.current = true;
+    // In-app opens pushed a history entry, so going back also keeps browser Back consistent.
+    if ((location.state as PrivacyPolicyLinkState | null)?.privacyPolicyFromSettings) {
+      navigate(-1);
+      return;
+    }
+    navigate(AppRoutes.settings, { replace: true });
+  }, [location.state, navigate, privacyPolicyOpen]);
 
   // Register first-run slides so replay is always available from Settings
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
@@ -411,6 +437,7 @@ export default function SettingsPage() {
       { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title'), icon: <IoServer size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle'), icon: <IoSparkles size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle'), icon: <IoDocumentText size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'privacy', label: t('settings.privacyPolicyNavTitle'), landmarkLabel: t('settings.privacyPolicyNavTitle'), icon: <IoShieldCheckmark size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       ...(hasSelectedProfile
         ? [{ id: 'refresh-profile-name' as const, label: refreshProfileNameLabel, landmarkLabel: refreshProfileNameLabel, icon: <IoPersonCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> }]
         : []),
@@ -506,6 +533,14 @@ export default function SettingsPage() {
         {competeReplay.show && <FirstRunCarousel slides={competeReplay.slides} onDismiss={competeReplay.dismiss} onExitComplete={competeReplay.onExitComplete} />}
         {rivalsReplay.show && <FirstRunCarousel slides={rivalsReplay.slides} onDismiss={rivalsReplay.dismiss} onExitComplete={rivalsReplay.onExitComplete} />}
         {shopReplay.show && <FirstRunCarousel slides={shopReplay.slides} onDismiss={shopReplay.dismiss} onExitComplete={shopReplay.onExitComplete} />}
+        <LazyModalBoundary
+          visible={privacyPolicyOpen}
+          title={t('settings.privacyPolicy.title')}
+          boundaryName="privacy-policy-modal"
+          onClose={closePrivacyPolicy}
+        >
+          <PrivacyPolicyModal visible={privacyPolicyOpen} onClose={closePrivacyPolicy} />
+        </LazyModalBoundary>
       </>}
     >
       <div style={st.cardColumn}>
@@ -822,6 +857,30 @@ export default function SettingsPage() {
                   <SectionHeader
                     title={t('settings.licensesNavTitle')}
                     description={t('settings.licensesNavDescription')}
+                    flush
+                  />
+                </div>
+                <IoChevronForward size={QUICK_LINK_GLYPH_ICON_SIZE} aria-hidden="true" style={st.navigationChevron} />
+              </Link>
+            </div>
+          </FadeInDiv>
+
+          {/* ── Privacy Policy ── */}
+          <FadeInDiv delay={stagger(staggerIndex++)}>
+            <div ref={(element) => registerSectionRef('privacy', element)}>
+              <Link
+                to={AppRoutes.settingsPrivacy}
+                state={PRIVACY_POLICY_LINK_STATE}
+                style={st.navigationRow}
+                aria-label={t('settings.privacyPolicyNavTitle')}
+                aria-haspopup="dialog"
+                onPointerEnter={() => { void loadPrivacyPolicyModal(); }}
+                onFocus={() => { void loadPrivacyPolicyModal(); }}
+              >
+                <div style={st.navigationContent}>
+                  <SectionHeader
+                    title={t('settings.privacyPolicyNavTitle')}
+                    description={t('settings.privacyPolicyNavDescription')}
                     flush
                   />
                 </div>

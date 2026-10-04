@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within, configure } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api';
@@ -17,6 +17,10 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('../../../../src/api/client', () => ({
   api: apiMock,
 }));
+
+// Role queries over the full filter modal DOM are slow under v8 coverage instrumentation.
+vi.setConfig({ testTimeout: 15_000 });
+configure({ asyncUtilTimeout: 5_000 });
 
 /* ── Helpers ── */
 
@@ -75,11 +79,8 @@ function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof Fi
   };
 }
 
-// Compact instrument selectors mount after the modal transition; CI shards under load can exceed the 1s default.
-const ASYNC_LOOKUP_TIMEOUT = { timeout: 5000 };
-
 async function clickCurrentCompactInstrument(label: string, index = 0) {
-  const instrument = (await screen.findAllByRole('button', { name: label }, ASYNC_LOOKUP_TIMEOUT))[index];
+  const instrument = (await screen.findAllByRole('button', { name: label }))[index];
   expect(instrument).toBeDefined();
   if (!instrument) return;
   fireEvent.click(instrument);
@@ -431,7 +432,7 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
     await clickCurrentCompactInstrument('Bass', 0);
 
-    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled(), ASYNC_LOOKUP_TIMEOUT);
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
     fireEvent.click(screen.getByText('Apply Filter Changes'));
 
     expect(combo.onApply).toHaveBeenCalledWith(expect.objectContaining({
@@ -442,7 +443,7 @@ describe('FilterModal', () => {
       ],
     }));
     expect(props.onApply).toHaveBeenCalledTimes(1);
-  }, 20_000);
+  });
 
   it('resets the embedded combo draft and clears the applied combo on Apply', async () => {
     const combo = bandComboFilter({ appliedAssignments });
@@ -475,10 +476,10 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
     await clickCurrentCompactInstrument('Drums', 0);
 
-    expect(await screen.findByText('Invalid Configuration', {}, ASYNC_LOOKUP_TIMEOUT)).toBeDefined();
+    expect(await screen.findByText('Invalid Configuration')).toBeDefined();
     expect(screen.getByText('Apply Filter Changes').closest('button')).toBeDisabled();
     expect(combo.onApply).not.toHaveBeenCalled();
-  }, 20_000);
+  });
 
   it('toggles selected band score filters without touching solo maps', () => {
     const onChange = vi.fn();

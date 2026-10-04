@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-10-01
-last_verified_commit: 598965ef
+last_verified: 2026-10-03
+last_verified_commit: fc9a7636
 sources:
   - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
@@ -53,6 +53,8 @@ sources:
   - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/PrivacyPolicyModal.tsx
+  - FortniteFestivalWeb/src/pages/settings/privacyPolicy.ts
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
@@ -182,7 +184,7 @@ The route tree covers:
 - player profiles, statistics, rivals, suggestions, and competition views;
 - global, family, combo, and band rankings;
 - band lookup, band detail, and player-band views;
-- shop, optional manual, settings, and licenses.
+- shop, optional manual, settings, licenses, and the privacy policy.
 
 Use `src/routes.ts` for route construction and `src/App.tsx` for the rendered
 tree. Static destinations and route-family matchers stay centralized in
@@ -192,8 +194,15 @@ the eager Songs page, the standard recoverable error UI. `RequirePlayer` and
 `RequireSelection` own access redirects with replace semantics, and the
 wildcard route uses the same replacement redirect for unsupported URLs so they
 land on `/songs`. Route and tab ownership normalize trailing slashes, and
-Licenses remains owned by the Settings tab. The manual is the only feature
-currently exposed through `/api/features`.
+Licenses remains owned by the Settings tab. `/settings/privacy` is a modal
+route: it renders the Settings page with the privacy policy modal open.
+`getRoutePageOwner` maps it to `/settings`, so `RouteBoundary`, shell scroll
+reset, the mobile header, and the Settings FAB treat both URLs as one page and
+Settings neither remounts nor scrolls to the top when the modal opens or
+closes. In-app opens push the route and close with history Back; direct visits
+close by replacing the URL with `/settings`. The policy text is owned by
+[Privacy policy](../reference/privacy-policy.md). The manual is the only
+feature currently exposed through `/api/features`.
 
 ## State ownership
 
@@ -355,7 +364,9 @@ band filter, or the view-toggle action retain only the list's normal bottom
 padding; handset states that do render a FAB remain protected from overlap.
 
 `ShellScrollRestoration` owns route/layout scroll resets, preserve-scroll keys,
-and the lazy Suggestions restoration coordinator outside `App.tsx`.
+and the lazy Suggestions restoration coordinator outside `App.tsx`. Resets key
+on the route's page owner, so modal routes such as `/settings/privacy` keep the
+underlying page's scroll position.
 `useScrollUpdateScheduler` provides one-frame coalescing plus viewport settling
 and cleanup for masks/fades, while each consumer retains its own observer and
 geometry rules. Songs and Suggestions share virtual-list scroll-margin

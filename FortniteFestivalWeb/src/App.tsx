@@ -130,6 +130,7 @@ function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | nu
         )}
       />
       <Route path={AppRoutes.settings} element={<RouteBoundary><SettingsPage /></RouteBoundary>} />
+      <Route path={AppRoutes.settingsPrivacy} element={<RouteBoundary><SettingsPage /></RouteBoundary>} />
       <Route path={AppRoutes.settingsLicenses} element={<RouteBoundary><LicensesPage /></RouteBoundary>} />
       <Route path="*" element={<RedirectToSongs />} />
     </Routes>
@@ -211,7 +212,7 @@ import {
 import { writeSelectedProfile } from './state/selectedProfile';
 import { queryClient } from './api/queryClient';
 import { invalidateLeaderboardData } from './api/queryPolicy';
-import { isKnownRoutePath, normalizeRoutePathname, Routes as AppRoutes, RoutePatterns } from './routes';
+import { getRoutePageOwner, isKnownRoutePath, normalizeRoutePathname, Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
@@ -367,7 +368,7 @@ function getSongDetailId(pathname: string): string | undefined {
   }
 }
 
-const ANIMATED_BG_ROUTES = new Set<string>([AppRoutes.root, AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.manual, AppRoutes.settings, AppRoutes.settingsLicenses, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
+const ANIMATED_BG_ROUTES = new Set<string>([AppRoutes.root, AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.manual, AppRoutes.settings, AppRoutes.settingsLicenses, AppRoutes.settingsPrivacy, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards') || pathname.startsWith('/bands');
@@ -789,6 +790,7 @@ function AppShell() {
   /* v8 ignore stop */
 
   const routePathname = normalizeRoutePathname(location.pathname);
+  const pageRoutePathname = getRoutePageOwner(routePathname);
   const showAnimatedBg = isAnimatedBgRoute(routePathname);
 
   const NAV_TITLES: Record<string, string> = {
@@ -805,7 +807,7 @@ function AppShell() {
   const knownRoute = isKnownRoutePath(routePathname);
   const navTitle = routePathname === AppRoutes.statistics
     ? (player?.displayName ?? (selectedProfile?.type === 'band' ? selectedProfile.displayName : t('nav.statistics')))
-    : (NAV_TITLES[routePathname] ?? (knownRoute ? null : t('nav.songs')));
+    : (NAV_TITLES[pageRoutePathname] ?? (knownRoute ? null : t('nav.songs')));
   const mainLabel = navTitle ?? t('common.brandName');
   const fallbackRouteHeading = navTitle !== null;
 
@@ -1015,7 +1017,7 @@ function AppShell() {
     >
       <RouteAccessibility
         pathname={location.pathname}
-        titleOverride={navTitle}
+        titleOverride={pageRoutePathname === routePathname ? navTitle : null}
         navigationType={navType}
         skipLabel={t('common.skipToContent')}
       />
@@ -1045,7 +1047,7 @@ function AppShell() {
             navTitle={navTitle}
             backFallback={backFallback}
             shouldAnimate={shouldAnimateHeader}
-            locationKey={routePathname}
+            locationKey={pageRoutePathname}
             songInstrument={songInstrument}
             isSongsRoute={routePathname === AppRoutes.songs}
             onOpenSidebar={() => setSidebarOpen(true)}
@@ -1131,7 +1133,7 @@ function AppShell() {
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
       )}
-      {showMobileFab && routePathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && pageRoutePathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           pageKey="settings"
           ready={pageReady}
@@ -1397,7 +1399,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {showMobileFab && knownRoute && routePathname !== AppRoutes.songs && routePathname !== AppRoutes.suggestions && routePathname !== AppRoutes.statistics && routePathname !== AppRoutes.settings && routePathname !== AppRoutes.manual && routePathname !== AppRoutes.shop && routePathname !== AppRoutes.compete && !RoutePatterns.history.test(routePathname) && !RoutePatterns.player.test(routePathname) && !RoutePatterns.songDetail.test(routePathname) && !RoutePatterns.songBandLeaderboard.test(routePathname) && !RoutePatterns.leaderboards.test(routePathname) && !RoutePatterns.rivals.test(routePathname) && !RoutePatterns.rivalDetail.test(routePathname) && !RoutePatterns.rivalry.test(routePathname) && !RoutePatterns.bands.test(routePathname) && (
+      {showMobileFab && knownRoute && routePathname !== AppRoutes.songs && routePathname !== AppRoutes.suggestions && routePathname !== AppRoutes.statistics && pageRoutePathname !== AppRoutes.settings && routePathname !== AppRoutes.manual && routePathname !== AppRoutes.shop && routePathname !== AppRoutes.compete && !RoutePatterns.history.test(routePathname) && !RoutePatterns.player.test(routePathname) && !RoutePatterns.songDetail.test(routePathname) && !RoutePatterns.songBandLeaderboard.test(routePathname) && !RoutePatterns.leaderboards.test(routePathname) && !RoutePatterns.rivals.test(routePathname) && !RoutePatterns.rivalDetail.test(routePathname) && !RoutePatterns.rivalry.test(routePathname) && !RoutePatterns.bands.test(routePathname) && (
         <MobileFloatingActionButton
           pageKey={`fallback:${routePathname}`}
           ready={pageReady}
