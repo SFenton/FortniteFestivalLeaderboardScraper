@@ -295,6 +295,20 @@ path from this site rather than Gluetun's server list. Because throughput is
 bounded by how many distinct, non-rate-limited egress addresses the refresh
 can reach, each added qualified region widens that pool.
 
+On 2026-10-04 disposable clones (ipify only) retested 42 regions with one
+region change and three reconnects each. Bahamas, Venezuela, Ecuador,
+Uruguay, Costa Rica, and Guatemala then passed 8/8 deeper trials and Peru
+4/4; their 280 image-list addresses do not overlap the eight qualified
+regions. Almost every other US and European region (including US Texas,
+Washington DC, Chicago, Seattle, Atlanta, Houston, Virginia, UK London, and
+DE Frankfurt) reached egress on 0–3 of 4 attempts. A region also has to exist
+in **every** effective container's runtime server list: Gluetun's updater
+(`UPDATER_PERIOD`) rewrites each container's list on its own schedule, and on
+2026-10-04 only Bahamas among those Latin American regions was present in all
+50 lists (the eight qualified regions were, with at least 43 addresses each).
+A region change or pin to a region missing from a container's list fails on
+that container.
+
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
 kept none of US Las Vegas's 86 or CA Toronto's 74 addresses, but loading a
