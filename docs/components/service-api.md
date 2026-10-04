@@ -33,6 +33,7 @@ sources:
   - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Api/AdminEndpoints.cs
+  - FSTService/FeedbackOptions.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
@@ -208,7 +209,8 @@ inventory. Domain routes live in `FSTService/Api/*Endpoints.cs`.
 
 The mapped groups are health, feature flags, account, songs/shop/paths,
 leaderboards, players, exports, band sync, rivals, leaderboard rivals,
-rankings/bands, improvement notifications, admin, diagnostics, and WebSocket.
+rankings/bands, improvement notifications, admin, diagnostics, in-app
+feedback ([In-app feedback](in-app-feedback.md)), and WebSocket.
 
 Path PNG and JSON routes are publication-bound and resolve one current
 immutable artifact generation. The protected single-song regeneration route
@@ -218,7 +220,7 @@ See [Path generation](path-generation.md).
 The path route validates the eight generated solo instruments, including the
 two plastic-drums scoring modes backed by Epic's shared `pd` chart.
 
-The current source contains 82 HTTP mappings across 14 route-bearing endpoint
+The current source contains 84 HTTP mappings across 15 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:
 
 - `PublicationBound`
@@ -232,6 +234,9 @@ See [API contract](../reference/api-contract.md).
 Protected endpoints use the `X-API-Key` authentication scheme. Public,
 authenticated, protected, and global fixed-window limiters currently share the
 same 100-request, one-second, per-client policy outside the test environment.
+`POST /api/feedback` instead uses the `feedback` policy, a per-client-IP fixed
+window from `Feedback:SubmissionsPerWindow`/`SubmissionWindowMinutes`
+(default 5 per 10 minutes).
 Do not copy older minute-based limits from deleted historical guidance.
 
 ## Caching and publication

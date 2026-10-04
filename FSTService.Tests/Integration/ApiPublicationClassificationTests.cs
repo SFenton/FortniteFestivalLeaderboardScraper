@@ -426,6 +426,8 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Get, "/api/diag/inflight"),
         new(HttpMethods.Get, "/api/diag/improvement-notifications"),
         new(HttpMethods.Post, "/api/debug/client-interactions"),
+        new(HttpMethods.Post, "/api/feedback"),
+        new(HttpMethods.Get, "/api/feedback/{id}"),
         new(HttpMethods.Post, "/api/player/{accountId}/leaderboard-rivals/recompute"),
         new(HttpMethods.Post, "/api/player/{accountId}/rivals/recompute"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics"),

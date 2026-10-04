@@ -293,6 +293,8 @@ builder.Services.AddOptions<FeatureOptions>()
     .ValidateOnStart();
 builder.Services.Configure<ClientTelemetryOptions>(
     builder.Configuration.GetSection(ClientTelemetryOptions.Section));
+builder.Services.Configure<FeedbackOptions>(
+    builder.Configuration.GetSection(FeedbackOptions.Section));
 builder.Services.Configure<ImprovementNotificationOptions>(
     builder.Configuration.GetSection(ImprovementNotificationOptions.Section));
 builder.Services.Configure<BandRankHistoryOptions>(
@@ -851,6 +853,14 @@ builder.Services.AddHttpClient(nameof(HistoryReconstructor))
         sp.GetRequiredService<ILogger<HistoryReconstructor>>(),
         sp.GetRequiredService<IProxyHealthReporter>()));
 
+// ─── In-app feedback (GitHub issues) ────────────────────────
+
+builder.Services.AddHttpClient(FSTService.Feedback.GitHubFeedbackIssueClient.HttpClientName)
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromMinutes(5));
+builder.Services.AddSingleton<FSTService.Feedback.IFeedbackIssueClient, FSTService.Feedback.GitHubFeedbackIssueClient>();
+builder.Services.AddSingleton<FSTService.Feedback.IFeedbackMediaProcessor, FSTService.Feedback.FfmpegFeedbackMediaProcessor>();
+builder.Services.AddSingleton<FSTService.Feedback.FeedbackSubmissionService>();
+
 // ─── Path Generation ────────────────────────────────────────
 
 builder.Services.AddHttpClient("PathGeneration")
@@ -939,6 +949,18 @@ builder.Services.AddRateLimiter(opts =>
     opts.AddPolicy("public", context => CreateFixedWindowPolicy(context, isTesting));
     opts.AddPolicy("auth", context => CreateFixedWindowPolicy(context, isTesting));
     opts.AddPolicy("protected", context => CreateFixedWindowPolicy(context, isTesting));
+    opts.AddPolicy(ApiEndpoints.FeedbackRateLimitPolicy, context =>
+    {
+        if (isTesting)
+            return RateLimitPartition.GetNoLimiter("test");
+        var feedback = context.RequestServices.GetRequiredService<IOptions<FeedbackOptions>>().Value;
+        return RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = Math.Max(1, feedback.SubmissionsPerWindow),
+            Window = TimeSpan.FromMinutes(Math.Max(1, feedback.SubmissionWindowMinutes)),
+            QueueLimit = 0,
+        });
+    });
 
     opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         CreateFixedWindowPolicy(context, isTesting));
