@@ -146,6 +146,27 @@ public sealed class PiaRegionRotatorTests
     }
 
     [Fact]
+    public async Task RotateAsync_TargetEndpoints_AmbiguousPinFailureClearsPinInsteadOfReconnecting()
+    {
+        var server = new RecordingControlServer { ThrowAfterApplyingEndpoint = "198.51.100.65" };
+        var claims = new RecordingClaims();
+        claims.Targets.Enqueue(new(IPAddress.Parse("198.51.100.65"), "US Las Vegas"));
+        using var client = new HttpClient(server);
+        var rotator = CreateRotator(client, new RecordingHealthRecycler(server),
+            new RecordingEgressProbe(server), maxAttempts: 2);
+
+        await rotator.RotateAsync(
+            Request(claims, ["US Seattle"], reconnectInPlace: true, targetEndpoints: true),
+            CancellationToken.None);
+
+        Assert.Equal(["198.51.100.65", "0.0.0.0"], server.PutEndpoints);
+        Assert.Equal(["US Las Vegas", "US Las Vegas"], server.PutRegions);
+        Assert.Equal(0, server.Reconnects);
+        Assert.Equal("0.0.0.0", server.EndpointIp);
+        Assert.Equal([IPAddress.Parse("198.51.100.65")], claims.FailedTargets);
+    }
+
+    [Fact]
     public async Task RotateAsync_TargetEndpoints_FailedPinsRestoreOriginalRegionUnpinned()
     {
         var server = new RecordingControlServer();
@@ -585,6 +606,8 @@ public sealed class PiaRegionRotatorTests
         public string CurrentRegion { get; set; } = "US Las Vegas";
         public string EndpointIp { get; set; } = "0.0.0.0";
         public List<string?> PutEndpoints { get; } = [];
+        public string? ThrowAfterApplyingEndpoint { get; set; }
+        public int FailNextSettingsReads { get; set; }
         public string Provider { get; set; } = "private internet access";
         public bool CrashOnRollback { get; set; }
         public bool FailSettingsRead { get; set; }
@@ -600,7 +623,7 @@ public sealed class PiaRegionRotatorTests
             {
                 if (request.Method == HttpMethod.Get)
                 {
-                    if (FailSettingsRead)
+                    if (FailSettingsRead || FailNextSettingsReads-- > 0)
                         return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
                     return Json(new
                     {
@@ -637,6 +660,11 @@ public sealed class PiaRegionRotatorTests
                 CurrentRegion = region;
                 if (endpoint is not null)
                     EndpointIp = endpoint;
+                if (endpoint is not null && endpoint == ThrowAfterApplyingEndpoint)
+                {
+                    FailNextSettingsReads = 1;
+                    throw new TaskCanceledException("simulated timeout after Gluetun applied the pin");
+                }
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(

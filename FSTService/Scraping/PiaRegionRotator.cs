@@ -300,7 +300,12 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                         "PIA {Action} for {Container} to {Region} failed: {Reason}; trying the next candidate.",
                         action, tunnel.ContainerName, candidate, ex.GetType().Name);
                     if (target is { } failed)
+                    {
                         request.Claims.ReportTargetFailed(failed.Address);
+                        // Gluetun may have applied the pin before the request
+                        // failed; assume it did unless the settings say otherwise.
+                        pinned = true;
+                    }
                     if (await TryGetSelectionAsync(tunnel.ControlUri, overall.Token) is { } after)
                     {
                         runtimeRegion = after.Region;
@@ -317,7 +322,10 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                     if (request.TargetEndpoints)
                     {
                         if (target is { } failed)
+                        {
                             request.Claims.ReportTargetFailed(failed.Address);
+                            pinned = true;
+                        }
                         if (await TryGetSelectionAsync(tunnel.ControlUri, overall.Token) is { } after)
                         {
                             runtimeRegion = after.Region;

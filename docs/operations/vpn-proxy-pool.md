@@ -193,8 +193,11 @@ use or a corrected region clears it). The attempt pins the exit to that
 server and verifies it exactly like any candidate. When nothing qualifies (for
 example right after a worker start, before the catalog has learned
 addresses), the attempt falls back to the random candidate list; on a pinned
-exit that fallback and restoration clear the pin instead of reconnecting,
-because an in-place reconnect would return to the same server. Container
+exit (or after a pin request whose outcome is ambiguous) that fallback and the
+restoration rollback clear the pin instead of reconnecting, because an
+in-place reconnect would return to the same server. Restoration may still
+keep a working pinned tunnel, which is the normal state after a targeted
+refresh. Container
 restarts and the Compose selector never carry a pin, and the guard's static
 `OPENVPN_ENDPOINT_IP` rejection is unchanged.
 
