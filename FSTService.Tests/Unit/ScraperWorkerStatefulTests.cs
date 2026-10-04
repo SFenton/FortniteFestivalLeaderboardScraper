@@ -605,8 +605,13 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         }
         await worker.StartAsync(CancellationToken.None);
         await Task.Delay(TimeSpan.FromSeconds(1));
-        var firstOwner = GetPublicationCommitIntentOwner();
-        Assert.False(string.IsNullOrWhiteSpace(firstOwner));
+        var cycleOwner = GetPublicationCommitIntentOwner();
+        Assert.False(string.IsNullOrWhiteSpace(cycleOwner));
+        // A deferred cycle releases its owner and the next resume
+        // acquires a fresh one; only require one durable owner per
+        // pending cycle so slow runners that reach the next resume
+        // inside the sampling window do not fail spuriously.
+        var deferredSinceOwnerObserved = false;
         for (var sample = 0; sample < 20; sample++)
         {
             var sampledState =
@@ -614,11 +619,29 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Assert.True(
                 sampledState.PublicationCommitPending
                 || sampledState.PublicationCommitDeferred);
-            if (sampledState.PublicationCommitPending)
+            if (sampledState.PublicationCommitDeferred)
             {
-                Assert.Equal(
-                    firstOwner,
-                    GetPublicationCommitIntentOwner());
+                deferredSinceOwnerObserved = true;
+            }
+            else
+            {
+                var sampledOwner =
+                    GetPublicationCommitIntentOwner();
+                if (string.IsNullOrWhiteSpace(sampledOwner))
+                {
+                    // Deferred between the state and owner reads.
+                    deferredSinceOwnerObserved = true;
+                }
+                else
+                {
+                    if (deferredSinceOwnerObserved)
+                    {
+                        cycleOwner = sampledOwner;
+                        deferredSinceOwnerObserved = false;
+                    }
+
+                    Assert.Equal(cycleOwner, sampledOwner);
+                }
             }
             await Task.Delay(250);
         }
