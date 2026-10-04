@@ -37,7 +37,7 @@ async function findReadyQuickLinksButton() {
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
   return {
-    getFeatures: fn().mockResolvedValue({ appManual: false }),
+    getFeatures: fn().mockResolvedValue({ appManual: false, feedback: false }),
     getSongs: fn().mockResolvedValue({ songs: [
       { songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/a.jpg', difficulty: { guitar: 3 } },
     ], count: 1, currentSeason: 5 }),
@@ -1740,7 +1740,7 @@ describe('App — mobile FAB branches', () => {
 
   it('opens Manual quick links directly from the mobile FAB without the fallback Actions FAB', async () => {
     setMobile();
-    mockApi.getFeatures.mockResolvedValueOnce({ appManual: true });
+    mockApi.getFeatures.mockResolvedValueOnce({ appManual: true, feedback: false });
     window.location.hash = '#/manual';
     render(<App />);
 

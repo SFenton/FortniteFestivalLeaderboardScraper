@@ -652,6 +652,58 @@ export type PublicationResponse = {
 
 export type FeatureFlagsResponse = {
   appManual: boolean;
+  feedback: boolean;
+};
+
+export type FeedbackKind = 'bug' | 'feature';
+
+export type FeedbackPlatform =
+  | 'web'
+  | 'ios'
+  | 'ipados'
+  | 'macos'
+  | 'iphone-duo'
+  | 'android'
+  | 'windows';
+
+export type FeedbackSubmissionAccepted = {
+  id: string;
+  status: 'queued';
+};
+
+export type FeedbackSubmissionStatus = 'queued' | 'processing' | 'submitted' | 'failed';
+
+export type FeedbackAttachmentStatus = {
+  name: string;
+  kind: 'image' | 'video';
+  outcome: 'pending' | 'attached' | 'transcoded' | 'skipped';
+  note?: string;
+};
+
+export type FeedbackStatusResponse = {
+  id: string;
+  status: FeedbackSubmissionStatus;
+  issueNumber?: number;
+  error?: string;
+  attachments: FeedbackAttachmentStatus[];
+};
+
+export type FeedbackErrorResponse = {
+  error: string;
+  code:
+    | 'invalid_form'
+    | 'invalid_kind'
+    | 'invalid_platform'
+    | 'title_required'
+    | 'description_required'
+    | 'field_too_long'
+    | 'too_many_attachments'
+    | 'unsupported_media'
+    | 'feedback_disabled'
+    | 'payload_too_large'
+    | 'feedback_busy'
+    | string;
+  maxBytes?: number;
 };
 
 export type ServiceInfoSubphaseProgress = {

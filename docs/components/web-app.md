@@ -53,6 +53,7 @@ sources:
   - FortniteFestivalWeb/src/hooks/ui/useInitialAppReveal.ts
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/feedback/FeedbackModal.tsx
   - FortniteFestivalWeb/src/pages/settings/PrivacyPolicyModal.tsx
   - FortniteFestivalWeb/src/pages/settings/privacyPolicy.ts
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
@@ -89,6 +90,7 @@ sources:
   - FortniteFestivalWeb/src/components/page/RouteBoundary.tsx
   - FortniteFestivalWeb/src/components/page/RouteGuards.tsx
   - FortniteFestivalWeb/src/contexts/
+  - FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
@@ -201,8 +203,9 @@ reset, the mobile header, and the Settings FAB treat both URLs as one page and
 Settings neither remounts nor scrolls to the top when the modal opens or
 closes. In-app opens push the route and close with history Back; direct visits
 close by replacing the URL with `/settings`. The policy text is owned by
-[Privacy policy](../reference/privacy-policy.md). The manual is the only
-feature currently exposed through `/api/features`.
+[Privacy policy](../reference/privacy-policy.md). App Manual and in-app
+feedback are the web features exposed through `/api/features`; feedback
+controls are hidden unless the public `feedback` flag is true.
 
 ## State ownership
 
@@ -414,6 +417,12 @@ domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
+The web feedback client exposes `submitFeedback` and `getFeedbackStatus`.
+`submitFeedback` sends multipart `POST /api/feedback` requests through
+`XMLHttpRequest` so upload progress is available to the UI, while status
+polling remains a normal React/API-client JSON read against
+`GET /api/feedback/{id}`.
+
 ### Song filters
 
 The Songs sort modal offers Has FC only when a player or band profile is
@@ -538,6 +547,18 @@ rival/sync status are not rendered. Settings therefore does not add a
 selected-profile sync polling loop; profile-name refresh and export controls
 keep their existing selected-profile ownership.
 
+When `/api/features` returns `feedback: true`, App Settings also shows
+`Report an Issue` and `Request a Feature`. Each entry opens an accessible modal
+that keeps the `[Bug] ` or `[Feature] ` title prefix editable, collects the
+required description, and lets users attach up to four image/video files with a
+90 MiB total request budget. Attachments render as local object-URL thumbnails
+above the Attach Media button, open in a new browser tab, and revoke object
+URLs on removal or unmount. Closing a dirty form uses the shared confirm alert;
+successful submissions can close without confirmation. The modal submits
+multipart data with upload progress, then polls feedback status until an issue
+number is available, failure is reported, or the five-minute client timeout is
+reached.
+
 English shell/common/Songs resources remain eager in the i18next `translation`
 namespace. App Manual, Settings, and First Run resources use named namespaces
 registered synchronously by their lazy page/carousel owners. The Settings
@@ -629,7 +650,10 @@ that exact Node patch. The preferred production image builds the SPA with Node
 and serves static files through Nginx. Nginx re-resolves the `fstservice`
 container name, proxies
 `/api`, `/healthz`, and `/readyz`, supports WebSockets, applies immutable asset
-caching, and falls back to `index.html` for client routes.
+caching, and falls back to `index.html` for client routes. A dedicated
+`^~ /api/feedback` location precedes the general API proxy so feedback uploads
+can stream without request buffering and can use a 92 MiB Nginx body limit plus
+300-second proxy send/read timeouts.
 
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
