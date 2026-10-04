@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  getRoutePageOwner,
   isKnownRoutePath,
   normalizeRoutePathname,
   Routes,
@@ -160,8 +161,19 @@ describe('RoutePatterns', () => {
     expect(isKnownRoutePath('/songs/song-1/Solo_Guitar/history')).toBe(true);
     expect(isKnownRoutePath('/leaderboards/bands/Band_Duets')).toBe(true);
     expect(isKnownRoutePath('/settings/')).toBe(true);
+    expect(isKnownRoutePath('/settings/privacy')).toBe(true);
+    expect(isKnownRoutePath('/settings/privacy/extra')).toBe(false);
     expect(isKnownRoutePath('/missing/deep-link')).toBe(false);
     expect(isKnownRoutePath('/bands/player/account/extra')).toBe(false);
+  });
+
+  it('maps modal routes to the page that owns them', () => {
+    expect(Routes.settingsPrivacy).toBe('/settings/privacy');
+    expect(getRoutePageOwner('/settings/privacy')).toBe(Routes.settings);
+    expect(getRoutePageOwner('/settings/privacy/')).toBe(Routes.settings);
+    expect(getRoutePageOwner('/settings')).toBe('/settings');
+    expect(getRoutePageOwner('/settings/licenses')).toBe('/settings/licenses');
+    expect(getRoutePageOwner('/songs/song-1')).toBe('/songs/song-1');
   });
 
   it('normalizes trailing slashes without changing the root', () => {
@@ -189,6 +201,7 @@ describe('RoutePatterns', () => {
         ['/leaderboards/bands/Band_Duets', 'band-rankings'],
         ['/bands/player/player-1', 'player-bands'],
         ['/settings/licenses', 'licenses'],
+        ['/settings/privacy', 'privacy'],
       ])('matches %s before broader route patterns', (pathname, expectedTitleKey) => {
         const expectedKeys: Record<string, string> = {
           songs: 'nav.songs',
@@ -203,6 +216,7 @@ describe('RoutePatterns', () => {
           'band-rankings': 'rankings.title',
           'player-bands': 'bandList.title',
           licenses: 'settings.licenses.title',
+          privacy: 'settings.privacyPolicy.title',
         };
         expect(matchRouteMetadata(pathname)[0]).toBe(expectedKeys[expectedTitleKey]);
       });

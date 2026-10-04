@@ -49,6 +49,7 @@ evidence remain the behavioral sources of truth.
 | Review API synchronization requirements | [API contract](reference/api-contract.md) |
 | Configure a role or deployment | [Configuration](reference/configuration.md) |
 | Review backend and public feature flags | [Feature flags](reference/feature-flags.md) |
+| Review or change the privacy policy shown by every client | [Privacy policy](reference/privacy-policy.md) |
 | Run a service mode or one-shot command | [CLI reference](reference/cli.md) |
 | Find repository scripts and tools | [Tooling](reference/tooling.md) |
 | Deploy the container stack | [Deployment topology](operations/deployment.md) |

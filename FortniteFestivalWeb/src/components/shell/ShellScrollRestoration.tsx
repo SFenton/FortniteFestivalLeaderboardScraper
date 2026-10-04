@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { markCurrentSuggestionsScrollRestorable } from '../../pages/suggestions/suggestionsSessionCache';
-import { normalizeRoutePathname, RoutePatterns, Routes } from '../../routes';
+import { getRoutePageOwner, normalizeRoutePathname, RoutePatterns, Routes } from '../../routes';
 import type { PreserveShellScrollState } from '../../utils/quietNavigation';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
@@ -24,6 +24,7 @@ export default function ShellScrollRestoration({
   const location = useLocation();
   const { key: locationKey, pathname } = location;
   const routePathname = normalizeRoutePathname(pathname);
+  const pageRoutePathname = getRoutePageOwner(routePathname);
   const preserveShellScrollKey = (
     location.state as PreserveShellScrollState | null
   )?.preserveShellScrollKey;
@@ -102,13 +103,13 @@ export default function ShellScrollRestoration({
       consumedPreserveShellScrollKeys.add(preserveShellScrollKey);
       return;
     }
-    if (routePathname === Routes.suggestions) return;
+    if (pageRoutePathname === Routes.suggestions) return;
     if (!IS_PAGE_RELOAD) {
-      if (routePathname === Routes.songs) return;
-      if (RoutePatterns.songDetail.test(routePathname)) return;
+      if (pageRoutePathname === Routes.songs) return;
+      if (RoutePatterns.songDetail.test(pageRoutePathname)) return;
     }
     scrollContainerRef.current?.scrollTo(0, 0);
-  }, [preserveShellScrollKey, routePathname, scrollContainerRef]);
+  }, [preserveShellScrollKey, pageRoutePathname, scrollContainerRef]);
 
   useLayoutEffect(() => {
     if (routePathname === Routes.suggestions && !preserveShellScrollKey) {

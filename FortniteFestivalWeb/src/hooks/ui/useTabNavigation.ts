@@ -31,7 +31,7 @@ export function inferTab(pathname: string): TabKey | null {
   if (path === Routes.leaderboards || path.startsWith(`${Routes.leaderboards}/`)) return TabKey.Leaderboards;
   if (path === Routes.rivals || path.startsWith(`${Routes.rivals}/`)) return TabKey.Rivals;
   if (path === Routes.statistics) return TabKey.Statistics;
-  if (path === Routes.settings || path === Routes.settingsLicenses) return TabKey.Settings;
+  if (path === Routes.settings || path === Routes.settingsLicenses || path === Routes.settingsPrivacy) return TabKey.Settings;
   return null;
 }
 

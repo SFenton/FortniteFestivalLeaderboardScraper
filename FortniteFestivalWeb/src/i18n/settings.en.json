@@ -16,6 +16,11 @@
     "licenses": {
       "title": "Licenses"
     },
+    "privacyPolicyNavTitle": "Privacy Policy",
+    "privacyPolicyNavDescription": "What data Festival Score Tracker uses and your choices.",
+    "privacyPolicy": {
+      "title": "Privacy Policy"
+    },
     "showInstrumentIcons": "Show Instrument Icons",
     "showInstrumentIconsDesc": "Display instrument icons on each song row showing which parts have leaderboard scores or FCs.",
     "enableVisualOrder": "Enable Independent Song Row Visual Order",
