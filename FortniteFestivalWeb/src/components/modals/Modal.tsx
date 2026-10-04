@@ -17,20 +17,21 @@ type ModalProps = {
   applyDisabled?: boolean;
   children: React.ReactNode;
   afterPanel?: React.ReactNode;
+  panelTestId?: string;
 };
 
 /**
  * Adaptive modal: bottom sheet on mobile (≤768px), side flyout on desktop.
  * Uses a draft pattern — the parent controls open/close & apply/cancel.
  */
-export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children, afterPanel }: ModalProps) {
+export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children, afterPanel, panelTestId }: ModalProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateScrollMask = useScrollMask(scrollRef, [visible, children], { selfScroll: true });
   const handleContentScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
   return (
-    <ModalShell visible={visible} title={title} onClose={onClose} afterPanel={afterPanel}>
+    <ModalShell visible={visible} title={title} onClose={onClose} afterPanel={afterPanel} panelTestId={panelTestId}>
       {/* Content */}
       <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
         {children}

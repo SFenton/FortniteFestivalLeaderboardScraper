@@ -56,6 +56,9 @@ import type {
   RankHistoryResponse,
   PublicationResponse,
   FeatureFlagsResponse,
+  FeedbackErrorResponse,
+  FeedbackStatusResponse,
+  FeedbackSubmissionAccepted,
 } from '@festival/core/api';
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api';
 import { readSelectedProfile } from '../state/selectedProfile';
@@ -69,6 +72,7 @@ import {
   ensurePublication,
   fetchWithPublication,
   getCurrentPublicationId,
+  withCurrentPublicationId,
 } from './publication';
 
 const BASE = '';
@@ -85,6 +89,22 @@ const HTTP_NOT_MODIFIED = 304;
 export type ApiRequestOptions = {
   signal?: AbortSignal;
 };
+
+export class ApiFeedbackError extends Error {
+  readonly status: number;
+  readonly code?: FeedbackErrorResponse['code'];
+  readonly maxBytes?: number;
+  readonly retryAfter?: number;
+
+  constructor(status: number, statusText: string, body?: FeedbackErrorResponse | null, retryAfter?: number) {
+    super(body?.error || `API ${status}: ${statusText}`);
+    this.name = 'ApiFeedbackError';
+    this.status = status;
+    this.code = body?.code;
+    this.maxBytes = body?.maxBytes;
+    this.retryAfter = retryAfter;
+  }
+}
 
 function withSelectedProfileHeaders(headers: Record<string, string> = {}): Record<string, string> {
   try {
@@ -134,6 +154,61 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
   return res.json() as Promise<T>;
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+function parseFeedbackError(xhr: XMLHttpRequest): FeedbackErrorResponse | null {
+  const body = xhr.response as Partial<FeedbackErrorResponse> | null;
+  if (body && typeof body === 'object' && typeof body.error === 'string') {
+    return {
+      error: body.error,
+      code: typeof body.code === 'string' ? body.code : 'invalid_form',
+      maxBytes: typeof body.maxBytes === 'number' ? body.maxBytes : undefined,
+    };
+  }
+  return null;
+}
+
+function submitMultipart<T>(
+  path: string,
+  formData: FormData,
+  onUploadProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', withCurrentPublicationId(`${BASE}${path}`), true);
+    xhr.responseType = 'json';
+    const headers = withSelectedProfileHeaders();
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value);
+    }
+
+    xhr.upload.onprogress = event => {
+      if (!event.lengthComputable || event.total <= 0) return;
+      onUploadProgress?.(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve((xhr.response ?? {}) as T);
+        return;
+      }
+      reject(new ApiFeedbackError(
+        xhr.status,
+        xhr.statusText,
+        parseFeedbackError(xhr),
+        parseRetryAfter(xhr.getResponseHeader('Retry-After')),
+      ));
+    };
+    xhr.onerror = () => reject(new ApiFeedbackError(xhr.status || 0, xhr.statusText || 'Network Error'));
+    xhr.onabort = () => reject(new ApiFeedbackError(0, 'Request Aborted'));
+    xhr.send(formData);
+  });
 }
 
 function getDownloadFileName(contentDisposition: string | null, fallback: string): string {
@@ -217,6 +292,15 @@ export const api = {
   getPublication: (): Promise<PublicationResponse> => ensurePublication(),
   getFeatures: (options?: ApiRequestOptions) =>
     get<FeatureFlagsResponse>('/api/features', options),
+
+  submitFeedback: (
+    formData: FormData,
+    onUploadProgress?: (percent: number) => void,
+  ): Promise<FeedbackSubmissionAccepted> =>
+    submitMultipart<FeedbackSubmissionAccepted>('/api/feedback', formData, onUploadProgress),
+
+  getFeedbackStatus: (id: string, options?: ApiRequestOptions): Promise<FeedbackStatusResponse> =>
+    get<FeedbackStatusResponse>(`/api/feedback/${encodeURIComponent(id)}`, options),
 
   getSongs: async (options?: ApiRequestOptions): Promise<SongsResponse> => {
     const cached = readSongsCache();

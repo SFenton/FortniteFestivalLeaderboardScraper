@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified: 2026-10-02
+last_verified_commit: afaaa6be
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -116,6 +116,14 @@ metadata, and schema-v2 activation fields consumed by the path modal.
 `ServerSong.doubleBassSupported` is optional and nullable for mixed-version
 responses: true and false represent inspected plastic-drum chart support,
 while null or absence represents an unclassified generation.
+
+The feature-flags mirror includes the public `feedback` boolean alongside
+`appManual`. Feedback submission/status DTOs are mirrored as
+`FeedbackKind`, `FeedbackPlatform`, `FeedbackSubmissionAccepted`,
+`FeedbackSubmissionStatus`, `FeedbackAttachmentStatus`,
+`FeedbackStatusResponse`, and `FeedbackErrorResponse` so the web client and UI
+can compile against the multipart submission and polling contract without
+duplicating shape definitions.
 
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.
