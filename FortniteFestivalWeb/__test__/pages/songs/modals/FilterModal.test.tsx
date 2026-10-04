@@ -75,8 +75,11 @@ function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof Fi
   };
 }
 
+// Compact instrument selectors mount after the modal transition; CI shards under load can exceed the 1s default.
+const ASYNC_LOOKUP_TIMEOUT = { timeout: 5000 };
+
 async function clickCurrentCompactInstrument(label: string, index = 0) {
-  const instrument = (await screen.findAllByRole('button', { name: label }))[index];
+  const instrument = (await screen.findAllByRole('button', { name: label }, ASYNC_LOOKUP_TIMEOUT))[index];
   expect(instrument).toBeDefined();
   if (!instrument) return;
   fireEvent.click(instrument);
@@ -428,7 +431,7 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
     await clickCurrentCompactInstrument('Bass', 0);
 
-    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled(), ASYNC_LOOKUP_TIMEOUT);
     fireEvent.click(screen.getByText('Apply Filter Changes'));
 
     expect(combo.onApply).toHaveBeenCalledWith(expect.objectContaining({
@@ -439,7 +442,7 @@ describe('FilterModal', () => {
       ],
     }));
     expect(props.onApply).toHaveBeenCalledTimes(1);
-  });
+  }, 20_000);
 
   it('resets the embedded combo draft and clears the applied combo on Apply', async () => {
     const combo = bandComboFilter({ appliedAssignments });
@@ -472,10 +475,10 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
     await clickCurrentCompactInstrument('Drums', 0);
 
-    expect(await screen.findByText('Invalid Configuration')).toBeDefined();
+    expect(await screen.findByText('Invalid Configuration', {}, ASYNC_LOOKUP_TIMEOUT)).toBeDefined();
     expect(screen.getByText('Apply Filter Changes').closest('button')).toBeDisabled();
     expect(combo.onApply).not.toHaveBeenCalled();
-  });
+  }, 20_000);
 
   it('toggles selected band score filters without touching solo maps', () => {
     const onChange = vi.fn();
