@@ -559,6 +559,28 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public void TargetEndpoints_MinimumRestSkipsRecentlyUsedServers()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationTargetMinRestSeconds = 600;
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator());
+        var now = DateTimeOffset.UtcNow;
+        var recent = IPAddress.Parse("198.51.100.97");
+        var rested = IPAddress.Parse("198.51.100.98");
+        pool.RecordKnownServer(recent, "US Seattle", now - TimeSpan.FromMinutes(5));
+        pool.RecordKnownServer(rested, "US Seattle", now - TimeSpan.FromMinutes(15));
+
+        Assert.Equal(rested, pool.TryReserveTarget(0, [])?.Address);
+        Assert.Null(pool.TryReserveTarget(1, []));
+
+        options.ProxyRegionRotationTargetMinRestSeconds = 3_601;
+        Assert.Contains("minimum rest", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+    }
+
+    [Fact]
     public async Task TargetEndpoints_RotationRequestsTargetingAndLearnsVerifiedServer()
     {
         var options = CreatePiaRotationOptions();

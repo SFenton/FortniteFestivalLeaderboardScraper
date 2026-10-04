@@ -189,7 +189,9 @@ merely unchanged egress). Each attempt first reserves, as the exit's pending
 egress, the least recently used catalog address in a qualified region that no
 exit holds or claims, that is outside the rate-limited window, and that is not
 backing off after a failed pin (10 minutes, doubling to 6 hours; a verified
-use or a corrected region clears it). The attempt pins the exit to that
+use or a corrected region clears it). With
+`ProxyRegionRotationTargetMinRestSeconds`, a target must also have been
+unused for that long. The attempt pins the exit to that
 server and verifies it exactly like any candidate. When nothing qualifies (for
 example right after a worker start, before the catalog has learned
 addresses), the attempt falls back to the random candidate list; on a pinned

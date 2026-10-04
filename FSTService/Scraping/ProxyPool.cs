@@ -95,6 +95,7 @@ internal sealed class ProxyPool :
     private readonly TimeSpan _regionRotationDrain;
     private readonly TimeSpan _quarantineRetry;
     private readonly bool _targetEndpoints;
+    private readonly TimeSpan _targetMinRest;
     private readonly HashSet<string> _qualifiedRegions;
     private readonly Dictionary<IPAddress, KnownServer> _knownServers = new();
     private const int MaxKnownServers = 8192;
@@ -174,6 +175,8 @@ internal sealed class ProxyPool :
         _quarantineRetry = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationQuarantineRetrySeconds));
         _targetEndpoints = options.ProxyRegionRotationEnabled
             && options.ProxyRegionRotationTargetEndpoints;
+        _targetMinRest = TimeSpan.FromSeconds(
+            Math.Max(0, options.ProxyRegionRotationTargetMinRestSeconds));
         _qualifiedRegions = new HashSet<string>(
             options.ProxyRegionRotationRegions, StringComparer.OrdinalIgnoreCase);
         RequestTimeout = options.ProxyRequestTimeoutSeconds > 0
@@ -1203,6 +1206,7 @@ internal sealed class ProxyPool :
         IPAddress address, KnownServer server, HashSet<IPAddress> inUse, DateTimeOffset now)
         => _qualifiedRegions.Contains(server.Region)
             && server.FailedUntil <= now
+            && now - server.LastUsedAt >= _targetMinRest
             && !inUse.Contains(address)
             && !(_rateLimitedEgress.TryGetValue(address, out var limitedAt)
                 && now - limitedAt < _burnedEgressTtl);
@@ -1606,6 +1610,11 @@ internal sealed class ProxyPool :
         {
             throw new InvalidOperationException(
                 "Targeted PIA egress refresh requires worker region rotation with at least one qualified region.");
+        }
+        if (options.ProxyRegionRotationTargetMinRestSeconds is < 0 or > 3_600)
+        {
+            throw new InvalidOperationException(
+                "Targeted PIA egress refresh minimum rest must be 0-3600 seconds.");
         }
         if (expected == 0)
         {
