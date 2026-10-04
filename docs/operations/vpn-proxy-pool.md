@@ -476,6 +476,8 @@ and were moved to other static regions). Full leaderboard network windows:
 | 1464 | 35 | 1 s / 14 | 5,263 | 123 min | ~53 | 1,007 |
 | 1465 | 40 | 0 / 20 | 6,037 | 108 min | ~61 | 1,930 |
 | 1466 | 50 | 0 / 25 | 6,011 | 109 min | ~59 | 4,648 |
+| 1470 | 50, seeded targeting | 0 / 25 | 12,494 | 51 min | ~120 | 0 random reconnects |
+| 1471 | 60, seeded targeting | 0 / 30 | 12,469 | 51 min | ~119 | 0 random reconnects |
 
 Throughput is about 100 successful requests per retired egress times the
 successful refresh rate. One-second global spacing capped refresh starts near
@@ -493,6 +495,18 @@ A pin works for an address absent from the container's own list (6/6), so a
 learned catalog is valid for every exit. Exit containers stayed negligible:
 50 Gluetun containers used about 2.3 GiB and about half of one CPU in total
 during acquisition.
+
+With the seeded target catalog (see Targeted server selection), refresh
+supply stopped binding and 60 exits matched 50: the worker's adaptive
+degree of parallelism held at its configured maximum of 200 with about 200
+requests in flight and about 208 requests per second, and 43–50 of 60 exits
+stayed selectable. Fifty effective exits (four leased requests each against
+a global limit of 200) is therefore the measured sweet spot; from scrape
+`1472` production runs 50 effective exits with `pia-gluetun-51` through
+`pia-gluetun-60` kept as qualified canonical spares. Further acquisition
+gains need a higher global degree of parallelism or a different throughput
+profile, which is an operator decision because Epic's JSON 429s can be
+account-scoped.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
