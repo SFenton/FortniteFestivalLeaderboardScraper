@@ -169,6 +169,38 @@ container healthy. A reachable but unacceptable egress moves to the next
 candidate after a short settle. Neither a `running` control response, Docker
 `healthy`, nor cached Gluetun public-IP metadata alone qualifies a tunnel.
 
+#### Targeted server selection
+
+A PIA exit's egress address is the address of the OpenVPN server it connected
+to (verified on 2026-10-04 on live exits), and Gluetun's control API accepts
+`server_selection.openvpn.endpoint_ip`: with a region selector it connects to
+exactly that server, using the server's own name for TLS verification, in
+about 3 seconds (8/8 on a disposable clone across two regions). `0.0.0.0`
+clears the pin and restores random selection. Random reconnects, by contrast,
+wasted most attempts in production: on scrape `1465` (40 exits) 6,489
+successful refreshes needed about 15,000 more rejected or failed candidates
+(5,065 still rate-limited, 1,930 peer duplicates, 1,096 unchanged), so a
+refresh averaged about 10 seconds.
+
+With `ProxyRegionRotationTargetEndpoints`, the pool keeps a catalog of known
+server addresses per region, learned from verified refreshes and from new
+candidate egress rejected only as rate-limited or peer-held (never from a
+merely unchanged egress). Each attempt first reserves, as the exit's pending
+egress, the least recently used catalog address in a qualified region that no
+exit holds or claims, that is outside the rate-limited window, and that is not
+backing off after a failed pin (10 minutes, doubling to 6 hours; a verified
+use or a corrected region clears it). The attempt pins the exit to that
+server and verifies it exactly like any candidate. When nothing qualifies (for
+example right after a worker start, before the catalog has learned
+addresses), the attempt falls back to the random candidate list; on a pinned
+exit (or after a pin request whose outcome is ambiguous) that fallback and the
+restoration rollback clear the pin instead of reconnecting, because an
+in-place reconnect would return to the same server. Restoration may still
+keep a working pinned tunnel, which is the normal state after a targeted
+refresh. Container
+restarts and the Compose selector never carry a pin, and the guard's static
+`OPENVPN_ENDPOINT_IP` rejection is unchanged.
+
 A rotated exit is immediately selectable (its old cooldown belonged to the
 spent egress); an explicit `Retry-After` is still honored. While refresh is
 enabled, an HTML edge 429 on a proxied request is handled per exit and is not
@@ -232,10 +264,11 @@ and lease-wait p50/p90/p99/max milliseconds and genuine send timeouts.
 Once a minute the pool logs `Proxy pool summary` with successful and
 rate-limited responses (and how many 429s were HTML edge pages), stale
 reports, refreshes scheduled/started/rotated/restored/deferred/unsafe, mean
-refresh duration, mean successes per retired egress, and exit states
-(selectable, cooling, refreshing, quarantined, known egress, rate-limited
-egress set size). Use these denominators, not raw 429 counts, to judge
-throughput changes.
+refresh duration, mean successes per retired egress, targeted pins reserved
+and failed, and exit states (selectable, cooling, refreshing, quarantined,
+known egress, rate-limited egress set size, known catalog servers, and
+currently targetable "rested" servers). Use these denominators, not raw 429
+counts, to judge throughput changes.
 
 #### Qualifying regions
 
@@ -261,6 +294,20 @@ or TCP timeouts) with no gateway block rule, so unreachable regions reflect the
 path from this site rather than Gluetun's server list. Because throughput is
 bounded by how many distinct, non-rate-limited egress addresses the refresh
 can reach, each added qualified region widens that pool.
+
+On 2026-10-04 disposable clones (ipify only) retested 42 regions with one
+region change and three reconnects each. Bahamas, Venezuela, Ecuador,
+Uruguay, Costa Rica, and Guatemala then passed 8/8 deeper trials and Peru
+4/4; their 280 image-list addresses do not overlap the eight qualified
+regions. Almost every other US and European region (including US Texas,
+Washington DC, Chicago, Seattle, Atlanta, Houston, Virginia, UK London, and
+DE Frankfurt) reached egress on 0–3 of 4 attempts. A region also has to exist
+in **every** effective container's runtime server list: Gluetun's updater
+(`UPDATER_PERIOD`) rewrites each container's list on its own schedule, and on
+2026-10-04 only Bahamas among those Latin American regions was present in all
+50 lists (the eight qualified regions were, with at least 43 addresses each).
+A region change or pin to a region missing from a container's list fails on
+that container.
 
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
@@ -379,6 +426,37 @@ about 70–95 successes per retired egress, no retry exhaustion, and (on
 availability: at any moment roughly 6–11 of 24 exits are refreshing, mostly
 because about half of first candidates return an egress still inside the
 rate-limited window.
+
+#### Exit-count scaling (2026-10-03/04)
+
+The operator approved testing more than 30 exits to find a throughput sweet
+spot. Spares were defined and qualified first (`pia-gluetun-34` and
+`pia-gluetun-50` looped on PIA `AUTH_FAILED` against one US California server
+and were moved to other static regions). Full leaderboard network windows:
+
+| Scrape | Effective exits | Global spacing / concurrent refreshes | Successful requests/min | Network window | Successful refreshes/min | Peer-duplicate rejections |
+|---|---:|---|---:|---:|---:|---:|
+| 1461–1463 | 30 | 1 s / 12 | 5,412–5,605 | 115–119 min | ~56 | ~375 |
+| 1464 | 35 | 1 s / 14 | 5,263 | 123 min | ~53 | 1,007 |
+| 1465 | 40 | 0 / 20 | 6,037 | 108 min | ~61 | 1,930 |
+| 1466 | 50 | 0 / 25 | 6,011 | 109 min | ~59 | 4,648 |
+
+Throughput is about 100 successful requests per retired egress times the
+successful refresh rate. One-second global spacing capped refresh starts near
+60 per minute, so 35 paced exits were slower than 30; removing the spacing at
+40 exits gave about 8%. Beyond that, random reconnects could not find fresh
+egress faster: successful refreshes stayed near 60 per minute while
+selectable exits stayed near 18–20, refreshes lengthened (about 10 to 12
+seconds), and peer duplicates grew. Gluetun's random choice is also
+concentrated: over scrape `1466` each region's roughly 1,300 connections
+reached only 21–30 of the 51–96 addresses in the image's server list. Each
+container's runtime server list (refreshed by `UPDATER_PERIOD`) differs; one
+from 2026-09-27 shared only 135 of its 775 qualified-region addresses with the
+image's 658, and the scrape reached 1,046 distinct server addresses in total.
+A pin works for an address absent from the container's own list (6/6), so a
+learned catalog is valid for every exit. Exit containers stayed negligible:
+50 Gluetun containers used about 2.3 GiB and about half of one CPU in total
+during acquisition.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are

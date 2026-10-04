@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,9 @@ internal readonly record struct ProxyRegionRotationResult(
     string? Region = null,
     int Attempts = 0);
 
+/// <summary>A known PIA server address (which is also its egress) and its region.</summary>
+internal readonly record struct ProxyEgressTarget(IPAddress Address, string Region);
+
 /// <summary>
 /// Pool-owned egress registry. <see cref="TryClaim"/> atomically rejects an
 /// address already used by another exit (or recently rate-limited) and
@@ -38,6 +42,24 @@ internal interface IProxyEgressClaims
 {
     /// <returns><c>null</c> when accepted; otherwise a short rejection reason.</returns>
     string? TryClaim(IPAddress address, bool allowRateLimited);
+
+    /// <summary>
+    /// Reserves the longest-rested known server address in a qualified region
+    /// that no exit uses, is outside the rate-limited window, has not recently
+    /// failed, and is not in <paramref name="exclude"/>; <c>null</c> when none
+    /// qualifies.
+    /// </summary>
+    ProxyEgressTarget? TryReserveTarget(IReadOnlyCollection<IPAddress> exclude) => null;
+
+    /// <summary>Records an observed egress as a server address of <paramref name="region"/>.</summary>
+    void RecordServer(IPAddress address, string region)
+    {
+    }
+
+    /// <summary>A targeted server produced no matching egress; back it off.</summary>
+    void ReportTargetFailed(IPAddress address)
+    {
+    }
 }
 
 internal sealed record ProxyRegionRotationRequest(
@@ -46,7 +68,8 @@ internal sealed record ProxyRegionRotationRequest(
     IProxyEgressClaims Claims,
     IReadOnlyList<string> Regions,
     int CandidateOffset,
-    bool ReconnectInPlace);
+    bool ReconnectInPlace,
+    bool TargetEndpoints = false);
 
 internal interface IProxyRegionRotator
 {
@@ -114,7 +137,9 @@ internal sealed class CurlProxyEgressProbe : IProxyEgressProbe
 /// <summary>
 /// Refreshes one PIA Gluetun exit's tunnel through the internal control API:
 /// an in-place reconnect (Gluetun selects another random server in the same
-/// region) or a region-selector change. Every candidate is accepted only after
+/// region), a region-selector change, or (when targeting is enabled) a pin to
+/// a specific known, rested server address in a qualified region through
+/// Gluetun's <c>endpoint_ip</c> selector. Every candidate is accepted only after
 /// its real proxy egress differs from the previous egress and from every other
 /// exit's known egress, is outside the rate-limited window, and the control
 /// API and Docker health agree. Failed candidates fall back to the next one;
@@ -194,10 +219,10 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         CancellationToken ct)
     {
         var tunnel = request.Tunnel;
-        string? originalRegion;
+        PiaSelection? selection;
         try
         {
-            originalRegion = await GetRegionAsync(tunnel.ControlUri, ct);
+            selection = await GetSelectionAsync(tunnel.ControlUri, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -207,7 +232,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
             return new(ProxyRegionRotationOutcome.Deferred);
         }
 
-        if (originalRegion is null)
+        if (selection is not { } current)
         {
             _log.LogWarning(
                 "PIA region rotation rejected for {Container}: provider, VPN type, or selector is not the qualified single-region PIA contract.",
@@ -215,29 +240,56 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
             return new(ProxyRegionRotationOutcome.Deferred);
         }
 
+        var originalRegion = current.Region;
         var candidates = BuildCandidates(originalRegion, request);
         if (candidates.Count == 0)
             return new(ProxyRegionRotationOutcome.Deferred);
 
         var started = Stopwatch.GetTimestamp();
         var runtimeRegion = originalRegion;
+        // A pinned endpoint makes an in-place reconnect return to the same
+        // server, so random fallbacks clear the pin instead.
+        var pinned = request.TargetEndpoints && current.Pinned;
+        var tried = new List<IPAddress>();
+        var fallback = 0;
         var attempts = 0;
         var mutated = false;
         using var overall = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overall.CancelAfter(_probeTimeout);
         try
         {
-            foreach (var candidate in candidates)
+            for (var attemptIndex = 0; attemptIndex < _maxAttempts; attemptIndex++)
             {
                 attempts++;
-                var reconnect = candidate.Equals(runtimeRegion, StringComparison.OrdinalIgnoreCase);
+                var target = request.TargetEndpoints
+                    ? request.Claims.TryReserveTarget(tried)
+                    : null;
+                string candidate;
+                string action;
+                if (target is { } reserved)
+                {
+                    tried.Add(reserved.Address);
+                    candidate = reserved.Region;
+                    action = "targeted server";
+                }
+                else
+                {
+                    candidate = candidates[fallback++ % candidates.Count];
+                    action = candidate.Equals(runtimeRegion, StringComparison.OrdinalIgnoreCase) && !pinned
+                        ? "reconnect"
+                        : "region update";
+                }
+
                 mutated = true;
                 string outcome;
                 try
                 {
-                    outcome = reconnect
-                        ? await ReconnectAsync(tunnel.ControlUri, overall.Token)
-                        : await PutRegionAsync(tunnel.ControlUri, candidate, overall.Token);
+                    outcome = target is { } pin
+                        ? await PutSelectionAsync(tunnel.ControlUri, pin.Region, pin.Address, overall.Token)
+                        : action == "reconnect"
+                            ? await ReconnectAsync(tunnel.ControlUri, overall.Token)
+                            : await PutSelectionAsync(
+                                tunnel.ControlUri, candidate, pinned ? IPAddress.Any : null, overall.Token);
                 }
                 catch (Exception ex) when (!overall.IsCancellationRequested)
                 {
@@ -246,9 +298,19 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                     // timeout is a failed candidate, not the rotation deadline.
                     _log.LogWarning(
                         "PIA {Action} for {Container} to {Region} failed: {Reason}; trying the next candidate.",
-                        reconnect ? "reconnect" : "region update",
-                        tunnel.ContainerName, candidate, ex.GetType().Name);
-                    runtimeRegion = await TryGetRegionAsync(tunnel.ControlUri, overall.Token) ?? runtimeRegion;
+                        action, tunnel.ContainerName, candidate, ex.GetType().Name);
+                    if (target is { } failed)
+                    {
+                        request.Claims.ReportTargetFailed(failed.Address);
+                        // Gluetun may have applied the pin before the request
+                        // failed; assume it did unless the settings say otherwise.
+                        pinned = true;
+                    }
+                    if (await TryGetSelectionAsync(tunnel.ControlUri, overall.Token) is { } after)
+                    {
+                        runtimeRegion = after.Region;
+                        pinned = request.TargetEndpoints && after.Pinned;
+                    }
                     continue;
                 }
 
@@ -256,20 +318,36 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                 {
                     _log.LogWarning(
                         "PIA {Action} for {Container} to {Region} reported {Outcome}; trying the next candidate.",
-                        reconnect ? "reconnect" : "region update",
-                        tunnel.ContainerName, candidate, outcome);
+                        action, tunnel.ContainerName, candidate, outcome);
+                    if (request.TargetEndpoints)
+                    {
+                        if (target is { } failed)
+                        {
+                            request.Claims.ReportTargetFailed(failed.Address);
+                            pinned = true;
+                        }
+                        if (await TryGetSelectionAsync(tunnel.ControlUri, overall.Token) is { } after)
+                        {
+                            runtimeRegion = after.Region;
+                            pinned = after.Pinned;
+                        }
+                    }
                     continue;
                 }
 
                 runtimeRegion = candidate;
+                if (request.TargetEndpoints)
+                    pinned = target is not null;
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
                 attempt.CancelAfter(_attemptTimeout);
+                var observed = new StrongBox<IPAddress?>();
                 IPAddress? verified;
                 try
                 {
                     verified = await WaitForAcceptableEgressAsync(
                         tunnel, candidate, request.PreviousEgress, request.Claims,
-                        allowPreviousAndRateLimited: false, attempt.Token);
+                        allowPreviousAndRateLimited: false, attempt.Token,
+                        request.TargetEndpoints ? observed : null);
                 }
                 catch (OperationCanceledException) when (!overall.IsCancellationRequested)
                 {
@@ -281,12 +359,22 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                     _log.LogInformation(
                         "PIA proxy {Container} {Action} {OldRegion} -> {NewRegion} in {ElapsedMs}ms (attempt {Attempt}); Docker health and distinct real proxy egress verified.",
                         tunnel.ContainerName,
-                        reconnect ? "reconnected" : "changed tunnel region",
+                        action switch
+                        {
+                            "reconnect" => "reconnected",
+                            "region update" => "changed tunnel region",
+                            _ => "targeted a rested server",
+                        },
                         originalRegion, candidate,
                         (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds,
                         attempts);
                     return new(ProxyRegionRotationOutcome.Rotated, verified, candidate, attempts);
                 }
+
+                // Reaching the targeted address but rejecting it is not a
+                // server failure; no egress (or another address) is.
+                if (target is { } missed && !missed.Address.Equals(observed.Value))
+                    request.Claims.ReportTargetFailed(missed.Address);
 
                 _log.LogDebug(
                     "PIA proxy {Container} candidate {Region} produced no acceptable egress within {TimeoutSeconds}s.",
@@ -322,7 +410,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         try
         {
             var restored = await RestoreAsync(
-                tunnel, originalRegion, runtimeRegion, request, recoveryDeadline.Token);
+                tunnel, originalRegion, runtimeRegion, pinned, request, recoveryDeadline.Token);
             if (restored is { } result)
                 return result with { Attempts = attempts };
         }
@@ -368,6 +456,7 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         ProxyRegionTunnel tunnel,
         string originalRegion,
         string runtimeRegion,
+        bool pinned,
         ProxyRegionRotationRequest request,
         CancellationToken ct)
     {
@@ -397,10 +486,14 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
 
         try
         {
-            var reconnect = runtimeRegion.Equals(originalRegion, StringComparison.OrdinalIgnoreCase);
+            // A pinned tunnel would reconnect to the same (failed) server, so
+            // the rollback clears the pin and lets Gluetun pick randomly.
+            var reconnect = runtimeRegion.Equals(originalRegion, StringComparison.OrdinalIgnoreCase)
+                && !pinned;
             var outcome = reconnect
                 ? await ReconnectAsync(tunnel.ControlUri, ct)
-                : await PutRegionAsync(tunnel.ControlUri, originalRegion, ct);
+                : await PutSelectionAsync(
+                    tunnel.ControlUri, originalRegion, pinned ? IPAddress.Any : null, ct);
             if (outcome.Equals("running", StringComparison.OrdinalIgnoreCase))
             {
                 using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -508,7 +601,8 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         IPAddress? previousAddress,
         IProxyEgressClaims claims,
         bool allowPreviousAndRateLimited,
-        CancellationToken ct)
+        CancellationToken ct,
+        StrongBox<IPAddress?>? observed = null)
     {
         var started = Stopwatch.GetTimestamp();
         while (true)
@@ -524,6 +618,14 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
                         && address.Equals(previousAddress)
                             ? "unchanged"
                             : claims.TryClaim(address, allowPreviousAndRateLimited);
+                    if (observed is not null)
+                    {
+                        observed.Value = address;
+                        // A new (not unchanged) egress after this candidate's
+                        // control change is one of the region's servers.
+                        if (rejection is "rate-limited" or "peer-duplicate")
+                            claims.RecordServer(address, region);
+                    }
                     if (rejection is null)
                     {
                         var selectedRegion = await GetRegionAsync(tunnel.ControlUri, ct);
@@ -553,6 +655,11 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
     }
 
     private async Task<string?> GetRegionAsync(Uri controlUri, CancellationToken ct)
+        => (await GetSelectionAsync(controlUri, ct))?.Region;
+
+    private readonly record struct PiaSelection(string Region, bool Pinned);
+
+    private async Task<PiaSelection?> GetSelectionAsync(Uri controlUri, CancellationToken ct)
     {
         using var response = await _control.GetAsync(
             new Uri(controlUri, "/v1/vpn/settings"), ct);
@@ -585,14 +692,25 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
             return null;
 
         var region = regions[0].GetString();
-        return string.IsNullOrWhiteSpace(region) ? null : region;
+        if (string.IsNullOrWhiteSpace(region))
+            return null;
+
+        // Gluetun reports an unpinned selector as 0.0.0.0.
+        var pinned = selection.TryGetProperty("openvpn", out var openvpn)
+            && openvpn.ValueKind == JsonValueKind.Object
+            && openvpn.TryGetProperty("endpoint_ip", out var endpoint)
+            && endpoint.ValueKind == JsonValueKind.String
+            && IPAddress.TryParse(endpoint.GetString(), out var endpointIp)
+            && !endpointIp.Equals(IPAddress.Any)
+            && !endpointIp.Equals(IPAddress.IPv6Any);
+        return new PiaSelection(region, pinned);
     }
 
-    private async Task<string?> TryGetRegionAsync(Uri controlUri, CancellationToken ct)
+    private async Task<PiaSelection?> TryGetSelectionAsync(Uri controlUri, CancellationToken ct)
     {
         try
         {
-            return await GetRegionAsync(controlUri, ct);
+            return await GetSelectionAsync(controlUri, ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -601,14 +719,25 @@ internal sealed class PiaRegionRotator : IProxyRegionRotator
         }
     }
 
-    private async Task<string> PutRegionAsync(Uri controlUri, string region, CancellationToken ct)
+    /// <summary>
+    /// Changes only the region selector; with <paramref name="endpoint"/> it
+    /// also pins Gluetun to that server address (or clears a pin with 0.0.0.0).
+    /// Gluetun matches a pinned address to its server in the region, so the
+    /// OpenVPN server name stays correct.
+    /// </summary>
+    private async Task<string> PutSelectionAsync(
+        Uri controlUri, string region, IPAddress? endpoint, CancellationToken ct)
     {
+        object serverSelection = endpoint is null
+            ? new { regions = new[] { region } }
+            : new
+            {
+                regions = new[] { region },
+                openvpn = new { endpoint_ip = endpoint.ToString() },
+            };
         using var payload = JsonContent.Create(new
         {
-            provider = new
-            {
-                server_selection = new { regions = new[] { region } },
-            },
+            provider = new { server_selection = serverSelection },
         });
         using var response = await _control.PutAsync(
             new Uri(controlUri, "/v1/vpn/settings"), payload, ct);

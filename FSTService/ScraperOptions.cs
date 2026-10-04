@@ -275,6 +275,17 @@ public sealed class ScraperOptions
     public int ProxyRegionRotationQuarantineRetrySeconds { get; set; }
 
     /// <summary>
+    /// When true, a refresh first pins the exit (Gluetun <c>endpoint_ip</c>) to
+    /// the longest-rested known PIA server address in a qualified region
+    /// instead of relying on Gluetun's random server choice. PIA egress equals
+    /// the server address, so the pool learns region/address pairs from
+    /// verified refreshes and skips addresses in use, rate-limited, or
+    /// recently failed; random selection remains the fallback. Requires
+    /// region rotation with at least one qualified region.
+    /// </summary>
+    public bool ProxyRegionRotationTargetEndpoints { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

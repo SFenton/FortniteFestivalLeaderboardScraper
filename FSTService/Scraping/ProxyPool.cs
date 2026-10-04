@@ -94,6 +94,12 @@ internal sealed class ProxyPool :
     private readonly int _regionRotationRequestBudget;
     private readonly TimeSpan _regionRotationDrain;
     private readonly TimeSpan _quarantineRetry;
+    private readonly bool _targetEndpoints;
+    private readonly HashSet<string> _qualifiedRegions;
+    private readonly Dictionary<IPAddress, KnownServer> _knownServers = new();
+    private const int MaxKnownServers = 8192;
+    private static readonly TimeSpan TargetFailureBackoff = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MaxTargetFailureBackoff = TimeSpan.FromHours(6);
     private readonly SemaphoreSlim _regionRotationGate;
     private readonly CancellationTokenSource _regionRotationCancellation = new();
     private readonly Dictionary<IPAddress, DateTimeOffset> _rateLimitedEgress = new();
@@ -166,6 +172,10 @@ internal sealed class ProxyPool :
         _regionRotationRequestBudget = Math.Max(0, options.ProxyRegionRotationRequestBudget);
         _regionRotationDrain = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationDrainSeconds));
         _quarantineRetry = TimeSpan.FromSeconds(Math.Max(0, options.ProxyRegionRotationQuarantineRetrySeconds));
+        _targetEndpoints = options.ProxyRegionRotationEnabled
+            && options.ProxyRegionRotationTargetEndpoints;
+        _qualifiedRegions = new HashSet<string>(
+            options.ProxyRegionRotationRegions, StringComparer.OrdinalIgnoreCase);
         RequestTimeout = options.ProxyRequestTimeoutSeconds > 0
             ? TimeSpan.FromSeconds(options.ProxyRequestTimeoutSeconds)
             : null;
@@ -834,6 +844,10 @@ internal sealed class ProxyPool :
                     if (trigger == RegionRotationTrigger.RateLimited && _burnedEgressTtl > TimeSpan.Zero)
                         _rateLimitedEgress[baseline] = DateTimeOffset.UtcNow;
                 }
+                // The retiring egress was in use until now.
+                if (endpoint.KnownEgress is { } retiring
+                    && _knownServers.TryGetValue(retiring, out var retiringServer))
+                    retiringServer.LastUsedAt = DateTimeOffset.UtcNow;
                 endpoint.LastRegionRotationAttempt = DateTimeOffset.UtcNow;
                 var candidateOffset = _regionRotationRegions.Count == 0
                     ? 0
@@ -848,7 +862,8 @@ internal sealed class ProxyPool :
                     new EndpointEgressClaims(this, endpointIndex),
                     _regionRotationRegions,
                     candidateOffset,
-                    _regionRotationReconnectInPlace);
+                    _regionRotationReconnectInPlace,
+                    _targetEndpoints);
                 _stats.RotationsStarted++;
             }
 
@@ -879,6 +894,18 @@ internal sealed class ProxyPool :
                 var now = DateTimeOffset.UtcNow;
                 _stats.RotationMilliseconds += (long)elapsed.TotalMilliseconds;
                 var wasQuarantined = endpoint.CooldownUntil == DateTimeOffset.MaxValue;
+                if (result.Outcome is ProxyRegionRotationOutcome.Rotated
+                        or ProxyRegionRotationOutcome.Restored
+                    && result.Egress is { } adopted
+                    && result.Region is { } adoptedRegion)
+                {
+                    RecordKnownServerLocked(adopted, adoptedRegion, now);
+                    if (_knownServers.TryGetValue(adopted, out var adoptedServer))
+                    {
+                        adoptedServer.Failures = 0;
+                        adoptedServer.FailedUntil = default;
+                    }
+                }
                 if (wasQuarantined
                     && result.Outcome is ProxyRegionRotationOutcome.Rotated
                         or ProxyRegionRotationOutcome.Restored)
@@ -1053,6 +1080,141 @@ internal sealed class ProxyPool :
         }
     }
 
+    /// <summary>
+    /// Learns that <paramref name="address"/> is a server (PIA egress equals the
+    /// server address) of <paramref name="region"/>. A changed region clears
+    /// any failure backoff recorded under the old pair.
+    /// </summary>
+    internal void RecordKnownServer(IPAddress address, string region, DateTimeOffset? usedAt = null)
+    {
+        lock (_lock)
+        {
+            if (!_disposed)
+                RecordKnownServerLocked(address, region, usedAt);
+        }
+    }
+
+    private void RecordKnownServerLocked(IPAddress address, string region, DateTimeOffset? usedAt)
+    {
+        if (!_targetEndpoints || string.IsNullOrWhiteSpace(region))
+            return;
+        // An address first seen as rate-limited was last used when it 429'd.
+        if (usedAt is null && _rateLimitedEgress.TryGetValue(address, out var limitedAt))
+            usedAt = limitedAt;
+        if (!_knownServers.TryGetValue(address, out var server))
+        {
+            if (_knownServers.Count >= MaxKnownServers)
+                return;
+            _knownServers[address] = server = new KnownServer { Region = region };
+        }
+        else if (!server.Region.Equals(region, StringComparison.OrdinalIgnoreCase))
+        {
+            server.Region = region;
+            server.Failures = 0;
+            server.FailedUntil = default;
+        }
+
+        if (usedAt is { } at && at > server.LastUsedAt)
+            server.LastUsedAt = at;
+    }
+
+    internal int KnownServerCount
+    {
+        get
+        {
+            lock (_lock)
+                return _knownServers.Count;
+        }
+    }
+
+    /// <summary>
+    /// Reserves (as the exit's pending egress) the known server address in a
+    /// qualified region that was used least recently, skipping addresses any
+    /// exit holds or is claiming, addresses inside the rate-limited window,
+    /// addresses still backing off after a failed pin, and
+    /// <paramref name="exclude"/>.
+    /// </summary>
+    internal ProxyEgressTarget? TryReserveTarget(
+        int endpointIndex, IReadOnlyCollection<IPAddress> exclude)
+    {
+        lock (_lock)
+        {
+            if (_disposed || !_targetEndpoints || !IsValidIndex(endpointIndex))
+                return null;
+
+            var now = DateTimeOffset.UtcNow;
+            var inUse = InUseEgressLocked(endpointIndex);
+            IPAddress? bestAddress = null;
+            KnownServer? best = null;
+            foreach (var (address, server) in _knownServers)
+            {
+                if (!IsTargetableLocked(address, server, inUse, now)
+                    || exclude.Contains(address))
+                    continue;
+                if (best is null || server.LastUsedAt < best.LastUsedAt)
+                {
+                    best = server;
+                    bestAddress = address;
+                }
+            }
+
+            if (best is null)
+                return null;
+            _endpoints[endpointIndex].PendingEgress = bestAddress;
+            _stats.TargetsReserved++;
+            return new ProxyEgressTarget(bestAddress!, best.Region);
+        }
+    }
+
+    internal void ReportTargetFailed(int endpointIndex, IPAddress address)
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+            _stats.TargetFailures++;
+            if (IsValidIndex(endpointIndex)
+                && address.Equals(_endpoints[endpointIndex].PendingEgress))
+                _endpoints[endpointIndex].PendingEgress = null;
+            if (!_knownServers.TryGetValue(address, out var server))
+                return;
+            server.Failures++;
+            var backoff = Math.Min(
+                MaxTargetFailureBackoff.TotalSeconds,
+                TargetFailureBackoff.TotalSeconds * Math.Pow(2, Math.Min(server.Failures - 1, 10)));
+            server.FailedUntil = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(backoff);
+        }
+    }
+
+    private HashSet<IPAddress> InUseEgressLocked(int reservingIndex)
+    {
+        var inUse = new HashSet<IPAddress>();
+        foreach (var endpoint in _endpoints)
+        {
+            if (endpoint.KnownEgress is { } known)
+                inUse.Add(known);
+            if (endpoint.Index != reservingIndex && endpoint.PendingEgress is { } pending)
+                inUse.Add(pending);
+        }
+        return inUse;
+    }
+
+    private bool IsTargetableLocked(
+        IPAddress address, KnownServer server, HashSet<IPAddress> inUse, DateTimeOffset now)
+        => _qualifiedRegions.Contains(server.Region)
+            && server.FailedUntil <= now
+            && !inUse.Contains(address)
+            && !(_rateLimitedEgress.TryGetValue(address, out var limitedAt)
+                && now - limitedAt < _burnedEgressTtl);
+
+    private sealed class KnownServer
+    {
+        public required string Region { get; set; }
+        public DateTimeOffset LastUsedAt { get; set; }
+        public DateTimeOffset FailedUntil { get; set; }
+        public int Failures { get; set; }
+    }
+
     private sealed class EndpointEgressClaims : IProxyEgressClaims
     {
         private readonly ProxyPool _pool;
@@ -1066,6 +1228,15 @@ internal sealed class ProxyPool :
 
         public string? TryClaim(IPAddress address, bool allowRateLimited)
             => _pool.TryClaimEgress(_index, address, allowRateLimited);
+
+        public ProxyEgressTarget? TryReserveTarget(IReadOnlyCollection<IPAddress> exclude)
+            => _pool.TryReserveTarget(_index, exclude);
+
+        public void RecordServer(IPAddress address, string region)
+            => _pool.RecordKnownServer(address, region);
+
+        public void ReportTargetFailed(IPAddress address)
+            => _pool.ReportTargetFailed(_index, address);
     }
 
     /// <summary>
@@ -1180,6 +1351,7 @@ internal sealed class ProxyPool :
         PoolWindowStats stats;
         TimeSpan window;
         int selectable = 0, cooling = 0, rotating = 0, quarantined = 0, known = 0, burned;
+        int knownServers = 0, restedServers = 0;
         lock (_lock)
         {
             if (_disposed)
@@ -1212,6 +1384,13 @@ internal sealed class ProxyPool :
                     _rateLimitedEgress.Remove(stale);
             }
             burned = _rateLimitedEgress.Count;
+            if (_targetEndpoints)
+            {
+                knownServers = _knownServers.Count;
+                var inUse = InUseEgressLocked(reservingIndex: -1);
+                restedServers = _knownServers.Count(
+                    pair => IsTargetableLocked(pair.Key, pair.Value, inUse, now));
+            }
         }
 
         List<int> sendLatency, leaseWait;
@@ -1242,7 +1421,7 @@ internal sealed class ProxyPool :
 
         var finished = stats.Rotated + stats.Restored + stats.Deferred + stats.Unsafe;
         _log.LogInformation(
-            "Proxy pool summary ({WindowSeconds:F0}s): ok={Successes} rateLimited={RateLimited} (html={RateLimitedHtml}) staleReports={Stale}; rotations scheduled={Scheduled} started={Started} rotated={Rotated} restored={Restored} deferred={Deferred} unsafe={Unsafe} avgMs={AvgMs} okPerRetiredEgress={OkPerEgress}; exits selectable={Selectable} cooling={Cooling} rotating={Rotating} quarantined={Quarantined} knownEgress={Known}/{Total} rateLimitedEgress={Burned}.",
+            "Proxy pool summary ({WindowSeconds:F0}s): ok={Successes} rateLimited={RateLimited} (html={RateLimitedHtml}) staleReports={Stale}; rotations scheduled={Scheduled} started={Started} rotated={Rotated} restored={Restored} deferred={Deferred} unsafe={Unsafe} avgMs={AvgMs} okPerRetiredEgress={OkPerEgress} targeted={Targeted} targetFailed={TargetFailed}; exits selectable={Selectable} cooling={Cooling} rotating={Rotating} quarantined={Quarantined} knownEgress={Known}/{Total} rateLimitedEgress={Burned} knownServers={KnownServers} restedServers={RestedServers}.",
             window.TotalSeconds,
             stats.Successes,
             stats.RateLimited,
@@ -1256,13 +1435,17 @@ internal sealed class ProxyPool :
             stats.Unsafe,
             finished == 0 ? 0 : stats.RotationMilliseconds / finished,
             stats.RetiredEgress == 0 ? 0 : stats.RetiredEgressSuccesses / stats.RetiredEgress,
+            stats.TargetsReserved,
+            stats.TargetFailures,
             selectable,
             cooling,
             rotating,
             quarantined,
             known,
             _endpoints.Count,
-            burned);
+            burned,
+            knownServers,
+            restedServers);
     }
 
     private struct PoolWindowStats
@@ -1280,6 +1463,8 @@ internal sealed class ProxyPool :
         public long RotationMilliseconds;
         public long RetiredEgress;
         public long RetiredEgressSuccesses;
+        public long TargetsReserved;
+        public long TargetFailures;
     }
 
     private static DateTimeOffset Max(DateTimeOffset left, DateTimeOffset right)
@@ -1414,6 +1599,13 @@ internal sealed class ProxyPool :
                 throw new InvalidOperationException(
                     "Worker PIA region rotation requires an aligned proxy pool, curl transport and same-data-directory curl scratch, 0-64 distinct regions (0 only with reconnect-in-place), threshold 1-100, per-exit interval 5-86400s, global interval 0-3600s, probe timeout 10-360s, attempt timeout 5-360s, 1-16 attempts, 1..exit-count concurrent rotations, rate-limited egress TTL 0-86400s, request budget 0 or 10-1000000, drain 0-300s, and quarantine retry 0-3600s.");
             }
+        }
+        if (options.ProxyRegionRotationTargetEndpoints
+            && (!options.ProxyRegionRotationEnabled
+                || options.ProxyRegionRotationRegions.Count == 0))
+        {
+            throw new InvalidOperationException(
+                "Targeted PIA egress refresh requires worker region rotation with at least one qualified region.");
         }
         if (expected == 0)
         {

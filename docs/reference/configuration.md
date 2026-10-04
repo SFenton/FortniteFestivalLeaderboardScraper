@@ -103,6 +103,7 @@ API/frontend and capture-only roles cannot operate VPN regions.
 | `Scraper:ProxyRegionRotationBurnedEgressTtlSeconds` | `900` | 0–86,400 seconds an egress that returned 429 is rejected as a replacement |
 | `Scraper:ProxyRegionRotationDrainSeconds` | `60` | 0–300 seconds to let in-flight leases finish before the tunnel changes; later reports from the old tunnel are ignored |
 | `Scraper:ProxyRegionRotationQuarantineRetrySeconds` | `0` | 0–3,600 seconds before a quarantined exit gets a fully verified refresh retry (doubling per consecutive failure, capped at one hour); `0` keeps it quarantined until the worker restarts |
+| `Scraper:ProxyRegionRotationTargetEndpoints` | `false` | Each refresh attempt first pins the exit (Gluetun `endpoint_ip`) to the least recently used known server address in a qualified region that no exit holds, is outside the rate-limited window, and is not backing off after a failed pin; random selection is the fallback. Requires rotation with at least one region |
 
 The enabled worker requires a nonzero `ExpectedProxyEndpointCount`, four
 complete aligned proxy/control/provider/container arrays with every provider
