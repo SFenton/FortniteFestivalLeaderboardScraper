@@ -111,7 +111,19 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
                 statOnly: false,
                 ct);
             using var stream = archive.Stream;
-            using var tar = new TarReader(stream);
+            // Docker.DotNet's archive stream misreports end-of-stream to
+            // TarReader's span reads; buffer the (bounded) archive first.
+            using var tarBytes = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await stream.ReadAsync(chunk, 0, chunk.Length, ct)) > 0)
+            {
+                if (tarBytes.Length + read > MaxPiaServerListBytes + 1024 * 1024)
+                    return [];
+                tarBytes.Write(chunk, 0, read);
+            }
+            tarBytes.Position = 0;
+            using var tar = new TarReader(tarBytes);
             var entry = await tar.GetNextEntryAsync(copyData: false, ct);
             if (entry?.DataStream is null || entry.Length > MaxPiaServerListBytes)
                 return [];
