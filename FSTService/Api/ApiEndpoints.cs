@@ -10,6 +10,7 @@ public static partial class ApiEndpoints
     {
         app.MapHealthEndpoints();
         app.MapFeatureEndpoints();
+        app.MapFeedbackEndpoints();
         app.MapAccountEndpoints();
         app.MapSongEndpoints();
         app.MapLeaderboardEndpoints();
