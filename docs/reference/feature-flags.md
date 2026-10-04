@@ -11,6 +11,7 @@ sources:
   - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Api/FeatureEndpoints.cs
+  - FSTService/FeedbackOptions.cs
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
   - packages/core/src/api/serverTypes.ts
@@ -21,13 +22,14 @@ update_triggers:
 
 # Feature flags
 
-`FeatureOptions` currently defines 13 flags. Only `AppManual` crosses the
-public API boundary; the other 12 control service/worker persistence and
+`FeatureOptions` currently defines 14 flags. `AppManual` and `Feedback` cross
+the public API boundary; the other 12 control service/worker persistence and
 publication behavior.
 
 | Flag | Code default | Audience | Purpose |
 |---|---:|---|---|
 | `AppManual` | `false` | Public web | Show the App Manual route/navigation |
+| `Feedback` | `false` | Public web/native, service | Enable in-app bug reports and feature requests; public only when the `Feedback` GitHub settings are also configured ([In-app feedback](../components/in-app-feedback.md)) |
 | `WriteLegacyLiveLeaderboardDuringScrape` | `true` | Worker | Continue legacy mutable scrape writes |
 | `WriteLegacyLiveLeaderboardSupplementalRows` | `true` | Worker | Continue legacy supplemental/backfill writes |
 | `UseSnapshotOverlayWorkerReaders` | `false` | Worker | Read current state through snapshots plus overlays |
@@ -96,9 +98,14 @@ bindings independently.
 
 ```json
 {
-  "appManual": false
+  "appManual": false,
+  "feedback": false
 }
 ```
+
+`feedback` is `true` only when `Features:Feedback` is enabled and
+`Feedback:GitHubRepository` plus `Feedback:GitHubToken` are configured on the
+public service role. Neither role file sets it today, so it is off.
 
 Any public feature change must keep these aligned:
 

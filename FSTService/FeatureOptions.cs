@@ -12,6 +12,12 @@ public sealed class FeatureOptions
     public bool AppManual { get; set; }
 
     /// <summary>
+    /// In-app bug reports and feature requests. Public only when the
+    /// <see cref="FeedbackOptions"/> GitHub target is also configured.
+    /// </summary>
+    public bool Feedback { get; set; }
+
+    /// <summary>
     /// When true, scrape spool flushes continue to maintain the legacy mutable
     /// leaderboard_entries table. When false, scrape flushes write snapshot
     /// current-state rows only and leave legacy live rows unchanged for rollback.

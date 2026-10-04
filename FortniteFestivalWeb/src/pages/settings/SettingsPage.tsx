@@ -19,7 +19,7 @@ import LazyModalBoundary from '../../components/common/LazyModalBoundary';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
+import type { FeedbackKind, ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, Opacity, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
@@ -47,6 +47,8 @@ import { SettingsServiceProgressCard } from './SettingsServiceProgress';
 import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoShieldCheckmark, IoSparkles, IoTrash } from 'react-icons/io5';
 import { normalizeRoutePathname, Routes as AppRoutes } from '../../routes';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
+import FeedbackModal from './feedback/FeedbackModal';
 
 import { APP_VERSION_LABEL, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 import './settingsEnglish';
@@ -212,6 +214,7 @@ export default function SettingsPage() {
   const { t } = useTranslation(['translation', 'settings', 'firstRun'], { nsMode: 'fallback' });
   const queryClient = useQueryClient();
   const { settings, updateSettings, resetSettings } = useSettings();
+  const featureFlags = useFeatureFlags();
   const { profile: selectedProfile } = useTrackedPlayer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
@@ -219,6 +222,7 @@ export default function SettingsPage() {
   const scrollContainerRef = useScrollContainer();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [feedbackModalKind, setFeedbackModalKind] = useState<FeedbackKind | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const privacyPolicyOpen = normalizeRoutePathname(location.pathname) === AppRoutes.settingsPrivacy;
@@ -524,6 +528,13 @@ export default function SettingsPage() {
           />
           /* v8 ignore stop */
         )}
+        {feedbackModalKind && (
+          <FeedbackModal
+            kind={feedbackModalKind}
+            visible
+            onClose={() => setFeedbackModalKind(null)}
+          />
+        )}
         {songsReplay.show && <FirstRunCarousel slides={songsReplay.slides} onDismiss={songsReplay.dismiss} onExitComplete={songsReplay.onExitComplete} />}
         {songInfoReplay.show && <FirstRunCarousel slides={songInfoReplay.slides} onDismiss={songInfoReplay.dismiss} onExitComplete={songInfoReplay.onExitComplete} />}
         {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} onExitComplete={statsReplay.onExitComplete} />}
@@ -659,6 +670,32 @@ export default function SettingsPage() {
                   onToggle={() => updateSettings({ showButtonsInHeaderMobile: !settings.showButtonsInHeaderMobile })}
                   large={isMobile}
                 />
+                {featureFlags.feedback && (
+                  <>
+                    <PressableButton
+                      style={modalCss.toggleRowSmallerGap}
+                      onPress={() => setFeedbackModalKind('bug')}
+                      data-testid="settings-report-issue"
+                    >
+                      <div style={modalCss.toggleContent}>
+                        <div style={modalCss.toggleLabel}>{t('settings.feedback.reportEntry')}</div>
+                        <div style={modalCss.toggleDesc}>{t('settings.feedback.reportEntryDesc')}</div>
+                      </div>
+                      <IoChevronForward size={QUICK_LINK_GLYPH_ICON_SIZE} aria-hidden="true" style={st.navigationChevron} />
+                    </PressableButton>
+                    <PressableButton
+                      style={modalCss.toggleRowSmallerGap}
+                      onPress={() => setFeedbackModalKind('feature')}
+                      data-testid="settings-request-feature"
+                    >
+                      <div style={modalCss.toggleContent}>
+                        <div style={modalCss.toggleLabel}>{t('settings.feedback.featureEntry')}</div>
+                        <div style={modalCss.toggleDesc}>{t('settings.feedback.featureEntryDesc')}</div>
+                      </div>
+                      <IoChevronForward size={QUICK_LINK_GLYPH_ICON_SIZE} aria-hidden="true" style={st.navigationChevron} />
+                    </PressableButton>
+                  </>
+                )}
               </Card>
             </div>
           </FadeInDiv>

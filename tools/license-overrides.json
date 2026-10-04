@@ -66,6 +66,15 @@
       "packageUrl": "https://github.com/SFenton/CHOpt/tree/f339262d3d64d782c4428bc0072633dd0b1031ab",
       "repositoryUrl": "https://github.com/SFenton/CHOpt",
       "sourcePath": "tools/chopt-cli-linux"
+    },
+    {
+      "name": "FFmpeg",
+      "version": "6.1.1",
+      "licenseType": "GPL-2.0-or-later",
+      "licenseTextPath": "tools/licenses/ffmpeg-GPL-2.0.txt",
+      "packageUrl": "https://launchpad.net/ubuntu/+source/ffmpeg",
+      "repositoryUrl": "https://git.ffmpeg.org/ffmpeg.git",
+      "sourcePath": "FSTService/Dockerfile"
     }
   ]
 }

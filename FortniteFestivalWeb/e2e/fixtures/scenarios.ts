@@ -367,7 +367,7 @@ export function createPopulatedScenario(): AppScenario {
       pinningEnabled: true,
       unreadySurfaces: [],
     },
-    features: { appManual: true },
+    features: { appManual: true, feedback: false },
     serviceInfo: createServiceInfo(),
     songs: { count: songs.length, currentSeason: 5, songs },
     songsEtag: '"e2e-songs-v1"',
