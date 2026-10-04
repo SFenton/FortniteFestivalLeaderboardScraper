@@ -459,6 +459,99 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public void TargetEndpoints_ReservesLeastRecentlyUsedQualifiedServerNotHeldByPeers()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator());
+        var t0 = DateTimeOffset.UtcNow - TimeSpan.FromHours(1);
+        var seattle = IPAddress.Parse("198.51.100.81");
+        var frankfurt = IPAddress.Parse("198.51.100.82");
+        var unqualified = IPAddress.Parse("198.51.100.83");
+        var claimedByPeer = IPAddress.Parse("198.51.100.84");
+        pool.RecordKnownServer(seattle, "us seattle", t0);
+        pool.RecordKnownServer(frankfurt, "DE Frankfurt", t0 + TimeSpan.FromMinutes(1));
+        pool.RecordKnownServer(unqualified, "US Las Vegas", t0 - TimeSpan.FromHours(1));
+        pool.RecordKnownServer(claimedByPeer, "US Seattle", t0 - TimeSpan.FromMinutes(10));
+        Assert.Null(pool.TryClaimEgress(1, claimedByPeer, allowRateLimited: false));
+
+        Assert.Equal(new ProxyEgressTarget(seattle, "us seattle"), pool.TryReserveTarget(0, []));
+        Assert.Equal("peer-duplicate", pool.TryClaimEgress(1, seattle, allowRateLimited: false));
+        Assert.Equal(new ProxyEgressTarget(claimedByPeer, "US Seattle"), pool.TryReserveTarget(1, []));
+        Assert.Equal(new ProxyEgressTarget(frankfurt, "DE Frankfurt"), pool.TryReserveTarget(0, [seattle]));
+        Assert.Null(pool.TryReserveTarget(0, [seattle, frankfurt]));
+        Assert.Equal(4, pool.KnownServerCount);
+    }
+
+    [Fact]
+    public void TargetEndpoints_FailedTargetBacksOffAndRegionCorrectionClearsIt()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator());
+        var server = IPAddress.Parse("198.51.100.90");
+        pool.RecordKnownServer(server, "US Seattle");
+
+        Assert.Equal(server, pool.TryReserveTarget(0, [])?.Address);
+        pool.ReportTargetFailed(0, server);
+        Assert.Null(pool.TryReserveTarget(0, []));
+        Assert.Null(pool.TryReserveTarget(1, []));
+
+        pool.RecordKnownServer(server, "DE Frankfurt");
+        Assert.Equal(new ProxyEgressTarget(server, "DE Frankfurt"), pool.TryReserveTarget(1, []));
+    }
+
+    [Fact]
+    public void TargetEndpoints_DisabledNeverLearnsOrReserves()
+    {
+        using var pool = new ProxyPool(
+            CreatePiaRotationOptions(), _log, new RecordingRecycler(), new RecordingRegionRotator());
+
+        pool.RecordKnownServer(IPAddress.Parse("198.51.100.91"), "US Seattle");
+
+        Assert.Equal(0, pool.KnownServerCount);
+        Assert.Null(pool.TryReserveTarget(0, []));
+    }
+
+    [Fact]
+    public void TargetEndpoints_RequiresRotationWithQualifiedRegions()
+    {
+        var withoutRotation = CreateOptions(activeStandby: false);
+        withoutRotation.ProxyRegionRotationTargetEndpoints = true;
+        Assert.Contains("Targeted PIA egress refresh", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(withoutRotation, _log)).Message);
+
+        var reconnectOnly = CreatePiaRotationOptions();
+        reconnectOnly.ProxyRegionRotationRegions = [];
+        reconnectOnly.ProxyRegionRotationReconnectInPlace = true;
+        reconnectOnly.ProxyRegionRotationTargetEndpoints = true;
+        Assert.Contains("Targeted PIA egress refresh", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(reconnectOnly, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_RotationRequestsTargetingAndLearnsVerifiedServer()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyRegionRotationTargetEndpoints = true;
+        var rotator = new RecordingRegionRotator { RotatedRegion = "DE Frankfurt" };
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(rotator.LastRequest!.TargetEndpoints);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await WaitUntilAsync(() => Task.FromResult(pool.KnownServerCount), 1);
+        // The adopting exit holds it, so it is not a target for anyone.
+        Assert.Null(pool.TryReserveTarget(1, []));
+    }
+
+    [Fact]
     public async Task RegionRotation_UsesFreshBaselineAndMarksItRateLimited()
     {
         var options = CreatePiaRotationOptions();
@@ -934,6 +1027,7 @@ public sealed class ProxyPoolTests
         public int InvocationCount => Volatile.Read(ref _invocationCount);
         public int MaxObservedConcurrency => Volatile.Read(ref _maxConcurrent);
         public IPAddress? RotatedEgress { get; set; } = IPAddress.Parse("198.51.100.7");
+        public string? RotatedRegion { get; set; }
         public Func<Uri, IPAddress?> Egress { get; set; } = _ => null;
 
         public async Task<ProxyRegionRotationResult> RotateAsync(
@@ -954,7 +1048,8 @@ public sealed class ProxyPoolTests
                 var outcome = await _result.Task.WaitAsync(ct);
                 _finished.TrySetResult();
                 return new(outcome,
-                    outcome == ProxyRegionRotationOutcome.Rotated ? RotatedEgress : null);
+                    outcome == ProxyRegionRotationOutcome.Rotated ? RotatedEgress : null,
+                    outcome == ProxyRegionRotationOutcome.Rotated ? RotatedRegion : null);
             }
             finally
             {

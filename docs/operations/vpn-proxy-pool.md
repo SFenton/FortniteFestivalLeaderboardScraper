@@ -169,6 +169,35 @@ container healthy. A reachable but unacceptable egress moves to the next
 candidate after a short settle. Neither a `running` control response, Docker
 `healthy`, nor cached Gluetun public-IP metadata alone qualifies a tunnel.
 
+#### Targeted server selection
+
+A PIA exit's egress address is the address of the OpenVPN server it connected
+to (verified on 2026-10-04 on live exits), and Gluetun's control API accepts
+`server_selection.openvpn.endpoint_ip`: with a region selector it connects to
+exactly that server, using the server's own name for TLS verification, in
+about 3 seconds (8/8 on a disposable clone across two regions). `0.0.0.0`
+clears the pin and restores random selection. Random reconnects, by contrast,
+wasted most attempts in production: on scrape `1465` (40 exits) 6,489
+successful refreshes needed about 15,000 more rejected or failed candidates
+(5,065 still rate-limited, 1,930 peer duplicates, 1,096 unchanged), so a
+refresh averaged about 10 seconds.
+
+With `ProxyRegionRotationTargetEndpoints`, the pool keeps a catalog of known
+server addresses per region, learned from verified refreshes and from new
+candidate egress rejected only as rate-limited or peer-held (never from a
+merely unchanged egress). Each attempt first reserves, as the exit's pending
+egress, the least recently used catalog address in a qualified region that no
+exit holds or claims, that is outside the rate-limited window, and that is not
+backing off after a failed pin (10 minutes, doubling to 6 hours; a verified
+use or a corrected region clears it). The attempt pins the exit to that
+server and verifies it exactly like any candidate. When nothing qualifies (for
+example right after a worker start, before the catalog has learned
+addresses), the attempt falls back to the random candidate list; on a pinned
+exit that fallback and restoration clear the pin instead of reconnecting,
+because an in-place reconnect would return to the same server. Container
+restarts and the Compose selector never carry a pin, and the guard's static
+`OPENVPN_ENDPOINT_IP` rejection is unchanged.
+
 A rotated exit is immediately selectable (its old cooldown belonged to the
 spent egress); an explicit `Retry-After` is still honored. While refresh is
 enabled, an HTML edge 429 on a proxied request is handled per exit and is not
@@ -232,10 +261,11 @@ and lease-wait p50/p90/p99/max milliseconds and genuine send timeouts.
 Once a minute the pool logs `Proxy pool summary` with successful and
 rate-limited responses (and how many 429s were HTML edge pages), stale
 reports, refreshes scheduled/started/rotated/restored/deferred/unsafe, mean
-refresh duration, mean successes per retired egress, and exit states
-(selectable, cooling, refreshing, quarantined, known egress, rate-limited
-egress set size). Use these denominators, not raw 429 counts, to judge
-throughput changes.
+refresh duration, mean successes per retired egress, targeted pins reserved
+and failed, and exit states (selectable, cooling, refreshing, quarantined,
+known egress, rate-limited egress set size, known catalog servers, and
+currently targetable "rested" servers). Use these denominators, not raw 429
+counts, to judge throughput changes.
 
 #### Qualifying regions
 
