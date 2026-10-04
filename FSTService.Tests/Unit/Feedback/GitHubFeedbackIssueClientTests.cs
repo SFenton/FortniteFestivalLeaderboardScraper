@@ -85,13 +85,14 @@ public sealed class GitHubFeedbackIssueClientTests : IDisposable
     {
         _handler.Respond("POST https://api.example/repos/owner/tracker/issues", HttpStatusCode.Created, """{"number":55}""");
 
-        var number = await CreateClient().CreateIssueAsync("[Bug] X", "body", ["surface:web"], CancellationToken.None);
+        var number = await CreateClient().CreateIssueAsync("[Bug] X", "body", ["From App", "Web"], CancellationToken.None);
 
         Assert.Equal(55, number);
         using var json = JsonDocument.Parse(_handler.Requests.Single().Body);
         Assert.Equal("[Bug] X", json.RootElement.GetProperty("title").GetString());
         Assert.Equal("body", json.RootElement.GetProperty("body").GetString());
-        Assert.Equal("surface:web", json.RootElement.GetProperty("labels")[0].GetString());
+        Assert.Equal("From App", json.RootElement.GetProperty("labels")[0].GetString());
+        Assert.Equal("Web", json.RootElement.GetProperty("labels")[1].GetString());
     }
 
     [Fact]
@@ -100,7 +101,7 @@ public sealed class GitHubFeedbackIssueClientTests : IDisposable
         _handler.Respond("POST https://api.example/repos/owner/tracker/issues", HttpStatusCode.UnprocessableEntity, """{"message":"Validation Failed"}""");
         _handler.Respond("POST https://api.example/repos/owner/tracker/issues", HttpStatusCode.Created, """{"number":56}""");
 
-        var number = await CreateClient().CreateIssueAsync("[Feature] Y", "body", ["surface:ios"], CancellationToken.None);
+        var number = await CreateClient().CreateIssueAsync("[Feature] Y", "body", ["From App", "iOS"], CancellationToken.None);
 
         Assert.Equal(56, number);
         Assert.Equal(2, _handler.Requests.Count);

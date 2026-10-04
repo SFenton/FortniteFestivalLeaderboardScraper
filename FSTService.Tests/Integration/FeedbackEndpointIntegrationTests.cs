@@ -133,8 +133,9 @@ public sealed class FeedbackEndpointIntegrationTests(ApiEndpointIntegrationTests
         Assert.Equal("attached", attachment.GetProperty("outcome").GetString());
         await _issues.Received(1).CreateIssueAsync(
             "[Bug] Scores missing",
-            Arg.Is<string>(body => body.Contains("![shot.png](https://github.com/user-attachments/assets/1)")),
-            Arg.Is<IReadOnlyList<string>>(labels => labels.SequenceEqual(new[] { "surface:web" })),
+            Arg.Is<string>(body => body.Contains("![shot.png](https://github.com/user-attachments/assets/1)")
+                                   && body.EndsWith("\n<!-- fst-feedback:v1 -->", StringComparison.Ordinal)),
+            Arg.Is<IReadOnlyList<string>>(labels => labels.SequenceEqual(new[] { "From App", "Web" })),
             Arg.Any<CancellationToken>());
     }
 
