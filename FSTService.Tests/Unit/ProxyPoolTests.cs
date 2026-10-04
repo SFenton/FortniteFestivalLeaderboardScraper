@@ -581,6 +581,76 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task TargetEndpoints_SeedAddsOnlyNewQualifiedServersAndPrefersNeverUsed()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedServerCatalog = true;
+        var recycler = new RecordingRecycler();
+        using var pool = new ProxyPool(options, _log, recycler, new RecordingRegionRotator());
+        var learned = IPAddress.Parse("198.51.100.110");
+        var seededSeattle = IPAddress.Parse("198.51.100.111");
+        var seededFrankfurt = IPAddress.Parse("198.51.100.112");
+        var unqualified = IPAddress.Parse("198.51.100.113");
+        pool.RecordKnownServer(learned, "US Seattle", DateTimeOffset.UtcNow - TimeSpan.FromHours(2));
+        recycler.ServerLists["gluetun-1"] =
+        [
+            new(learned, "DE Frankfurt"),
+            new(seededSeattle, "US Seattle"),
+            new(unqualified, "US Las Vegas"),
+        ];
+        recycler.ServerLists["gluetun-2"] =
+        [
+            new(seededSeattle, "US Seattle"),
+            new(seededFrankfurt, "de frankfurt"),
+        ];
+
+        Assert.Equal(2, await pool.SeedServerCatalogAsync(CancellationToken.None));
+        Assert.Equal(3, pool.KnownServerCount);
+        var first = pool.TryReserveTarget(0, [])!.Value;
+        var second = pool.TryReserveTarget(1, [])!.Value;
+        Assert.Equal(
+            new HashSet<IPAddress> { seededSeattle, seededFrankfurt },
+            new HashSet<IPAddress> { first.Address, second.Address });
+        Assert.Equal(new ProxyEgressTarget(learned, "US Seattle"), pool.TryReserveTarget(0, [first.Address]));
+        Assert.Equal(0, await pool.SeedServerCatalogAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public void TargetEndpoints_SeedRequiresTargeting()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationSeedServerCatalog = true;
+        Assert.Contains("Seeding the PIA server catalog", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+    }
+
+    [Fact]
+    public void ParsePiaServerList_ReadsUdpIpv4AddressesFromGluetunFormats()
+    {
+        const string wrapped = """
+            {"version":1,"timestamp":2,"servers":[
+              {"vpn":"openvpn","region":"US East","server_name":"a","tcp":true,"udp":true,"ips":["198.51.100.1","2001:db8::1","bad"]},
+              {"vpn":"openvpn","region":"US East","server_name":"b","tcp":true,"udp":false,"ips":["198.51.100.2"]},
+              {"vpn":"openvpn","region":"","udp":true,"ips":["198.51.100.3"]},
+              {"vpn":"openvpn","region":"Netherlands","udp":true,"ips":["198.51.100.4"]}]}
+            """;
+        using var wrappedStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(wrapped));
+        Assert.Equal(
+            [new(IPAddress.Parse("198.51.100.1"), "US East"), new(IPAddress.Parse("198.51.100.4"), "Netherlands")],
+            GluetunContainerRecycler.ParsePiaServerList(wrappedStream));
+
+        using var bare = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+            """[{"region":"CA Montreal","udp":true,"ips":["198.51.100.5"]}]"""));
+        Assert.Equal([new(IPAddress.Parse("198.51.100.5"), "CA Montreal")],
+            GluetunContainerRecycler.ParsePiaServerList(bare));
+
+        using var other = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"version\":1}"));
+        Assert.Empty(GluetunContainerRecycler.ParsePiaServerList(other));
+    }
+
+    [Fact]
     public async Task TargetEndpoints_RotationRequestsTargetingAndLearnsVerifiedServer()
     {
         var options = CreatePiaRotationOptions();
@@ -1031,6 +1101,13 @@ public sealed class ProxyPoolTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public List<string> RestartedContainers { get; } = [];
+        public Dictionary<string, IReadOnlyList<PiaServerAddress>> ServerLists { get; } = new();
+
+        public Task<IReadOnlyList<PiaServerAddress>> ReadPiaServerListAsync(
+            string containerName, CancellationToken ct)
+            => Task.FromResult(ServerLists.TryGetValue(containerName, out var list)
+                ? list
+                : (IReadOnlyList<PiaServerAddress>)[]);
 
         public Task<bool> RestartAsync(
             string containerName, CancellationToken ct = default)

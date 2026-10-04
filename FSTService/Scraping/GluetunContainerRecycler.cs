@@ -1,15 +1,29 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
+using System.Formats.Tar;
 using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 
 namespace FSTService.Scraping;
+
+/// <summary>One PIA OpenVPN (UDP) server address from a Gluetun server list.</summary>
+public readonly record struct PiaServerAddress(IPAddress Address, string Region);
 
 public interface IProxyContainerRecycler
 {
     Task<bool> RestartAsync(string containerName, CancellationToken ct = default);
     Task<bool> IsHealthyAsync(string containerName, CancellationToken ct);
     Task<string?> GetConfiguredRegionAsync(string containerName, CancellationToken ct);
+
+    /// <summary>
+    /// Reads (never writes) the PIA server list Gluetun uses inside
+    /// <paramref name="containerName"/>; empty when unavailable.
+    /// </summary>
+    Task<IReadOnlyList<PiaServerAddress>> ReadPiaServerListAsync(
+        string containerName, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<PiaServerAddress>>([]);
 }
 
 public sealed class DisabledProxyContainerRecycler : IProxyContainerRecycler
@@ -80,6 +94,81 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
             _log.LogWarning(ex, "Cannot inspect health of proxy container {Container}", containerName);
             return false;
         }
+    }
+
+    /// <summary>Gluetun's runtime PIA server list (refreshed by its updater).</summary>
+    internal const string PiaServerListPath = "/gluetun/servers/private internet access.json";
+    private const long MaxPiaServerListBytes = 16 * 1024 * 1024;
+
+    public async Task<IReadOnlyList<PiaServerAddress>> ReadPiaServerListAsync(
+        string containerName, CancellationToken ct)
+    {
+        try
+        {
+            var archive = await _docker.Containers.GetArchiveFromContainerAsync(
+                containerName,
+                new GetArchiveFromContainerParameters { Path = PiaServerListPath },
+                statOnly: false,
+                ct);
+            using var stream = archive.Stream;
+            using var tar = new TarReader(stream);
+            var entry = await tar.GetNextEntryAsync(copyData: false, ct);
+            if (entry?.DataStream is null || entry.Length > MaxPiaServerListBytes)
+                return [];
+            using var buffer = new MemoryStream();
+            await entry.DataStream.CopyToAsync(buffer, ct);
+            buffer.Position = 0;
+            return ParsePiaServerList(buffer);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(
+                "Cannot read the PIA server list of proxy container {Container}: {Reason}",
+                containerName, ex.GetType().Name);
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Parses a Gluetun PIA server list (<c>{"servers":[...]}</c> or a bare
+    /// array) into UDP OpenVPN IPv4 server addresses with their regions.
+    /// </summary>
+    internal static IReadOnlyList<PiaServerAddress> ParsePiaServerList(Stream json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        JsonElement servers = default;
+        if (root.ValueKind == JsonValueKind.Array)
+            servers = root;
+        else if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("servers", out var list)
+            && list.ValueKind == JsonValueKind.Array)
+            servers = list;
+        if (servers.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var result = new List<PiaServerAddress>();
+        foreach (var server in servers.EnumerateArray())
+        {
+            if (server.ValueKind != JsonValueKind.Object
+                || !server.TryGetProperty("udp", out var udp)
+                || udp.ValueKind != JsonValueKind.True
+                || !server.TryGetProperty("region", out var region)
+                || region.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(region.GetString())
+                || !server.TryGetProperty("ips", out var ips)
+                || ips.ValueKind != JsonValueKind.Array)
+                continue;
+            var name = region.GetString()!;
+            foreach (var ip in ips.EnumerateArray())
+            {
+                if (ip.ValueKind == JsonValueKind.String
+                    && IPAddress.TryParse(ip.GetString(), out var address)
+                    && address.AddressFamily == AddressFamily.InterNetwork)
+                    result.Add(new PiaServerAddress(address, name));
+            }
+        }
+        return result;
     }
 
     public async Task<string?> GetConfiguredRegionAsync(string containerName, CancellationToken ct)

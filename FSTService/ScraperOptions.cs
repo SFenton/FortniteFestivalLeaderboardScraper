@@ -296,6 +296,16 @@ public sealed class ScraperOptions
     public int ProxyRegionRotationTargetMinRestSeconds { get; set; }
 
     /// <summary>
+    /// When true (with targeting), the worker reads, read-only through the
+    /// Docker API, each exit container's Gluetun PIA server list at startup
+    /// and hourly, and adds its qualified-region UDP addresses to the target
+    /// catalog. Gluetun's random choice reaches only a fraction of these
+    /// addresses, and each container's list differs, so learning alone keeps
+    /// the catalog small.
+    /// </summary>
+    public bool ProxyRegionRotationSeedServerCatalog { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

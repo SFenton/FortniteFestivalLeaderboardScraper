@@ -191,7 +191,30 @@ exit holds or claims, that is outside the rate-limited window, and that is not
 backing off after a failed pin (10 minutes, doubling to 6 hours; a verified
 use or a corrected region clears it). With
 `ProxyRegionRotationTargetMinRestSeconds`, a target must also have been
-unused for that long. The attempt pins the exit to that
+unused for that long. Equally rested servers (for example never-used seeded
+ones) are chosen in random order.
+
+Learning alone keeps the catalog small, because Gluetun's random choice
+reaches only part of each list. With
+`ProxyRegionRotationSeedServerCatalog`, the worker also reads every exit
+container's runtime server list through the Docker archive API (read-only)
+at startup and hourly, and adds qualified-region UDP addresses it does not
+know yet; learned entries keep their verified region, use time, and failure
+state. On 2026-10-04 the 50 lists plus the image list held 4,222 distinct
+addresses in the eight qualified regions, and 24 of 24 randomly sampled ones
+connected when pinned on a disposable clone.
+
+The first targeted canary (scrape `1468`, 50 exits, learning only) needed
+about five minutes for learned servers to leave the rate-limited window, then
+pinned 60–135 servers per minute, refreshed in about 4–6 seconds instead of
+10–12, and completed 90–140 refreshes per minute. Minutes 10–30 averaged about
+8,200 successful requests per minute against 6,200–6,300 for random refresh
+on scrapes `1466`–`1467` (+29–32%), with no quarantines or retry exhaustion.
+Per-minute throughput oscillated (about 3,500–12,800) because the learned
+catalog (about 450–600 servers) cycled every five to seven minutes: a
+server reused after 300–450 seconds of rest averaged about 76 successful
+requests against about 92 on first use, so the catalog's size, not exit
+count, bounded throughput. The attempt pins the exit to that
 server and verifies it exactly like any candidate. When nothing qualifies (for
 example right after a worker start, before the catalog has learned
 addresses), the attempt falls back to the random candidate list; on a pinned
@@ -328,7 +351,9 @@ control API). CDN blocks alone cool/fail over; they do not prove a tunnel is
 broken.
 
 Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
-`DisabledProxyContainerRecycler`, which rejects restart requests. The recycler
+`DisabledProxyContainerRecycler`, which rejects restart requests (and returns
+no server lists). Catalog seeding only reads Gluetun's server-list file
+through the archive API; it never writes into a container. The recycler
 normally restarts a container without rewriting provider selectors; legacy
 recreate/city-selection support exists for provider-specific workflows.
 Once a restart has requested the stop, it always finishes with a start on its
