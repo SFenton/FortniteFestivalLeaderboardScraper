@@ -1098,6 +1098,9 @@ internal sealed class ProxyPool :
     {
         if (!_targetEndpoints || string.IsNullOrWhiteSpace(region))
             return;
+        // An address first seen as rate-limited was last used when it 429'd.
+        if (usedAt is null && _rateLimitedEgress.TryGetValue(address, out var limitedAt))
+            usedAt = limitedAt;
         if (!_knownServers.TryGetValue(address, out var server))
         {
             if (_knownServers.Count >= MaxKnownServers)

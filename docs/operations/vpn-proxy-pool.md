@@ -413,6 +413,37 @@ availability: at any moment roughly 6–11 of 24 exits are refreshing, mostly
 because about half of first candidates return an egress still inside the
 rate-limited window.
 
+#### Exit-count scaling (2026-10-03/04)
+
+The operator approved testing more than 30 exits to find a throughput sweet
+spot. Spares were defined and qualified first (`pia-gluetun-34` and
+`pia-gluetun-50` looped on PIA `AUTH_FAILED` against one US California server
+and were moved to other static regions). Full leaderboard network windows:
+
+| Scrape | Effective exits | Global spacing / concurrent refreshes | Successful requests/min | Network window | Successful refreshes/min | Peer-duplicate rejections |
+|---|---:|---|---:|---:|---:|---:|
+| 1461–1463 | 30 | 1 s / 12 | 5,412–5,605 | 115–119 min | ~56 | ~375 |
+| 1464 | 35 | 1 s / 14 | 5,263 | 123 min | ~53 | 1,007 |
+| 1465 | 40 | 0 / 20 | 6,037 | 108 min | ~61 | 1,930 |
+| 1466 | 50 | 0 / 25 | 6,011 | 109 min | ~59 | 4,648 |
+
+Throughput is about 100 successful requests per retired egress times the
+successful refresh rate. One-second global spacing capped refresh starts near
+60 per minute, so 35 paced exits were slower than 30; removing the spacing at
+40 exits gave about 8%. Beyond that, random reconnects could not find fresh
+egress faster: successful refreshes stayed near 60 per minute while
+selectable exits stayed near 18–20, refreshes lengthened (about 10 to 12
+seconds), and peer duplicates grew. Gluetun's random choice is also
+concentrated: over scrape `1466` each region's roughly 1,300 connections
+reached only 21–30 of the 51–96 addresses in the image's server list. Each
+container's runtime server list (refreshed by `UPDATER_PERIOD`) differs; one
+from 2026-09-27 shared only 135 of its 775 qualified-region addresses with the
+image's 658, and the scrape reached 1,046 distinct server addresses in total.
+A pin works for an address absent from the container's own list (6/6), so a
+learned catalog is valid for every exit. Exit containers stayed negligible:
+50 Gluetun containers used about 2.3 GiB and about half of one CPU in total
+during acquisition.
+
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
 rejected because they can preserve a dead tunnel across boot.

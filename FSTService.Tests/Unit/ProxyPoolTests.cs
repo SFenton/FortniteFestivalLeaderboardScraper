@@ -531,6 +531,34 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task TargetEndpoints_RateLimitedServerRanksByItsLastUseNotAsNeverUsed()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyRegionRotationBurnedEgressTtlSeconds = 1;
+        options.ProxyRegionRotationTargetEndpoints = true;
+        var burned = IPAddress.Parse("198.51.100.95");
+        var rested = IPAddress.Parse("198.51.100.96");
+        var rotator = new RecordingRegionRotator
+        {
+            Egress = uri => uri.Host == "gluetun-1" ? burned : null,
+        };
+        using var pool = new ProxyPool(options, _log, new RecordingRecycler(), rotator);
+        using var request = RequestFor(0, "gluetun-1");
+        pool.ReportRateLimited(request, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+
+        pool.RecordKnownServer(burned, "US Seattle");
+        pool.RecordKnownServer(rested, "US Seattle", DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+
+        Assert.Equal(rested, pool.TryReserveTarget(1, [])?.Address);
+        Assert.Equal(burned, pool.TryReserveTarget(1, [rested])?.Address);
+    }
+
+    [Fact]
     public async Task TargetEndpoints_RotationRequestsTargetingAndLearnsVerifiedServer()
     {
         var options = CreatePiaRotationOptions();
