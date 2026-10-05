@@ -858,10 +858,11 @@ internal sealed class ProxyPool :
                     && _knownServers.TryGetValue(retiring, out var retiringServer))
                     retiringServer.LastUsedAt = DateTimeOffset.UtcNow;
                 endpoint.LastRegionRotationAttempt = DateTimeOffset.UtcNow;
-                var candidateOffset = _regionRotationRegions.Count == 0
+                var regions = RotationRegionsFor(endpoint);
+                var candidateOffset = regions.Count == 0
                     ? 0
                     : (endpoint.Index + endpoint.RegionRotationAttempts++)
-                        % _regionRotationRegions.Count;
+                        % regions.Count;
                 endpoint.PendingEgress = null;
                 request = new ProxyRegionRotationRequest(
                     new ProxyRegionTunnel(
@@ -869,7 +870,7 @@ internal sealed class ProxyPool :
                         new Uri(endpoint.ControlUrl)),
                     endpoint.KnownEgress,
                     new EndpointEgressClaims(this, endpointIndex),
-                    _regionRotationRegions,
+                    regions,
                     candidateOffset,
                     _regionRotationReconnectInPlace,
                     _targetEndpoints);
@@ -1155,10 +1156,15 @@ internal sealed class ProxyPool :
             if (servers.Count == 0)
                 continue;
             lists++;
+            var regions = new HashSet<string>(
+                servers.Select(server => server.Region), StringComparer.OrdinalIgnoreCase);
             lock (_lock)
             {
                 if (_disposed)
                     return added;
+                foreach (var endpoint in _endpoints.Where(endpoint =>
+                    string.Equals(endpoint.ContainerName, container, StringComparison.OrdinalIgnoreCase)))
+                    endpoint.AvailableRegions = regions;
                 foreach (var server in servers)
                 {
                     if (!_qualifiedRegions.Contains(server.Region)
@@ -1177,11 +1183,20 @@ internal sealed class ProxyPool :
             }
         }
 
+        List<string> missing;
         lock (_lock)
+        {
             known = _knownServers.Count;
+            missing = _regionRotationRegions
+                .Select(region => (Region: region, Exits: _endpoints.Count(endpoint =>
+                    endpoint.AvailableRegions is { } available && !available.Contains(region))))
+                .Where(pair => pair.Exits > 0)
+                .Select(pair => $"{pair.Region}={pair.Exits}")
+                .ToList();
+        }
         _log.LogInformation(
-            "Seeded the PIA server catalog from {Lists} of {Containers} exit server list(s): {Added} new qualified address(es), {Known} known.",
-            lists, containers.Count, added, known);
+            "Seeded the PIA server catalog from {Lists} of {Containers} exit server list(s): {Added} new qualified address(es), {Known} known; exits lacking a qualified region: {Missing}.",
+            lists, containers.Count, added, known, missing.Count == 0 ? "none" : string.Join(", ", missing));
         return added;
     }
 
@@ -1207,6 +1222,21 @@ internal sealed class ProxyPool :
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
+    }
+
+    /// <summary>
+    /// Qualified regions this exit's own server list contains (all qualified
+    /// regions while the list is unknown).
+    /// </summary>
+    private IReadOnlyList<string> RotationRegionsFor(ProxyEndpoint endpoint)
+        => endpoint.AvailableRegions is { } available
+            ? _regionRotationRegions.Where(available.Contains).ToList()
+            : _regionRotationRegions;
+
+    internal IReadOnlyList<string> RotationRegionsFor(int endpointIndex)
+    {
+        lock (_lock)
+            return RotationRegionsFor(_endpoints[endpointIndex]);
     }
 
     internal int KnownServerCount
@@ -1235,12 +1265,14 @@ internal sealed class ProxyPool :
 
             var now = DateTimeOffset.UtcNow;
             var inUse = InUseEgressLocked(endpointIndex);
+            var available = _endpoints[endpointIndex].AvailableRegions;
             IPAddress? bestAddress = null;
             KnownServer? best = null;
             foreach (var (address, server) in _knownServers)
             {
                 if (!IsTargetableLocked(address, server, inUse, now)
-                    || exclude.Contains(address))
+                    || exclude.Contains(address)
+                    || (available is not null && !available.Contains(server.Region)))
                     continue;
                 if (best is null
                     || server.LastUsedAt < best.LastUsedAt
@@ -1918,6 +1950,12 @@ internal sealed class ProxyPool :
         public long Generation { get; private set; }
         public long GenerationSuccesses { get; private set; }
         public IPAddress? KnownEgress { get; set; }
+        /// <summary>
+        /// Regions in this exit's own Gluetun server list (from catalog
+        /// seeding); <c>null</c> while unknown. Gluetun cannot select a
+        /// region its list lacks, and each container's list differs.
+        /// </summary>
+        public HashSet<string>? AvailableRegions { get; set; }
         public IPAddress? PendingEgress { get; set; }
         public DateTimeOffset EgressObservedAt { get; set; }
 
