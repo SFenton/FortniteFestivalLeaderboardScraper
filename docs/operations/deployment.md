@@ -146,9 +146,9 @@ Sanitized configuration inspection on 2026-09-26 found:
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
 
-On 2026-10-05 (scrape `1475`) the production overlay defined 60 canonical
-PIA services with 60 effective aligned endpoints, `PIA_DEGREE_OF_PARALLELISM`
-240, and `FST_WORKER_CPUS` 10.0 (raised from the 6.0 template default, which
+On 2026-10-05 (scrape `1476`) the production overlay defined 75 canonical
+PIA services with 75 effective aligned endpoints, `PIA_DEGREE_OF_PARALLELISM`
+300, and `FST_WORKER_CPUS` 12.0 (raised from the 6.0 template default, which
 throttled the curl-per-request transport); see
 [VPN and proxy pool](vpn-proxy-pool.md) for the exit-scaling and refresh
 measurements.

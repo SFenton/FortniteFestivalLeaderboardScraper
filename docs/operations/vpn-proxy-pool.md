@@ -480,6 +480,7 @@ and were moved to other static regions). Full leaderboard network windows:
 | 1471 | 60, seeded targeting | 0 / 30 | 12,469 | 51 min | ~119 | 0 random reconnects |
 | 1474 | 60, seeded, DOP 240, 6 worker CPUs | 0 / 30 | 12,504 | 51 min | ~120 | 0 random reconnects |
 | 1475 | 60, seeded, DOP 240, 10 worker CPUs | 0 / 30 | 17,467 | 37 min | ~168 | 0 random reconnects |
+| 1476 | 75, seeded, DOP 300, 12 worker CPUs | 0 / 38 | 20,405 | 31 min | ~196 | 0 random reconnects |
 
 Throughput is about 100 successful requests per retired egress times the
 successful refresh rate. One-second global spacing capped refresh starts near
@@ -517,6 +518,19 @@ further steps raise exits, degree of parallelism, and worker CPUs together;
 the guard accepts 30–80 canonical exits for that. Epic's JSON 429s can be
 account-scoped, so each step is watched for non-HTML 429s and limiter
 reductions.
+
+Scrape `1476` (75 exits, degree of parallelism 300, 12 worker CPUs) reached
+about 20,400 successful requests per minute with a 31-minute network window,
+2.9% HTML-only 429s, no quarantines, 21 PIA `AUTH_FAILED` lines, and
+unchanged public API latency, while the worker used about 8–10 CPUs and was
+again throttled in about a quarter of periods. Production stays there: the
+leaderboard fetch is now about a sixth of a roughly three-hour cycle, so
+further fetch gains barely shorten the cycle. Adding exits beyond 60 exposed
+a boot-time hazard: new spares with the same static region repeatedly
+reconnected to the same server, so the guard's distinct-egress check failed
+six times until the spares were pinned to distinct servers through the
+control API (as refresh does). Pin new spares the same way before the guard
+check when adding many at once.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
