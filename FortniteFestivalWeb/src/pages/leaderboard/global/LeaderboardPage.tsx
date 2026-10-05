@@ -37,10 +37,11 @@ import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionCon
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
 import Page, { PageBackground } from '../../Page';
-import { Routes } from '../../../routes';
+import { NAV_TO_PLAYER_PARAM, Routes } from '../../../routes';
 import { getBandProfileRoute, getPlayerProfileRoute } from '../../../utils/profileNavigation';
+import { getLeaderboardPageForRank, SONG_LEADERBOARD_PAGE_SIZE } from '../../../utils/leaderboardPosition';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = SONG_LEADERBOARD_PAGE_SIZE;
 
 import { leaderboardCache } from '../../../api/pageCache';
 export { clearLeaderboardCache } from '../../../api/pageCache';
@@ -63,7 +64,9 @@ export default function LeaderboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const cacheKey = `${songId}:${instKey}`;
-  const cached = leaderboardCache.get(cacheKey);
+  // A "jump to my position" link names its page explicitly; it must win over the remembered page.
+  const [openedForSelectedRow] = useState(() => !!searchParams.get(NAV_TO_PLAYER_PARAM));
+  const cached = openedForSelectedRow ? undefined : leaderboardCache.get(cacheKey);
   const pageParam = parseInt(searchParams.get('page') ?? '', 10);
   const requestedPage = !isNaN(pageParam) && pageParam >= 1 ? pageParam - 1 : 0;
   const [page, setPage] = useState(cached?.page ?? requestedPage);
@@ -193,6 +196,7 @@ export default function LeaderboardPage() {
   // Tracks: 'first' = initial load (stagger everything), 'paginate' = page change (stagger rows only), 'cached' = from cache (no stagger)
   const [animMode, setAnimMode] = useState<'first' | 'paginate' | 'cached'>(skipAllAnim ? 'cached' : 'first');
   const userScrolledRef = useRef(false);
+  const footerJumpRequestedRef = useRef(false);
 
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
@@ -313,24 +317,52 @@ export default function LeaderboardPage() {
 
   /* v8 ignore start � navToPlayer auto-scroll */
   useEffect(() => {
-    if (loadPhase !== LoadPhase.ContentIn || !searchParams.get('navToPlayer')) return;
+    if (loadPhase !== LoadPhase.ContentIn || !searchParams.get(NAV_TO_PLAYER_PARAM)) return;
+    // Wait for the requested page instead of giving up on the previous page's rows.
+    if (leaderboardQuery.isPlaceholderData) return;
     const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
     if (playerIndex < 0) {
-      searchParams.delete('navToPlayer');
+      footerJumpRequestedRef.current = false;
+      searchParams.delete(NAV_TO_PLAYER_PARAM);
       setSearchParams(searchParams, { replace: true });
       return;
     }
     // Wait for the player's row stagger animation to finish, then scroll to it
     const scrollDelay = (playerIndex + 1) * STAGGER_INTERVAL + 300;
     const id = setTimeout(() => {
-      if (userScrolledRef.current) return;
+      // The footer jump's own scroll-to-top must not count as the user scrolling away.
+      if (userScrolledRef.current && !footerJumpRequestedRef.current) return;
+      footerJumpRequestedRef.current = false;
       playerRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      searchParams.delete('navToPlayer');
+      searchParams.delete(NAV_TO_PLAYER_PARAM);
       setSearchParams(searchParams, { replace: true });
     }, scrollDelay);
     return () => clearTimeout(id);
-  }, [loadPhase, entries, playerData, searchParams, setSearchParams]);
+  }, [loadPhase, entries, leaderboardQuery.isPlaceholderData, playerData, searchParams, setSearchParams]);
   /* v8 ignore stop */
+
+  // Selected-row rule shared with the band leaderboard: when the player's row is
+  // not on this page, the footer jumps to it; when it is visible, the footer opens Statistics.
+  const playerRowOnPage = !!playerData && !leaderboardQuery.isPlaceholderData
+    && entries.some(e => e.accountId === playerData.accountId);
+  const playerJumpPage = useMemo(() => {
+    if (!effectivePlayerScore) return null;
+    const jumpRank = resolvedPlayerScore ? resolvedPlayerScore.rank : (effectivePlayerScore.localRank ?? effectivePlayerScore.rank);
+    const target = getLeaderboardPageForRank(jumpRank, PAGE_SIZE);
+    return target != null && target - 1 !== page ? target - 1 : null;
+  }, [effectivePlayerScore, page, resolvedPlayerScore]);
+  const playerFooterJumps = !playerRowOnPage && playerJumpPage != null;
+  const handlePlayerFooterPress = useCallback(() => {
+    if (!playerFooterJumps || playerJumpPage == null) {
+      navigate(Routes.statistics);
+      return;
+    }
+    footerJumpRequestedRef.current = true;
+    const params = new URLSearchParams(searchParams);
+    params.set(NAV_TO_PLAYER_PARAM, 'true');
+    setSearchParams(params, { replace: true });
+    goToPage(playerJumpPage);
+  }, [goToPage, navigate, playerFooterJumps, playerJumpPage, searchParams, setSearchParams]);
 
   const scoreWidth = useMemo(() => {
     const scoreLengths = entries.map((e) => e.score.toLocaleString().length);
@@ -457,7 +489,7 @@ export default function LeaderboardPage() {
                 playerRowRef={playerRowRef}
                 hasPlayerFooter={hasFooter}
                 renderPlayerFooter={({ className, style }) => selectedBand && selectedBandSongScore && selectedBandFooterRoute && selectedBandFooterName ? (
-                  <LeaderboardFooterLink to={selectedBandFooterRoute} className={className} style={{ ...style, cursor: 'pointer' }}>
+                  <LeaderboardFooterLink to={selectedBandFooterRoute} ariaLabel={t('leaderboard.openBand', { names: selectedBandFooterName })} className={className} style={{ ...style, cursor: 'pointer' }}>
                     <LeaderboardEntry
                       rank={selectedBandSongScore.rank}
                       displayName={selectedBandFooterName}
@@ -484,7 +516,10 @@ export default function LeaderboardPage() {
                     className={className}
                     style={{ ...style, cursor: 'pointer' }}
                     pressedStyle={LEADERBOARD_FOOTER_PRESSED_STYLE}
-                    onPress={() => navigate('/statistics')}
+                    ariaLabel={playerFooterJumps
+                      ? t('leaderboard.jumpToYourPosition', { rank: effectivePlayerScore!.rank.toLocaleString() })
+                      : t('leaderboard.openYourStatistics')}
+                    onPress={handlePlayerFooterPress}
                   >
                       <LeaderboardEntry
                         rank={effectivePlayerScore!.rank}
@@ -531,12 +566,13 @@ const LEADERBOARD_FOOTER_PRESSED_STYLE: CSSProperties = {
   backgroundColor: 'rgba(255, 255, 255, 0.06)',
 };
 
-function LeaderboardFooterLink({ to, className, style, children }: { to: string; className: string; style: CSSProperties; children: ReactNode }) {
+function LeaderboardFooterLink({ to, ariaLabel, className, style, children }: { to: string; ariaLabel?: string; className: string; style: CSSProperties; children: ReactNode }) {
   const linkPress = useNavLinkPress<HTMLAnchorElement>({ to });
 
   return (
     <Link
       to={to}
+      aria-label={ariaLabel}
       className={className}
       style={{ ...style, ...(linkPress.isPressed ? LEADERBOARD_FOOTER_PRESSED_STYLE : undefined) }}
       data-pressed={linkPress.isPressed ? 'true' : undefined}

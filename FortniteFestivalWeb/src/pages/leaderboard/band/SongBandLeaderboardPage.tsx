@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { LoadPhase } from '@festival/core/runtime';
 import type { ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api';
-import { Border, Colors, Display, Gap, border, flexColumn } from '@festival/theme';
+import { Border, Colors, Display, Gap, STAGGER_INTERVAL, border, flexColumn } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import EmptyState from '../../../components/common/EmptyState';
+import CardPressable from '../../../components/common/CardPressable';
 import BandFilterPill from '../../../components/common/BandFilterPill';
 import { FixedLeaderboardPagination, FixedLeaderboardPlayerFooter, useLeaderboardFooterScrollMargin } from '../../../components/leaderboard/LeaderboardPaginationFooter';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
@@ -35,8 +36,11 @@ import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
 import BandComboFilterModal from '../../leaderboards/modals/BandComboFilterModal';
 import { getBandProfileRoute } from '../../../utils/profileNavigation';
+import { getLeaderboardPageForRank, SONG_LEADERBOARD_PAGE_SIZE } from '../../../utils/leaderboardPosition';
+import { NAV_TO_BAND_PARAM } from '../../../routes';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = SONG_LEADERBOARD_PAGE_SIZE;
+const SELECTED_ROW_ELEMENT_ID = 'song-band-leaderboard-selected-row';
 const COMBO_CATALOG_STALE_TIME_MS = 10 * 60_000;
 const SONG_BAND_LEADERBOARD_STALE_TIME_MS = 5 * 60_000;
 
@@ -178,6 +182,44 @@ export default function SongBandLeaderboardPage() {
   const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${selectedProfileKey}:${page}`, !loading);
   useSetPageReady(phase === LoadPhase.ContentIn);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
+
+  // Selected-row rule shared with the solo leaderboard: when the selected row is
+  // not on this page, the footer jumps to it; when it is visible, the footer opens the band.
+  const selectedRowIndex = selectedEntry ? entries.findIndex(entry => isSameSongBandEntry(entry, selectedEntry)) : -1;
+  const selectedJumpPage = useMemo(() => {
+    const target = getLeaderboardPageForRank(selectedEntry?.rank, PAGE_SIZE);
+    return target != null && target !== page ? target : null;
+  }, [page, selectedEntry?.rank]);
+  const selectedFooterJumps = selectedRowIndex < 0 && selectedJumpPage != null;
+  const jumpToSelectedRow = useCallback(() => {
+    if (selectedJumpPage == null) return;
+    const params = new URLSearchParams(searchParams);
+    params.set('page', String(selectedJumpPage));
+    params.set(NAV_TO_BAND_PARAM, 'true');
+    scrollContainerRef.current?.scrollTo(0, 0);
+    setSearchParams(params, { replace: true });
+  }, [scrollContainerRef, searchParams, selectedJumpPage, setSearchParams]);
+
+  const navToBand = searchParams.get(NAV_TO_BAND_PARAM) === 'true';
+  useEffect(() => {
+    if (!navToBand || phase !== LoadPhase.ContentIn || !data) return;
+    const clearNavToBand = () => {
+      const params = new URLSearchParams(searchParams);
+      params.delete(NAV_TO_BAND_PARAM);
+      setSearchParams(params, { replace: true });
+    };
+    if (selectedRowIndex < 0) {
+      clearNavToBand();
+      return;
+    }
+    // Let the selected row finish its entrance stagger before bringing it into view.
+    const delay = shouldStagger ? (selectedRowIndex + 1) * STAGGER_INTERVAL + 300 : 0;
+    const id = setTimeout(() => {
+      document.getElementById(SELECTED_ROW_ELEMENT_ID)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      clearNavToBand();
+    }, delay);
+    return () => clearTimeout(id);
+  }, [data, navToBand, phase, searchParams, selectedRowIndex, setSearchParams, shouldStagger]);
   useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedFooter });
   const styles = useStyles();
 
@@ -253,7 +295,7 @@ export default function SongBandLeaderboardPage() {
                   showMemberStars={showMemberStars}
                   showMemberAccuracy={showMemberAccuracy}
                   activeFilterInstruments={activeComboInstruments}
-                  isSelected={!!selectedEntry && isSameSongBandEntry(entry, selectedEntry)}
+                  isSelected={index === selectedRowIndex}
                   style={stagger(index)}
                   onAnimationEnd={clearAnim}
                 />
@@ -274,8 +316,8 @@ export default function SongBandLeaderboardPage() {
           )}
           {hasSelectedFooter && selectedEntry && selectedFooterName && selectedFooterRoute && (
             <FixedLeaderboardPlayerFooter hasFab={hasFab} reserveFabSpace={reserveFabSpace}>
-              {({ className, style }) => (
-                <Link to={selectedFooterRoute} className={className} style={style}>
+              {({ className, style }) => {
+                const footerEntry = (
                   <LeaderboardEntry
                     rank={selectedEntry.rank}
                     displayName={selectedFooterName}
@@ -294,8 +336,24 @@ export default function SongBandLeaderboardPage() {
                     rankWidth={selectedFooterRankWidth}
                     isPlayer
                   />
-                </Link>
-              )}
+                );
+                return selectedFooterJumps ? (
+                  <CardPressable
+                    testId="song-band-leaderboard-selected-footer-jump"
+                    className={className}
+                    style={{ ...style, cursor: 'pointer' }}
+                    pressedStyle={styles.footerPressed}
+                    ariaLabel={t('leaderboard.jumpToYourBandPosition', { rank: selectedEntry.rank.toLocaleString() })}
+                    onPress={jumpToSelectedRow}
+                  >
+                    {footerEntry}
+                  </CardPressable>
+                ) : (
+                  <Link to={selectedFooterRoute} aria-label={t('leaderboard.openBand', { names: selectedFooterName })} className={className} style={style}>
+                    {footerEntry}
+                  </Link>
+                );
+              }}
             </FixedLeaderboardPlayerFooter>
           )}
         </div>
@@ -338,6 +396,7 @@ function SongBandLeaderboardRow({
 
   return (
     <PlayerBandCard
+      id={isSelected ? SELECTED_ROW_ELEMENT_ID : undefined}
       testId={`song-band-leaderboard-entry-${entry.rank}`}
       entry={playerBandEntry}
       rank={entry.rank}
@@ -375,6 +434,9 @@ function useStyles() {
     selectedCard: {
       backgroundColor: Colors.purpleHighlight,
       border: border(Border.thin, Colors.purpleHighlightBorder),
+    } as CSSProperties,
+    footerPressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
     } as CSSProperties,
   }), []);
 }

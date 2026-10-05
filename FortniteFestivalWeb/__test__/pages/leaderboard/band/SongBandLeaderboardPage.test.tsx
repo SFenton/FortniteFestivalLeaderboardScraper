@@ -624,4 +624,79 @@ describe('SongBandLeaderboardPage', () => {
     expect(score.compareDocumentPosition(stars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stars.compareDocumentPosition(accuracy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+  describe('selected band footer rule (#307)', () => {
+    const selectedBandEntry = (rank: number) => ({
+      bandId: 'selected-band',
+      bandType: 'Band_Duets' as const,
+      teamKey: 'acct-selected:acct-partner',
+      score: 777_777,
+      rank,
+      members: [
+        { accountId: 'acct-selected', displayName: 'Selected', instruments: ['Solo_Guitar' as const] },
+        { accountId: 'acct-partner', displayName: 'Partner', instruments: ['Solo_Bass' as const] },
+      ],
+    });
+
+    function writeSelectedBandProfile() {
+      localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+        type: 'band',
+        bandId: 'selected-band',
+        bandType: 'Band_Duets',
+        teamKey: 'acct-selected:acct-partner',
+        displayName: 'Selected + Partner',
+        members: [
+          { accountId: 'acct-selected', displayName: 'Selected' },
+          { accountId: 'acct-partner', displayName: 'Partner' },
+        ],
+      }));
+    }
+
+    it('jumps to the page containing the selected band and scrolls its highlighted row into view', async () => {
+      writeSelectedBandProfile();
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      mockGetSongBandLeaderboard.mockImplementation((_songId: string, _bandType: string, _top: number, offset: number) => Promise.resolve(offset === 25
+        ? { ...response, entries: [{ ...response.entries[1]!, rank: 39 }, selectedBandEntry(40)], selectedBandEntry: selectedBandEntry(40) }
+        : { ...response, selectedBandEntry: selectedBandEntry(40) }));
+
+      renderPage();
+
+      const footer = await screen.findByRole('button', { name: "Jump to your band's position, rank #40" });
+      fireEvent.click(footer);
+
+      await waitFor(() => {
+        expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 25, undefined, 'acct-selected:acct-partner', undefined);
+      });
+      const selectedRow = await screen.findByTestId('song-band-leaderboard-entry-40');
+      expect(selectedRow).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      expect(scrollIntoView.mock.contexts[0]).toBe(selectedRow);
+      expect(await screen.findByRole('link', { name: 'Open band Selected + Partner' })).toBeTruthy();
+    });
+
+    it('opens the band profile when the selected band row is already on the current page', async () => {
+      writeSelectedBandProfile();
+      mockGetSongBandLeaderboard.mockResolvedValue({
+        ...response,
+        entries: [selectedBandEntry(1), { ...response.entries[1]! }],
+        selectedBandEntry: selectedBandEntry(1),
+      });
+
+      renderPage();
+
+      const footerLink = await screen.findByRole('link', { name: 'Open band Selected + Partner' });
+      expect(footerLink).toHaveAttribute('href', '/statistics');
+      expect(screen.queryByRole('button', { name: /Jump to your band's position/ })).toBeNull();
+    });
+
+    it('keeps other band rows linked to their band pages', async () => {
+      writeSelectedBandProfile();
+      mockGetSongBandLeaderboard.mockResolvedValue({ ...response, selectedBandEntry: selectedBandEntry(40) });
+
+      renderPage();
+
+      const otherRow = await screen.findByTestId('song-band-leaderboard-entry-1');
+      expect(otherRow.getAttribute('href')).toMatch(/^\/bands\/band-1/);
+    });
+  });
 });

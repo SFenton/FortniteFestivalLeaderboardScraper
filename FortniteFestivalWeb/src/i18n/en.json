@@ -416,7 +416,11 @@
     "viewFullShort": "View full leaderboard",
     "trackedCount": "{{count}} tracked",
     "totalCount": "{{count}} total",
-    "instrumentEntryCount": "{{count}} {{instrument}} entries"
+    "instrumentEntryCount": "{{count}} {{instrument}} entries",
+    "jumpToYourPosition": "Jump to your position, rank #{{rank}}",
+    "jumpToYourBandPosition": "Jump to your band's position, rank #{{rank}}",
+    "openYourStatistics": "Open your statistics",
+    "openBand": "Open band {{names}}"
   },
   "player": {
     "title": "Statistics",
