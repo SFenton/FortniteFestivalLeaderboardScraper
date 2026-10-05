@@ -355,9 +355,11 @@ arbitrary addresses from the lists. With all six added in production (scrape
 for Ecuador 16%, Guatemala 18%, Bahamas 31%, Costa Rica 37%, and Uruguay 38%
 of attempts (the original eight regions: 91–100%). The failed pins, each a
 12-second attempt, grew to about 40 per minute as backoffs expired and cut
-throughput by roughly a tenth, so from scrape `1478` the allowlist is the
-original eight regions plus Venezuela. Qualify a new region by pinning a
-sample of its listed addresses before adding it.
+throughput by roughly a tenth. Venezuela alone stayed in for scrape `1478`,
+but once the union of its lists was seeded only 19 of 64 pins (30%)
+connected, so from scrape `1479` the allowlist is again the original eight
+regions. Qualify a new region by pinning a sample of every address its lists
+carry (not by random reconnects) before adding it.
 
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
@@ -462,8 +464,8 @@ stopped misreading Gluetun control timeouts as the restoration deadline.
 Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
 workers could not record an interrupted attempt within the shutdown window
 (see [Deployment](deployment.md)); publication pointers were unchanged
-throughout. As of scrape `1478` (2026-10-05) the production worker env
-enables refresh with the eight qualified regions above plus Venezuela,
+throughout. As of scrape `1479` (2026-10-05) the production worker env
+enables refresh with the eight qualified regions above,
 reconnect-in-place, a one-429 trigger, a 10-second per-exit interval, no
 global spacing, 38 concurrent refreshes (75 exits), four 12-second attempts
 within 90 seconds, a 300-second rate-limited egress window, a 5-second drain,
