@@ -210,9 +210,15 @@ container's runtime server list through the Docker archive API (read-only;
 the archive is buffered in memory, because Docker.DotNet's stream ends early
 under `TarReader`) at startup and hourly, and adds qualified-region UDP
 addresses it does not know yet; learned entries keep their verified region,
-use time, and failure state. On 2026-10-04 the 50 lists plus the image list
-held 4,222 distinct addresses in the eight qualified regions, and 24 of 24
-randomly sampled ones connected when pinned on a disposable clone.
+use time, and failure state. Seeding also records which regions each exit's
+own list contains: targets and random region-change candidates for that exit
+come only from qualified regions in its list (all qualified regions until its
+list has been read), so a region missing from one container neither fails its
+refreshes nor backs off servers that other exits can use. The seeding log
+line reports how many exits lack each qualified region. On 2026-10-04 the 50
+lists plus the image list held 4,222 distinct addresses in the eight
+qualified regions, and 24 of 24 randomly sampled ones connected when pinned
+on a disposable clone.
 
 Live canaries on 2026-10-04 (50 exits, full leaderboard network windows):
 
@@ -340,7 +346,18 @@ in **every** effective container's runtime server list: Gluetun's updater
 2026-10-04 only Bahamas among those Latin American regions was present in all
 50 lists (the eight qualified regions were, with at least 43 addresses each).
 A region change or pin to a region missing from a container's list fails on
-that container.
+that container, so with catalog seeding the worker offers each exit only the
+qualified regions in its own list (see Targeted server selection).
+
+Random-reconnect qualification is not enough for targeted refresh, which pins
+arbitrary addresses from the lists. With all six added in production (scrape
+`1477`, 75 exits), pinned servers connected for Venezuela 45 of 45 times but
+for Ecuador 16%, Guatemala 18%, Bahamas 31%, Costa Rica 37%, and Uruguay 38%
+of attempts (the original eight regions: 91–100%). The failed pins, each a
+12-second attempt, grew to about 40 per minute as backoffs expired and cut
+throughput by roughly a tenth, so from scrape `1478` the allowlist is the
+original eight regions plus Venezuela. Qualify a new region by pinning a
+sample of its listed addresses before adding it.
 
 The failures are not explained by Gluetun's embedded PIA server list. On
 2026-09-27 the list shipped in the running Gluetun image was 52 days old and
@@ -445,13 +462,14 @@ stopped misreading Gluetun control timeouts as the restoration deadline.
 Candidates 1431 and 1433–1435 ended `abandoned_staging_cleanup` after their
 workers could not record an interrupted attempt within the shutdown window
 (see [Deployment](deployment.md)); publication pointers were unchanged
-throughout. As of scrape `1470` (2026-10-04) the production worker env
-enables refresh with the eight qualified regions above, reconnect-in-place,
-a one-429 trigger, a 10-second per-exit interval, no global spacing, 25
-concurrent refreshes, four 12-second attempts within 90 seconds, a
-300-second rate-limited egress window, a 5-second drain, targeted server
-selection, and catalog seeding (earlier: 1-second global spacing and twelve
-concurrent refreshes).
+throughout. As of scrape `1478` (2026-10-05) the production worker env
+enables refresh with the eight qualified regions above plus Venezuela,
+reconnect-in-place, a one-429 trigger, a 10-second per-exit interval, no
+global spacing, 38 concurrent refreshes (75 exits), four 12-second attempts
+within 90 seconds, a 300-second rate-limited egress window, a 5-second drain,
+targeted server selection, and catalog seeding with per-exit region
+availability (earlier: 1-second global spacing and twelve concurrent
+refreshes).
 
 Against the prior worker's last five minutes (about 390 successful
 leaderboard requests and 6–7 progress units per minute), the refresh builds

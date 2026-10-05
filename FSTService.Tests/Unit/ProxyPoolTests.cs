@@ -617,6 +617,51 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task TargetEndpoints_SeedRecordsEachExitsRegionsForTargets()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedServerCatalog = true;
+        var recycler = new RecordingRecycler();
+        using var pool = new ProxyPool(options, _log, recycler, new RecordingRegionRotator());
+        var seattle = IPAddress.Parse("198.51.100.120");
+        var frankfurt = IPAddress.Parse("198.51.100.121");
+        Assert.Equal(["US Seattle", "DE Frankfurt"], pool.RotationRegionsFor(0));
+        recycler.ServerLists["gluetun-1"] = [new(seattle, "US Seattle")];
+        recycler.ServerLists["gluetun-2"] = [new(seattle, "US Seattle"), new(frankfurt, "de frankfurt")];
+
+        await pool.SeedServerCatalogAsync(CancellationToken.None);
+
+        Assert.Equal(["US Seattle"], pool.RotationRegionsFor(0));
+        Assert.Equal(["US Seattle", "DE Frankfurt"], pool.RotationRegionsFor(1));
+        Assert.Equal(seattle, pool.TryReserveTarget(0, [])?.Address);
+        Assert.Null(pool.TryReserveTarget(0, [seattle]));
+        Assert.Equal(frankfurt, pool.TryReserveTarget(1, [seattle])?.Address);
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_RotationOffersOnlyRegionsInTheExitsList()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationRateLimitThreshold = 1;
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedServerCatalog = true;
+        var recycler = new RecordingRecycler();
+        var rotator = new RecordingRegionRotator();
+        using var pool = new ProxyPool(options, _log, recycler, rotator);
+        recycler.ServerLists["gluetun-1"] = [new(IPAddress.Parse("198.51.100.122"), "DE Frankfurt")];
+        await pool.SeedServerCatalogAsync(CancellationToken.None);
+        using var request = RequestFor(0, "gluetun-1");
+
+        pool.ReportRateLimited(request, null);
+        await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(["DE Frankfurt"], rotator.LastRequest!.Regions);
+        rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+        await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public void TargetEndpoints_SeedRequiresTargeting()
     {
         var options = CreatePiaRotationOptions();
