@@ -52,6 +52,11 @@ describe('Routes', () => {
     expect(Routes.songBandLeaderboard('abc-123', 'Band_Quad', 3)).toBe('/songs/abc-123/bands/Band_Quad?page=3');
   });
 
+  it('generates selected-row jump paths for solo and band leaderboards', () => {
+    expect(Routes.leaderboardAtSelectedPlayer('abc-123', 'Solo_Guitar', 4)).toBe('/songs/abc-123/Solo_Guitar?page=4&navToPlayer=true');
+    expect(Routes.songBandLeaderboard('abc-123', 'Band_Duets', 2, { navToSelected: true })).toBe('/songs/abc-123/bands/Band_Duets?page=2&navToBand=true');
+  });
+
   it('generates player history path', () => {
     expect(Routes.playerHistory('abc-123', 'Solo_Guitar')).toBe('/songs/abc-123/Solo_Guitar/history');
   });

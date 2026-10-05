@@ -1,11 +1,23 @@
+/** Query flag asking a full instrument leaderboard to scroll to the selected player's row. */
+export const NAV_TO_PLAYER_PARAM = 'navToPlayer';
+/** Query flag asking a full song band leaderboard to scroll to the selected band's row. */
+export const NAV_TO_BAND_PARAM = 'navToBand';
+
 /** Centralised route path constants. */
 export const Routes = {
   root: '/',
   songs: '/songs',
   songDetail: (songId: string) => `/songs/${songId}`,
   leaderboard: (songId: string, instrument: string) => `/songs/${songId}/${instrument}`,
-  songBandLeaderboard: (songId: string, bandType: string, page?: number) =>
-    `/songs/${encodeURIComponent(songId)}/bands/${encodeURIComponent(bandType)}${page != null ? `?page=${page}` : ''}`,
+  /** Full instrument leaderboard opened on `page` (1-based), scrolled to the selected player's row. */
+  leaderboardAtSelectedPlayer: (songId: string, instrument: string, page: number) =>
+    `/songs/${songId}/${instrument}?page=${page}&${NAV_TO_PLAYER_PARAM}=true`,
+  songBandLeaderboard: (songId: string, bandType: string, page?: number, options?: { navToSelected?: boolean }) => {
+    const params: string[] = [];
+    if (page != null) params.push(`page=${page}`);
+    if (options?.navToSelected) params.push(`${NAV_TO_BAND_PARAM}=true`);
+    return `/songs/${encodeURIComponent(songId)}/bands/${encodeURIComponent(bandType)}${params.length ? `?${params.join('&')}` : ''}`;
+  },
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
   rivals: '/rivals',

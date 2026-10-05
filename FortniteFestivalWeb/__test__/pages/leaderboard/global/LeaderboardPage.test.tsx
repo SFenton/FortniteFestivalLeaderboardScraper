@@ -7,6 +7,7 @@ import { createTestQueryClient, TestProviders } from '../../../helpers/TestProvi
 import type { QueryClient } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubMatchMedia } from '../../../helpers/browserStubs';
 import { expectCancellableCall } from '../../../helpers/requestAssertions';
+import { leaderboardCache } from '../../../../src/api/pageCache';
 
 const defaultEntries = [
   { accountId: 'acc-1', displayName: 'Player One', score: 145000, rank: 1, percentile: 99, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
@@ -993,5 +994,68 @@ describe('LeaderboardPage — header title click', () => {
     const linkEl = document.querySelector('[role="link"]');
     expect(linkEl).toBeTruthy();
     expect((linkEl as HTMLElement).style.cursor).toBe('pointer');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Selected-row rule (#307): footer jumps to an off-page row, opens Statistics when visible
+// ---------------------------------------------------------------------------
+
+describe('LeaderboardPage — selected player footer jump', () => {
+  function renderWithStatistics(route: string) {
+    return render(
+      <TestProviders route={route} accountId="test-player-1">
+        <Routes>
+          <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
+          <Route path="/statistics" element={<div data-testid="statistics-page" />} />
+        </Routes>
+      </TestProviders>,
+    );
+  }
+
+  it('jumps to the page containing the player when their row is not on the current page', async () => {
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Guitar', score: 90000, rank: 40, localRank: 40, percentile: 50, accuracy: 93.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderWithStatistics('/songs/song-1/Solo_Guitar');
+
+    const footer = await screen.findByRole('button', { name: 'Jump to your position, rank #40' });
+    fireEvent.click(footer);
+
+    await waitFor(() => {
+      expectCancellableCall(mockApi.getLeaderboard, 'song-1', 'Solo_Guitar', 25, 25, undefined);
+    });
+    expect(screen.queryByTestId('statistics-page')).toBeNull();
+  });
+
+  it('opens Statistics when the player row is already on the current page', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 2, totalEntries: 50, localEntries: 50,
+      entries: [
+        defaultEntries[0],
+        { accountId: 'test-player-1', displayName: 'TestPlayer', score: 120000, rank: 2, accuracy: 93.1, isFullCombo: false, stars: 4, season: 5 },
+      ],
+    });
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Guitar', score: 120000, rank: 2, localRank: 2, percentile: 90, accuracy: 93.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderWithStatistics('/songs/song-1/Solo_Guitar');
+
+    const footer = await screen.findByRole('button', { name: 'Open your statistics' });
+    fireEvent.click(footer);
+
+    expect(await screen.findByTestId('statistics-page')).toBeTruthy();
+  });
+
+  it('honours the requested page of a navToPlayer link over the remembered page', async () => {
+    leaderboardCache.set('song-1:Solo_Guitar', { page: 0, scrollTop: 0 });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar?page=3&navToPlayer=true', 'test-player-1');
+
+    await waitFor(() => {
+      expectCancellableCall(mockApi.getLeaderboard, 'song-1', 'Solo_Guitar', 25, 50, undefined);
+    });
   });
 });

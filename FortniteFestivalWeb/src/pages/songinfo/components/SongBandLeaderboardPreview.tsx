@@ -9,6 +9,7 @@ import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, ge
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { songBandToPlayerBandEntry } from '../../../utils/songBandLeaderboards';
+import { getLeaderboardPageForRank } from '../../../utils/leaderboardPosition';
 import { bandTypeLabel } from '../../../utils/bandTypes';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
@@ -118,14 +119,22 @@ export default function SongBandLeaderboardPreview({
           {showSelectedRow && selectedEntry && (() => {
             const playerBandEntry = songBandToPlayerBandEntry(selectedEntry);
             const names = formatPlayerBandNames(playerBandEntry);
+            // Same rule as the solo spotlight row: an off-preview selected row jumps to its full-leaderboard position.
+            const selectedPage = getLeaderboardPageForRank(selectedEntry.rank);
+            const jumpRoute = selectedPage != null
+              ? Routes.songBandLeaderboard(songId, bandType, selectedPage, { navToSelected: true })
+              : undefined;
             return (
               <PlayerBandCard
                 key={`${selectedEntry.bandType}:${selectedEntry.teamKey}:selected`}
                 testId={`song-band-selected-entry-${bandType}`}
                 entry={playerBandEntry}
                 sourceAccountId={selectedAccountId}
+                to={jumpRoute}
                 rank={selectedEntry.rank}
-                ariaLabel={names ? t('bandList.viewBand', { names }) : t('band.title')}
+                ariaLabel={jumpRoute
+                  ? t('leaderboard.jumpToYourBandPosition', { rank: selectedEntry.rank.toLocaleString() })
+                  : names ? t('bandList.viewBand', { names }) : t('band.title')}
                 renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showDifficulty={!isMobile} showSeason={!isMobile} showStars={!isMobile && showMemberStars} showAccuracy={!isMobile && showMemberAccuracy} />}
                 scoreFooter={<SongBandScoreFooter entry={selectedEntry} scoreWidth={scoreWidth} />}
                 scoreFooterAriaLabel={t('songDetail.bandScoreFooter', {

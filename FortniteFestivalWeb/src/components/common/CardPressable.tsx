@@ -4,6 +4,7 @@ import { useCardPressAction } from '../../hooks/ui/usePressAction';
 interface CardPressableProps {
   children: ReactNode;
   onPress: () => void;
+  id?: string;
   className?: string;
   style?: CSSProperties;
   pressedStyle?: CSSProperties;
@@ -15,6 +16,7 @@ interface CardPressableProps {
 export default function CardPressable({
   children,
   onPress,
+  id,
   className,
   style,
   pressedStyle,
@@ -26,6 +28,7 @@ export default function CardPressable({
 
   return (
     <div
+      id={id}
       className={className}
       data-card-pressable=""
       data-testid={testId}

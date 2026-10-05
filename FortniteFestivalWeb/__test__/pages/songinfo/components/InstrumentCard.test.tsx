@@ -234,6 +234,17 @@ describe('InstrumentCard', () => {
     expect(screen.getByText('#50')).toBeTruthy();
   });
 
+  it('links the tracked player spotlight row to its full-leaderboard position', () => {
+    renderCard({
+      prefetchedEntries: [makeEntry(1)],
+      playerScore: { songId: 'song-1', instrument: 'Solo_Guitar', score: 120000, rank: 50, localRank: 30 },
+      playerName: 'MyPlayer',
+      playerAccountId: 'my-player',
+    });
+    const spotlightRow = screen.getByRole('link', { name: 'Jump to your position, rank #50' });
+    expect(spotlightRow.getAttribute('href')).toBe('/songs/song-1/Solo_Guitar?page=2&navToPlayer=true');
+  });
+
   it('highlights selected member entries when they are already in the top rows', () => {
     const entries = [makeEntry(1, { accountId: 'member-1' })];
     renderCard({

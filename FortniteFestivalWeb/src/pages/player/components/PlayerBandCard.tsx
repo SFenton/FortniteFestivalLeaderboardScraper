@@ -134,6 +134,10 @@ export function getPlayerBandRoute(entry: PlayerBandEntry, sourceAccountId?: str
 type PlayerBandCardProps = {
   entry: PlayerBandEntry;
   sourceAccountId?: string;
+  /** Overrides the default band-profile destination (e.g. a jump to the selected band's leaderboard position). */
+  to?: string;
+  /** DOM id for the card root, used to scroll a specific row into view. */
+  id?: string;
   rank?: number;
   rankWidth?: number;
   testId?: string;
@@ -150,6 +154,8 @@ type PlayerBandCardProps = {
 export default function PlayerBandCard({
   entry,
   sourceAccountId,
+  to,
+  id,
   rank,
   rankWidth,
   testId,
@@ -163,7 +169,7 @@ export default function PlayerBandCard({
   onAnimationEnd,
 }: PlayerBandCardProps) {
   const { profile } = useSelectedProfile();
-  const route = getPlayerBandRoute(entry, sourceAccountId, profile);
+  const route = to ?? getPlayerBandRoute(entry, sourceAccountId, profile);
   const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route ?? '', disabled: !route });
   const appearanceCount = entry.appearanceCount ?? 0;
   const contentRef = useRef<HTMLDivElement>(null);
@@ -217,6 +223,7 @@ export default function PlayerBandCard({
   if (onPress) {
     return (
       <CardPressable
+        id={id}
         testId={testId}
         ariaLabel={ariaLabel ?? `View band ${entry.teamKey}`}
         style={{ ...bandCardStyles.entryCard, ...(hasFooter ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style }}
@@ -232,7 +239,7 @@ export default function PlayerBandCard({
 
   if (!route) {
     return (
-      <div data-testid={testId} style={{ ...bandCardStyles.entryCard, ...style }} onAnimationEnd={onAnimationEnd}>
+      <div id={id} data-testid={testId} style={{ ...bandCardStyles.entryCard, ...style }} onAnimationEnd={onAnimationEnd}>
         <div style={hasFooter ? bandCardStyles.entryCardMetaBody : bandCardStyles.entryCardBody}>{body}{chevron}</div>
       </div>
     );
@@ -240,6 +247,7 @@ export default function PlayerBandCard({
 
   return (
     <Link
+      id={id}
       data-testid={testId}
       to={route}
       aria-label={ariaLabel ?? `View band ${entry.teamKey}`}

@@ -23,6 +23,8 @@ export const changelog: ChangelogEntry[] = [
           'Song filters are now available without selecting a profile or band.',
           'General filter options can be toggled independently.',
           'Has FC sorting now requires a selected profile.',
+          'Tapping your band\'s row under a Duos, Trios, or Quads preview now jumps to its spot on the full leaderboard, like your solo row.',
+          'On full song leaderboards, your player and band footers jump to your position when it is on another page, and open your profile when it is already visible.',
         ],
       },
       {
