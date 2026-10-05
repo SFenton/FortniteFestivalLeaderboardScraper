@@ -413,7 +413,7 @@ and do not enable or target the worker profile.
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
 historical name), a canonical count `Scraper:CanonicalProxyServiceCount`
-between 30 and 60 with exactly `pia-gluetun-1` through `pia-gluetun-N`
+between 30 and 80 with exactly `pia-gluetun-1` through `pia-gluetun-N`
 defined, an effective count no greater than the canonical count, exact service
 names, aligned arrays, PIA provider labels, and matching worker dependencies.
 Canonical services beyond the effective arrays are spares the worker does not

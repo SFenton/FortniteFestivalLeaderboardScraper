@@ -1585,7 +1585,20 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
-  for (const canonicalCount of [29, 61]) {
+  it("accepts an 80-exit canonical overlay with all exits effective", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ canonicalCount: 80, effectiveCount: 80 })
+    });
+    try {
+      const result = await harness.run();
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  for (const canonicalCount of [29, 81]) {
     it(`rejects a canonical PIA service count of ${canonicalCount}`, async () => {
       const harness = await createHarness({
         config: buildComposeConfig({ canonicalCount })
@@ -1594,7 +1607,7 @@ describe("fstworker Compose startup recovery", () => {
         const result = await harness.run();
         assert.notEqual(result.code, 0);
         assert.deepEqual(await harness.events(), []);
-        assert.match(result.stderr, /canonical PIA service count must be between 30 and 60/);
+        assert.match(result.stderr, /canonical PIA service count must be between 30 and 80/);
       } finally {
         await harness.cleanup();
       }
