@@ -18,6 +18,7 @@ import { resolveTopScoresColumns } from '../topScoresLayout';
 import CollapsePresence from '../../../components/common/CollapsePresence';
 import ViewFullLeaderboardCta from './ViewFullLeaderboardCta';
 import { Routes } from '../../../routes';
+import { getLeaderboardPageForRank } from '../../../utils/leaderboardPosition';
 
 interface InstrumentCardProps {
   songId: string;
@@ -262,14 +263,15 @@ export default memo(function InstrumentCard({
           const playerStagger = anim(playerDelay);
           const playerRowStyle = { ...st.playerEntryRow, ...(isCompactCard ? st.entryRowMobile : {}) };
           const isTrackedPlayerRow = playerAccountId != null && normalizeAccountId(score.accountId) === normalizeAccountId(playerAccountId);
-          const playerLeaderboardPage = Math.floor(((score.localRank ?? score.rank) - 1) / 25) + 1;
+          const playerLeaderboardPage = getLeaderboardPageForRank(score.localRank ?? score.rank) ?? 1;
           return (
             <InstrumentCardRowLink
               key={score.accountId}
               id={getSpotlightRowId(instrument, score.accountId, playerAccountId)}
               to={isTrackedPlayerRow
-                ? `/songs/${songId}/${instrument}?page=${playerLeaderboardPage}&navToPlayer=true`
+                ? Routes.leaderboardAtSelectedPlayer(songId, instrument, playerLeaderboardPage)
                 : `/player/${score.accountId}`}
+              ariaLabel={isTrackedPlayerRow ? t('leaderboard.jumpToYourPosition', { rank: score.rank.toLocaleString() }) : undefined}
               state={isTrackedPlayerRow ? undefined : { backTo: `/songs/${songId}` }}
               style={{ ...playerRowStyle, ...playerStagger }}
               pressedStyle={st.entryRowPressed}
@@ -335,6 +337,7 @@ export default memo(function InstrumentCard({
 function InstrumentCardRowLink({
   id,
   to,
+  ariaLabel,
   state,
   style,
   pressedStyle,
@@ -343,6 +346,7 @@ function InstrumentCardRowLink({
 }: {
   id?: string;
   to: string;
+  ariaLabel?: string;
   state?: unknown;
   style: CSSProperties;
   pressedStyle: CSSProperties;
@@ -360,6 +364,7 @@ function InstrumentCardRowLink({
     <Link
       id={id}
       to={to}
+      aria-label={ariaLabel}
       state={state}
       style={{ ...style, ...(linkPress.isPressed ? pressedStyle : undefined) }}
       data-pressed={linkPress.isPressed ? 'true' : undefined}

@@ -39,6 +39,11 @@ sources:
   - FortniteFestivalWeb/src/hooks/ui/useScrollFade.ts
   - FortniteFestivalWeb/src/components/leaderboard/LeaderboardPaginationFooter.tsx
   - FortniteFestivalWeb/src/pages/leaderboard/player/PlayerHistoryPage.tsx
+  - FortniteFestivalWeb/src/pages/leaderboard/global/LeaderboardPage.tsx
+  - FortniteFestivalWeb/src/pages/leaderboard/band/SongBandLeaderboardPage.tsx
+  - FortniteFestivalWeb/src/pages/songinfo/components/InstrumentCard.tsx
+  - FortniteFestivalWeb/src/pages/songinfo/components/SongBandLeaderboardPreview.tsx
+  - FortniteFestivalWeb/src/utils/leaderboardPosition.ts
   - FortniteFestivalWeb/src/pages/suggestions/components/VirtualizedSuggestionsList.tsx
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
@@ -206,6 +211,22 @@ close by replacing the URL with `/settings`. The policy text is owned by
 [Privacy policy](../reference/privacy-policy.md). App Manual and in-app
 feedback are the web features exposed through `/api/features`; feedback
 controls are hidden unless the public `feedback` flag is true.
+
+### Selected-row leaderboard navigation
+
+Solo and band song leaderboards share one rule for the selected profile's own
+row. When that row is not visible, tapping it jumps to its position: the extra
+row under a Song Detail instrument or Duos/Trios/Quads preview, and the full
+leaderboard footer when the row is on another page. The jump opens the full
+board at the page containing the rank (`getLeaderboardPageForRank`, 25 rows per
+page) with `navToPlayer=true` or `navToBand=true`, then scrolls the highlighted
+row into view and clears the flag. A jump URL's `page` wins over the remembered
+solo leaderboard page. When the row is already visible, tapping the footer
+opens the profile: Statistics for a player and the band page for a band (which
+resolves to Statistics when the band itself is selected). Rows for other
+players and bands always open that player's or band's page. Accessibility
+labels name the destination, for example "Jump to your band's position" versus
+"Open band".
 
 ## State ownership
 

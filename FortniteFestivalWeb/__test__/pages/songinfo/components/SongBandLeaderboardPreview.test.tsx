@@ -340,6 +340,36 @@ describe('SongBandLeaderboardPreview', () => {
     expect(within(selectedRow).getByText('#19')).toBeTruthy();
   });
 
+  it('jumps the off-preview selected band row to its full-leaderboard position like the solo spotlight row', () => {
+    const selectedBandEntry: NonNullable<SongBandData['selectedBandEntry']> = {
+      ...data.entries[1]!,
+      bandId: 'band-selected-band',
+      teamKey: 'acct-band-a:acct-band-b',
+      rank: 27,
+      members: [
+        { accountId: 'acct-band-a', displayName: 'Band Alpha', instruments: ['Solo_Drums'] },
+        { accountId: 'acct-band-b', displayName: 'Band Beta', instruments: ['Solo_Vocals'] },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <SongBandLeaderboardPreview
+          songId="song-a"
+          bandType="Band_Duets"
+          data={{ ...data, selectedBandEntry }}
+          baseDelay={0}
+          skipAnimation
+        />
+      </MemoryRouter>,
+    );
+
+    const selectedRow = screen.getByTestId('song-band-selected-entry-Band_Duets');
+    expect(selectedRow).toHaveAttribute('href', '/songs/song-a/bands/Band_Duets?page=2&navToBand=true');
+    expect(selectedRow).toHaveAccessibleName("Jump to your band's position, rank #27");
+    expect(screen.getByTestId('song-band-entry-Band_Duets-0').getAttribute('href')).toMatch(/^\/bands\/band-1/);
+  });
+
   it('does not duplicate the selected player band score when it is already in the preview entries', () => {
     render(
       <MemoryRouter>
