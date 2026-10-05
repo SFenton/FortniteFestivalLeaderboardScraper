@@ -146,8 +146,10 @@ Sanitized configuration inspection on 2026-09-26 found:
 - optional run-once, recovery, preferred-hostname, and 80-endpoint expansion
   overlays.
 
-On 2026-10-04 the production overlay defined 60 canonical PIA services
-(`.env` canonical count 60) with 50 effective aligned endpoints; see
+On 2026-10-05 (scrape `1476`) the production overlay defined 75 canonical
+PIA services with 75 effective aligned endpoints, `PIA_DEGREE_OF_PARALLELISM`
+300, and `FST_WORKER_CPUS` 12.0 (raised from the 6.0 template default, which
+throttled the curl-per-request transport); see
 [VPN and proxy pool](vpn-proxy-pool.md) for the exit-scaling and refresh
 measurements.
 
@@ -197,7 +199,7 @@ artifacts were retained, so this fact grants no cleanup or deletion authority.
 
 The standard worker guard accepts the canonical PIA overlay by exact filename,
 requires every canonical service definition (`pia-gluetun-1` through the
-canonical count, which may be 30 to 60), permits an effective count up to the
+canonical count, which may be 30 to 80), permits an effective count up to the
 canonical count, validates aligned arrays and worker dependencies, rejects static effective
 PIA endpoint-IP pins, and provides the bounded production startup handoff.
 Canonical effective-service membership and static-pin rejection intentionally

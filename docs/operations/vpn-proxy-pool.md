@@ -420,7 +420,7 @@ and do not enable or target the worker profile.
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
 historical name), a canonical count `Scraper:CanonicalProxyServiceCount`
-between 30 and 60 with exactly `pia-gluetun-1` through `pia-gluetun-N`
+between 30 and 80 with exactly `pia-gluetun-1` through `pia-gluetun-N`
 defined, an effective count no greater than the canonical count, exact service
 names, aligned arrays, PIA provider labels, and matching worker dependencies.
 Canonical services beyond the effective arrays are spares the worker does not
@@ -485,6 +485,9 @@ and were moved to other static regions). Full leaderboard network windows:
 | 1466 | 50 | 0 / 25 | 6,011 | 109 min | ~59 | 4,648 |
 | 1470 | 50, seeded targeting | 0 / 25 | 12,494 | 51 min | ~120 | 0 random reconnects |
 | 1471 | 60, seeded targeting | 0 / 30 | 12,469 | 51 min | ~119 | 0 random reconnects |
+| 1474 | 60, seeded, DOP 240, 6 worker CPUs | 0 / 30 | 12,504 | 51 min | ~120 | 0 random reconnects |
+| 1475 | 60, seeded, DOP 240, 10 worker CPUs | 0 / 30 | 17,467 | 37 min | ~168 | 0 random reconnects |
+| 1476 | 75, seeded, DOP 300, 12 worker CPUs | 0 / 38 | 20,405 | 31 min | ~196 | 0 random reconnects |
 
 Throughput is about 100 successful requests per retired egress times the
 successful refresh rate. One-second global spacing capped refresh starts near
@@ -504,16 +507,37 @@ learned catalog is valid for every exit. Exit containers stayed negligible:
 during acquisition.
 
 With the seeded target catalog (see Targeted server selection), refresh
-supply stopped binding and 60 exits matched 50: the worker's adaptive
-degree of parallelism held at its configured maximum of 200 with about 200
-requests in flight and about 208 requests per second, and 43–50 of 60 exits
-stayed selectable. Fifty effective exits (four leased requests each against
-a global limit of 200) is therefore the measured sweet spot; from scrape
-`1472` production runs 50 effective exits with `pia-gluetun-51` through
-`pia-gluetun-60` kept as qualified canonical spares. Further acquisition
-gains need a higher global degree of parallelism or a different throughput
-profile, which is an operator decision because Epic's JSON 429s can be
-account-scoped.
+supply stopped binding and 60 exits matched 50 at about 208 requests per
+second. The binding limit was the worker container's CPU quota, not its
+degree of parallelism: the proxied curl transport starts one curl process per
+request (about 24–28 ms of CPU each), and `fstworker`'s 6-CPU limit
+(`FST_WORKER_CPUS`) was throttled in every scheduler period. Raising the
+degree of parallelism to 240 alone (scrape `1474`) changed nothing except
+longer sends and a host load average near 36. With the operator's approval
+of a higher request limit, raising the worker to 10 CPUs (scrape `1475`)
+lifted acquisition by about 40% to about 17,500 successful requests per
+minute (37-minute network window) at about 7 CPUs of worker use, throttling
+in about 5% of periods, the same 3.2% HTML-only 429 rate, low PIA
+`AUTH_FAILED` counts, no adaptive DOP reductions, and unchanged public API
+latency. With the CPU limit lifted, the degree of parallelism and exit
+leases (four per exit under the baseline 800/32/4 profile) bind again, so
+further steps raise exits, degree of parallelism, and worker CPUs together;
+the guard accepts 30–80 canonical exits for that. Epic's JSON 429s can be
+account-scoped, so each step is watched for non-HTML 429s and limiter
+reductions.
+
+Scrape `1476` (75 exits, degree of parallelism 300, 12 worker CPUs) reached
+about 20,400 successful requests per minute with a 31-minute network window,
+2.9% HTML-only 429s, no quarantines, 21 PIA `AUTH_FAILED` lines, and
+unchanged public API latency, while the worker used about 8–10 CPUs and was
+again throttled in about a quarter of periods. Production stays there: the
+leaderboard fetch is now about a sixth of a roughly three-hour cycle, so
+further fetch gains barely shorten the cycle. Adding exits beyond 60 exposed
+a boot-time hazard: new spares with the same static region repeatedly
+reconnected to the same server, so the guard's distinct-egress check failed
+six times until the spares were pinned to distinct servers through the
+control API (as refresh does). Pin new spares the same way before the guard
+check when adding many at once.
 
 Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
 Hostname/region selection remains supported; static resolved IP pins are
