@@ -52,7 +52,7 @@ export function useRivalsSharedStyles() {
       fontSize: Font.sm,
       color: Colors.textPrimary,
     } as CSSProperties,
-    seeAll: {
+    viewAll: {
       fontSize: Font.lg,
       fontWeight: Weight.bold,
       color: Colors.textPrimary,

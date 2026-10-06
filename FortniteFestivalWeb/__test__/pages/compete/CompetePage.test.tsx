@@ -326,8 +326,8 @@ describe('CompetePage', () => {
     const leaderboardButtons = await screen.findAllByRole('button');
     const buttonLabels = leaderboardButtons.map((button) => button.textContent ?? '');
     const leadDrumsIndex = buttonLabels.findIndex((text) => /Lead \+ Drums/.test(text));
-    const leadIndex = buttonLabels.findIndex((text) => /^LeadSee All$/.test(text));
-    const drumsIndex = buttonLabels.findIndex((text) => /^DrumsSee All$/.test(text));
+    const leadIndex = buttonLabels.findIndex((text) => /^LeadView All$/.test(text));
+    const drumsIndex = buttonLabels.findIndex((text) => /^DrumsView All$/.test(text));
     expect(leadDrumsIndex).toBeGreaterThanOrEqual(0);
     expect(leadIndex).toBeGreaterThan(leadDrumsIndex);
     expect(drumsIndex).toBeGreaterThan(leadIndex);
@@ -402,7 +402,7 @@ describe('CompetePage', () => {
     expect(await screen.findByText('No scores recorded yet for Lead.')).toBeInTheDocument();
     expect(await screen.findByText('No rivals yet')).toBeInTheDocument();
     expect(await screen.findByText('No rivals found for Lead yet.')).toBeInTheDocument();
-    expect(screen.queryByText('See All')).not.toBeInTheDocument();
+    expect(screen.queryByText('View All')).not.toBeInTheDocument();
     expect(screen.queryByText('View full leaderboards')).not.toBeInTheDocument();
     expect(screen.queryByText('View all rivals')).not.toBeInTheDocument();
   });

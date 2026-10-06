@@ -194,7 +194,7 @@ export default function LeaderboardRivalsTab({
                   {t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}
                 </span>
               </div>
-              <span style={shared.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+              <span style={shared.viewAll}>{t('common.viewAll')}</span>
               <IoChevronForward size={20} style={shared.chevron} />
             </CardPressable>
             <div style={shared.rivalList}>

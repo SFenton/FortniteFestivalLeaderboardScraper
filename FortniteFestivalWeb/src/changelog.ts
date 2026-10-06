@@ -28,6 +28,12 @@ export const changelog: ChangelogEntry[] = [
         ],
       },
       {
+        title: 'RIVALS',
+        items: [
+          'Section links on Rivals, Rival Detail, Compete, and player Bands now read "View All", matching the rest of the app.',
+        ],
+      },
+      {
         title: 'CHARTS',
         items: [
           'Maximum scores now update automatically when song charts change.',

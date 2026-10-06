@@ -505,7 +505,7 @@ export default function RivalsPage() {
                     <div style={styles.cardHeaderText}>
                       <span style={styles.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
                     </div>
-                    <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                    <span style={styles.viewAll}>{t('common.viewAll')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
                   </CardPressable>
                   <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
@@ -545,7 +545,7 @@ export default function RivalsPage() {
                     <div style={styles.cardHeaderText}>
                       <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: comboDisplayLabel })}</span>
                     </div>
-                    <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                    <span style={styles.viewAll}>{t('common.viewAll')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
                   </CardPressable>
                   <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
@@ -587,7 +587,7 @@ export default function RivalsPage() {
                       <div style={styles.cardHeaderText}>
                         <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}</span>
                       </div>
-                      <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                      <span style={styles.viewAll}>{t('common.viewAll')}</span>
                       <IoChevronForward size={20} style={styles.chevron} />
                     </CardPressable>
                     <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
