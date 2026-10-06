@@ -21,6 +21,8 @@ sources:
   - FSTService/Api/PublicationReadContext.cs
   - FSTService/Api/PublicApiResponseCacheMiddleware.cs
   - FSTService/Api/SongEndpoints.cs
+  - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService.Tests/Unit/BandSearchTests.cs
   - FSTService/Api/PublicationApiResponseCachePolicy.cs
   - FSTService/Api/PublicationApiResponseCacheService.cs
   - FSTService/Api/PublishedRivalSamples.cs
@@ -104,6 +106,20 @@ same manifest and encrypted MIDI. Publication-bound reads never use a newer
 live generation's metadata. Existing durable payloads remain unchanged until
 the publication pipeline builds another response. Incoming catalog-only songs
 remain unclassified.
+
+### Band search
+
+`GET /api/bands/search` (`q`, optional `accountIds`, `bandType`, `combo`,
+`rankBy`, `page`, `pageSize`) is a pure read on every path; native and web
+clients may call it freely within the public rate limit. With a published
+band search projection (`band_search_team_projection` /
+`band_search_member_projection`) it reads only the projection. Without one it
+derives the same membership summaries from `band_members` and
+`band_member_stats` with read-only queries; it never rebuilds or upserts
+`band_team_membership`, `band_team_membership_state`, or
+`band_team_configurations` on demand. Those summaries are owned by the worker's
+band extraction and maintenance phases. `BandSearchTests` runs both paths on a
+`default_transaction_read_only` connection so any write fails the test.
 
 ### Path artifacts
 
