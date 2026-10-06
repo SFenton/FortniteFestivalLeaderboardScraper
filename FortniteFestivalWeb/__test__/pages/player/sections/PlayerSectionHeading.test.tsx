@@ -49,13 +49,13 @@ describe('PlayerSectionHeading', () => {
     expect(container.textContent).toContain('Section');
   });
 
-  it('renders text-only see all action styling', () => {
-    renderHeading(<PlayerSectionHeading title="Bands" actionLabel="See all" actionTo="/bands/player/p1" actionTestId="bands-action" />);
+  it('renders text-only view all action styling', () => {
+    renderHeading(<PlayerSectionHeading title="Bands" actionLabel="View All" actionTo="/bands/player/p1" actionTestId="bands-action" />);
 
     const action = screen.getByTestId('bands-action');
     const title = screen.getByRole('heading', { name: 'Bands' });
     expect(title.parentElement).toHaveStyle({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-    expect(action).toHaveTextContent('See all');
+    expect(action).toHaveTextContent('View All');
     expect(action).toHaveAttribute('href', '/bands/player/p1');
     expect(action.parentElement).toHaveStyle({ alignItems: 'center' });
     expect(action.style.backgroundColor).toBe('');

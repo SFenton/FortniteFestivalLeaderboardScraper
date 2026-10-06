@@ -338,7 +338,7 @@ export default function CompetePage() {
                     </div>
                     {section.hasLeaderboardNavigation && (
                       <>
-                        <span style={s.seeAll}>{t('compete.seeAll')}</span>
+                        <span style={s.viewAll}>{t('common.viewAll')}</span>
                         <IoChevronForward size={20} style={s.chevron} />
                       </>
                     )}
@@ -425,7 +425,7 @@ export default function CompetePage() {
                     </div>
                     {section.hasRivalsNavigation && (
                       <>
-                        <span style={s.seeAll}>{t('compete.seeAll')}</span>
+                        <span style={s.viewAll}>{t('common.viewAll')}</span>
                         <IoChevronForward size={20} style={s.chevron} />
                       </>
                     )}
@@ -702,7 +702,7 @@ function useCompeteStyles() {
         fontWeight: Weight.bold,
         color: Colors.textPrimary,
       } as CSSProperties,
-      seeAll: {
+      viewAll: {
         fontSize: Font.md,
         fontWeight: Weight.bold,
         color: Colors.textPrimary,

@@ -39,7 +39,7 @@ export function buildPlayerBandsItems(
       node: (
         <PlayerSectionHeading
           title={t('player.bands', { name: displayName })}
-          actionLabel={t('player.seeAll')}
+          actionLabel={t('common.viewAll')}
           actionTo={sourceAccountId ? Routes.playerBands(sourceAccountId, 'all', 1, displayName) : undefined}
           actionTestId="player-bands-view-all"
         />

@@ -238,7 +238,7 @@ export default function RivalDetailPage() {
                             {t(cat.descriptionKey)}
                           </span>
                         </div>
-                        <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                        <span style={styles.viewAll}>{t('common.viewAll')}</span>
                         <IoChevronForward size={20} style={styles.chevron} />
                       </CardPressable>
                       <div style={styles.songList}>
