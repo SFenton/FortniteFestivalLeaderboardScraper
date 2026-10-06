@@ -4009,10 +4009,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 candidateAccountIds);
         }
 
-        foreach (var accountId in candidateAccountIds)
-            EnsureBandTeamMembershipSummary(conn, accountId);
-
-        var candidateRows = GetBandSearchCandidateMembershipRows(conn, candidateAccountIds, bandTypeFilter);
+        // Public search is strictly read-only: without the projection, derive the
+        // membership summaries from the band source tables instead of rebuilding
+        // and persisting band_team_membership on demand.
+        var candidateRows = ComputeBandSearchCandidateMembershipRows(conn, candidateAccountIds, bandTypeFilter);
         if (comboIdFilter is not null)
         {
             candidateRows = candidateRows
@@ -4040,7 +4040,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 totalCount: 0);
         }
 
-        var teamRows = GetBandSearchTeamMembershipRows(conn, matchedTeams.Keys.ToList());
+        var teamRows = ComputeBandSearchTeamMembershipRows(conn, matchedTeams.Keys.ToList());
         var allMemberAccountIds = matchedTeams.Keys
             .SelectMany(static key => SplitTeamKey(key.TeamKey))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -4472,36 +4472,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             StringComparer.OrdinalIgnoreCase);
     }
 
-    private void EnsureBandTeamMembershipSummary(NpgsqlConnection conn, string accountId)
-    {
-        if (HasBandTeamMembershipState(conn, accountId))
-            return;
-
-        using var tx = conn.BeginTransaction();
-        BandLeaderboardPersistence.RebuildBandTeamMembershipForAccount(conn, tx, accountId);
-
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = $"""
-            INSERT INTO {BandLeaderboardPersistence.BandTeamMembershipStateTable} (account_id, rebuilt_at)
-            VALUES (@accountId, @rebuiltAt)
-            ON CONFLICT (account_id) DO UPDATE SET rebuilt_at = EXCLUDED.rebuilt_at
-            """;
-        cmd.Parameters.AddWithValue("accountId", accountId);
-        cmd.Parameters.AddWithValue("rebuiltAt", DateTime.UtcNow);
-        cmd.ExecuteNonQuery();
-
-        tx.Commit();
-    }
-
-    private static bool HasBandTeamMembershipState(NpgsqlConnection conn, string accountId)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {BandLeaderboardPersistence.BandTeamMembershipStateTable} WHERE account_id = @accountId)";
-        cmd.Parameters.AddWithValue("accountId", accountId);
-        return Convert.ToBoolean(cmd.ExecuteScalar());
-    }
-
     private static bool HasBandSearchProjection(NpgsqlConnection conn)
     {
         using var cmd = conn.CreateCommand();
@@ -4915,7 +4885,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return matches;
     }
 
-    private static List<PlayerBandMembershipSummaryRow> GetBandSearchCandidateMembershipRows(
+    private static List<PlayerBandMembershipSummaryRow> ComputeBandSearchCandidateMembershipRows(
         NpgsqlConnection conn,
         IReadOnlyCollection<string> accountIds,
         string? bandTypeFilter)
@@ -4923,47 +4893,28 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (accountIds.Count == 0)
             return [];
 
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = bandTypeFilter is null
-            ? $"""
-                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
-                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
-                WHERE account_id = ANY(@accountIds)
-                ORDER BY account_id, band_type, team_key, instrument_combo
-                """
-            : $"""
-                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
-                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
-                WHERE account_id = ANY(@accountIds)
-                  AND band_type = @bandType
-                ORDER BY account_id, band_type, team_key, instrument_combo
-                """;
-        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
-        if (bandTypeFilter is not null)
-            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
-
-        return ReadBandMembershipSummaryRows(cmd);
+        return ComputeBandMembershipSummaryRows(conn, accountIds, bandTypeFilter, teamKeys: null);
     }
 
-    private static Dictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>> GetBandSearchTeamMembershipRows(
+    private static Dictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>> ComputeBandSearchTeamMembershipRows(
         NpgsqlConnection conn,
         IReadOnlyCollection<BandSearchTeamKey> teamKeys)
     {
         var result = new Dictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>>();
         foreach (var teamGroup in teamKeys.GroupBy(static key => key.BandType, StringComparer.OrdinalIgnoreCase))
         {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
-                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
-                WHERE band_type = @bandType
-                  AND team_key = ANY(@teamKeys)
-                ORDER BY band_type, team_key, instrument_combo, account_id
-                """;
-            cmd.Parameters.AddWithValue("bandType", teamGroup.Key);
-            cmd.Parameters.AddWithValue("teamKeys", teamGroup.Select(static key => key.TeamKey).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            var groupTeamKeys = teamGroup
+                .Select(static key => key.TeamKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var memberAccountIds = groupTeamKeys
+                .SelectMany(SplitTeamKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (memberAccountIds.Length == 0)
+                continue;
 
-            foreach (var row in ReadBandMembershipSummaryRows(cmd))
+            foreach (var row in ComputeBandMembershipSummaryRows(conn, memberAccountIds, teamGroup.Key, groupTeamKeys))
             {
                 var key = new BandSearchTeamKey(row.BandType, row.TeamKey);
                 if (!result.TryGetValue(key, out var rows))
@@ -4979,22 +4930,115 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return result;
     }
 
-    private static List<PlayerBandMembershipSummaryRow> ReadBandMembershipSummaryRows(NpgsqlCommand cmd)
+    /// <summary>
+    /// Read-only equivalent of the band_team_membership summary rows, derived
+    /// from band_members and band_member_stats. Both lookups are driven by the
+    /// account-first band_members primary key and the band_member_stats primary key.
+    /// </summary>
+    private static List<PlayerBandMembershipSummaryRow> ComputeBandMembershipSummaryRows(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<string> accountIds,
+        string? bandTypeFilter,
+        IReadOnlyCollection<string>? teamKeys)
     {
-        var rows = new List<PlayerBandMembershipSummaryRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH member_rows AS (
+                SELECT account_id, song_id, band_type, team_key, instrument_combo
+                FROM band_members
+                WHERE account_id = ANY(@accountIds)
+                  AND (@bandType::text IS NULL OR band_type = @bandType::text)
+                  AND (@teamKeys::text[] IS NULL OR team_key = ANY(@teamKeys::text[]))
+            ),
+            counts AS (
+                SELECT account_id, band_type, team_key, instrument_combo, COUNT(*)::int AS appearance_count
+                FROM member_rows
+                GROUP BY account_id, band_type, team_key, instrument_combo
+            ),
+            instruments AS (
+                SELECT DISTINCT
+                    mr.account_id,
+                    mr.band_type,
+                    mr.team_key,
+                    mr.instrument_combo,
+                    bms.account_id AS member_account_id,
+                    bms.instrument_id
+                FROM member_rows mr
+                JOIN band_member_stats bms
+                  ON bms.song_id = mr.song_id
+                 AND bms.band_type = mr.band_type
+                 AND bms.team_key = mr.team_key
+                 AND bms.instrument_combo = mr.instrument_combo
+                WHERE bms.instrument_id IS NOT NULL
+            )
+            SELECT c.account_id, c.band_type, c.team_key, c.instrument_combo, c.appearance_count,
+                   i.member_account_id, i.instrument_id
+            FROM counts c
+            LEFT JOIN instruments i
+              ON i.account_id = c.account_id
+             AND i.band_type = c.band_type
+             AND i.team_key = c.team_key
+             AND i.instrument_combo = c.instrument_combo
+            ORDER BY c.account_id, c.band_type, c.team_key, c.instrument_combo, i.member_account_id, i.instrument_id
+            """;
+        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
+        cmd.Parameters.Add(new NpgsqlParameter("bandType", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)bandTypeFilter ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("teamKeys", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)teamKeys?.ToArray() ?? DBNull.Value });
+
+        var summaries = new List<(string AccountId, string BandType, string TeamKey, string InstrumentCombo, int AppearanceCount, Dictionary<string, HashSet<string>> Instruments)>();
+        using (var reader = cmd.ExecuteReader())
         {
-            rows.Add(new PlayerBandMembershipSummaryRow(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
-                reader.GetInt32(4),
-                ParseMemberInstrumentsJson(reader.IsDBNull(5) ? "{}" : reader.GetString(5))));
+            while (reader.Read())
+            {
+                var accountId = reader.GetString(0);
+                var bandType = reader.GetString(1);
+                var teamKey = reader.GetString(2);
+                var instrumentCombo = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+
+                if (summaries.Count == 0
+                    || !string.Equals(summaries[^1].AccountId, accountId, StringComparison.Ordinal)
+                    || !string.Equals(summaries[^1].BandType, bandType, StringComparison.Ordinal)
+                    || !string.Equals(summaries[^1].TeamKey, teamKey, StringComparison.Ordinal)
+                    || !string.Equals(summaries[^1].InstrumentCombo, instrumentCombo, StringComparison.Ordinal))
+                {
+                    var initialInstruments = SplitTeamKey(teamKey).ToDictionary(
+                        static memberAccountId => memberAccountId,
+                        static _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase);
+                    summaries.Add((accountId, bandType, teamKey, instrumentCombo, reader.GetInt32(4), initialInstruments));
+                }
+
+                if (reader.IsDBNull(5) || reader.IsDBNull(6))
+                    continue;
+
+                var instrument = BandInstrumentMapping.ToLeaderboardType(reader.GetInt32(6));
+                if (string.IsNullOrWhiteSpace(instrument))
+                    continue;
+
+                var memberInstruments = summaries[^1].Instruments;
+                var memberAccountId = reader.GetString(5);
+                if (!memberInstruments.TryGetValue(memberAccountId, out var instruments))
+                {
+                    instruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    memberInstruments[memberAccountId] = instruments;
+                }
+
+                instruments.Add(instrument);
+            }
         }
 
-        return rows;
+        return summaries
+            .Select(static summary => new PlayerBandMembershipSummaryRow(
+                summary.AccountId,
+                summary.BandType,
+                summary.TeamKey,
+                summary.InstrumentCombo,
+                summary.AppearanceCount,
+                summary.Instruments.ToDictionary(
+                    static kvp => kvp.Key,
+                    static kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList(),
+                    StringComparer.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     private BandSearchResultDto BuildBandSearchResult(
