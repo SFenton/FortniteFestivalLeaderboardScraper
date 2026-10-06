@@ -155,6 +155,85 @@ public sealed class BandSearchTests : IDisposable
     }
 
     [Fact]
+    public void SearchBands_ProjectionMissing_ServesResultsOnReadOnlyConnectionWithoutWrites()
+    {
+        SeedAccountNames(
+            ("acct-sf", "SFentonX"),
+            ("acct-a", "Alpha"),
+            ("acct-b", "Bravo"));
+        SeedBandRows("song-1", "Band_Duets", "acct-a:acct-sf", "0:1", (0, "acct-sf", 0), (1, "acct-a", 1));
+        SeedBandRows("song-2", "Band_Duets", "acct-a:acct-sf", "0:1", (0, "acct-sf", 0), (1, "acct-a", 1));
+        SeedBandRows("song-3", "Band_Duets", "acct-a:acct-sf", "1:0", (0, "acct-sf", 1), (1, "acct-a", 0));
+        SeedBandRows("song-4", "Band_Duets", "acct-b:acct-sf", "0:3", (0, "acct-sf", 0), (1, "acct-b", 3));
+        var before = CountBandMembershipSummaryRows();
+
+        var response = SearchBandsReadOnly("SFentonX");
+
+        Assert.Equal(2, response.TotalCount);
+        var alpha = Assert.Single(response.Results, result => result.TeamKey == "acct-a:acct-sf");
+        Assert.Equal(BandIdentity.CreateBandId("Band_Duets", "acct-a:acct-sf"), alpha.BandId);
+        Assert.Equal(3, alpha.AppearanceCount);
+        Assert.Contains(alpha.Members, member =>
+            member.AccountId == "acct-sf" &&
+            member.DisplayName == "SFentonX" &&
+            member.Instruments.SequenceEqual(["Solo_Guitar", "Solo_Bass"]));
+        Assert.Contains(alpha.Members, member =>
+            member.AccountId == "acct-a" &&
+            member.DisplayName == "Alpha" &&
+            member.Instruments.SequenceEqual(["Solo_Guitar", "Solo_Bass"]));
+        var bravo = Assert.Single(response.Results, result => result.TeamKey == "acct-b:acct-sf");
+        Assert.Equal(1, bravo.AppearanceCount);
+        Assert.Contains(bravo.Members, member =>
+            member.AccountId == "acct-b" &&
+            member.Instruments.SequenceEqual(["Solo_Drums"]));
+
+        Assert.Equal(before, CountBandMembershipSummaryRows());
+        Assert.Equal((0, 0, 0), before);
+    }
+
+    [Fact]
+    public void SearchBands_ProjectionAvailable_ServesResultsOnReadOnlyConnection()
+    {
+        SeedAccountNames(
+            ("acct-sf", "SFentonX"),
+            ("acct-a", "Alpha"));
+        SeedBandSearchProjection(
+            "Band_Duets",
+            "acct-a:acct-sf",
+            appearanceCount: 4,
+            new Dictionary<string, string[]>
+            {
+                ["acct-sf"] = ["Solo_Guitar"],
+                ["acct-a"] = ["Solo_Bass"],
+            },
+            ("acct-sf", ["0:1"], 4),
+            ("acct-a", ["0:1"], 4));
+        PublishBandSearchProjectionState();
+
+        var response = SearchBandsReadOnly("SFentonX", rankBy: "adjusted");
+
+        var result = Assert.Single(response.Results);
+        Assert.Equal("acct-a:acct-sf", result.TeamKey);
+        Assert.Equal(4, result.AppearanceCount);
+        Assert.Equal((0, 0, 0), CountBandMembershipSummaryRows());
+    }
+
+    [Fact]
+    public void ReadOnlySearchConnection_RejectsWrites()
+    {
+        using var readOnlySource = CreateReadOnlyDataSource();
+        using var conn = readOnlySource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {BandLeaderboardPersistence.BandTeamMembershipStateTable} (account_id, rebuilt_at)
+            VALUES ('acct-guard', now())
+            """;
+
+        var error = Assert.Throws<PostgresException>(() => cmd.ExecuteNonQuery());
+        Assert.Equal(PostgresErrorCodes.ReadOnlySqlTransaction, error.SqlState);
+    }
+
+    [Fact]
     public void SearchBands_ProjectionAvailable_ComboFilterUsesMemberProjectionCombos()
     {
         SeedAccountNames(
@@ -457,6 +536,48 @@ public sealed class BandSearchTests : IDisposable
 
         Assert.Single(results);
         Assert.Equal("acct-wild", results[0].AccountId);
+    }
+
+    private NpgsqlDataSource CreateReadOnlyDataSource()
+    {
+        var builder = new NpgsqlConnectionStringBuilder(
+            SharedPostgresContainer.OriginalConnectionStringFor(_fixture.DataSource))
+        {
+            Options = "-c default_transaction_read_only=on",
+        };
+        return NpgsqlDataSource.Create(builder.ConnectionString);
+    }
+
+    // Every connection used by the search (persistence and meta lookups) is
+    // read-only, so any INSERT/UPDATE/DELETE/DDL on any path fails the test.
+    private BandSearchResponseDto SearchBandsReadOnly(string query, string rankBy = "appearance")
+    {
+        using var readOnlySource = CreateReadOnlyDataSource();
+        using var readOnlyMeta = new MetaDatabase(readOnlySource, Substitute.For<ILogger<MetaDatabase>>());
+        using var readOnlyPersistence = new GlobalLeaderboardPersistence(
+            readOnlyMeta,
+            Substitute.For<ILoggerFactory>(),
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            readOnlySource,
+            Options.Create(new FeatureOptions()));
+
+        return readOnlyPersistence.SearchBands(query, null, rankBy: rankBy, pageSize: 10);
+    }
+
+    private (int Membership, int MembershipState, int Configurations) CountBandMembershipSummaryRows()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        int Count(string table)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM {table}";
+            return Convert.ToInt32(cmd.ExecuteScalar());
+        }
+
+        return (
+            Count(BandLeaderboardPersistence.BandTeamMembershipTable),
+            Count(BandLeaderboardPersistence.BandTeamMembershipStateTable),
+            Count(BandLeaderboardPersistence.BandTeamConfigurationTable));
     }
 
     private void SeedAccountNames(params (string AccountId, string DisplayName)[] accounts)
