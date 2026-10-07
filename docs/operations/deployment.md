@@ -285,6 +285,36 @@ starting a worker. A failed dynamic update that cannot recover is
 quarantined, not masked by the Docker `healthy` flag or a control response.
 See [VPN proxy pool](vpn-proxy-pool.md) for live egress and cooldown gates.
 
+### Worker crash dumps
+
+On 2026-10-07 the worker process died from a native general-protection fault
+in libc on a .NET thread-pool thread about 18 minutes into scrape `1489`'s
+leaderboard fetch (75 exits, `PIA_DEGREE_OF_PARALLELISM` 300,
+`FST_WORKER_CPUS` 12.0). It is the only native .NET crash in the host kernel
+log since 2026-09-20. Docker restarted the worker, which then held the next
+scrape until startup recovery for interrupted frozen acquisitions (#173)
+was deployed.
+
+To diagnose a recurrence, the production-owned worker env file
+(`pg1-fstworker.env`, worker only) enables the .NET runtime's crash dumps:
+
+| Variable | Value | Effect |
+|---|---|---|
+| `DOTNET_DbgEnableMiniDump` | `1` | Write a dump on a native crash or unhandled managed exception |
+| `DOTNET_DbgMiniDumpType` | `2` | Heap dump: thread stacks plus private read/write memory (about the process size, typically 0.3–5 GB) |
+| `DOTNET_DbgMiniDumpName` | `/app/data/crash-dumps/fstworker.%p.%t.dmp` | Host `fst-data/crash-dumps/` on the FST drive (directory mode `0700`); `%p` is the PID and `%t` the Unix time |
+| `DOTNET_EnableCrashReport` | `1` | Also write `<dump>.crashreport.json` with managed and native stacks |
+
+The image's `createdump` works under Docker's default seccomp profile and the
+host's `ptrace_scope=1` as the `ubuntu` user (verified on a disposable
+container from the same image). A dump suspends the dying process only while
+it is written; Docker's `on-failure` policy then restarts the worker as
+before. Dumps contain process memory, including Epic and database
+credentials and tokens: keep them on the FST drive, never attach them to
+issues or upload them, read the crash report first, analyze with
+`dotnet-dump analyze` on this host, and delete each dump once the crash is
+understood. The API role does not set these variables.
+
 ## Networks and ports
 
 Templates bind API and web ports to localhost. Nginx communicates with
