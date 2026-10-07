@@ -207,6 +207,23 @@ public sealed class ScrapeLifecycleNotifier
         ReleasePublicReads();
     }
 
+    /// <summary>
+    /// Refreshes in-process read state after startup recovery durably released an orphaned
+    /// acquisition freeze. No database write is made here.
+    /// </summary>
+    public void InterruptedAcquisitionFreezeReleased()
+    {
+        _log.LogWarning("Interrupted acquisition freeze was released at startup — refreshing the public-read gate and invalidating {Count} response caches.", _caches.Length);
+        _publicReadGate.ClearLocalFailClosed();
+        _publicReadGate.Invalidate();
+        _publicationReadContext.Invalidate();
+        foreach (var cache in _caches)
+        {
+            cache.Unfreeze();
+        }
+        InvalidateInProcessCaches();
+    }
+
     public void InvalidateInProcessCaches()
     {
         foreach (var cache in _caches)

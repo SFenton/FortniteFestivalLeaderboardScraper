@@ -1129,6 +1129,182 @@ public sealed class InterruptedAcquisitionNormalizationTests :
         Assert.Equal(before, ReadProtectedState());
     }
 
+    private const string StartupWorkerInstanceId = "restarted-worker:1:startup";
+
+    private DateTime SeedStartupRecoveryState()
+    {
+        SeedFrozenAbandonmentState();
+        var startedAt = DateTime.UtcNow.AddSeconds(-30);
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            StartupWorkerInstanceId,
+            startedAt,
+            startedAt.AddSeconds(5),
+            "Worker ready");
+        return startedAt;
+    }
+
+    private StartupFrozenAcquisitionRecoveryResult RecoverOnStartup(
+        DateTime startedAt,
+        string instanceId = StartupWorkerInstanceId)
+        => Db.RecoverInterruptedFrozenAcquisitionOnStartup(
+            instanceId,
+            startedAt,
+            TimeSpan.FromMinutes(2));
+
+    [Fact]
+    public void Startup_recovery_abandons_interrupted_frozen_acquisition_and_next_scrape_allocates()
+    {
+        var startedAt = SeedStartupRecoveryState();
+        const string publishedSql = """
+            SELECT jsonb_build_object('scrape', (SELECT to_jsonb(s) FROM scrape_log s WHERE id = 1406),
+                'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY publication_id)
+                    FROM publication_generations g WHERE publication_id IN (310,312)),
+                'catalog', (SELECT to_jsonb(c) FROM publication_song_catalog c WHERE publication_id = 312),
+                'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY surface_name)
+                    FROM publication_surface_bindings b WHERE publication_id = 312),
+                'worker', (SELECT to_jsonb(w) FROM service_worker_status w WHERE worker_key = 'scraper'))::TEXT
+            """;
+        var published = ReadScalarText(publishedSql);
+
+        var result = RecoverOnStartup(startedAt);
+
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.AcquisitionAbandoned, result.Outcome);
+        Assert.Equal(ExactState.ActiveScrapeId, result.ScrapeId);
+        Assert.Equal(ExactState.PublishedScrapeId, result.PublishedScrapeId);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+        var pointer = Db.GetPublicationPointerState();
+        Assert.Equal(ExactState.PublishedScrapeId, pointer.PublishedScrapeId);
+        Assert.Equal(ExactState.CurrentPublicationId, pointer.CurrentPublicationId);
+        Assert.Equal(ExactState.PreviousPublicationId, pointer.PreviousPublicationId);
+        Assert.Null(pointer.WorkingPublicationId);
+        Assert.Equal(published, ReadScalarText(publishedSql));
+        Assert.Equal(1, CountSql($"""
+            SELECT count(*) FROM scrape_log WHERE id = 1407 AND status = 'failed'
+              AND failure_phase = '{MetaDatabase.StartupFrozenAcquisitionAbandonmentPhase}'
+            """));
+        Assert.Equal(1, CountSql($"""
+            SELECT count(*) FROM publication_generations WHERE publication_id = 314 AND status = 'failed'
+              AND failure_phase = '{MetaDatabase.StartupFrozenAcquisitionAbandonmentPhase}'
+            """));
+        Assert.Equal(1, CountSql("""
+            SELECT count(*) FROM scrape_phase_attempts
+            WHERE scrape_id = 1407 AND status = 'failed' AND completed_at IS NOT NULL
+              AND worker_instance_id = '1bd93ecb9a86:1:70a2a8ef1826456d9792685ef8de5056'
+            """));
+        Assert.Equal(1, CountSql("SELECT count(*) FROM publication_song_catalog WHERE publication_id = 314"));
+        Assert.True(Db.GetActiveScrapeFailureIsolationReadiness(1407, 1406).PublicationIsolationComplete);
+
+        var terminal = ReadProtectedState();
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.NotApplicable, RecoverOnStartup(startedAt).Outcome);
+        Assert.Equal(terminal, ReadProtectedState());
+
+        var nextScrapeId = Db.StartScrapeRun();
+        Assert.Equal(ExactState.ActiveScrapeId + 1, nextScrapeId);
+        Assert.Equal(
+            Db.GetPublicationGenerationForScrape(nextScrapeId)!.PublicationId,
+            Db.GetPublicationPointerState().WorkingPublicationId);
+    }
+
+    [Fact]
+    public void Startup_recovery_is_not_applicable_without_scrape_freeze()
+    {
+        SeedExactState();
+        var before = ReadProtectedState();
+        Assert.Equal(
+            StartupFrozenAcquisitionRecoveryOutcome.NotApplicable,
+            RecoverOnStartup(DateTime.UtcNow).Outcome);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
+    [Theory]
+    [InlineData("UPDATE scrape_phase_attempts SET worker_instance_id='restarted-worker:1:startup' WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET heartbeat_at=now() WHERE scrape_id=1407")]
+    [InlineData("UPDATE scrape_phase_attempts SET last_progress_at=now() WHERE scrape_id=1407")]
+    [InlineData("UPDATE service_worker_status SET instance_id='another-live-worker'")]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen_at=now()")]
+    [InlineData("UPDATE scrape_publication_state SET public_reads_frozen_scrape_id=1405")]
+    [InlineData("UPDATE scrape_publication_state SET publication_commit_intent_owner='other'")]
+    [InlineData("UPDATE scrape_log SET songs_scraped=1 WHERE id=1407")]
+    [InlineData("UPDATE scrape_log SET acquisition_completed_at=now(), songs_scraped=1, total_entries=1, total_requests=1, total_bytes=1, expected_solo_scope_count=1, expected_solo_scope_fingerprint_version=1, expected_solo_scope_fingerprint=repeat('0', 64) WHERE id=1407")]
+    [InlineData("UPDATE publication_generations SET status='ready' WHERE publication_id=314")]
+    [InlineData("UPDATE publication_generations SET status='retired' WHERE publication_id=310")]
+    [InlineData("INSERT INTO scrape_phase_attempts SELECT (jsonb_populate_record(NULL::scrape_phase_attempts, (SELECT to_jsonb(p)||'{\"scrape_id\":1406}'::jsonb FROM scrape_phase_attempts p WHERE scrape_id=1407))).*")]
+    public void Startup_recovery_blocks_unsafe_states_without_mutation(string sql)
+    {
+        var startedAt = SeedStartupRecoveryState();
+        ExecuteSql(sql);
+        var before = ReadProtectedState();
+
+        var result = RecoverOnStartup(startedAt);
+
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.Blocked, result.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(result.Reason));
+        Assert.Equal(before, ReadProtectedState());
+        Assert.True(Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public void Startup_recovery_blocks_phase_that_progressed_after_worker_started()
+    {
+        SeedStartupRecoveryState();
+        var before = ReadProtectedState();
+
+        var result = RecoverOnStartup(ExactState.WorkerFreshnessUtc.AddMinutes(-10));
+
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.Blocked, result.Outcome);
+        Assert.Equal(before, ReadProtectedState());
+    }
+
+    [Fact]
+    public void Startup_recovery_rolls_back_on_failure_and_busy_fence()
+    {
+        var startedAt = SeedStartupRecoveryState();
+        var before = ReadProtectedState();
+        Db.StartupFrozenAcquisitionRecoveryBeforeCommitTestHook =
+            () => throw new TimeoutException("Injected failure.");
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.Blocked, RecoverOnStartup(startedAt).Outcome);
+        Db.StartupFrozenAcquisitionRecoveryBeforeCommitTestHook = null;
+        Assert.Equal(before, ReadProtectedState());
+
+        using (var connection = DataSource.OpenConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            using var acquire = connection.CreateCommand();
+            acquire.Transaction = transaction;
+            acquire.CommandText = "SELECT pg_advisory_xact_lock(@key)";
+            acquire.Parameters.AddWithValue("key", PublicationGenerationSchema.AdvisoryLockKey);
+            acquire.ExecuteNonQuery();
+            var busy = RecoverOnStartup(startedAt);
+            Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.Blocked, busy.Outcome);
+            Assert.Contains("fence", busy.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Equal(before, ReadProtectedState());
+
+        Assert.Equal(
+            StartupFrozenAcquisitionRecoveryOutcome.AcquisitionAbandoned,
+            RecoverOnStartup(startedAt).Outcome);
+    }
+
+    [Fact]
+    public void Startup_recovery_releases_freeze_left_before_candidate_allocation()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(true, reason: "scrape");
+        ExecuteSql("UPDATE scrape_publication_state SET public_reads_frozen_at = now() - interval '10 minutes'");
+
+        var result = RecoverOnStartup(DateTime.UtcNow);
+
+        Assert.Equal(StartupFrozenAcquisitionRecoveryOutcome.FreezeReleased, result.Outcome);
+        Assert.Equal(scrapeId, result.PublishedScrapeId);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(scrapeId, Db.GetPublicationPointerState().PublishedScrapeId);
+    }
+
     private ExactState SeedExactState()
     {
         SetSequences(

@@ -1158,6 +1158,137 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
+    public async Task ExecuteAsync_RestartDuringFrozenAcquisition_AbandonsCandidateRecoversNotificationsAndStartsNextScrape()
+    {
+        var retainedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(retainedScrapeId, 1, 10, 1, 100);
+        _metaDb.PublishScrapeRun(retainedScrapeId, promoteCachedResponses: false);
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        // The previous worker froze reads, allocated a candidate and was stopped mid-acquisition
+        // without running its cleanup, leaving the phase running under its own instance id.
+        const string oldWorkerInstanceId = "old-host:1:stopped-mid-acquisition";
+        var stoppedAt = DateTime.UtcNow.AddMinutes(-15);
+        _metaDb.SetPublicReadFreeze(true, reason: "scrape");
+        var candidateScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            candidateScrapeId,
+            InterruptedAcquisitionNormalizationCommand.AcquisitionPhaseId,
+            "scrape.update",
+            100,
+            "fst.scrape-plan.v2",
+            oldWorkerInstanceId,
+            "fetching_leaderboards",
+            "running",
+            "leaderboards",
+            10,
+            100,
+            true,
+            10,
+            "indeterminate",
+            null, null, null, null, null, null,
+            stoppedAt.AddMinutes(-5),
+            stoppedAt,
+            stoppedAt,
+            "build-test",
+            "config-test"));
+        _metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            oldWorkerInstanceId,
+            stoppedAt.AddMinutes(-20),
+            stoppedAt,
+            "Scraping");
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText =
+                "UPDATE scrape_publication_state SET public_reads_frozen_at = @frozenAt WHERE id = TRUE";
+            cmd.Parameters.AddWithValue("frozenAt", stoppedAt.AddMinutes(-5));
+            cmd.ExecuteNonQuery();
+        }
+        var frozen = _metaDb.GetPublicReadFreezeState();
+        Assert.True(frozen.IsFrozen);
+        Assert.Equal("scrape", frozen.Reason);
+        Assert.Equal(publishedScrapeId, frozen.ScrapeId);
+
+        var nextScrapeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var tokenRequests = 0;
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                // First request authenticates the worker; the second is the next scrape pass.
+                if (Interlocked.Increment(ref tokenRequests) == 1)
+                    return Task.FromResult<string?>("token");
+                nextScrapeStarted.TrySetResult();
+                return Task.FromResult<string?>(null);
+            });
+
+        var workerStatus = new WorkerStatusPublisher(
+            _metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
+        var worker = CreateWorker(
+            new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                ScrapeInterval = TimeSpan.FromHours(1),
+            },
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                NotificationRecoveryRetrySeconds = 1,
+            },
+            workerStatus: workerStatus);
+
+        await worker.StartAsync(CancellationToken.None);
+        await nextScrapeStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.False(_metaDb.GetPublicReadFreezeState().IsFrozen);
+        var pointer = _metaDb.GetPublicationPointerState();
+        Assert.Equal(publishedScrapeId, pointer.PublishedScrapeId);
+        Assert.Null(pointer.WorkingPublicationId);
+        Assert.True(_metaDb
+            .GetActiveScrapeFailureIsolationReadiness(candidateScrapeId, publishedScrapeId)
+            .PublicationIsolationComplete);
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT scrape.failure_phase, attempt.status
+                FROM scrape_log scrape
+                JOIN scrape_phase_attempts attempt ON attempt.scrape_id = scrape.id
+                WHERE scrape.id = @scrapeId AND scrape.status = 'failed'
+                """;
+            cmd.Parameters.AddWithValue("scrapeId", (int)candidateScrapeId);
+            using var reader = cmd.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(MetaDatabase.StartupFrozenAcquisitionAbandonmentPhase, reader.GetString(0));
+            Assert.Equal("failed", reader.GetString(1));
+        }
+
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<ImprovementNotificationService>>());
+        var status = notifications.GetPublicationStatus();
+        Assert.Equal("completed", status.MarkerStatus);
+        Assert.Equal(publishedScrapeId, status.MarkerScrapeId);
+
+        var nextScrapeId = _metaDb.StartScrapeRun();
+        Assert.True(nextScrapeId > candidateScrapeId);
+        Assert.Equal(
+            _metaDb.GetPublicationGenerationForScrape(nextScrapeId)!.PublicationId,
+            _metaDb.GetPublicationPointerState().WorkingPublicationId);
+    }
+
+    [Fact]
     public async Task RetentionSafePoint_DisabledPlannerIsNotInvoked()
     {
         var planner =

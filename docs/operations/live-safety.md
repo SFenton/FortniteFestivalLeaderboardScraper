@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-29
+last_verified: 2026-10-07
 last_verified_commit: f65a3a4a
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
+  - FSTService/Persistence/MetaDatabase.StartupFrozenAcquisitionRecovery.cs
   - AGENTS.md
   - .github/copilot-instructions.md
   - .github/instructions/fst-postgres.instructions.md
@@ -714,6 +715,16 @@ previous publications, all historical source data, scores, cache rows, worker
 metadata, staging and artifacts. It performs no candidate cleanup or sweep.
 Any failed admission or final proof holds deployment; manual SQL changes to
 make a rejected state eligible remain forbidden.
+
+A restarted full worker performs the same isolation in-process on startup
+when every running phase belongs to another, stale worker instance and the
+worker row is its own or offline; see
+[Startup recovery in the full worker](../reference/cli.md#startup-recovery-in-the-full-worker).
+Deploying that worker is therefore the normal recovery for a plain restart
+mid-acquisition. Agents must not trigger it against production; recovering a
+live stuck scrape remains an operator action. If the worker logs that startup
+recovery is blocked, investigate the reported reason instead of clearing the
+freeze manually.
 
 ### Interrupted acquisition normalization handoff
 

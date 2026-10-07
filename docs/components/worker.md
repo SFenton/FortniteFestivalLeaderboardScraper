@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-30
+last_verified: 2026-10-07
 last_verified_commit: b801fdf3
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
+  - FSTService/Persistence/MetaDatabase.StartupFrozenAcquisitionRecovery.cs
   - FSTService/Scraping/Capture/
   - FSTService/Scraping/LeaderboardEntryIdentity.cs
   - FSTService/Scraping/LeaderboardPaginationPlanner.cs
@@ -404,6 +405,17 @@ It requires exact publication/worker/phase pins and quiescence under the
 publication fence, preserving published history and all candidate artifacts.
 It is separate from normal interrupted-acquisition normalization and does not
 start hosted workers. See [CLI reference](../reference/cli.md#frozen-acquisition-abandonment).
+
+On startup, and before each scrape pass, the full worker's notification gate
+runs in this order: deferred publication retry and isolation checks, then
+in-process recovery of an interrupted frozen acquisition, then pending
+improvement-notification recovery. The recovery step fails and isolates a
+candidate left `running` by a previous, stopped worker instance (or releases a
+freeze left before candidate allocation) under the same quiescence and
+publication-fence gates, recording failure phase
+`startup_acquisition_abandoned`. Without it a restart mid-acquisition kept
+reads frozen and notification recovery blocked forever. See
+[Startup recovery in the full worker](../reference/cli.md#startup-recovery-in-the-full-worker).
 
 Scrape allocation additionally captures the publication-bound path artifact
 snapshot for the new working publication, and publication preparation re-emits

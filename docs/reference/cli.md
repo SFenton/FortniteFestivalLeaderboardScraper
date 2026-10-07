@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
+last_verified: 2026-10-07
 last_verified_commit: f65a3a4a
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
+  - FSTService/Persistence/MetaDatabase.StartupFrozenAcquisitionRecovery.cs
   - FSTService/Scraping/PathMetadataBackfillCommand.cs
   - FSTService/Program.cs
   - FSTService/Persistence/InterruptedAcquisitionNormalizationCommand.cs
@@ -452,6 +453,37 @@ artifacts are preserved; this command does not delete or sweep anything.
 Both modes write one JSON object to stdout, logs to stderr, and exit `2` when
 proof fails. An already terminal candidate is rejected without mutation;
 verify its exact terminal state rather than retrying a wider action.
+
+#### Startup recovery in the full worker
+
+The full worker (not `--api-only`) performs the in-process form of this
+abandonment automatically on startup, before pending improvement-notification
+recovery and before its next scrape, so a plain worker restart during a frozen
+acquisition does not wedge scraping. It derives the pins instead of taking
+flags and applies only when all of these hold under the exclusive publication
+fence in one transaction:
+
+- reads are frozen for `scrape` on the published scrape, with no commit intent
+  or max-score mutation gate, and the freeze predates this worker's start and
+  is at least two minutes old;
+- the candidate is the scrape of the working publication's building
+  generation and has no checkpoint or partial checkpoint payload;
+- every running phase attempt belongs to that candidate and to a different
+  worker instance, and its heartbeat and last progress both predate this
+  worker's start and are at least two minutes old;
+- the scraper worker row is this instance or offline;
+- the handoff quiescence gates above hold (no other worker query, waiting or
+  foreign advisory lock, maintenance, candidate mapping or newer scrape).
+
+It then fails the running attempts, scrape and building generation with
+failure phase `startup_acquisition_abandoned`, releases the working pointer
+and freeze, and proves the terminal state before commit. When the previous
+worker froze reads but stopped before allocating a candidate (no working
+publication, no running scrape or phase), it releases only that freeze.
+Published history, catalog, scores, caches, staging and artifacts are
+preserved. Any failed condition leaves the state untouched and is retried on
+the next gate pass; a checkpointed acquisition still needs the explicit
+operator path.
 
 `--interrupted-acquisition-normalization` is a narrower, one-shot handoff into
 the unchanged official active-scrape failure-isolation command. It does not

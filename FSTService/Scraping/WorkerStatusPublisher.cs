@@ -35,6 +35,8 @@ public sealed class WorkerStatusPublisher
 
     public string InstanceId => _instanceId;
 
+    public DateTime StartedAtUtc => _startedAtUtc;
+
     public void AttachScrape(long scrapeId)
     {
         if (scrapeId <= 0)
