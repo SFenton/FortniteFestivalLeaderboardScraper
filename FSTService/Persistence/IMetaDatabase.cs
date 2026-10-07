@@ -103,6 +103,10 @@ public interface IMetaDatabase : IDisposable
         SweepPublicationBandTableOrphans();
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
+    StartupFrozenAcquisitionRecoveryResult RecoverInterruptedFrozenAcquisitionOnStartup(
+        string currentWorkerInstanceId,
+        DateTime currentWorkerStartedAtUtc,
+        TimeSpan minimumStaleness);
     PublicReadFreezeState GetFailedCandidateReadIsolationState();
     PublicReadCacheDatabaseState?
         GetPublicReadCacheDatabaseState();

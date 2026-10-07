@@ -128,6 +128,9 @@ public sealed class ScraperWorker : BackgroundService
     private readonly ISnapshotGenerationRetentionPlanner?
         _snapshotGenerationRetentionPlanner;
     private readonly WorkerStatusPublisher? _workerStatus;
+    private readonly string _fallbackWorkerInstanceId =
+        $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
+    private readonly DateTime _fallbackWorkerStartedAtUtc = DateTime.UtcNow;
     private readonly RegistrationMutationCoordinator
         _registrationMutations;
     private readonly IOptions<ScraperOptions> _options;
@@ -145,6 +148,9 @@ public sealed class ScraperWorker : BackgroundService
 
     private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
+    // A replaced worker's acquisition phase must be quiet at least this long before startup abandons it.
+    internal static readonly TimeSpan InterruptedFrozenAcquisitionMinimumStaleness =
+        TimeSpan.FromMinutes(2);
     private static readonly TimeSpan DeferredPublicationRetryDelay =
         TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetentionSafePointRetryDelay =
@@ -924,6 +930,24 @@ public sealed class ScraperWorker : BackgroundService
                     continue;
                 }
 
+                if (!_options.Value.ApiOnly
+                    && freezeState.IsFrozen
+                    && string.Equals(
+                        freezeState.Reason,
+                        "scrape",
+                        StringComparison.Ordinal)
+                    && !RecoverInterruptedFrozenAcquisition())
+                {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(
+                            Math.Max(
+                                1,
+                                _publicationCommitOptions
+                                    .NotificationRecoveryRetrySeconds)),
+                        stoppingToken);
+                    continue;
+                }
+
                 _workerStatus?.BeginOperation(
                     "notifications.recovery",
                     "Recovering pending improvement notifications before the next scrape",
@@ -957,6 +981,44 @@ public sealed class ScraperWorker : BackgroundService
                                 .NotificationRecoveryRetrySeconds)),
                     stoppingToken);
             }
+        }
+    }
+
+    /// <summary>
+    /// Resolves a <c>scrape</c> freeze left by a previous worker instance that stopped
+    /// mid-acquisition, using the in-process form of frozen-acquisition abandonment.
+    /// Returns false while the freeze remains and the gate must wait.
+    /// </summary>
+    private bool RecoverInterruptedFrozenAcquisition()
+    {
+        var result = _persistence.Meta.RecoverInterruptedFrozenAcquisitionOnStartup(
+            _workerStatus?.InstanceId ?? _fallbackWorkerInstanceId,
+            _workerStatus?.StartedAtUtc ?? _fallbackWorkerStartedAtUtc,
+            InterruptedFrozenAcquisitionMinimumStaleness);
+        switch (result.Outcome)
+        {
+            case StartupFrozenAcquisitionRecoveryOutcome.AcquisitionAbandoned:
+                _log.LogWarning(
+                    "Startup recovery abandoned interrupted acquisition scrape {ScrapeId} and released the scrape freeze; published scrape {PublishedScrapeId} remains current. Candidate artifacts are preserved.",
+                    result.ScrapeId,
+                    result.PublishedScrapeId);
+                _lifecycle.InterruptedAcquisitionFreezeReleased();
+                return true;
+            case StartupFrozenAcquisitionRecoveryOutcome.FreezeReleased:
+                _log.LogWarning(
+                    "Startup recovery released an orphaned scrape freeze on published scrape {PublishedScrapeId}; no candidate had been allocated.",
+                    result.PublishedScrapeId);
+                _lifecycle.InterruptedAcquisitionFreezeReleased();
+                return true;
+            case StartupFrozenAcquisitionRecoveryOutcome.Blocked:
+                _log.LogWarning(
+                    "Public reads remain frozen for scrape {ScrapeId} (published {PublishedScrapeId}) and startup acquisition recovery is blocked: {Reason}. The next scrape is held; recovery will retry.",
+                    result.ScrapeId,
+                    result.PublishedScrapeId,
+                    result.Reason);
+                return false;
+            default:
+                return true;
         }
     }
 
