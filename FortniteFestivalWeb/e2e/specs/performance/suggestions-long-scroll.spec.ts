@@ -609,8 +609,12 @@ async function waitForStableVirtualRestoration(page: Page, expectedScrollTop: nu
 }
 
 async function assertVirtualRowsDoNotOverlap(page: Page): Promise<void> {
-  const overlap = await page.locator('[data-suggestion-row-id]').evaluateAll((elements) => {
-    const rects = elements
+  // Query and measure in one synchronous pass: locator.evaluateAll resolves the
+  // rows before evaluating, so a row the virtualizer unmounts in between reads
+  // as a detached 0x0 rect at the origin and looks like an overlap. Poll so
+  // late ResizeObserver measurements can settle; persistent overlap still fails.
+  await expect.poll(() => page.evaluate(() => {
+    const rects = Array.from(document.querySelectorAll<HTMLElement>('[data-suggestion-row-id]'))
       .map(element => element.getBoundingClientRect())
       .sort((left, right) => left.top - right.top);
     let maximumOverlap = 0;
@@ -618,8 +622,7 @@ async function assertVirtualRowsDoNotOverlap(page: Page): Promise<void> {
       maximumOverlap = Math.max(maximumOverlap, rects[index - 1]!.bottom - rects[index]!.top);
     }
     return maximumOverlap;
-  });
-  expect(overlap).toBeLessThanOrEqual(1);
+  }), { timeout: 5_000 }).toBeLessThanOrEqual(1);
 }
 
 async function navigateByHash(page: Page, path: string): Promise<void> {
