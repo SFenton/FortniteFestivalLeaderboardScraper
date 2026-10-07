@@ -642,9 +642,12 @@ Category cards are variable-height TanStack Virtual rows rooted in the
 persistent application scroll container. Stable mix-and-source ordinals,
 dynamic measurement, responsive remeasurement, and one retained focused row
 preserve filtering, keyboard focus, route navigation, and deep pixel
-restoration while bounding mounted DOM. Filter measurement changes temporarily
-suppress virtualizer scroll compensation, enforce the intentional top reset,
-then restore normal deep-scroll compensation. The shell loads the restoration
+restoration while bounding mounted DOM. Filter measurement changes and
+fresh-mix identity changes temporarily suppress virtualizer scroll
+compensation, enforce the intentional top reset, then restore normal
+deep-scroll compensation. Rapid back-to-back identity commits and list unmount
+keep compensation suppressed so stale late measurements cannot pull the list
+away from the top. The shell loads the restoration
 controller through the existing lazy Suggestions module and restores on route
 return, profile/layout ownership changes, and song-detail Back navigation. It
 holds the target through late virtual measurements until the scroll position

@@ -28,6 +28,12 @@ export const changelog: ChangelogEntry[] = [
         ],
       },
       {
+        title: 'SUGGESTIONS',
+        items: [
+          'Starting a fresh mix now keeps the list at the top while new cards finish loading.',
+        ],
+      },
+      {
         title: 'RIVALS',
         items: [
           'Section links on Rivals, Rival Detail, Compete, and player Bands now read "View All", matching the rest of the app.',
