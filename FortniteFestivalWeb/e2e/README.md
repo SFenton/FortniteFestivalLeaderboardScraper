@@ -11,6 +11,10 @@ reduced-motion, Save-Data, and image-label behavior. These specs run in the
 focused WebKit project as well as Chromium; Firefox and desktop WebKit retain
 the same surface in the nightly matrix.
 
+`specs/accessibility/privacy-policy.spec.ts` covers the Settings Privacy Policy
+row and modal: name/role/state, reading and focus order, target size, 320 px
+reflow, reduced motion, and dialog axe findings.
+
 `specs/accessibility/focus-appearance.spec.ts` separately verifies rendered
 focus decoration in touch Chromium, iPhone-class WebKit, and real desktop
 keyboard flows. Its attachments include event order, active element,
