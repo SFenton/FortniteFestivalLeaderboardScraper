@@ -29,9 +29,12 @@ public static class RankHistoryLatestStateSchema
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
+        -- Not partitioned: production already carries an empty table of exactly this
+        -- shape from an earlier experiment, and the per-instrument reads use the
+        -- (instrument, account_id) primary key.
         CREATE TABLE IF NOT EXISTS rank_history_latest (
-            instrument             TEXT        NOT NULL,
             account_id             TEXT        NOT NULL,
+            instrument             TEXT        NOT NULL,
             snapshot_date          DATE        NOT NULL,
             snapshot_taken_at      TIMESTAMPTZ,
             adjusted_skill_rank    INTEGER     NOT NULL,
@@ -50,19 +53,10 @@ public static class RankHistoryLatestStateSchema
             raw_max_score_percent  REAL,
             raw_weighted_rating    REAL,
             raw_skill_rating       REAL,
-            schema_version         SMALLINT    NOT NULL DEFAULT 1,
+            schema_version         SMALLINT    NOT NULL DEFAULT 2,
             PRIMARY KEY (instrument, account_id)
-        ) PARTITION BY LIST (instrument);
-
-        CREATE TABLE IF NOT EXISTS rank_history_latest_solo_guitar  PARTITION OF rank_history_latest FOR VALUES IN ('Solo_Guitar') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_solo_bass    PARTITION OF rank_history_latest FOR VALUES IN ('Solo_Bass') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_solo_drums   PARTITION OF rank_history_latest FOR VALUES IN ('Solo_Drums') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_solo_vocals  PARTITION OF rank_history_latest FOR VALUES IN ('Solo_Vocals') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_pro_guitar   PARTITION OF rank_history_latest FOR VALUES IN ('Solo_PeripheralGuitar') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_pro_bass     PARTITION OF rank_history_latest FOR VALUES IN ('Solo_PeripheralBass') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_pro_vocals   PARTITION OF rank_history_latest FOR VALUES IN ('Solo_PeripheralVocals') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_pro_cymbals  PARTITION OF rank_history_latest FOR VALUES IN ('Solo_PeripheralCymbals') WITH (fillfactor = 80);
-        CREATE TABLE IF NOT EXISTS rank_history_latest_pro_drums    PARTITION OF rank_history_latest FOR VALUES IN ('Solo_PeripheralDrums') WITH (fillfactor = 80);
+        );
+        ALTER TABLE rank_history_latest SET (fillfactor = 80);
 
         CREATE TABLE IF NOT EXISTS composite_rank_history_latest (
             account_id         TEXT    PRIMARY KEY,
@@ -71,7 +65,8 @@ public static class RankHistoryLatestStateSchema
             composite_rating   REAL,
             instruments_played INTEGER,
             total_songs_played INTEGER
-        ) WITH (fillfactor = 80);
+        );
+        ALTER TABLE composite_rank_history_latest SET (fillfactor = 80);
         """;
 
     private static readonly ConcurrentDictionary<string, bool> Ensured = new(StringComparer.Ordinal);

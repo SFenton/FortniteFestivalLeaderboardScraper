@@ -734,9 +734,12 @@ the post-commit release.
 
 ### Rank-history latest rows
 
-`rank_history_latest` (list-partitioned by instrument like `rank_history`)
-and `composite_rank_history_latest` hold each account's newest history row,
-with the same columns. Rank-history snapshots read and update them when
+`rank_history_latest` (primary key `(instrument, account_id)`) and
+`composite_rank_history_latest` (primary key `account_id`) hold each
+account's newest history row, with the same columns. They are not partitioned:
+production already had empty tables of exactly this shape from an earlier
+experiment, and the first deploy of this change failed every scrape `1499`
+snapshot because its schema expected a partitioned table. Rank-history snapshots read and update them when
 `Scraper:UseRankHistoryLatestState` is on, so the snapshots no longer rescan
 the full history. `rank_history_latest_state` marks each scope (instrument or
 `composite`) ready only after an enabled snapshot rebuilt it from history.
