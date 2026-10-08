@@ -387,6 +387,7 @@ public sealed partial class MetaDatabase
             state.NotificationScrapeId,
             state.NotificationStatus);
         VerifyCompletedScrape(conn, tx, scrapeId);
+        VerifyPublishableRankingDenominators(conn, tx, scrapeId);
 
         var publicationId = EnsureWorkingPublicationGeneration(
             conn,
@@ -3140,6 +3141,52 @@ public sealed partial class MetaDatabase
         {
             throw new InvalidOperationException(
                 $"Scrape run {scrapeId} cannot be published before it is completed.");
+        }
+    }
+
+    /// <summary>
+    /// Refuses to prepare a publication while any ranking row has an
+    /// impossible denominator. These full-table checks (several seconds on
+    /// production data) formerly ran in the publication pointer trigger,
+    /// inside the bounded exclusive cutover; preparation runs before that
+    /// lock with a generous statement timeout. Rankings are rebuilt before
+    /// preparation and not written between preparation and commit.
+    /// </summary>
+    private static void VerifyPublishableRankingDenominators(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long scrapeId)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM account_rankings
+                    WHERE songs_played > total_charted_songs
+                       OR full_combo_count > total_charted_songs
+                       OR coverage > 1.000001
+                       OR fc_rate > 1.000001),
+                EXISTS (
+                    SELECT 1
+                    FROM solo_family_rankings
+                    WHERE songs_played > total_charted_songs
+                       OR full_combo_count > total_charted_songs
+                       OR coverage > 1.000001
+                       OR fc_rate > 1.000001)
+            """;
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        if (reader.GetBoolean(0))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to publish scrape {scrapeId} because impossible account ranking denominator rows exist.");
+        }
+        if (reader.GetBoolean(1))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to publish scrape {scrapeId} because impossible solo family ranking denominator rows exist.");
         }
     }
 

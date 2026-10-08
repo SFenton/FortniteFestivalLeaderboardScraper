@@ -360,6 +360,12 @@ selected denominator is zero are not newly validated or rewritten. This keeps
 downstream family, combo, history, and cached responses from normalizing or
 publishing inconsistent per-account values.
 
+No database trigger rewrites ranking denominators. Production once carried an
+operator-installed row trigger, `fst_account_rankings_denominator_guard_1100`,
+that raised `account_rankings` denominators to hard-coded catalog sizes
+(669/627) instead of rejecting impossible rows; the
+`publication-guard` schema step removes it (see Publication ownership).
+
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate
 `max_pro_cymbals_score` and `max_pro_drums_score` columns because cymbal-mode
@@ -731,6 +737,43 @@ the post-commit release.
 Candidate writes do not become public merely because they were committed to a
 table. Publication validates the candidate, prepares generation-bound state,
 drains readers, and atomically advances the published pointer.
+
+### Publication guards
+
+Two repo-owned checks refuse impossible publications, split by cost:
+
+| Check | Where | Cost on production data |
+|---|---|---:|
+| No `account_rankings` or `solo_family_rankings` row has songs played or Full Combos above its denominator, or coverage/FC rate above `1.000001` | Publication preparation (`PrepareScrapePublication`), before any working-publication adoption and outside the exclusive cutover; preparation's statement timeout is 15 minutes | about 3.0 s and 1.8 s |
+| The scrape being published has no `scrape_phase_timings` row with `success = FALSE` | `trg_guard_scrape_publication_no_failed_phases`, a `BEFORE UPDATE OF published_scrape_id` trigger on `scrape_publication_state`, inside the cutover | about 4 ms |
+
+Either failure fails the publication through the normal scrape-failure path;
+the published scrape stays current.
+
+Until 2026-10, production carried operator-installed versions of these
+objects. The pointer trigger also ran a no-op `UPDATE account_rankings` (to
+re-fire the denominator row trigger) and both full-table ranking checks inside
+the 5-second exclusive cutover, about 8 seconds in total. Each scrape's first
+commit attempt therefore exceeded its budget, deferred about 3 minutes, and
+logged a misleading publication failure. The `publication-guard` schema step
+(`PublicationGuardSchema`) replaces the function with the failed-phase check
+only, creates the trigger if missing, and drops
+`fst_account_rankings_denominator_guard_1100` and its partition clones. It
+runs in one transaction with a 2-second lock timeout and 15-second statement
+timeout. Dropping the legacy trigger takes a brief `ACCESS EXCLUSIVE` lock on
+`account_rankings`, so apply it in production only at an idle, unfrozen
+boundary, with the dedicated one-shot command:
+
+```bash
+dotnet FSTService.dll --initialize-publication-guard-schema-only
+```
+
+It reads only `ConnectionStrings__PostgreSQL`, loads no `.env`, starts no
+hosted services, runs no other schema step, prints one JSON line
+(`outcome` `schema_current` and exit code `0` on success), and is idempotent.
+The full `--initialize-schema-only` also includes the step. Before applying it,
+capture the existing definitions with `pg_get_functiondef` and
+`pg_get_triggerdef` so they can be restored.
 
 `publication_path_artifacts` binds one canonical path/max-score row per
 publication catalog song, including authoritative null-generation rows, so
