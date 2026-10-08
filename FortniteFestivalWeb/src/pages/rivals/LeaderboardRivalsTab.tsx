@@ -21,6 +21,7 @@ import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
 import type { PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { viewAllCtaName } from '../../utils/viewAllCtaName';
 
 type InstrumentLeaderboardRivals = {
   instrument: ServerInstrumentKey;
@@ -178,6 +179,7 @@ export default function LeaderboardRivalsTab({
         const allPreview = [...previewAbove, ...previewBelow];
 
         const navigateToAllRivals = () => navigate(Routes.allRivals(entry.instrument, 'leaderboard', rankBy));
+        const sectionTitle = t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) });
 
         return (
           <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={shared.section}>
@@ -188,10 +190,10 @@ export default function LeaderboardRivalsTab({
               onAnimationEnd={clearAnim}
               onPress={navigateToAllRivals}
             >
-              <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
+              <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly decorativeIcon />
               <div style={shared.cardHeaderText}>
                 <span style={shared.cardTitle}>
-                  {t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}
+                  {sectionTitle}
                 </span>
               </div>
               <span style={shared.viewAll}>{t('common.viewAll')}</span>
@@ -208,7 +210,7 @@ export default function LeaderboardRivalsTab({
                   onAnimationEnd={clearAnim}
                 />
               ))}
-              <CardPressable style={{ ...shared.viewAllButton, ...nextStagger() }} pressedStyle={shared.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToAllRivals}>
+              <CardPressable style={{ ...shared.viewAllButton, ...nextStagger() }} pressedStyle={shared.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToAllRivals} ariaLabel={viewAllCtaName(t('rivals.viewAllRivals'), sectionTitle)}>
                 {t('rivals.viewAllRivals')}
               </CardPressable>
             </div>

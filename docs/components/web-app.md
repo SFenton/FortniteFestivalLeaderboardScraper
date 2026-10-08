@@ -20,6 +20,8 @@ sources:
   - FortniteFestivalWeb/src/utils/focusAppearance.ts
   - FortniteFestivalWeb/src/styles/focusAppearance.module.css
   - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/specs/accessibility/view-all-headers.spec.ts
+  - FortniteFestivalWeb/src/utils/viewAllCtaName.ts
   - FortniteFestivalWeb/src/App.tsx
   - FortniteFestivalWeb/src/App.module.css
   - FortniteFestivalWeb/src/appStyles.ts
@@ -229,6 +231,16 @@ resolves to Statistics when the band itself is selected). Rows for other
 players and bands always open that player's or band's page. Accessibility
 labels name the destination, for example "Jump to your band's position" versus
 "Open band".
+
+Card section headers on Rivals, Rival Detail, the Leaderboard Rivals tab and
+Compete are single `role="button"` targets that read their title, then
+"View All" (never "See All"). They are at least 44 pixels tall. An instrument
+icon next to a visible instrument title is decorative (`InstrumentHeader`
+`decorativeIcon`), so the name does not repeat the instrument. The full-width
+"View all rivals" and "View full leaderboards" calls to action keep their
+visible text but get an accessible name from `viewAllCtaName(label, card)`, for
+example "View all rivals, Lead Rivals". This matches the native apps'
+`ViewAllCta.Name` rule, so buttons in different cards stay distinct.
 
 ## State ownership
 

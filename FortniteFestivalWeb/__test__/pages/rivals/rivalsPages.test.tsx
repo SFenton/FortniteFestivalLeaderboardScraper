@@ -290,6 +290,98 @@ async function advancePastSpinner() {
   await act(async () => { await vi.advanceTimersByTimeAsync(600); });
 }
 
+/* ── View All accessibility (#321, #468) ── */
+
+describe('Rivals View All accessibility', () => {
+  function renderWithLocation(route: string, element: React.ReactElement, path: string) {
+    return render(
+      <TestProviders route={route} accountId="test-1">
+        <Routes>
+          <Route path={path} element={element} />
+          <Route path="*" element={null} />
+        </Routes>
+        <LocationProbe />
+      </TestProviders>,
+    );
+  }
+
+  it('names section headers by their title and View All, with a decorative instrument icon', async () => {
+    renderWithLocation('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+
+    const header = await screen.findByRole('button', { name: /^Lead Rivals\s*View All$/ }, { timeout: 5000 });
+    expect(header.getAttribute('tabindex')).toBe('0');
+    expect(within(header).queryByRole('img', { name: 'Lead' })).toBeNull();
+    expect(within(header).getByText('View All')).toBeTruthy();
+    expect(screen.queryByText(/see all/i)).toBeNull();
+  });
+
+  it('gives each View all rivals button a distinct name that starts with its visible label', async () => {
+    renderWithLocation('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+
+    const lead = await screen.findByRole('button', { name: 'View all rivals, Lead Rivals' }, { timeout: 5000 });
+    expect(lead.textContent).toBe('View all rivals');
+    const names = screen.getAllByRole('button', { name: /^View all rivals, / }).map(button => button.getAttribute('aria-label'));
+    expect(names.length).toBeGreaterThan(1);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('reads the header, then the rival rows, then the View all rivals button', async () => {
+    renderWithLocation('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+
+    const header = await screen.findByRole('button', { name: /^Lead Rivals\s*View All$/ }, { timeout: 5000 });
+    const buttons = within(header.parentElement!).getAllByRole('button');
+    expect(buttons).toHaveLength(4);
+    expect(buttons[0]).toBe(header);
+    expect(buttons[1]!.textContent).toContain('RivalAbove');
+    expect(buttons[2]!.textContent).toContain('RivalBelow');
+    expect(buttons[3]!.getAttribute('aria-label')).toBe('View all rivals, Lead Rivals');
+  });
+
+  it('opens the instrument rival list with Enter on the section header', async () => {
+    renderWithLocation('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+
+    const header = await screen.findByRole('button', { name: /^Lead Rivals\s*View All$/ }, { timeout: 5000 });
+    await act(async () => {
+      fireEvent.keyDown(header, { key: 'Enter' });
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getByTestId('route-probe').textContent).toBe('/rivals/all?category=Solo_Guitar');
+  });
+
+  it('names leaderboard-tab View all rivals buttons after their card', async () => {
+    renderWithLocation('/rivals?tab=leaderboard', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+
+    await screen.findAllByText('LeaderAbove', undefined, { timeout: 5000 });
+    const header = screen.getByRole('button', { name: /^Lead Rivals\s*View All$/ });
+    expect(within(header).queryByRole('img', { name: 'Lead' })).toBeNull();
+    const buttons = within(header.parentElement!).getAllByRole('button');
+    expect(buttons[1]!.textContent).toContain('LeaderAbove');
+    expect(buttons.at(-1)!.getAttribute('aria-label')).toBe('View all rivals, Lead Rivals');
+    expect(buttons.at(-1)!.textContent).toBe('View all rivals');
+  });
+
+  it('makes Rival Detail category headers focusable buttons that open the rivalry with Enter', async () => {
+    renderWithLocation('/rivals/rival-1?name=TestRival', <RivalDetailPage />, '/rivals/:rivalId');
+    await advancePastSpinner();
+
+    const headers = await screen.findAllByRole('button', { name: /View All$/ }, { timeout: 5000 });
+    expect(headers.length).toBeGreaterThan(0);
+    for (const header of headers) expect(header.getAttribute('tabindex')).toBe('0');
+    expect(screen.queryByText(/see all/i)).toBeNull();
+
+    await act(async () => {
+      fireEvent.keyDown(headers[0]!, { key: 'Enter' });
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getByTestId('route-probe').textContent).toMatch(/^\/rivals\/rival-1\/rivalry\?mode=/);
+  });
+});
+
 /* ── RivalsPage ── */
 
 describe('RivalsPage', () => {

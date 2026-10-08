@@ -6,6 +6,29 @@ import { InstrumentHeaderSize } from '@festival/core/runtime';
 
 
 describe('InstrumentHeader', () => {
+  it('names the icon by default and hides it when decorativeIcon is set', () => {
+    const named = render(
+      React.createElement(InstrumentHeader, {
+        instrument: 'Solo_Guitar',
+        size: InstrumentHeaderSize.SM,
+        iconOnly: true,
+      }),
+    );
+    expect(named.getByRole('img', { name: 'Lead' })).toBeTruthy();
+    named.unmount();
+
+    const decorative = render(
+      React.createElement(InstrumentHeader, {
+        instrument: 'Solo_Guitar',
+        size: InstrumentHeaderSize.SM,
+        iconOnly: true,
+        decorativeIcon: true,
+      }),
+    );
+    expect(decorative.queryByRole('img', { name: 'Lead' })).toBeNull();
+    expect(decorative.container.querySelector('img')?.getAttribute('alt')).toBe('');
+  });
+
   it('renders icon and label at MD size', () => {
     const { container } = render(
       React.createElement(InstrumentHeader, {

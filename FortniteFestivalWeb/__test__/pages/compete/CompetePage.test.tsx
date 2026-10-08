@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -283,7 +283,7 @@ describe('CompetePage', () => {
     expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_Drums');
     expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_PeripheralVocals');
     expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_PeripheralCymbals');
-    expect((await screen.findAllByRole('button', { name: /Lead \+ Drums/i })).length).toBe(2);
+    expect((await screen.findAllByRole('button', { name: /^Lead \+ Drums\s*View All$/i })).length).toBe(2);
     expect((await screen.findAllByText(/^Lead$/i)).length).toBe(2);
     expect((await screen.findAllByText(/^Drums$/i)).length).toBe(2);
     expect((await screen.findAllByText(/^Karaoke$/i)).length).toBe(2);
@@ -354,6 +354,29 @@ describe('CompetePage', () => {
     fireEvent.click(leaderboardsHeader);
 
     expect(await screen.findByTestId('location-search')).toHaveTextContent('/leaderboards/all?combo=05&rankBy=totalscore');
+  });
+
+  it('names instrument headers once and gives each View all button its card name', async () => {
+    renderCompete();
+    await advancePastPageTransition();
+
+    const leadHeaders = await screen.findAllByRole('button', { name: /^Lead\s*View All$/ });
+    expect(leadHeaders).toHaveLength(2);
+    for (const header of leadHeaders) {
+      expect(header.getAttribute('tabindex')).toBe('0');
+      expect(within(header).queryByRole('img', { name: 'Lead' })).toBeNull();
+    }
+
+    const leaderboards = screen.getByRole('button', { name: 'View full leaderboards, Lead' });
+    const rivals = screen.getByRole('button', { name: 'View all rivals, Lead' });
+    expect(leaderboards).toHaveTextContent('View full leaderboards');
+    expect(rivals).toHaveTextContent('View all rivals');
+    const ctaNames = screen.getAllByRole('button', { name: /^View (full leaderboards|all rivals), / })
+      .map((button) => button.getAttribute('aria-label'));
+    expect(new Set(ctaNames).size).toBe(ctaNames.length);
+
+    fireEvent.keyDown(leadHeaders[0]!, { key: 'Enter' });
+    expect(await screen.findByTestId('location-search')).toHaveTextContent('/leaderboards/all?instrument=Solo_Guitar');
   });
 
   it('links selected player ranking rows directly to statistics', async () => {
