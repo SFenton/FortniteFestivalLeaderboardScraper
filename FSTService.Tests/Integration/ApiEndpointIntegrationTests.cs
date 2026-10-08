@@ -56,6 +56,16 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         _authedClient.Dispose();
     }
 
+    // Tests share one class database, so an account can accumulate scores on
+    // several songs. The denominator must cover them all; otherwise publication
+    // preparation correctly rejects the rows as impossible.
+    private static int ComputeFixtureAccountRankings(
+        IInstrumentDatabase db,
+        int credibilityThreshold = 50) =>
+        db.ComputeAccountRankings(
+            totalChartedSongs: Math.Max(1, db.GetAllSongCounts().Count),
+            credibilityThreshold: credibilityThreshold);
+
     // ─── Health ─────────────────────────────────────────────────
 
     [Fact]
@@ -1699,8 +1709,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 .ToArray());
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(
-            totalChartedSongs: 1,
+        ComputeFixtureAccountRankings(
+            db,
             credibilityThreshold: 0);
 
         var precomputer =
@@ -5958,7 +5968,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             ]);
             db.RecomputeAllRanks();
             db.ComputeSongStats();
-            db.ComputeAccountRankings(totalChartedSongs: 1);
+            ComputeFixtureAccountRankings(db);
             expectedRanking = db.GetAccountRanking(accountId)!;
             expectedTotalRanked = db.GetRankedAccountCount();
 
@@ -7961,7 +7971,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         ]);
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
 
         var response = await _client.GetAsync("/api/rankings/Solo_Guitar?page=1&pageSize=200&leeway=-3.2");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -8031,7 +8041,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         ]);
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
 
         foreach (var rankBy in new[] { "adjusted", "weighted", "fcrate", "totalscore", "maxscore" })
         {
@@ -8050,7 +8060,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         ]);
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
 
         var response = await _client.GetAsync("/api/rankings/Solo_Guitar/single_rank_p1?leeway=4.5");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -8077,7 +8087,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         ]);
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
         db.SnapshotRankHistory();
 
         var response = await _client.GetAsync("/api/rankings/Solo_Guitar/hist_p1/history?days=7&leeway=2.5");
@@ -9097,7 +9107,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
 
         var response = await _client.GetAsync("/api/rankings/Solo_Guitar/nb_p5/neighborhood?radius=2");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -9123,7 +9133,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         db.UpsertEntries("song_nbc", [ new LeaderboardEntry { AccountId = "nbc_p1", Score = 50000, Accuracy = 90, Stars = 5 } ]);
         db.RecomputeAllRanks();
         db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        ComputeFixtureAccountRankings(db);
 
         var r1 = await _client.GetAsync("/api/rankings/Solo_Bass/nbc_p1/neighborhood");
         Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
