@@ -49,11 +49,11 @@ async function openSortFromFab(page: Page): Promise<Locator> {
   return fab;
 }
 
+/* Polls so a scale-in transition caught on its last frame (WebKit reports
+ * e.g. 43.9999 px) settles before the floor is enforced. */
 async function expectMinTarget(locator: Locator, min: number): Promise<void> {
-  const box = await locator.boundingBox();
-  if (!box) throw new Error('target was not measurable');
-  expect(box.width, 'target width').toBeGreaterThanOrEqual(min);
-  expect(box.height, 'target height').toBeGreaterThanOrEqual(min);
+  await expect.poll(async () => (await locator.boundingBox())?.width ?? 0, { message: 'target width' }).toBeGreaterThanOrEqual(min);
+  await expect.poll(async () => (await locator.boundingBox())?.height ?? 0, { message: 'target height' }).toBeGreaterThanOrEqual(min);
 }
 
 async function focusedName(page: Page): Promise<string> {
@@ -195,7 +195,6 @@ test('phone Item Shop sort action is named, large enough and opens the labelled 
   await expect(action).toHaveText('Sort Item Shop');
   // The menu scales open; measure once it has settled at full size.
   await expect(page.getByTestId('fab-menu')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
-  await expect.poll(async () => (await action.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(MIN_TARGET_PX);
   await expectMinTarget(action, MIN_TARGET_PX);
 
   await action.click();
