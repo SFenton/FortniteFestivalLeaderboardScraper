@@ -758,8 +758,9 @@ Until 2026-10, production carried operator-installed versions of these
 objects. The pointer trigger also ran a no-op `UPDATE account_rankings` (to
 re-fire the denominator row trigger) and both full-table ranking checks inside
 the 5-second exclusive cutover, about 8 seconds in total. Each scrape's first
-commit attempt therefore exceeded its budget, deferred about 3 minutes, and
-logged a misleading publication failure. The `publication-guard` schema step
+commit attempt therefore exceeded its budget and logged a misleading
+publication failure before a retry committed: from `ready_at` to
+`published_at` took 5.3 to 6.0 seconds. The `publication-guard` schema step
 (`PublicationGuardSchema`) replaces the function with the failed-phase check
 only, creates the trigger if missing, and drops
 `fst_account_rankings_denominator_guard_1100` and its partition clones. It
@@ -778,6 +779,12 @@ hosted services, runs no other schema step, prints one JSON line
 The full `--initialize-schema-only` also includes the step. Before applying it,
 capture the existing definitions with `pg_get_functiondef` and
 `pg_get_triggerdef` so they can be restored.
+
+Production applied the step on 2026-10-08 at the scrape 1494 idle boundary.
+The legacy denominator trigger and function no longer exist there, and the
+pointer trigger checks failed phases only. Scrape 1495 then committed on its
+first attempt: 0.5 seconds from `ready_at` to `published_at`, with a 478 ms
+exclusive lock.
 
 `publication_path_artifacts` binds one canonical path/max-score row per
 publication catalog song, including authoritative null-generation rows, so
