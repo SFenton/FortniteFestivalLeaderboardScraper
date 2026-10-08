@@ -324,16 +324,17 @@ export function useSuggestions(
     currentSession.mixKey,
   ]);
 
-  const startNewMix = useCallback(() => {
+  const startNewMix = useCallback((): boolean => {
     if (
       (mode === 'solo' && !accountId)
       || !sourceReady
       || coreSongs.length === 0
-    ) return;
+    ) return false;
 
     const nextCache = createMix();
     installFreshMix(nextCache);
     scrollContainerRef.current?.scrollTo(0, 0);
+    return true;
   }, [
     accountId,
     coreSongs.length,
