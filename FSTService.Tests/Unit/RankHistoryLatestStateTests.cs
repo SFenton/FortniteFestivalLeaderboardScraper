@@ -100,6 +100,45 @@ public sealed class RankHistoryLatestStateTests : IDisposable
     }
 
     [Fact]
+    public void Snapshots_work_with_the_preexisting_production_table_shape()
+    {
+        // Production already had empty tables of this exact shape (no fillfactor,
+        // schema_version default 2) from an earlier experiment; scrape 1499 failed
+        // when the schema expected rank_history_latest to be partitioned.
+        foreach (var ds in new[] { _latest.DataSource, _latestMeta.DataSource })
+        {
+            Execute(ds, """
+                DROP TABLE IF EXISTS rank_history_latest CASCADE;
+                DROP TABLE IF EXISTS composite_rank_history_latest;
+                CREATE TABLE rank_history_latest (
+                    account_id TEXT NOT NULL, instrument TEXT NOT NULL, snapshot_date DATE NOT NULL,
+                    snapshot_taken_at TIMESTAMPTZ, adjusted_skill_rank INTEGER NOT NULL, weighted_rank INTEGER NOT NULL,
+                    fc_rate_rank INTEGER NOT NULL, total_score_rank INTEGER NOT NULL, max_score_percent_rank INTEGER NOT NULL,
+                    adjusted_skill_rating REAL, weighted_rating REAL, fc_rate REAL, total_score INTEGER,
+                    max_score_percent REAL, songs_played INTEGER, coverage REAL, full_combo_count INTEGER,
+                    raw_max_score_percent REAL, raw_weighted_rating REAL, raw_skill_rating REAL,
+                    schema_version SMALLINT NOT NULL DEFAULT 2,
+                    PRIMARY KEY (instrument, account_id));
+                CREATE TABLE composite_rank_history_latest (
+                    account_id TEXT PRIMARY KEY, snapshot_date DATE NOT NULL, composite_rank INTEGER NOT NULL,
+                    composite_rating REAL, instruments_played INTEGER, total_songs_played INTEGER);
+                """);
+        }
+
+        _latest.Db.UpsertEntries("song0", [Entry("p0", 1_000), Entry("p1", 900)]);
+        _latest.Db.RecomputeAllRanks();
+        _latest.Db.ComputeSongStats();
+        _latest.Db.ComputeAccountRankings(totalChartedSongs: 1);
+        _latest.Db.SnapshotRankHistory(cleanupRetention: false, useLatestState: true);
+        Assert.True(IsReady(_latest.DataSource, "Solo_Guitar"));
+        AssertLatestMatchesHistory(_latest.DataSource);
+
+        _latestMeta.Db.ReplaceCompositeRankings([Composite("c0", 1, 0.10)]);
+        _latestMeta.Db.SnapshotCompositeRankHistory(cleanupRetention: false, useLatestState: true);
+        Assert.True(IsReady(_latestMeta.DataSource, RankHistoryLatestStateSchema.CompositeScope));
+    }
+
+    [Fact]
     public void Composite_snapshots_from_latest_state_match_full_history_scans()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
