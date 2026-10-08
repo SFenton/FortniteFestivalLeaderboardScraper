@@ -1249,7 +1249,11 @@ Representative Songs, Suggestions, Leaderboards, Settings, and Manual routes
 must have no moderate, serious, or critical axe violations in the focused
 accessibility suite. The same suite owns skip navigation, route
 title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
-Save-Data, and friendly instrument image semantics. WebKit mobile runs this
+Save-Data, and friendly instrument image semantics.
+`specs/accessibility/settings-version.spec.ts` owns the Settings version card:
+term/definition roles and reading order, a scoped axe scan, and reflow at
+320 CSS px with doubled text; `__test__/pages/settings/SettingsVersionList.test.tsx`
+covers the announced `<version>, commit <sha>` wording. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
 

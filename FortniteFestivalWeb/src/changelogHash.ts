@@ -1,6 +1,6 @@
 import type { ChangelogEntry } from './changelog';
 
-const CURRENT_CHANGELOG_HASH = 'vwmja3';
+const CURRENT_CHANGELOG_HASH = 'ayonhq';
 
 export function changelogHash(): string {
   return CURRENT_CHANGELOG_HASH;

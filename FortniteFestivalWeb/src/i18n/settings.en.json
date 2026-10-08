@@ -129,6 +129,7 @@
     "versionTitle": "Festival Score Tracker Version",
     "versionHint": "Festival Score Tracker information to help with debugging.",
     "appVersion": "App Version",
+    "appCommit": "commit",
     "serviceVersion": "Service Version",
     "coreVersion": "@festival/core Version",
     "themeVersion": "@festival/theme Version",
