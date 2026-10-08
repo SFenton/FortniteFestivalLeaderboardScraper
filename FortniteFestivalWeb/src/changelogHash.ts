@@ -1,6 +1,6 @@
 import type { ChangelogEntry } from './changelog';
 
-const CURRENT_CHANGELOG_HASH = 'iwz4tu';
+const CURRENT_CHANGELOG_HASH = '-29qf4x';
 
 export function changelogHash(): string {
   return CURRENT_CHANGELOG_HASH;

@@ -28,6 +28,12 @@ export const changelog: ChangelogEntry[] = [
         ],
       },
       {
+        title: 'ITEM SHOP',
+        items: [
+          'Sort the Item Shop by Title, Artist, Year, or Duration, ascending or descending. Your choice is remembered for both grid and list views.',
+        ],
+      },
+      {
         title: 'SUGGESTIONS',
         items: [
           'Starting a fresh mix now keeps the list at the top while new cards finish loading.',

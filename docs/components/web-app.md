@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-10-03
-last_verified_commit: fc9a7636
+last_verified: 2026-10-07
+last_verified_commit: a4b8bf4d
 sources:
   - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
@@ -72,6 +72,8 @@ sources:
   - FortniteFestivalWeb/src/hooks/ui/useVirtualListScrollMargin.ts
   - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
+  - FortniteFestivalWeb/src/pages/shop/shopSort.ts
+  - FortniteFestivalWeb/src/pages/shop/modals/ShopSortModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
   - FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx
@@ -383,9 +385,9 @@ the shell viewport and `none` delegates spacing to the caller. The opt-in
 reserves clearance only while `MobileFloatingActionButton` has registered a
 renderable surface. Empty warm-up mounts do not register, and the shared
 registry tracks overlapping page-owned and shell-owned FABs independently.
-The Item Shop uses `auto`, so narrow handsets without quick links, a selected
-band filter, or the view-toggle action retain only the list's normal bottom
-padding; handset states that do render a FAB remain protected from overlap.
+The Item Shop uses `auto`; its FAB always carries the Sort action once the
+page registers its actions, so handsets reserve FAB clearance there, and any
+state without a renderable FAB keeps only the list's normal bottom padding.
 
 `ShellScrollRestoration` owns route/layout scroll resets, preserve-scroll keys,
 and the lazy Suggestions restoration coordinator outside `App.tsx`. Resets key
@@ -497,6 +499,26 @@ or `false` in `ServerSong.doubleBassSupported` matches that category; absent
 or null metadata matches neither. Existing saved single-category or
 unrestricted choices migrate to independent boolean selections. Reset
 restores all General choices in solo and band views.
+
+### Item Shop sort
+
+The Item Shop offers the general Songs sort modes — Title, Artist, Year, and
+Duration — with an ascending/descending direction. Desktop shows a Sort pill
+in the Shop header beside the song count and Grid/List toggle; mobile chrome
+adds a Sort action to the Shop FAB at every width (the Grid/List action stays
+hidden below the narrow-grid breakpoint). Both open `ShopSortModal`, which
+uses the same radio rows, direction selector, Reset/Apply, and discard
+confirmation as the Songs sort modal.
+
+`pages/shop/shopSort.ts` owns the comparator, used by both grid and list. It
+matches the Songs list: missing year or duration sorts as zero, and ties fall
+back to title in the chosen direction. The shop feed (`ShopSong`) has no
+duration, so Shop entries are joined to the published song catalogue by
+`songId` for `durationSeconds` (and a missing year). List rows therefore show
+artist, year, and duration like Songs rows. The choice persists in
+`localStorage` under `fst:shopSort`, separately from Songs sort settings;
+invalid stored values fall back to Title ascending. The Sort control is
+highlighted when the choice differs from that default.
 
 ### Settings service progress
 

@@ -80,9 +80,25 @@ describe('FabSearchContext', () => {
   it('registerShopActions + shopToggleView calls registered toggle', () => {
     const { result } = renderHook(() => useFabSearch(), { wrapper });
     const mockToggle = vi.fn();
-    act(() => result.current.registerShopActions({ toggleView: mockToggle }));
+    act(() => result.current.registerShopActions({ toggleView: mockToggle, openSort: vi.fn() }));
     act(() => result.current.shopToggleView());
     expect(mockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('registerShopActions + shopOpenSort calls registered sort and tracks sortActive', () => {
+    const { result } = renderHook(() => useFabSearch(), { wrapper });
+    const mockSort = vi.fn();
+    expect(result.current.shopActionsReady).toBe(false);
+    expect(result.current.shopSortActive).toBe(false);
+    act(() => result.current.registerShopActions({ toggleView: vi.fn(), openSort: mockSort, sortActive: true }));
+    expect(result.current.shopActionsReady).toBe(true);
+    expect(result.current.shopSortActive).toBe(true);
+    act(() => result.current.shopOpenSort());
+    expect(mockSort).toHaveBeenCalledTimes(1);
+    act(() => result.current.registerShopActions(null));
+    expect(result.current.shopActionsReady).toBe(false);
+    expect(result.current.shopSortActive).toBe(false);
+    expect(() => { act(() => result.current.shopOpenSort()); }).not.toThrow();
   });
 
   it('setShopViewMode updates shopViewMode reactively', () => {

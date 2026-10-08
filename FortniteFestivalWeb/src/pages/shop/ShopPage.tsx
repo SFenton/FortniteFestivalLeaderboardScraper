@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType, useLocation } from 'react-router-dom';
-import { IoGrid, IoList } from 'react-icons/io5';
+import { IoGrid, IoList, IoSwapVerticalSharp } from 'react-icons/io5';
 import { LoadPhase } from '@festival/core/runtime';
 import { useShopState } from '../../hooks/data/useShopState';
+import { useFestival } from '../../contexts/FestivalContext';
+import { useModalState } from '../../hooks/ui/useModalState';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -11,7 +13,7 @@ import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { useViewTransition } from '../../hooks/ui/useViewTransition';
 import { ActionPill } from '../../components/common/ActionPill';
-import { Size, QUERY_NARROW_GRID, Colors, Font, Gap, flexColumn } from '@festival/theme';
+import { Size, IconSize, QUERY_NARROW_GRID, Colors, Font, Gap, flexColumn } from '@festival/theme';
 import { staggerDelay as calcStagger, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { SongRow } from '../songs/components/SongRow';
@@ -28,6 +30,8 @@ import PageHeader from '../../components/common/PageHeader';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { shopSlides } from './firstRun';
+import ShopSortModal from './modals/ShopSortModal';
+import { defaultShopSort, enrichShopSongs, isShopSortActive, loadShopSort, saveShopSort, sortShopSongs, type ShopSortSettings } from './shopSort';
 
 const STORAGE_KEY = 'fst:shopView';
 
@@ -41,6 +45,7 @@ function loadViewMode(): 'grid' | 'list' {
 export default function ShopPage() {
   const { t } = useTranslation();
   const { shopSongs, isLeavingTomorrow, isShopNew } = useShopState();
+  const { state: { songs: catalogSongs } } = useFestival();
   const { settings } = useSettings();
   const isMobileChrome = useIsMobileChrome();
   const navType = useNavigationType();
@@ -80,15 +85,28 @@ export default function ShopPage() {
   }, [transition.phase, scrollContainerRef]);
   /* v8 ignore stop */
 
-  // Register toggle action for FAB and sync view mode
+  const [sortSettings, setSortSettings] = useState<ShopSortSettings>(loadShopSort);
+  const sortActive = isShopSortActive(sortSettings);
+  const sortModal = useModalState<ShopSortSettings>(() => sortSettings);
+  const openSort = useCallback(() => sortModal.open(sortSettings), [sortModal, sortSettings]);
+  const applySort = () => {
+    setSortSettings(sortModal.draft);
+    saveShopSort(sortModal.draft);
+    sortModal.close();
+  };
+  const resetSort = () => sortModal.setDraft(defaultShopSort());
+
+  // Register toggle/sort actions for FAB and sync view mode
   const { registerShopActions, setShopViewMode } = useFabSearch();
   const toggleViewRef = useRef(toggleView);
   toggleViewRef.current = toggleView;
+  const openSortRef = useRef(openSort);
+  openSortRef.current = openSort;
   /* v8 ignore start — FAB registration callback */
   useLayoutEffect(() => {
-    registerShopActions({ toggleView: () => toggleViewRef.current() });
-    return () => registerShopActions(null);
-  }, [registerShopActions]);
+    registerShopActions({ toggleView: () => toggleViewRef.current(), openSort: () => openSortRef.current(), sortActive });
+  }, [registerShopActions, sortActive]);
+  useLayoutEffect(() => () => registerShopActions(null), [registerShopActions]);
   useLayoutEffect(() => {
     setShopViewMode(effectiveView);
   }, [effectiveView, setShopViewMode]);
@@ -97,9 +115,8 @@ export default function ShopPage() {
   const enabledInstruments = useMemo(() => visibleInstruments(settings), [settings]);
   const instrument = useMemo(() => loadSongSettings().instrument ?? DEFAULT_INSTRUMENT, []);
 
-  const sorted = useMemo(() => {
-    return [...shopSongs].sort((a, b) => a.title.localeCompare(b.title));
-  }, [shopSongs]);
+  const enrichedShopSongs = useMemo(() => enrichShopSongs(shopSongs, catalogSongs), [shopSongs, catalogSongs]);
+  const sorted = useMemo(() => sortShopSongs(enrichedShopSongs, sortSettings), [enrichedShopSongs, sortSettings]);
 
   // Stagger: animate items on the first render that has data.
   // Skip when the page has been rendered before this session (layout remount, back-nav, etc.).
@@ -148,12 +165,29 @@ export default function ShopPage() {
       scrollDeps={[loadPhase, shopSongs]}
       loadPhase={loadPhase}
       firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlidesMemo, gateContext: firstRunGateCtx }}
+      after={
+        <ShopSortModal
+          visible={sortModal.visible}
+          draft={sortModal.draft}
+          savedDraft={sortSettings}
+          onChange={sortModal.setDraft}
+          onCancel={sortModal.close}
+          onReset={resetSort}
+          onApply={applySort}
+        />
+      }
       before={
         isMobileChrome ? undefined : (
         <PageHeader
           title={t('nav.shop')}
           actions={sorted.length > 0 ? <>
             <span style={shopStyles.count}>{t('format.songCount', { count: sorted.length })}</span>
+            <ActionPill
+              icon={<IoSwapVerticalSharp size={IconSize.action} />}
+              label={t('common.sort', 'Sort')}
+              onClick={openSort}
+              active={sortActive}
+            />
             {!isNarrow && !isMobileChrome && (
               <ActionPill
                 icon={viewMode === 'grid' ? <IoList size={Size.iconAction} /> : <IoGrid size={Size.iconAction} />}
@@ -192,7 +226,7 @@ export default function ShopPage() {
                   showInstrumentIcons={false}
                   enabledInstruments={enabledInstruments}
                   metadataOrder={[]}
-                  sortMode="title"
+                  sortMode={sortSettings.sortMode}
                   isMobile={false}
                   externalHref={song.shopUrl}
                   shopHighlightRed={isLeavingTomorrow(song.songId)}

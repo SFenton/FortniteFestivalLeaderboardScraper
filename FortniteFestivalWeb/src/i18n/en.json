@@ -916,7 +916,10 @@
     "switchToListView": "Switch to list view",
     "itemShop": "Item Shop",
     "empty": "No songs in the Item Shop",
-    "emptyHint": "Check back later — the shop updates regularly."
+    "emptyHint": "Check back later — the shop updates regularly.",
+    "sortTitle": "Sort Item Shop",
+    "sortModeHint": "Choose which property to sort the Item Shop by.",
+    "sortResetHint": "Restore sort mode and direction to their defaults."
   },
   "chart": {
     "scoreHistory": "Score History",
