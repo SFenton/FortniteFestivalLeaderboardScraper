@@ -497,7 +497,9 @@ public static class DatabaseInitializer
                     $"{Environment.NewLine}{Environment.NewLine}" +
                     $"{PublicationGenerationSchema.Sql}" +
                     $"{Environment.NewLine}{Environment.NewLine}" +
-                    BandRetentionFloorSchema.Sql,
+                    $"{BandRetentionFloorSchema.Sql}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    RankHistoryLatestStateSchema.Sql,
                 CommandTimeoutSeconds: 0,
                 UseShortTransaction: false,
                 LockTimeout: null,

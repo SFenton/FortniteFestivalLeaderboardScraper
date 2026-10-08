@@ -64,6 +64,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
     private int _bandRankHistoryTablesEnsured;
+    private readonly object _bandRankHistoryTablesEnsureLock = new();
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
     internal Func<Exception?>?
@@ -7170,11 +7171,22 @@ public sealed partial class MetaDatabase : IMetaDatabase
         return (above, self, below);
     }
 
-    public void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true)
+    public void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (useLatestState)
+            RankHistoryLatestStateSchema.Ensure(_ds);
+
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        if (useLatestState)
+        {
+            SnapshotCompositeRankHistoryFromLatestState(conn, tx, today);
+            if (cleanupRetention)
+                CleanupCompositeRankHistoryRetention(conn, tx, retentionDays);
+            tx.Commit();
+            return;
+        }
 
         // Step A: Build temp table of each account's latest composite snapshot
         using (var c = conn.CreateCommand())
@@ -7217,7 +7229,79 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (cleanupRetention)
             CleanupCompositeRankHistoryRetention(conn, tx, retentionDays);
 
+        RankHistoryLatestStateSchema.Invalidate(conn, tx, RankHistoryLatestStateSchema.CompositeScope);
         tx.Commit();
+    }
+
+    /// <summary>
+    /// Composite snapshot that compares against <c>composite_rank_history_latest</c>
+    /// instead of sorting the whole composite history. A scope that is not ready is
+    /// first rebuilt from history with the original scan.
+    /// </summary>
+    private static void SnapshotCompositeRankHistoryFromLatestState(NpgsqlConnection conn, NpgsqlTransaction tx, DateOnly today)
+    {
+        var ready = RankHistoryLatestStateSchema.LockAndReadReady(conn, tx, RankHistoryLatestStateSchema.CompositeScope);
+        if (!ready)
+        {
+            using var rebuild = conn.CreateCommand();
+            rebuild.Transaction = tx;
+            rebuild.CommandTimeout = 0;
+            rebuild.CommandText = """
+                DELETE FROM composite_rank_history_latest;
+
+                INSERT INTO composite_rank_history_latest (
+                    account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played)
+                SELECT DISTINCT ON (account_id)
+                    account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played
+                FROM composite_rank_history
+                ORDER BY account_id, snapshot_date DESC;
+                """;
+            rebuild.ExecuteNonQuery();
+        }
+
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandTimeout = 0;
+            c.CommandText = """
+                CREATE TEMP TABLE _composite_rank_history_changes ON COMMIT DROP AS
+                SELECT cr.account_id, @today::DATE AS snapshot_date, cr.composite_rank,
+                    cr.composite_rating, cr.instruments_played, cr.total_songs_played
+                FROM composite_rankings cr
+                LEFT JOIN composite_rank_history_latest lc ON lc.account_id = cr.account_id
+                WHERE lc.account_id IS NULL
+                  OR lc.composite_rank IS DISTINCT FROM cr.composite_rank
+                  OR lc.composite_rating IS DISTINCT FROM cr.composite_rating
+                  OR lc.instruments_played IS DISTINCT FROM cr.instruments_played
+                  OR lc.total_songs_played IS DISTINCT FROM cr.total_songs_played;
+
+                INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank,
+                    composite_rating, instruments_played, total_songs_played)
+                SELECT account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played
+                FROM _composite_rank_history_changes
+                ON CONFLICT (account_id, snapshot_date) DO UPDATE SET
+                    composite_rank = EXCLUDED.composite_rank,
+                    composite_rating = EXCLUDED.composite_rating,
+                    instruments_played = EXCLUDED.instruments_played,
+                    total_songs_played = EXCLUDED.total_songs_played;
+
+                INSERT INTO composite_rank_history_latest (account_id, snapshot_date, composite_rank,
+                    composite_rating, instruments_played, total_songs_played)
+                SELECT account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played
+                FROM _composite_rank_history_changes
+                ON CONFLICT (account_id) DO UPDATE SET
+                    snapshot_date = EXCLUDED.snapshot_date,
+                    composite_rank = EXCLUDED.composite_rank,
+                    composite_rating = EXCLUDED.composite_rating,
+                    instruments_played = EXCLUDED.instruments_played,
+                    total_songs_played = EXCLUDED.total_songs_played
+                WHERE EXCLUDED.snapshot_date >= composite_rank_history_latest.snapshot_date;
+                """;
+            c.Parameters.AddWithValue("today", today);
+            c.ExecuteNonQuery();
+        }
+
+        RankHistoryLatestStateSchema.MarkReady(conn, tx, RankHistoryLatestStateSchema.CompositeScope, rebuilt: !ready);
     }
 
     public int CleanupCompositeRankHistoryRetention(
@@ -16240,11 +16324,21 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
             return;
 
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        EnsureBandRankHistoryTables(conn, tx);
-        tx.Commit();
-        Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
+        // Band types rebuild concurrently. Without this lock, a second caller that
+        // races the first also runs the schema DDL, and its CREATE INDEX IF NOT
+        // EXISTS waits on the first band type's open rebuild transaction, which
+        // serialized the first scrape after every worker start.
+        lock (_bandRankHistoryTablesEnsureLock)
+        {
+            if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
+                return;
+
+            using var conn = _ds.OpenConnection();
+            using var tx = conn.BeginTransaction();
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+            Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
+        }
     }
 
     private static void EnsureBandRankHistoryTables(NpgsqlConnection conn, NpgsqlTransaction tx)

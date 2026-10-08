@@ -450,6 +450,7 @@ on-demand and maintenance-lease paths.
 | `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
 | `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
 | `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
+| `Scraper:UseRankHistoryLatestState` | `false` | Compare rank-history snapshots against the maintained latest row per account instead of scanning each instrument's and the composite's whole history; see below |
 
 Per-instrument solo rankings always run at most two instruments at once to
 bound PostgreSQL memory. The production worker env sets
@@ -474,6 +475,32 @@ ComputeRankings took 103 minutes. With the combo index described below
 (scrape `1462`, still `2`), band team rankings took 12.5 minutes (Band_Quad's
 inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
 production keeps `2`.
+
+The band rank-history schema is ensured once per worker process. Until
+2026-10-08, two band types that started together both ran that DDL, and the
+second one's `CREATE INDEX IF NOT EXISTS` waited for the first band type's whole
+rebuild transaction. In the first scrape after each worker start, Duets waited
+for Trios (scrapes `1495` and `1497`: Duets 562 and 540 s, against 236 s in
+`1496`). The ensure step is now serialized in-process, so the second caller
+skips it.
+
+Each snapshot writes a new history row only for accounts whose ranks or
+metrics differ from their latest history row. Finding that latest row scanned
+the whole history every scrape: about 104 seconds per instrument partition (14
+to 38 GB each) and about 5.5 minutes for `composite_rank_history` (92 GB),
+together about 260 GB of reads per scrape. `Scraper:UseRankHistoryLatestState`
+instead reads the latest row per account from `rank_history_latest` and
+`composite_rank_history_latest`. Each snapshot updates those tables in the same
+transaction as its history insert.
+
+The first enabled snapshot of each scope (instrument or `composite`) rebuilds
+its latest rows from history with the original scan, so it costs one old-style
+snapshot plus the insert. It then marks the scope ready in
+`rank_history_latest_state`. A snapshot taken with the option off drops that
+scope's readiness, and the next enabled snapshot rebuilds it. Retention cleanup
+never deletes an account's newest history row, so it does not affect the
+latest rows. The tables are created on first use, so no deploy hook is needed.
+`false` is the rollback.
 
 `ComboBatched` was adopted when disk headroom was tight (a single monolithic
 insert once failed with `No space left on device`). Its per-combo statements
