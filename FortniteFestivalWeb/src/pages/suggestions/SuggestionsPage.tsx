@@ -23,9 +23,9 @@ import { queryKeys } from '../../api/queryKeys';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 import type { SelectedBandProfile } from '../../state/selectedProfile';
 import {
-  Size, Gap, Layout, MaxWidth, Colors, Font, Weight, Radius, Spinner, SpinnerSize,
+  Size, Gap, Layout, MaxWidth, Colors, Spinner, SpinnerSize,
   CssValue,
-  fixedFill, flexCenter, flexColumn, padding,
+  fixedFill, flexCenter, padding,
   FADE_DURATION, SCROLL_PREFETCH_PX,
 } from '@festival/theme';
 import { LoadPhase } from '@festival/core/runtime';
@@ -39,8 +39,9 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useModalState } from '../../hooks/ui/useModalState';
-import PressableButton from '../../components/common/PressableButton';
 import { SuggestionsLoadSentinel } from './components/SuggestionsLoadSentinel';
+import { SuggestionsMixLimit } from './components/SuggestionsMixLimit';
+import { focusRouteMain } from '../../components/shell/RouteAccessibility';
 import {
   VirtualizedSuggestionsList,
   type VisibleSuggestionRow,
@@ -310,7 +311,9 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   }, [visibleCategories.length, phase]);
   const handleStartNewMix = useCallback(() => {
     revealedCountRef.current = 0;
-    startNewMix();
+    // The limit footer (and its focused button) unmounts with the fresh mix,
+    // so hand focus to the top of the route instead of dropping it to <body>.
+    if (startNewMix()) focusRouteMain();
   }, [startNewMix]);
   
 
@@ -417,20 +420,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
           scoresIndex={scoresIndex}
           bandType={bandTypeForCards}
         />
-        {limitReached && (
-          <div data-testid="suggestions-mix-limit" style={suggestionsStyles.mixLimit}>
-            <div style={suggestionsStyles.mixLimitMessage}>
-              {t('suggestions.mixLimitReached')}
-            </div>
-            <PressableButton
-              data-testid="suggestions-start-new-mix"
-              style={suggestionsStyles.mixLimitButton}
-              onPress={handleStartNewMix}
-            >
-              {t('suggestions.startNewMix')}
-            </PressableButton>
-          </div>
-        )}
+        {limitReached && <SuggestionsMixLimit onStartNewMix={handleStartNewMix} />}
         {hasMore && phase === LoadPhase.ContentIn && (
           <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div>
         )}
@@ -475,27 +465,5 @@ const suggestionsStyles = {
     borderTopColor: Colors.accentPurple,
     borderRadius: CssValue.circle,
     animation: `spin ${Spinner.duration} linear infinite`,
-  } as CSSProperties,
-  mixLimit: {
-    ...flexColumn,
-    alignItems: 'center',
-    gap: Gap.lg,
-    padding: padding(Gap.section, Gap.xl),
-    textAlign: 'center',
-  } as CSSProperties,
-  mixLimitMessage: {
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    fontWeight: Weight.semibold,
-  } as CSSProperties,
-  mixLimitButton: {
-    border: 0,
-    borderRadius: Radius.full,
-    padding: padding(Gap.md, Gap.xl),
-    backgroundColor: Colors.accentPurple,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: Weight.bold,
-    cursor: 'pointer',
   } as CSSProperties,
 };
