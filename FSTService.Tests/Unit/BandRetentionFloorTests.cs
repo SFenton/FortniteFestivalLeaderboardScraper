@@ -236,6 +236,42 @@ public sealed class BandRetentionFloorTests : IDisposable
     }
 
     [Fact]
+    public async Task Unchecked_rows_from_an_earlier_flush_turn_the_floor_off_and_are_kept()
+    {
+        var persistence = Persistence(_enforced);
+        Upsert(persistence, "song-a", Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+
+        var first = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        await using (var spool = BandSpoolWriterFactory.Create(Logger(), persistence, retentionFloor: first))
+        {
+            spool.Enqueue("song-a", BandType, [Entry("late-1", 100)]);
+            spool.Complete();
+            first.PrepareForFlush(_enforced.DataSource);
+            spool.FlushAll();
+        }
+
+        Assert.Equal(1, first.BelowFloorRows);
+
+        // No prune ran, so the next flush must not discard the recorded row.
+        var second = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        await using (var spool = BandSpoolWriterFactory.Create(Logger(), persistence, retentionFloor: second))
+        {
+            spool.Enqueue("song-a", BandType, [Entry("late-2", 100)]);
+            spool.Complete();
+            second.PrepareForFlush(_enforced.DataSource);
+            spool.FlushAll();
+        }
+
+        Assert.True(second.PendingEvidence);
+        Assert.False(second.IsActive);
+        Assert.Contains(TeamKey("late-2"), ReadKeys(_enforced, "song-a"));
+        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+        Assert.Equal((1L, 0L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowRowsKept));
+    }
+
+    [Fact]
     public void Over_threshold_recompute_invalidation_drops_matching_floors()
     {
         var persistence = Persistence(_enforced);

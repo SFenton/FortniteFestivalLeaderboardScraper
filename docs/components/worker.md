@@ -914,7 +914,10 @@ The flush also drops the floor of every scope whose recorded first valid entry
 is staged as over-threshold. An over-threshold recompute after a max-score
 change (`BandRankingRepairService`) drops the floors of the songs it changed.
 Staged rows in a scope without a floor are flushed as before. If preparation
-fails, the flush continues without the floor for that scrape.
+fails, the flush continues without the floor for that scrape. If a prune never
+checked the rows recorded by an earlier flush (for example, it failed), the next
+flush also runs without the floor. It keeps those rows so the next successful
+prune can count them.
 
 The worker creates the two small tables on first use, so no deploy hook is
 needed. Rollback is `Off`. Promote `Report` to `Enforce` only after scrapes

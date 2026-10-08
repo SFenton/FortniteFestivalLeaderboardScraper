@@ -52,6 +52,9 @@ public static class BandRetentionFloorSchema
             end_time_key     TEXT NOT NULL,
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo)
         );
+
+        ALTER TABLE band_retention_floor_shadow ADD COLUMN IF NOT EXISTS score INT NOT NULL DEFAULT 0;
+        ALTER TABLE band_retention_floor_shadow ADD COLUMN IF NOT EXISTS end_time_key TEXT NOT NULL DEFAULT '';
         """;
 
     private static readonly ConcurrentDictionary<string, bool> Ensured = new(StringComparer.Ordinal);
@@ -221,6 +224,12 @@ public sealed class BandRetentionFloorFilter
     /// <summary>Turns the filter off for the rest of this scrape (for example when preparation failed).</summary>
     public void Disable() => _disabled = true;
 
+    /// <summary>
+    /// True when an earlier flush's recorded rows were still waiting for a prune,
+    /// so this scrape flushes without the floor.
+    /// </summary>
+    public bool PendingEvidence { get; private set; }
+
     /// <summary>Rows skipped (Enforce) or recorded (Report) so far.</summary>
     public long BelowFloorRows => Interlocked.Read(ref _belowFloorRows);
 
@@ -238,9 +247,11 @@ public sealed class BandRetentionFloorFilter
     }
 
     /// <summary>
-    /// Ensures the schema, clears any previous shadow rows, and drops the floor of
-    /// every scope whose first valid row is staged as over-threshold. Call once
-    /// after the spool is complete and before the first chunk flush.
+    /// Ensures the schema and drops the floor of every scope whose first valid row
+    /// is staged as over-threshold. Call once after the spool is complete and
+    /// before the first chunk flush. When rows recorded by an earlier flush were
+    /// never evaluated by a prune (for example because prune failed), the filter
+    /// turns itself off for this scrape and keeps those rows for the next prune.
     /// </summary>
     public int PrepareForFlush(NpgsqlDataSource dataSource)
     {
@@ -250,11 +261,17 @@ public sealed class BandRetentionFloorFilter
         BandRetentionFloorSchema.Ensure(dataSource);
         using var conn = dataSource.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var clear = conn.CreateCommand())
+        using (var pending = conn.CreateCommand())
         {
-            clear.Transaction = tx;
-            clear.CommandText = "DELETE FROM band_retention_floor_shadow";
-            clear.ExecuteNonQuery();
+            pending.Transaction = tx;
+            pending.CommandText = "SELECT EXISTS (SELECT 1 FROM band_retention_floor_shadow)";
+            if (pending.ExecuteScalar() is true)
+            {
+                PendingEvidence = true;
+                Disable();
+                tx.Commit();
+                return 0;
+            }
         }
 
         var invalidated = 0;

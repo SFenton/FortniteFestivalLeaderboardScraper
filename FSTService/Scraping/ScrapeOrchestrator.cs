@@ -1005,6 +1005,14 @@ public sealed class ScrapeOrchestrator
         try
         {
             var invalidated = filter.PrepareForFlush(_bandPersistence.DataSource);
+            if (filter.PendingEvidence)
+            {
+                _log.LogWarning(
+                    "Band retention floor {Mode}: rows recorded by an earlier flush were never checked by a prune; flushing this scrape without the floor so the next prune can check them.",
+                    filter.Mode);
+                return;
+            }
+
             _log.LogInformation(
                 "Band retention floor {Mode}: dropped {Invalidated:N0} scope floor(s) whose first valid entry is staged over-threshold.",
                 filter.Mode,
