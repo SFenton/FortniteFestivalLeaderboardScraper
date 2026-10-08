@@ -64,6 +64,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
     private int _bandRankHistoryTablesEnsured;
+    private readonly object _bandRankHistoryTablesEnsureLock = new();
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
     internal Func<Exception?>?
@@ -16323,11 +16324,21 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
             return;
 
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        EnsureBandRankHistoryTables(conn, tx);
-        tx.Commit();
-        Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
+        // Band types rebuild concurrently. Without this lock, a second caller that
+        // races the first also runs the schema DDL, and its CREATE INDEX IF NOT
+        // EXISTS waits on the first band type's open rebuild transaction, which
+        // serialized the first scrape after every worker start.
+        lock (_bandRankHistoryTablesEnsureLock)
+        {
+            if (Volatile.Read(ref _bandRankHistoryTablesEnsured) != 0)
+                return;
+
+            using var conn = _ds.OpenConnection();
+            using var tx = conn.BeginTransaction();
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+            Volatile.Write(ref _bandRankHistoryTablesEnsured, 1);
+        }
     }
 
     private static void EnsureBandRankHistoryTables(NpgsqlConnection conn, NpgsqlTransaction tx)

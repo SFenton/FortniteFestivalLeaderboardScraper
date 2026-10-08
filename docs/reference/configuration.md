@@ -474,6 +474,14 @@ ComputeRankings took 103 minutes. With the combo index described below
 inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
 production keeps `2`.
 
+The band rank-history schema is ensured once per worker process. Until
+2026-10-08, two band types that started together both ran that DDL, and the
+second one's `CREATE INDEX IF NOT EXISTS` waited for the first band type's whole
+rebuild transaction. In the first scrape after each worker start, Duets waited
+for Trios (scrapes `1495` and `1497`: Duets 562 and 540 s, against 236 s in
+`1496`). The ensure step is now serialized in-process, so the second caller
+skips it.
+
 Each snapshot writes a new history row only for accounts whose ranks or
 metrics differ from their latest history row. Finding that latest row scanned
 the whole history every scrape: about 104 seconds per instrument partition (14
