@@ -777,8 +777,8 @@ working on the old, slower plan.
 position a margin below band prune's window (`floor_rank`, `floor_score`,
 `floor_end_time`), the first valid entry's key, and the `max_valid_entries`
 it was computed for. Each prune that runs with the floor enabled replaces the
-whole table in its own transaction. `band_retention_floor_shadow` is an
-unlogged scratch list of the flush rows found below a floor (key, score, end
+whole table in its own transaction. `band_retention_floor_shadow` is a
+scratch list of the flush rows found below a floor (key, score, end
 time), cleared by the next prune after it counts how many of them it would
 keep. Both tables are derived and safe to truncate. Behaviour is
 described in [worker: band retention floor](../components/worker.md#band-retention-floor).

@@ -43,7 +43,7 @@ public static class BandRetentionFloorSchema
             PRIMARY KEY (song_id, band_type)
         );
 
-        CREATE UNLOGGED TABLE IF NOT EXISTS band_retention_floor_shadow (
+        CREATE TABLE IF NOT EXISTS band_retention_floor_shadow (
             song_id          TEXT NOT NULL,
             band_type        TEXT NOT NULL,
             team_key         TEXT NOT NULL,
@@ -55,6 +55,9 @@ public static class BandRetentionFloorSchema
 
         ALTER TABLE band_retention_floor_shadow ADD COLUMN IF NOT EXISTS score INT NOT NULL DEFAULT 0;
         ALTER TABLE band_retention_floor_shadow ADD COLUMN IF NOT EXISTS end_time_key TEXT NOT NULL DEFAULT '';
+        -- Logged, so the evidence an Enforce flush recorded survives a crash until a
+        -- prune has checked it.
+        ALTER TABLE band_retention_floor_shadow SET LOGGED;
         """;
 
     private static readonly ConcurrentDictionary<string, bool> Ensured = new(StringComparer.Ordinal);

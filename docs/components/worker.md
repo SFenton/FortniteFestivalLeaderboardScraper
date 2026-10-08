@@ -886,7 +886,7 @@ teams, mostly from that churn.
 - `Enforce` removes those rows from the chunk before the upsert, so they never
   write entries, member stats or lookups.
 - `Report` writes them as before.
-- Both modes record each such row's key, score and end time in the unlogged
+- Both modes record each such row's key, score and end time in
   `band_retention_floor_shadow`.
 
 The next prune counts exactly how many recorded rows it would keep, and warns
