@@ -732,6 +732,47 @@ and leaves guarded mutations fail-closed. A new validated lease may replace
 the stale owner token and either resume the incomplete workflow or complete
 the post-commit release.
 
+### Band entry indexes
+
+`band_entries` is list-partitioned by band type. Each partition has its primary
+key, `(song_id, band_type, team_key, instrument_combo)`, and a repo-owned
+covering index `ix_be_<duets|trios|quad>_prefilter` on the same columns with
+`INCLUDE (score, base_score, instrument_bonus, overdrive_bonus,
+is_over_threshold)`.
+
+The covering index serves the band spool flush pre-filter
+(`BandSpoolWriterFactory.PrefilterUnchangedSql`). Every staged row is compared
+with its stored row, and about 96% are dropped as unchanged before the upsert.
+The comparison is a materialized `SELECT` followed by a `ctid` delete of the
+temporary staging table. Do not rewrite it as `DELETE ... USING band_entries`:
+a joined relation of a `DELETE` carries a row mark, which rules out index-only
+scans. The planner then uses `ix_be_<type>_type_team_combo`, which has no
+`song_id`, and fetches every heap row of the team on every song (4 to 16 per
+probe). On production data on 2026-10-08, one 6,400-row chunk took 2.33 s that
+way and 50 ms with the index-only plan; the old form made the post-fetch band
+flush about 32 minutes.
+
+Production also carries two operator-installed index families that the schema
+initializer does not create: `ix_be_<type>_type_team_combo (band_type,
+team_key, instrument_combo)` and `ix_be_<type>_updated_type_team
+(last_updated_at, band_type, team_key)`. The prefilter indexes were built in
+production on 2026-10-08 with `CREATE INDEX CONCURRENTLY` (about 30 seconds
+and 1.2 to 1.6 GB each). On any other existing database, build them the same
+way before deploying the flush change, because the initializer's plain
+`CREATE INDEX IF NOT EXISTS` would block band writes while it runs:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_be_duets_prefilter ON band_entries_duets
+    (song_id, band_type, team_key, instrument_combo)
+    INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold);
+-- repeat for band_entries_trios / ix_be_trios_prefilter and band_entries_quad / ix_be_quad_prefilter
+```
+
+`CREATE INDEX CONCURRENTLY` waits for older transactions, so give it a lock
+timeout of a few minutes. If it fails, it leaves an invalid index: drop it with
+`DROP INDEX CONCURRENTLY` and rebuild. Without the indexes the flush keeps
+working on the old, slower plan.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a

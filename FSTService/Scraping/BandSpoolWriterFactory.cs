@@ -10,6 +10,32 @@ namespace FSTService.Scraping;
 /// </summary>
 public static class BandSpoolWriterFactory
 {
+    /// <summary>
+    /// Deletes staged rows that <c>band_entries</c> already holds with an equal or
+    /// higher score and identical fill-in fields. The comparison runs in a
+    /// materialized SELECT because <c>band_entries</c> as a joined relation of the
+    /// DELETE would carry a row mark, which rules out index-only scans; as a plain
+    /// SELECT it can read the covering <c>ix_be_*_prefilter</c> indexes instead of
+    /// fetching heap rows.
+    /// </summary>
+    internal const string PrefilterUnchangedSql = """
+        WITH unchanged AS MATERIALIZED (
+            SELECT s.ctid AS staging_ctid
+            FROM _be_staging s
+            JOIN band_entries e
+              ON e.song_id = s.song_id AND e.band_type = s.band_type
+             AND e.team_key = s.team_key AND e.instrument_combo = s.instrument_combo
+            WHERE e.score >= s.score
+              AND COALESCE(e.base_score, -1) = COALESCE(s.base_score, -1)
+              AND COALESCE(e.instrument_bonus, -1) = COALESCE(s.instrument_bonus, -1)
+              AND COALESCE(e.overdrive_bonus, -1) = COALESCE(s.overdrive_bonus, -1)
+              AND e.is_over_threshold = s.is_over_threshold
+        )
+        DELETE FROM _be_staging s
+        USING unchanged u
+        WHERE s.ctid = u.staging_ctid
+        """;
+
     public static SpoolWriter<BandLeaderboardEntry> Create(ILogger log, BandLeaderboardPersistence persistence, string? baseDirectory = null)
     {
         return new SpoolWriter<BandLeaderboardEntry>(
@@ -105,26 +131,15 @@ public static class BandSpoolWriterFactory
             }
 
             // Pre-filter: remove staging rows that already exist with equal or higher
-            // score and identical fill-in fields. This eliminates 85-95% of rows before
-            // the expensive PK-probing INSERT...ON CONFLICT, plus eliminates the need
-            // to process member stats and member lookups for unchanged teams.
+            // score and identical fill-in fields, before the expensive PK-probing
+            // INSERT...ON CONFLICT and the member stats/lookups for unchanged teams.
             int stagingBefore = allEntries.Count;
             int deleted;
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
                 cmd.CommandTimeout = 0;
-                cmd.CommandText = """
-                    DELETE FROM _be_staging s
-                    USING band_entries e
-                    WHERE e.song_id = s.song_id AND e.band_type = s.band_type
-                      AND e.team_key = s.team_key AND e.instrument_combo = s.instrument_combo
-                      AND e.score >= s.score
-                      AND COALESCE(e.base_score, -1) = COALESCE(s.base_score, -1)
-                      AND COALESCE(e.instrument_bonus, -1) = COALESCE(s.instrument_bonus, -1)
-                      AND COALESCE(e.overdrive_bonus, -1) = COALESCE(s.overdrive_bonus, -1)
-                      AND e.is_over_threshold = s.is_over_threshold
-                    """;
+                cmd.CommandText = PrefilterUnchangedSql;
                 deleted = cmd.ExecuteNonQuery();
             }
             int stagingAfter = stagingBefore - deleted;

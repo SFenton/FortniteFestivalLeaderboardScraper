@@ -930,7 +930,14 @@ scrape `1460` the flush took 28.7 minutes versus 33.0 sequentially in `1459`:
 each band type ran about twice as slowly concurrently (Quad 14.8, Trios 25.2,
 Duets 28.7 minutes) because the chunk pre-filter and upserts are bound by
 random reads of `band_entries`, `band_member_stats`, and `band_members`, so the
-gain is about 13%.
+gain is about 13%. Production runs `3`.
+
+Most of that time was the pre-filter: as a `DELETE ... USING band_entries` it
+could not use an index-only scan and fetched every heap row of each staged team
+across all songs, about 1.8 seconds per chunk (Quad about 1.0). The pre-filter
+now compares through the covering `ix_be_<type>_prefilter` indexes with an
+index-only scan (50 ms for the same chunk on production data). See
+[Data storage: Band entry indexes](../architecture/data-storage.md#band-entry-indexes).
 
 `BandExtraction` intentionally has no exact parent percentage because song
 extraction and membership-summary rebuild use unrelated units. Its subphase
