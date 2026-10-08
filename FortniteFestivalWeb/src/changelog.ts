@@ -14,6 +14,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'SETTINGS',
         items: [
           'Added a Privacy Policy to Settings, also available directly at /settings/privacy.',
+          'Screen readers now pair each version number with its label, and the version rows wrap instead of running off narrow screens at large text sizes.',
         ],
       },
       {
@@ -44,6 +45,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'RIVALS',
         items: [
           'Section links on Rivals, Rival Detail, Compete, and player Bands now read "View All", matching the rest of the app.',
+          'Screen readers now name each "View all rivals" and "View full leaderboards" button after its card, instrument headers no longer repeat the instrument name, and Common Rivals and Rival Detail headers are easier to tap.',
         ],
       },
       {

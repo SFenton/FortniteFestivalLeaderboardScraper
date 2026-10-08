@@ -51,6 +51,7 @@ import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import InstrumentHeader, { getInstrumentHeaderConfig } from '../../components/display/InstrumentHeader';
 import InstrumentEmptyState from '../player/sections/InstrumentEmptyState';
 import { getPlayerProfileRoute } from '../../utils/profileNavigation';
+import { viewAllCtaName } from '../../utils/viewAllCtaName';
 
 type PlayerRankingResult = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
 
@@ -395,7 +396,7 @@ export default function CompetePage() {
                     )}
                   </div>
                   {section.hasLeaderboardNavigation && (
-                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToLeaderboards(section.scope)}>
+                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToLeaderboards(section.scope)} ariaLabel={viewAllCtaName(t('compete.viewFullLeaderboards'), section.label)}>
                       {t('compete.viewFullLeaderboards')}
                     </CardPressable>
                   )}
@@ -464,7 +465,7 @@ export default function CompetePage() {
                     </div>
                   )}
                   {section.hasRivalsNavigation && (
-                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToAllRivals(section.scope)}>
+                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToAllRivals(section.scope)} ariaLabel={viewAllCtaName(t('compete.viewAllRivals'), section.label)}>
                       {t('compete.viewAllRivals')}
                     </CardPressable>
                   )}
@@ -560,6 +561,7 @@ function CompeteScopeHeader({
       <InstrumentHeader
         instrument={scope.instrument}
         size={InstrumentHeaderSize.SM}
+        decorativeIcon
       />
     );
   }

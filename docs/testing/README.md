@@ -105,6 +105,7 @@ sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/e2e/specs/accessibility/focus-appearance.spec.ts
+  - FortniteFestivalWeb/e2e/specs/accessibility/view-all-headers.spec.ts
   - FortniteFestivalWeb/e2e/specs/browser/notification-rotation.spec.ts
   - FortniteFestivalWeb/playwright/gallery/main.tsx
   - FortniteFestivalWeb/nginx.conf
@@ -1249,9 +1250,27 @@ Representative Songs, Suggestions, Leaderboards, Settings, and Manual routes
 must have no moderate, serious, or critical axe violations in the focused
 accessibility suite. The same suite owns skip navigation, route
 title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
-Save-Data, and friendly instrument image semantics. WebKit mobile runs this
+Save-Data, and friendly instrument image semantics.
+`specs/accessibility/settings-version.spec.ts` owns the Settings version card:
+term/definition roles and reading order, a scoped axe scan, and reflow at
+320 CSS px with doubled text; `__test__/pages/settings/SettingsVersionList.test.tsx`
+covers the announced `<version>, commit <sha>` wording. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
+
+`e2e/specs/accessibility/view-all-headers.spec.ts` covers the "View All"
+section headers and the card "View all" calls to action on Rivals, Rival
+Detail and Compete. It checks:
+
+- role and accessible name, with a distinct name for each CTA;
+- reading order (header, then rows, then CTA);
+- keyboard activation;
+- a 44-pixel target size;
+- 320-pixel reflow without clipping "View All";
+- no blocking axe violations.
+
+The unit tests in `__test__/pages/rivals/rivalsPages.test.tsx` and
+`__test__/pages/compete/CompetePage.test.tsx` check the same names and order.
 
 `specs/accessibility/privacy-policy.spec.ts` owns the Settings Privacy Policy
 row and modal: link name and `aria-haspopup`, reading/Tab order after

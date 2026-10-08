@@ -41,6 +41,7 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import RankByModal from '../leaderboards/modals/RankByModal';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
+import { viewAllCtaName } from '../../utils/viewAllCtaName';
 
 type InstrumentRivals = {
   instrument: ServerInstrumentKey;
@@ -493,6 +494,7 @@ export default function RivalsPage() {
                 const previewBelow = commonRivals.below.slice(0, PREVIEW_COUNT);
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToCommon = () => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } });
+                const commonTitle = t('rivals.commonRivalsShort', 'Common Rivals');
                 return (
                 <div ref={(element) => registerSectionRef('common', element)} style={styles.section}>
                   <CardPressable
@@ -503,7 +505,7 @@ export default function RivalsPage() {
                     onPress={navigateToCommon}
                   >
                     <div style={styles.cardHeaderText}>
-                      <span style={styles.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
+                      <span style={styles.cardTitle}>{commonTitle}</span>
                     </div>
                     <span style={styles.viewAll}>{t('common.viewAll')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
@@ -519,7 +521,7 @@ export default function RivalsPage() {
                         onAnimationEnd={clearAnim}
                       />
                     ))}
-                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCommon}>
+                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCommon} ariaLabel={viewAllCtaName(t('rivals.viewAllRivals'), commonTitle)}>
                       {t('rivals.viewAllRivals')}
                     </CardPressable>
                   </div>
@@ -533,6 +535,7 @@ export default function RivalsPage() {
                 const previewBelow = comboRivals.below.slice(0, PREVIEW_COUNT);
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToCombo = () => navigate(Routes.allRivals('combo'), { state: { from: 'rivals' } });
+                const comboTitle = t('rivals.instrumentRivalsShort', { instrument: comboDisplayLabel });
                 return (
                 <div ref={(element) => registerSectionRef('combo', element)} style={styles.section}>
                   <CardPressable
@@ -543,7 +546,7 @@ export default function RivalsPage() {
                     onPress={navigateToCombo}
                   >
                     <div style={styles.cardHeaderText}>
-                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: comboDisplayLabel })}</span>
+                      <span style={styles.cardTitle}>{comboTitle}</span>
                     </div>
                     <span style={styles.viewAll}>{t('common.viewAll')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
@@ -559,7 +562,7 @@ export default function RivalsPage() {
                         onAnimationEnd={clearAnim}
                       />
                     ))}
-                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCombo}>
+                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCombo} ariaLabel={viewAllCtaName(t('rivals.viewAllRivals'), comboTitle)}>
                       {t('rivals.viewAllRivals')}
                     </CardPressable>
                   </div>
@@ -574,6 +577,7 @@ export default function RivalsPage() {
                 const previewBelow = entry.data.below.slice(0, PREVIEW_COUNT);
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToInstrument = () => navigate(Routes.allRivals(entry.instrument), { state: { from: 'rivals' } });
+                const instrumentTitle = t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) });
                 return (
                   <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={styles.section}>
                     <CardPressable
@@ -583,9 +587,9 @@ export default function RivalsPage() {
                       onAnimationEnd={clearAnim}
                       onPress={navigateToInstrument}
                     >
-                      <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
+                      <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly decorativeIcon />
                       <div style={styles.cardHeaderText}>
-                        <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}</span>
+                        <span style={styles.cardTitle}>{instrumentTitle}</span>
                       </div>
                       <span style={styles.viewAll}>{t('common.viewAll')}</span>
                       <IoChevronForward size={20} style={styles.chevron} />
@@ -601,7 +605,7 @@ export default function RivalsPage() {
                           onAnimationEnd={clearAnim}
                         />
                       ))}
-                      <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToInstrument}>
+                      <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToInstrument} ariaLabel={viewAllCtaName(t('rivals.viewAllRivals'), instrumentTitle)}>
                         {t('rivals.viewAllRivals')}
                       </CardPressable>
                     </div>

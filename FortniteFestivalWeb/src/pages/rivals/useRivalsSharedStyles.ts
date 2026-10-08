@@ -1,10 +1,13 @@
 import { useMemo, type CSSProperties } from 'react';
 import {
   Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex,
-  Display, Align, Justify, Cursor, WhiteSpace, InstrumentSize,
+  Display, Align, Justify, Cursor, WhiteSpace,
   flexColumn, flexCenter, flexRow, padding, transition, frostedCard, purpleGlass,
   CssProp, FAST_FADE_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
+
+/** Minimum height of a tappable section header (44 px touch target). */
+const SECTION_HEADER_MIN_TARGET = 44;
 
 /**
  * Shared styles used across rivals pages (RivalsPage, RivalDetailPage, RivalryPage).
@@ -30,7 +33,7 @@ export function useRivalsSharedStyles() {
     sectionHeaderClickable: {
       ...flexRow,
       gap: Gap.md,
-      minHeight: InstrumentSize.sm,
+      minHeight: SECTION_HEADER_MIN_TARGET,
       paddingBottom: Gap.md,
       cursor: Cursor.pointer,
       borderRadius: Radius.sm,
