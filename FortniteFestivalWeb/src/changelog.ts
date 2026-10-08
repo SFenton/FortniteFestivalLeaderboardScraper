@@ -14,6 +14,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'SETTINGS',
         items: [
           'Added a Privacy Policy to Settings, also available directly at /settings/privacy.',
+          'Screen readers now pair each version number with its label, and the version rows wrap instead of running off narrow screens at large text sizes.',
         ],
       },
       {

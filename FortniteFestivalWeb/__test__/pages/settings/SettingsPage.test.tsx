@@ -1105,6 +1105,29 @@ describe('SettingsPage', () => {
     expect(screen.getByTestId('settings-app-version').textContent).toBe(APP_VERSION_LABEL);
   });
 
+  it('exposes each version as a labelled term/definition pair in reading order', () => {
+    renderSettings();
+    const list = screen.getByTestId('settings-version-list');
+    expect(list.tagName).toBe('DL');
+    const terms = within(list).getAllByRole('term');
+    const definitions = within(list).getAllByRole('definition');
+    expect(terms.map(term => term.textContent)).toEqual([
+      'App Version',
+      'Service Version',
+      '@festival/core Version',
+      '@festival/theme Version',
+    ]);
+    expect(definitions).toHaveLength(terms.length);
+    terms.forEach((term, index) => {
+      expect(term.parentElement).toBe(definitions[index]!.parentElement);
+      expect(term.compareDocumentPosition(definitions[index]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    expect(definitions[0]).toBe(screen.getByTestId('settings-app-version'));
+    expect(definitions[0]!.textContent).toBe(APP_VERSION_LABEL);
+    expect(within(list).queryAllByRole('button')).toHaveLength(0);
+    expect(within(list).queryAllByRole('link')).toHaveLength(0);
+  });
+
   it('renders ToggleRow-style service state and publication rows', async () => {
     renderSettings();
 
