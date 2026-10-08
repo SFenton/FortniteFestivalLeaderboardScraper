@@ -40,11 +40,11 @@ export const DirectionSelector = memo(function DirectionSelector({
         <div style={s.hint}>{desc}</div>
       </div>
       <div style={s.icons}>
-        <PressableButton style={s.iconBtn} onPress={() => onChange(true)} aria-label={ascendingLabel ?? t('sort.ascending')}>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(true)} aria-label={ascendingLabel ?? t('sort.ascending')} aria-pressed={ascending}>
           <div style={s.ascCircle} />
           <IoArrowUp size={IconSize.default} style={s.ascIcon} />
         </PressableButton>
-        <PressableButton style={s.iconBtn} onPress={() => onChange(false)} aria-label={descendingLabel ?? t('sort.descending')}>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(false)} aria-label={descendingLabel ?? t('sort.descending')} aria-pressed={!ascending}>
           <div style={s.descCircle} />
           <IoArrowDown size={IconSize.default} style={s.descIcon} />
         </PressableButton>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import ShopSortModal from '../../../../src/pages/shop/modals/ShopSortModal';
 import type { ShopSortSettings } from '../../../../src/pages/shop/shopSort';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -91,5 +91,31 @@ describe('ShopSortModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     expect(props.onCancel).not.toHaveBeenCalled();
     expect(screen.getByText('Discard Sort Changes')).toBeDefined();
+  });
+
+  describe('accessibility', () => {
+    it('names the dialog and exposes every control by role and name in reading order', () => {
+      renderModal();
+      const dialog = screen.getByRole('dialog', { name: 'Sort Item Shop' });
+      const names = within(dialog).getAllByRole('button').map(button => button.getAttribute('aria-label') ?? button.textContent?.trim());
+      expect(names).toEqual(['Close', 'Title', 'Artist', 'Year', 'Duration', 'Ascending', 'Descending', 'Reset', 'Apply Sort Changes']);
+      expect(within(dialog).getByRole('heading', { name: 'Sort Item Shop' })).toBeDefined();
+    });
+
+    it('marks exactly the current mode and direction as pressed', () => {
+      renderModal({ draft: { sortMode: 'duration', sortAscending: false } });
+      const dialog = screen.getByRole('dialog', { name: 'Sort Item Shop' });
+      for (const mode of ['Title', 'Artist', 'Year']) {
+        expect(within(dialog).getByRole('button', { name: mode, pressed: false })).toBeDefined();
+      }
+      expect(within(dialog).getByRole('button', { name: 'Duration', pressed: true })).toBeDefined();
+      expect(within(dialog).getByRole('button', { name: 'Ascending', pressed: false })).toBeDefined();
+      expect(within(dialog).getByRole('button', { name: 'Descending', pressed: true })).toBeDefined();
+    });
+
+    it('exposes the disabled Apply state until the draft changes', () => {
+      renderModal();
+      expect((screen.getByRole('button', { name: 'Apply Sort Changes' }) as HTMLButtonElement).disabled).toBe(true);
+    });
   });
 });
