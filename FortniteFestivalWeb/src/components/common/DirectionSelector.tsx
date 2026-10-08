@@ -18,12 +18,16 @@ export interface DirectionSelectorProps {
   onChange: (ascending: boolean) => void;
   title?: string;
   hint?: string;
+  ascendingLabel?: string;
+  descendingLabel?: string;
 }
 
 export const DirectionSelector = memo(function DirectionSelector({
   ascending, onChange,
   title,
   hint,
+  ascendingLabel,
+  descendingLabel,
 }: DirectionSelectorProps) {
   const { t } = useTranslation();
   const s = useStyles(ascending);
@@ -36,11 +40,11 @@ export const DirectionSelector = memo(function DirectionSelector({
         <div style={s.hint}>{desc}</div>
       </div>
       <div style={s.icons}>
-        <PressableButton style={s.iconBtn} onPress={() => onChange(true)} aria-label={t('sort.ascending')}>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(true)} aria-label={ascendingLabel ?? t('sort.ascending')}>
           <div style={s.ascCircle} />
           <IoArrowUp size={IconSize.default} style={s.ascIcon} />
         </PressableButton>
-        <PressableButton style={s.iconBtn} onPress={() => onChange(false)} aria-label={t('sort.descending')}>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(false)} aria-label={descendingLabel ?? t('sort.descending')}>
           <div style={s.descCircle} />
           <IoArrowDown size={IconSize.default} style={s.descIcon} />
         </PressableButton>

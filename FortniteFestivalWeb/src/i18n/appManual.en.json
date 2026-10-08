@@ -416,7 +416,7 @@
           "gridList": {
             "title": "Grid And List Views",
             "copy": {
-              "body": "Grid and list views support different browsing densities. Grid view emphasizes album art and visual scanning, while list view is better when you want a tighter table-like pass through shop songs."
+              "body": "Grid and list views support different browsing densities. Grid view emphasizes album art and visual scanning, while list view is better when you want a tighter table-like pass through shop songs. Sort orders both views by title, artist, year, or duration in either direction, and the app remembers your choice."
             },
             "carousels": {
               "gridList": "Shop grid and list"

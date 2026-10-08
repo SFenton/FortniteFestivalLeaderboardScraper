@@ -1040,18 +1040,33 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('hides the mobile Shop view-toggle FAB below the narrow-grid breakpoint', async () => {
+  it('offers only Sort in the mobile Shop FAB below the narrow-grid breakpoint', async () => {
     setMobileWidth(375);
     markShopFirstRunSeen();
     window.location.hash = '#/shop';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Switch to list view' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Switch to grid view' })).toBeNull();
-      expect(screen.queryByLabelText('Actions')).toBeNull();
-    }, { timeout: 5000 });
-    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }, { timeout: 5000 }));
+    expect(await screen.findByRole('button', { name: 'Sort Item Shop' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'List View' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Grid View' })).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('opens the Shop sort modal from the mobile FAB', async () => {
+    setMobileWidth(430);
+    markShopFirstRunSeen();
+    window.location.hash = '#/shop';
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }, { timeout: 5000 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sort Item Shop' }));
+    const dialog = await screen.findByRole('dialog');
+    for (const label of ['Title', 'Artist', 'Year', 'Duration']) {
+      expect(within(dialog).getByText(label)).toBeDefined();
+    }
     window.location.hash = '';
   });
 
