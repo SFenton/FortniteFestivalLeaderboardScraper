@@ -735,7 +735,11 @@ the web Dockerfile as `FST_APP_BUILD_NUMBER` and `FST_APP_COMMIT`.
 - shortens the commit to seven characters.
 
 Settings → App Version shows `<version> · <commit>`, and the What's New title
-shows the same version.
+shows the same version. The Settings version card (`SettingsVersionList`) is a
+description list: each label is a `dt` and each value its `dd`, in label →
+value order. The `·` is hidden from assistive technology and a visually hidden
+"commit" word is announced instead (`<version>, commit <sha>`). Rows wrap so
+labels and values stay inside the card at 320 CSS px with doubled text.
 
 Builds without a valid build number keep the plain `package.json` version and
 omit the commit. That covers local development, tests, and the committed

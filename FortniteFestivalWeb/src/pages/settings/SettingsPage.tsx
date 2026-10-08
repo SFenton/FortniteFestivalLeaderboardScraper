@@ -50,7 +50,8 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import FeedbackModal from './feedback/FeedbackModal';
 
-import { APP_VERSION_LABEL, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
+import { APP_COMMIT, APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
+import SettingsVersionList from './SettingsVersionList';
 import './settingsEnglish';
 import '../../components/firstRun/firstRunEnglish';
 
@@ -792,22 +793,14 @@ export default function SettingsPage() {
             <div ref={(element) => registerSectionRef('version', element)}>
               <SectionHeader title={t('settings.versionTitle')} description={t('settings.versionHint')} />
               <Card>
-                <div style={st.versionRow}>
-                  <span>{t('settings.appVersion')}</span>
-                  <span style={st.versionValue} data-testid="settings-app-version">{APP_VERSION_LABEL}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceVersion')}</span>
-                  <span style={st.versionValue}>{serviceVersion ?? t('common.loading')}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.coreVersion')}</span>
-                  <span style={st.versionValue}>{CORE_VERSION}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.themeVersion')}</span>
-                  <span style={st.versionValue}>{THEME_VERSION}</span>
-                </div>
+                <SettingsVersionList
+                  rows={[
+                    { id: 'app', label: t('settings.appVersion'), value: APP_VERSION, commit: APP_COMMIT, testId: 'settings-app-version' },
+                    { id: 'service', label: t('settings.serviceVersion'), value: serviceVersion ?? t('common.loading') },
+                    { id: 'core', label: t('settings.coreVersion'), value: CORE_VERSION },
+                    { id: 'theme', label: t('settings.themeVersion'), value: THEME_VERSION },
+                  ]}
+                />
               </Card>
             </div>
           </FadeInDiv>
@@ -1079,14 +1072,6 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
       color: Colors.textMuted,
       lineHeight: LineHeight.relaxed,
       marginBottom: Gap.md,
-    } as CSSProperties,
-    versionRow: {
-      ...flexBetween,
-      padding: padding(Gap.sm, Gap.none),
-      fontSize: Font.md,
-    } as CSSProperties,
-    versionValue: {
-      color: Colors.textSecondary,
     } as CSSProperties,
     resetRow: {
       ...flexBetween,
