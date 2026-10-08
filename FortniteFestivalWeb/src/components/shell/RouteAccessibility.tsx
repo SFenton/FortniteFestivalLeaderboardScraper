@@ -11,6 +11,10 @@ import RouteAccessibilityRuntime from './RouteAccessibilityRuntime';
 
 const MAIN_CONTENT_ID = 'main-content';
 
+export function focusRouteMain(): void {
+  document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: true });
+}
+
 export type RouteAccessibilityProps = {
   pathname: string;
   titleOverride?: string | null;
@@ -26,7 +30,7 @@ export function RouteAccessibility({
 }: RouteAccessibilityProps) {
   const handleSkip = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
-    document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: true });
+    focusRouteMain();
   };
 
   return (

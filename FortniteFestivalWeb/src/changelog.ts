@@ -37,6 +37,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'SUGGESTIONS',
         items: [
           'Starting a fresh mix now keeps the list at the top while new cards finish loading.',
+          'After Start a new mix, keyboard and screen reader focus moves to the top of Suggestions instead of being lost.',
         ],
       },
       {
