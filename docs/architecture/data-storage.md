@@ -773,13 +773,14 @@ timeout of a few minutes. If it fails, it leaves an invalid index: drop it with
 `DROP INDEX CONCURRENTLY` and rebuild. Without the indexes the flush keeps
 working on the old, slower plan.
 
-`band_retention_floor` holds one row per song and band type with the lowest
-position band prune keeps unconditionally (`floor_rank`, `floor_score`,
+`band_retention_floor` holds one row per song and band type: the floor
+position a margin below band prune's window (`floor_rank`, `floor_score`,
 `floor_end_time`), the first valid entry's key, and the `max_valid_entries`
 it was computed for. Each prune that runs with the floor enabled replaces the
 whole table in its own transaction. `band_retention_floor_shadow` is an
-unlogged scratch list of flush rows recorded in `Report` mode, cleared by the
-next prune. Both tables are derived and safe to truncate. Behaviour is
+unlogged scratch list of the flush rows found below a floor (key, score, end
+time), cleared by the next prune after it counts how many of them it would
+keep. Both tables are derived and safe to truncate. Behaviour is
 described in [worker: band retention floor](../components/worker.md#band-retention-floor).
 
 ## Publication ownership

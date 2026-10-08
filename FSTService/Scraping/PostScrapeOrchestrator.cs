@@ -3127,7 +3127,8 @@ public sealed class PostScrapeOrchestrator
         {
             var result = _bandPersistence.PruneBandEntriesDetailed(
                 ctx.RegisteredIds,
-                captureRetentionFloor: _options.Value.BandRetentionFloorMode != BandRetentionFloorMode.Off);
+                captureRetentionFloor: _options.Value.BandRetentionFloorMode != BandRetentionFloorMode.Off,
+                retentionFloorMarginRows: _options.Value.BandRetentionFloorMarginRows);
             if (result.DeletedEntries > 0)
                 _log.LogInformation("Band pruning complete: {Deleted:N0} entries removed.", result.DeletedEntries);
             return result;

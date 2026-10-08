@@ -1,3 +1,4 @@
+using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
@@ -1042,6 +1043,14 @@ public sealed class ScraperOptions
     /// Set via <c>Scraper__BandRetentionFloorMode</c>.
     /// </summary>
     public BandRetentionFloorMode BandRetentionFloorMode { get; set; } = BandRetentionFloorMode.Off;
+
+    /// <summary>
+    /// Rows between band prune's last kept window row and the recorded retention
+    /// floor. The margin absorbs over-threshold flips at the top of a leaderboard
+    /// between the flush and prune (each moves the window down one row). Default
+    /// 100. Set via <c>Scraper__BandRetentionFloorMarginRows</c>.
+    /// </summary>
+    public int BandRetentionFloorMarginRows { get; set; } = BandLeaderboardPersistence.DefaultRetentionFloorMarginRows;
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).

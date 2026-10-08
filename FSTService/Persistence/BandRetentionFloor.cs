@@ -8,18 +8,21 @@ namespace FSTService.Persistence;
 /// <summary>
 /// Per-scope band retention floor. Band prune keeps, for each (song, band type),
 /// the over-threshold rows ranked above the first valid row plus the next
-/// <c>maxValidEntries</c> rows, plus any team with a registered member. The floor
-/// is the last position that prune keeps unconditionally. A staged row that ranks
-/// strictly below it, is not already stored, and has no registered member would be
-/// deleted by the next prune, so the flush may skip it.
+/// <c>maxValidEntries</c> rows (the window), plus any team with a registered
+/// member. The floor is recorded a margin of rows below the window's last row. A
+/// staged row that ranks strictly below it, is not already stored, and has no
+/// registered member would normally be deleted by the next prune, so the flush
+/// may skip it.
 /// </summary>
 /// <remarks>
-/// Rows only move up between a prune and the next flush (scores are maxima and
-/// only prune deletes band entries), so a stored floor stays conservative, with
-/// one exception: when the first valid row becomes over-threshold, prune keeps
-/// rows further down. Floors are therefore dropped for scopes whose first valid
-/// row is staged as over-threshold, and whenever over-threshold flags are
-/// recomputed outside the flush.
+/// Between a prune and the next flush rows only move up (scores are maxima and
+/// only prune deletes band entries). The window can still move down when rows
+/// at the top become over-threshold, for example when band extraction applies
+/// CHOpt validation after the flush, so the floor keeps a margin. Every skipped
+/// row is recorded in the shadow table with its rank keys. The next prune
+/// counts exactly how many of them it would have kept: rows that rank at or
+/// above its window's last row, rows another writer stored meanwhile, and rows
+/// whose team gained a registered member.
 /// </remarks>
 public static class BandRetentionFloorSchema
 {
@@ -45,6 +48,8 @@ public static class BandRetentionFloorSchema
             band_type        TEXT NOT NULL,
             team_key         TEXT NOT NULL,
             instrument_combo TEXT NOT NULL,
+            score            INT  NOT NULL,
+            end_time_key     TEXT NOT NULL,
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo)
         );
         """;
@@ -132,7 +137,8 @@ public sealed class BandRetentionFloorFilter
     /// an index-only scan (see <see cref="BandSpoolWriterFactory.PrefilterUnchangedSql"/>).
     /// </summary>
     internal const string BelowFloorSelectSql = """
-        SELECT s.ctid AS staging_ctid, s.song_id, s.band_type, s.team_key, s.instrument_combo
+        SELECT s.ctid AS staging_ctid, s.song_id, s.band_type, s.team_key, s.instrument_combo,
+               s.score, COALESCE(s.end_time, '') AS end_time_key
         FROM _be_staging s
         JOIN band_retention_floor f
           ON f.song_id = s.song_id AND f.band_type = s.band_type
@@ -146,22 +152,44 @@ public sealed class BandRetentionFloorFilter
                 AND e.team_key = s.team_key AND e.instrument_combo = s.instrument_combo)
         """;
 
+    private const string RecordShadowSql = """
+        INSERT INTO band_retention_floor_shadow (song_id, band_type, team_key, instrument_combo, score, end_time_key)
+        SELECT DISTINCT ON (b.song_id, b.band_type, b.team_key, b.instrument_combo)
+               b.song_id, b.band_type, b.team_key, b.instrument_combo, b.score, b.end_time_key
+        FROM below_floor b
+        ORDER BY b.song_id, b.band_type, b.team_key, b.instrument_combo, b.score DESC, b.end_time_key ASC
+        ON CONFLICT (song_id, band_type, team_key, instrument_combo) DO UPDATE SET
+            score = GREATEST(band_retention_floor_shadow.score, EXCLUDED.score),
+            end_time_key = CASE
+                WHEN EXCLUDED.score > band_retention_floor_shadow.score THEN EXCLUDED.end_time_key
+                WHEN EXCLUDED.score = band_retention_floor_shadow.score
+                    THEN LEAST(band_retention_floor_shadow.end_time_key, EXCLUDED.end_time_key)
+                ELSE band_retention_floor_shadow.end_time_key
+            END
+        """;
+
+    /// <summary>Records the below-floor rows and removes them from the chunk.</summary>
     internal const string EnforceSql = $"""
         WITH below_floor AS MATERIALIZED (
         {BelowFloorSelectSql}
+        ),
+        recorded AS (
+        {RecordShadowSql}
         )
         DELETE FROM _be_staging s
         USING below_floor b
         WHERE s.ctid = b.staging_ctid
         """;
 
+    /// <summary>Records the below-floor rows, leaves them staged, and returns their count.</summary>
     internal const string ReportSql = $"""
-        INSERT INTO band_retention_floor_shadow (song_id, band_type, team_key, instrument_combo)
-        SELECT b.song_id, b.band_type, b.team_key, b.instrument_combo
-        FROM (
+        WITH below_floor AS MATERIALIZED (
         {BelowFloorSelectSql}
-        ) b
-        ON CONFLICT DO NOTHING
+        ),
+        recorded AS (
+        {RecordShadowSql}
+        )
+        SELECT count(*) FROM below_floor
         """;
 
     private readonly ConcurrentDictionary<(string SongId, string BandType, string TeamKey, string InstrumentCombo), byte> _stagedOverThreshold = new();
@@ -175,6 +203,7 @@ public sealed class BandRetentionFloorFilter
         IEnumerable<string> registeredIds,
         int maxValidEntries = BandLeaderboardPersistence.DefaultMaxValidBandEntries)
     {
+
         Mode = mode;
         MaxValidEntries = maxValidEntries;
         _registeredIds = registeredIds
@@ -269,7 +298,9 @@ public sealed class BandRetentionFloorFilter
         cmd.CommandText = Mode == BandRetentionFloorMode.Enforce ? EnforceSql : ReportSql;
         cmd.Parameters.AddWithValue("maxValid", MaxValidEntries);
         cmd.Parameters.Add("registeredIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = _registeredIds;
-        var affected = cmd.ExecuteNonQuery();
+        var affected = Mode == BandRetentionFloorMode.Enforce
+            ? cmd.ExecuteNonQuery()
+            : Convert.ToInt32(cmd.ExecuteScalar());
         Interlocked.Add(ref _belowFloorRows, affected);
         return affected;
     }

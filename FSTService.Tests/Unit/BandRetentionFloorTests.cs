@@ -37,7 +37,7 @@ public sealed class BandRetentionFloorTests : IDisposable
         var result = persistence.PruneBandEntriesDetailed(
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             MaxValid,
-            captureRetentionFloor: true);
+            captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
         Assert.Equal(2, result.DeletedEntries);
         Assert.Equal(1, result.RetentionFloor!.Scopes);
@@ -68,7 +68,7 @@ public sealed class BandRetentionFloorTests : IDisposable
             Upsert(baseline, song, entries);
         }
 
-        enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
         baseline.PruneBandEntriesDetailed(registered, MaxValid);
         Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
 
@@ -98,7 +98,7 @@ public sealed class BandRetentionFloorTests : IDisposable
             }
 
             belowFloor += filter.BelowFloorRows;
-            enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+            enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
             baseline.PruneBandEntriesDetailed(registered, MaxValid);
 
             Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
@@ -114,7 +114,7 @@ public sealed class BandRetentionFloorTests : IDisposable
         var board = Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList();
         Upsert(persistence, "song-a", board);
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
         var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Report, registered, MaxValid);
         await using (var spool = BandSpoolWriterFactory.Create(Logger(), persistence, retentionFloor: filter))
@@ -128,9 +128,9 @@ public sealed class BandRetentionFloorTests : IDisposable
         Assert.Equal(2, filter.BelowFloorRows);
         Assert.Contains(TeamKey("late-1"), ReadKeys(_enforced, "song-a"));
 
-        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
-        Assert.Equal((2L, 0L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowSurvivors));
+        Assert.Equal((2L, 0L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowRowsKept));
         Assert.DoesNotContain(TeamKey("late-1"), ReadKeys(_enforced, "song-a"));
     }
 
@@ -141,7 +141,7 @@ public sealed class BandRetentionFloorTests : IDisposable
         var board = Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList();
         Upsert(persistence, "song-a", board);
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
         // The first valid entry turns over-threshold without invalidating the floor,
         // so prune now keeps one more row than the floor promised.
@@ -156,9 +156,58 @@ public sealed class BandRetentionFloorTests : IDisposable
             spool.FlushAll();
         }
 
-        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
-        Assert.Equal((1L, 1L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowSurvivors));
+        Assert.Equal((1L, 1L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowRowsKept));
+    }
+
+    [Theory]
+    [InlineData(0, 1L)]
+    [InlineData(2, 0L)]
+    public async Task Enforce_detects_a_window_lowered_after_the_flush_and_margin_absorbs_it(int margin, long expectedKept)
+    {
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var enforced = Persistence(_enforced);
+        var baseline = Persistence(_baseline);
+        var board = Enumerable.Range(0, 9).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList();
+        Upsert(enforced, "song-a", board);
+        Upsert(baseline, "song-a", board);
+        enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: margin);
+        baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+        // Production re-fetches the rows just below the window every scrape, so the
+        // staged page includes them along with rows further down.
+        BandLeaderboardEntry[] staged = [Entry("team-5", 750), Entry("team-6", 740), Entry("late-1", 735), Entry("late-2", 300)];
+        var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        await using (var spool = BandSpoolWriterFactory.Create(Logger(), enforced, retentionFloor: filter))
+        {
+            spool.Enqueue("song-a", BandType, staged);
+            spool.Complete();
+            filter.PrepareForFlush(_enforced.DataSource);
+            spool.FlushAll();
+        }
+
+        await using (var spool = BandSpoolWriterFactory.Create(Logger(), baseline))
+        {
+            spool.Enqueue("song-a", BandType, staged);
+            spool.Complete();
+            spool.FlushAll();
+        }
+
+        // Band extraction can mark the first valid entry over-threshold after the
+        // flush; prune then keeps one more row at the bottom.
+        var flip = Entry("team-0", 800, isOverThreshold: true);
+        Upsert(enforced, "song-a", [flip]);
+        Upsert(baseline, "song-a", [flip]);
+
+        var result = enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: margin);
+        baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+        Assert.Equal(expectedKept, result.RetentionFloor!.ShadowRowsKept);
+        if (expectedKept == 0)
+            Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
+        else
+            Assert.NotEqual(Snapshot(_baseline), Snapshot(_enforced));
     }
 
     [Fact]
@@ -168,7 +217,7 @@ public sealed class BandRetentionFloorTests : IDisposable
         Upsert(persistence, "song-a", Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
         Upsert(persistence, "song-b", Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true);
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
         Assert.Equal(2, ReadFloors(_enforced).Count);
 
         var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
@@ -192,7 +241,7 @@ public sealed class BandRetentionFloorTests : IDisposable
         var persistence = Persistence(_enforced);
         Upsert(persistence, "song-a", Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
         Upsert(persistence, "song-b", Enumerable.Range(0, 8).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
-        persistence.PruneBandEntriesDetailed(new HashSet<string>(StringComparer.OrdinalIgnoreCase), MaxValid, captureRetentionFloor: true);
+        persistence.PruneBandEntriesDetailed(new HashSet<string>(StringComparer.OrdinalIgnoreCase), MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
 
         using var conn = _enforced.DataSource.OpenConnection();
         Assert.Equal(1, BandRetentionFloorSchema.InvalidateForSongs(conn, null, [BandType], ["song-a"]));

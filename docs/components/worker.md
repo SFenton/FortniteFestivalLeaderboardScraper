@@ -877,30 +877,48 @@ teams, mostly from that churn.
 `Scraper:BandRetentionFloorMode` (default `Off`) breaks the cycle:
 
 - With `Report` or `Enforce`, prune records each scope's floor in
-  `band_retention_floor` from the same ranking it deletes with: the score and
-  end time at rank `first_valid_rn + 10,000 - 1`, plus the key of the first
-  valid entry. The flush then looks for staged rows that rank strictly below
-  their scope's floor, are not already stored, and have no registered member.
-  Prune would delete these.
+  `band_retention_floor` from the same ranking it deletes with. The floor is
+  the score and end time at rank `first_valid_rn + 10,000 - 1 + margin`, where
+  the margin is `Scraper:BandRetentionFloorMarginRows` (default `100`). Prune
+  also records the key of the first valid entry.
+- The flush looks for staged rows that rank strictly below their scope's floor,
+  are not already stored, and have no registered member.
 - `Enforce` removes those rows from the chunk before the upsert, so they never
   write entries, member stats or lookups.
-- `Report` writes them as before and records their keys in the unlogged
-  `band_retention_floor_shadow`. The next prune logs how many of them it kept
-  ("survived") and warns if any did. A survivor means enforcing would have
-  skipped a row that prune keeps.
+- `Report` writes them as before.
+- Both modes record each such row's key, score and end time in the unlogged
+  `band_retention_floor_shadow`.
+
+The next prune counts exactly how many recorded rows it would keep, and warns
+when that count is not zero. A row counts as kept if:
+
+- another writer stored it meanwhile;
+- its team gained a registered member;
+- it ranks at or above the window's last row; or
+- the scope no longer fills its window and the row fits in the open positions.
+
+In `Report` mode a kept row is simply still present. In `Enforce` mode the same
+count is the number of rows the scrape is missing. They come back on the next
+scrape because the next floor is recorded below them.
 
 Between a prune and the next flush, rows only move up: scores are maxima and
-only prune deletes band entries. A stored floor therefore stays conservative,
-with one exception: when the first valid entry becomes over-threshold, prune
-keeps rows further down. Before the first chunk, the flush drops the floor of
-every scope whose recorded first valid entry is staged as over-threshold. An
-over-threshold recompute after a max-score change (`BandRankingRepairService`)
-drops the floors of the songs it changed. Staged rows in a scope without a
-floor are flushed as before. If preparation fails, the flush continues without
-the floor for that scrape.
+only prune deletes band entries. The window can still move down when entries
+at the top become over-threshold, each flip by one row. The band page fetch
+stages every row with `is_over_threshold = false` (it has no max scores), and
+band extraction applies CHOpt validation later in the same scrape, before
+prune. That is why the floor sits a margin below the window: production
+re-fetches the rows just under the window every scrape, and the margin keeps
+them, so up to `margin` flips per scope cannot reach a skipped row.
+
+The flush also drops the floor of every scope whose recorded first valid entry
+is staged as over-threshold. An over-threshold recompute after a max-score
+change (`BandRankingRepairService`) drops the floors of the songs it changed.
+Staged rows in a scope without a floor are flushed as before. If preparation
+fails, the flush continues without the floor for that scrape.
 
 The worker creates the two small tables on first use, so no deploy hook is
-needed. Rollback is `Off`.
+needed. Rollback is `Off`. Promote `Report` to `Enforce` only after scrapes
+report zero kept rows.
 
 ## Durable phase progress
 
