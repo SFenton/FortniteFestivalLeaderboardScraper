@@ -1257,6 +1257,12 @@ covers the announced `<version>, commit <sha>` wording. WebKit mobile runs this
 focused accessibility surface on every PR; WebKit desktop and Firefox desktop
 retain it in the nightly matrix.
 
+`specs/accessibility/privacy-policy.spec.ts` owns the Settings Privacy Policy
+row and modal: link name and `aria-haspopup`, reading/Tab order after
+Licenses, a 44 px row target (the shared modal Close button is held to WCAG
+2.2 AA 24 px), heading order, keyboard open/trap/Escape with focus returned to
+the row, axe on the dialog, 320 px reflow, and reduced motion.
+
 Focus appearance has a separate computed-style regression matrix:
 
 ```bash
