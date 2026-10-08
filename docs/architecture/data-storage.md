@@ -748,7 +748,11 @@ Two repo-owned checks refuse impossible publications, split by cost:
 | The scrape being published has no `scrape_phase_timings` row with `success = FALSE` | `trg_guard_scrape_publication_no_failed_phases`, a `BEFORE UPDATE OF published_scrape_id` trigger on `scrape_publication_state`, inside the cutover | about 4 ms |
 
 Either failure fails the publication through the normal scrape-failure path;
-the published scrape stays current.
+the published scrape stays current. A deferred ready publication commits
+without re-preparation, so the worker repeats the ranking checks (outside the
+cutover) before resuming it. An impossible row fails and isolates that
+candidate; a transient database error during the check keeps the candidate
+ready for the next retry instead of failing it.
 
 Until 2026-10, production carried operator-installed versions of these
 objects. The pointer trigger also ran a no-op `UPDATE account_rankings` (to

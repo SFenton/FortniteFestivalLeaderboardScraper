@@ -3144,6 +3144,16 @@ public sealed partial class MetaDatabase
         }
     }
 
+    public void VerifyPublishableRankings(long scrapeId)
+    {
+        ValidatePublicationCommitOptions();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        ApplyPublicationPreparationTimeouts(conn, tx);
+        VerifyPublishableRankingDenominators(conn, tx, scrapeId);
+        tx.Commit();
+    }
+
     /// <summary>
     /// Refuses to prepare a publication while any ranking row has an
     /// impossible denominator. These full-table checks (several seconds on
