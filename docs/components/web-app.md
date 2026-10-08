@@ -5,6 +5,7 @@ last_verified: 2026-10-07
 last_verified_commit: a4b8bf4d
 sources:
   - FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/components/SuggestionsMixLimit.tsx
   - FortniteFestivalWeb/src/pages/songs/components/SongsToolbar.tsx
   - FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx
   - FortniteFestivalWeb/src/hooks/data/useFilteredSongs.ts
@@ -657,7 +658,10 @@ snapshot because they reuse the generator. Each generator has a distinct mix
 identity, and the raw navigation cache stops at 1,000 categories. The page
 then exposes an explicit **Start a new mix** action that creates a fresh seeded
 generator while retaining the selected source and filters; it never silently
-evicts the user-visible backscroll range. Filtered-empty sessions continue
+evicts the user-visible backscroll range. The action's button is described by
+the limit message, and because a successful fresh mix unmounts it, focus moves
+to the route's labelled `main#main-content` (the same target as PUSH route
+focus) instead of falling to `<body>`. Filtered-empty sessions continue
 loading until a match, true generator exhaustion, or that ceiling.
 
 Category cards are variable-height TanStack Virtual rows rooted in the
