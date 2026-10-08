@@ -150,6 +150,31 @@ public static class DatabaseInitializer
             LockTimeout: NotificationSchemaLockTimeout,
             StatementTimeout: NotificationSchemaStatementTimeout);
 
+    internal static DatabaseSchemaInitializationStep PublicationGuardInitializationStep =>
+        new(
+            Name: PublicationGuardSchema.StepName,
+            Sql: PublicationGuardSchema.Sql,
+            CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+            UseShortTransaction: true,
+            LockTimeout: NotificationSchemaLockTimeout,
+            StatementTimeout: NotificationSchemaStatementTimeout);
+
+    /// <summary>
+    /// Applies only the publication guard step in one bounded transaction
+    /// (2-second lock timeout, 15-second statement timeout).
+    /// </summary>
+    internal static async Task EnsurePublicationGuardSchemaAsync(
+        string normalizedConnectionString,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(normalizedConnectionString);
+        await using var connection =
+            new PostgresUnpooledConnectionFactory(normalizedConnectionString).CreateConnection();
+        await connection.OpenAsync(ct);
+        await ExecuteSchemaInitializationStepAsync(
+            connection, PublicationGuardInitializationStep, ct);
+    }
+
     internal static async Task
         EnsurePublicationGenerationRetirementSchemaAsync(
             NpgsqlDataSource dataSource,
@@ -475,6 +500,7 @@ public static class DatabaseInitializer
                 UseShortTransaction: false,
                 LockTimeout: null,
                 StatementTimeout: null),
+            PublicationGuardInitializationStep,
             new(
                 Name: "scrape-acquisition-checkpoint",
                 Sql: ScrapeAcquisitionCheckpointSchema.Sql,

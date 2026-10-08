@@ -1258,6 +1258,7 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "publication-guard",
                 "scrape-acquisition-checkpoint",
                 "publication-generation-retirement-columns",
                 "publication-generation-foreign-keys",
@@ -1301,7 +1302,7 @@ public class DatabaseInitializerTests : IDisposable
             "ix_publication_generations_retired_scrape",
             plan[2].Sql,
             StringComparison.Ordinal);
-        var retirementColumns = plan[4];
+        var retirementColumns = plan[5];
         Assert.True(retirementColumns.UseShortTransaction);
         Assert.Equal(20, retirementColumns.CommandTimeoutSeconds);
         Assert.Equal("2s", retirementColumns.LockTimeout);
@@ -1314,7 +1315,7 @@ public class DatabaseInitializerTests : IDisposable
             "ADD COLUMN IF NOT EXISTS retired_scrape_id",
             retirementColumns.Sql,
             StringComparison.Ordinal);
-        var publicationForeignKeys = plan[5];
+        var publicationForeignKeys = plan[6];
         Assert.True(publicationForeignKeys.UseShortTransaction);
         Assert.Equal(20, publicationForeignKeys.CommandTimeoutSeconds);
         Assert.Equal("2s", publicationForeignKeys.LockTimeout);
@@ -1327,7 +1328,7 @@ public class DatabaseInitializerTests : IDisposable
             "ON DELETE RESTRICT",
             publicationForeignKeys.Sql,
             StringComparison.Ordinal);
-        var retirementIndex = plan[6];
+        var retirementIndex = plan[7];
         Assert.False(retirementIndex.UseShortTransaction);
         Assert.True(retirementIndex.UseConcurrentIndex);
         Assert.Equal(20, retirementIndex.CommandTimeoutSeconds);
@@ -1353,7 +1354,7 @@ public class DatabaseInitializerTests : IDisposable
             PublicationGenerationRetirementSchemaMigration
                 .DropIndexSql,
             retirementIndex.CleanupSql);
-        var pathArtifacts = plan[7];
+        var pathArtifacts = plan[8];
         Assert.True(pathArtifacts.UseShortTransaction);
         Assert.Equal(20, pathArtifacts.CommandTimeoutSeconds);
         Assert.Equal("2s", pathArtifacts.LockTimeout);
@@ -1361,12 +1362,12 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(
             PublicationPathArtifactSchema.Sql,
             pathArtifacts.Sql);
-        var retention = plan[8];
+        var retention = plan[9];
         Assert.True(retention.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationRetentionSchema.Sql,
             retention.Sql);
-        var retirementControl = plan[9];
+        var retirementControl = plan[10];
         Assert.True(retirementControl.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationRetirementSchema.Sql,
@@ -1374,7 +1375,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, retirementControl.CommandTimeoutSeconds);
         Assert.Equal("2s", retirementControl.LockTimeout);
         Assert.Equal("15s", retirementControl.StatementTimeout);
-        var quarantine = plan[10];
+        var quarantine = plan[11];
         Assert.True(quarantine.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationQuarantineSchema.Sql,
@@ -1382,7 +1383,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, quarantine.CommandTimeoutSeconds);
         Assert.Equal("2s", quarantine.LockTimeout);
         Assert.Equal("15s", quarantine.StatementTimeout);
-        var drop = plan[11];
+        var drop = plan[12];
         Assert.True(drop.UseShortTransaction);
         Assert.Equal(
             SnapshotGenerationDropSchema.Sql,
@@ -1390,7 +1391,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(20, drop.CommandTimeoutSeconds);
         Assert.Equal("2s", drop.LockTimeout);
         Assert.Equal("15s", drop.StatementTimeout);
-        var maxScoreMaintenance = plan[12];
+        var maxScoreMaintenance = plan[13];
         Assert.True(maxScoreMaintenance.UseShortTransaction);
         Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
         Assert.Equal("2s", maxScoreMaintenance.LockTimeout);

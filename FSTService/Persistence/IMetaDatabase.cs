@@ -64,6 +64,11 @@ public interface IMetaDatabase : IDisposable
         DateTime? rankingsInputCutoffUtc = null);
     PublicationPreparationResult?
         GetDeferredPublicationPreparation();
+    /// <summary>
+    /// Re-runs preparation's impossible-ranking-row checks outside the
+    /// cutover, for a ready publication committed without re-preparation.
+    /// </summary>
+    void VerifyPublishableRankings(long scrapeId);
     PublicationCommitResult CommitPreparedScrapePublication(
         PublicationPreparationResult preparation,
         PublicationCommitIntentHandle? commitIntent = null);

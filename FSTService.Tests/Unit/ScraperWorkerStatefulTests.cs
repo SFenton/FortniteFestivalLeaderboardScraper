@@ -737,6 +737,114 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
+    public async Task DeferredReadyCandidateWithImpossibleRankingIsFailedNotPublished()
+    {
+        var (publishedScrapeId, deferredScrapeId, preparation) =
+            PrepareDeferredCandidate();
+        // A candidate prepared before the relocated check, or whose rankings
+        // changed later, must still be verified before its deferred commit.
+        ExecuteSql(
+            """
+            INSERT INTO account_rankings (
+                account_id, instrument, songs_played, total_charted_songs, coverage,
+                raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
+                weighted_rating, weighted_rank, fc_rate, fc_rate_rank,
+                total_score, total_score_rank, max_score_percent, max_score_percent_rank,
+                avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at)
+            VALUES ('impossible', 'Solo_Guitar', 6, 5, 1.2, 0.5, 0.5, 1, 0.5, 1,
+                    0.2, 1, 100, 1, 0.9, 1, 0.9, 1, 5, 1, 1, now())
+            """);
+
+        var outcome = await ResumeDeferredPublicationAsync();
+
+        Assert.True(outcome.Handled);
+        Assert.False(outcome.Published);
+        Assert.Contains("impossible account ranking denominator", outcome.Detail);
+        Assert.Equal(
+            publishedScrapeId,
+            _metaDb.GetPublicationPointerState().PublishedScrapeId);
+        Assert.NotEqual(
+            PublicationGenerationStatus.Current,
+            _metaDb.GetPublicationGeneration(preparation.PublicationId)?.Status);
+        Assert.Equal("failed", ScrapeStatus(deferredScrapeId));
+    }
+
+    [Fact]
+    public async Task DeferredRankingVerificationTransientFailurePreservesReadyCandidate()
+    {
+        var (_, deferredScrapeId, preparation) = PrepareDeferredCandidate();
+        ExecuteSql("ALTER TABLE solo_family_rankings RENAME TO solo_family_rankings_hidden");
+        try
+        {
+            var outcome = await ResumeDeferredPublicationAsync();
+
+            Assert.True(outcome.Handled);
+            Assert.False(outcome.Published);
+            Assert.Contains("retry scheduled", outcome.Detail);
+        }
+        finally
+        {
+            ExecuteSql("ALTER TABLE solo_family_rankings_hidden RENAME TO solo_family_rankings");
+        }
+
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(preparation.PublicationId)?.Status);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState().WorkingPublicationId);
+        Assert.True(_metaDb.GetPublicReadFreezeState().PublicationCommitDeferred);
+        Assert.NotEqual("failed", ScrapeStatus(deferredScrapeId));
+        _metaDb.FailScrapeRun(deferredScrapeId, "test", "cleanup");
+    }
+
+    private (long PublishedScrapeId, long DeferredScrapeId, PublicationPreparationResult Preparation)
+        PrepareDeferredCandidate()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(publishedScrapeId, 1, 1, 1, 1);
+        _metaDb.PublishScrapeRun(publishedScrapeId, promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(deferredScrapeId, 1, 2, 2, 2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState.PublicationCommitDeferredReason);
+        return (publishedScrapeId, deferredScrapeId, preparation);
+    }
+
+    private async Task<DeferredPublicationResumeOutcome> ResumeDeferredPublicationAsync()
+    {
+        var worker = CreateWorker();
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return await (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+            worker,
+            [CancellationToken.None])!;
+    }
+
+    private void ExecuteSql(string sql)
+    {
+        using var connection = _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    private string? ScrapeStatus(long scrapeId)
+    {
+        using var connection = _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT status FROM scrape_log WHERE id = @id";
+        command.Parameters.AddWithValue("id", checked((int)scrapeId));
+        return command.ExecuteScalar() as string;
+    }
+
+    [Fact]
     public async Task DeferredResumeShutdownPreservesReadyCandidate()
     {
         var publishedScrapeId = _metaDb.StartScrapeRun();

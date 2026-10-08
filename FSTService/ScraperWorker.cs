@@ -2113,12 +2113,39 @@ public sealed class ScraperWorker : BackgroundService
             phase: "Publishing",
             subOperation: "resuming_deferred_publication");
         PublicationCommitResult commit;
+        var rankingsVerified = false;
         try
         {
+            // A deferred ready candidate commits without re-preparation; repeat
+            // preparation's ranking checks (outside the cutover) first.
+            _persistence.Meta.VerifyPublishableRankings(
+                preparation.ScrapeId);
+            rankingsVerified = true;
             commit =
                 await CommitPreparedWithContentionRetriesAsync(
                     preparation,
                     ct);
+        }
+        catch (Exception ex)
+            when (!rankingsVerified
+                && ex is Npgsql.NpgsqlException or TimeoutException)
+        {
+            _log.LogWarning(
+                ex,
+                "Ranking verification for deferred publication {PublicationId} failed transiently; preserving the ready candidate for retry.",
+                preparation.PublicationId);
+            _workerStatus?.FailOperation(
+                "scrape.publication",
+                ex,
+                "deferred publication remains ready");
+            _workerStatus?.DetachScrape(
+                preparation.ScrapeId,
+                "Deferred publication remains ready.");
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail:
+                    "Deferred publication ranking verification failed transiently; retry scheduled.");
         }
         catch (PublicationCommitShutdownDeferredException ex)
         {

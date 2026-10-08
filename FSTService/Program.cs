@@ -44,6 +44,17 @@ if (SnapshotRetentionSchemaCommand.IsRequested(args))
     return;
 }
 
+// Like the retention-only command, the publication-guard schema command runs
+// before .env loading and host construction.
+if (PublicationGuardSchemaCommand.IsRequested(args))
+{
+    Environment.ExitCode = await PublicationGuardSchemaCommand.RunAsync(
+        args,
+        Environment.GetEnvironmentVariable(PublicationGuardSchemaCommand.ConnectionEnvironment),
+        Console.Out);
+    return;
+}
+
 // Replay dispatch must happen before .env loading and WebApplication/worker
 // registration so production credentials and mutation services are absent.
 if (ReplayCommand.IsRequested(args))

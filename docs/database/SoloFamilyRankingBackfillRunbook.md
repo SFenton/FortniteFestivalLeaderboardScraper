@@ -79,9 +79,12 @@ produced family row has:
 - non-finite coverage/FC rate; or
 - coverage/FC rate greater than `1 + 1e-9`.
 
-The command does not alter or drop
-`fst_account_rankings_denominator_guard_1100` and does not weaken the
-publication guard.
+The command does not create or alter database triggers and does not weaken
+the publication guards: publication preparation independently rejects any
+impossible `solo_family_rankings` or `account_rankings` row (see
+[Data storage: Publication guards](../architecture/data-storage.md#publication-guards)).
+The operator-installed `fst_account_rankings_denominator_guard_1100` trigger
+that existed when this runbook was written has been removed.
 
 The JSON report is deterministic for unchanged inputs and includes:
 
