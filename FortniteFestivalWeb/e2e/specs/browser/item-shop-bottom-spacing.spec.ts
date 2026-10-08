@@ -9,19 +9,20 @@ const EXPECTED_DESKTOP_FAB_CLEARANCE_PX = 96;
 
 test.use({ scenario: createScrollableShopScenario() });
 
-test('narrow Item Shop omits clearance when no mobile FAB is rendered', async ({ page, appState }, testInfo) => {
+test('narrow Item Shop keeps clearance for the Sort FAB without a profile', async ({ page, appState }, testInfo) => {
   test.skip(!isMobileProject(testInfo.project.name), 'mobile handset geometry only');
   await page.setViewportSize({ width: 390, height: 844 });
   await appState.reset();
   await appState.clearProfile();
   await gotoAppRoute(page, '/shop');
 
-  await expect(page.getByTestId('mobile-fab')).toHaveCount(0);
+  await expect(page.getByTestId('mobile-fab').locator('button').first()).toBeVisible();
   const geometry = await scrollToLastShopItem(page);
 
   expect(geometry.maxScroll).toBeGreaterThan(0);
   expect(geometry.distanceFromBottom).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.trailingGap - geometry.listPaddingBottom)).toBeLessThanOrEqual(2);
+  if (geometry.fabTop == null) throw new Error('Sort FAB button was not measurable');
+  expect(geometry.lastItemBottom).toBeLessThanOrEqual(geometry.fabTop - 1);
 });
 
 test('narrow Item Shop keeps clearance for the selected-band FAB', async ({ page, appState }, testInfo) => {
