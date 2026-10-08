@@ -1268,6 +1268,12 @@ Detail and Compete. It checks:
 The unit tests in `__test__/pages/rivals/rivalsPages.test.tsx` and
 `__test__/pages/compete/CompetePage.test.tsx` check the same names and order.
 
+`specs/accessibility/privacy-policy.spec.ts` owns the Settings Privacy Policy
+row and modal: link name and `aria-haspopup`, reading/Tab order after
+Licenses, a 44 px row target (the shared modal Close button is held to WCAG
+2.2 AA 24 px), heading order, keyboard open/trap/Escape with focus returned to
+the row, axe on the dialog, 320 px reflow, and reduced motion.
+
 Focus appearance has a separate computed-style regression matrix:
 
 ```bash
