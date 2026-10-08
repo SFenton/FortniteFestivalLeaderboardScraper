@@ -161,9 +161,11 @@ describe('FabSearchContext — default context (no provider)', () => {
     expect(() => result.current.registerPlayerQuickLinks(null)).not.toThrow();
     expect(() => result.current.openPlayerQuickLinks()).not.toThrow();
     expect(result.current.hasPlayerQuickLinks).toBe(false);
-    expect(() => result.current.registerShopActions({ toggleView: () => {} })).not.toThrow();
+    expect(() => result.current.registerShopActions({ toggleView: () => {}, openSort: () => {} })).not.toThrow();
     expect(() => result.current.shopToggleView()).not.toThrow();
+    expect(() => result.current.shopOpenSort()).not.toThrow();
     expect(result.current.shopActionsReady).toBe(false);
+    expect(result.current.shopSortActive).toBe(false);
     expect(result.current.shopViewMode).toBe('grid');
     expect(() => result.current.setShopViewMode('list')).not.toThrow();
     expect(() => result.current.registerPlayerPageSelect(null)).not.toThrow();

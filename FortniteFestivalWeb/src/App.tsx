@@ -42,7 +42,7 @@ const AnimatedBackground = lazy(() => import('./components/shell/AnimatedBackgro
 })));
 const ProximityGlowRuntime = lazy(() => import('./components/shell/ProximityGlowRuntime'));
 /* v8 ignore stop */
-import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
+import { Size, IconSize, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 
 /** Shared route tree used by both mobile and wide-desktop layouts. */
 function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | null; selectedProfile: SelectedProfile | null }) {
@@ -1194,11 +1194,14 @@ function AppShell() {
           ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
-            fabSearch.shopActionsReady && !isNarrowGrid ? [{
-              label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
-              icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
-              onPress: () => fabSearch.shopToggleView(),
-            }] : [],
+            fabSearch.shopActionsReady ? [
+              { label: t('shop.sortTitle'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.shopSortActive, icon: <IoSwapVerticalSharp size={IconSize.fab} />, onPress: () => fabSearch.shopOpenSort() },
+              ...(!isNarrowGrid ? [{
+                label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
+                icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
+                onPress: () => fabSearch.shopToggleView(),
+              }] : []),
+            ] : [],
           )}
           onPress={() => {}}
         />
