@@ -24,6 +24,8 @@ export interface InstrumentHeaderProps {
   className?: string;
   style?: React.CSSProperties;
   iconOnly?: boolean;
+  /** Hide the icon from assistive technology when nearby text already names the instrument. */
+  decorativeIcon?: boolean;
   sig?: string;
 }
 
@@ -35,12 +37,13 @@ const InstrumentHeader = memo(function InstrumentHeader({
   className,
   style,
   iconOnly,
+  decorativeIcon,
   sig,
 }: InstrumentHeaderProps) {
   const s = useStyles(size);
   return (
     <div className={className} style={{ ...s.header, ...style }}>
-      <InstrumentIcon instrument={instrument} sig={sig} size={s.iconSize} />
+      <InstrumentIcon instrument={instrument} sig={sig} size={s.iconSize} decorative={decorativeIcon} />
       {!iconOnly && (
         subtitle ? (
           <div style={s.titleCol}>
