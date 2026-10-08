@@ -732,6 +732,23 @@ and leaves guarded mutations fail-closed. A new validated lease may replace
 the stale owner token and either resume the incomplete workflow or complete
 the post-commit release.
 
+### Rank-history latest rows
+
+`rank_history_latest` (list-partitioned by instrument like `rank_history`)
+and `composite_rank_history_latest` hold each account's newest history row,
+with the same columns. Rank-history snapshots read and update them when
+`Scraper:UseRankHistoryLatestState` is on, so the snapshots no longer rescan
+the full history. `rank_history_latest_state` marks each scope (instrument or
+`composite`) ready only after an enabled snapshot rebuilt it from history.
+
+Invariant: for a ready scope, each latest row equals the account's history row
+with the greatest `snapshot_date`. Snapshots keep it in the same transaction as
+the history write. Retention cleanup keeps every account's newest row. A
+snapshot taken without the option clears the scope's readiness. The tables are
+derived, so truncating them and clearing `rank_history_latest_state` is a safe
+reset; the next enabled snapshot rebuilds them. See
+[configuration](../reference/configuration.md).
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a

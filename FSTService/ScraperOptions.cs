@@ -384,6 +384,16 @@ public sealed class ScraperOptions
     public int RankHistorySnapshotMaxDegreeOfParallelism { get; set; } = 1;
 
     /// <summary>
+    /// When true, rank-history snapshots compare current rankings against the
+    /// maintained <c>rank_history_latest</c> / <c>composite_rank_history_latest</c>
+    /// rows instead of scanning each instrument's and the composite's whole history.
+    /// The first enabled snapshot of each scope rebuilds its latest rows with the
+    /// original scan. Snapshots taken with the option off drop that readiness.
+    /// Default false. Set via <c>Scraper__UseRankHistoryLatestState</c>.
+    /// </summary>
+    public bool UseRankHistoryLatestState { get; set; }
+
+    /// <summary>
     /// Command timeout in seconds for cleanup-time solo projection refreshes. 0 means unlimited.
     /// </summary>
     public int SoloProjectionCleanupCommandTimeoutSeconds { get; set; }
