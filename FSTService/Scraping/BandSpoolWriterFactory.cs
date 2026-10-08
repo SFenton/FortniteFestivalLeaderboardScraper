@@ -36,18 +36,24 @@ public static class BandSpoolWriterFactory
         WHERE s.ctid = u.staging_ctid
         """;
 
-    public static SpoolWriter<BandLeaderboardEntry> Create(ILogger log, BandLeaderboardPersistence persistence, string? baseDirectory = null)
+    public static SpoolWriter<BandLeaderboardEntry> Create(
+        ILogger log,
+        BandLeaderboardPersistence persistence,
+        string? baseDirectory = null,
+        BandRetentionFloorFilter? retentionFloor = null)
     {
         return new SpoolWriter<BandLeaderboardEntry>(
             log, "band",
             serialize: SerializeBandPage,
             deserialize: DeserializeBandPage,
-            flush: (bandType, batch) => FlushBandBatch(log, persistence, bandType, batch),
-            baseDirectory: baseDirectory);
+            flush: (bandType, batch) => FlushBandBatch(log, persistence, bandType, batch, retentionFloor),
+            baseDirectory: baseDirectory,
+            onEnqueue: retentionFloor is null ? null : retentionFloor.Observe);
     }
 
     private static void FlushBandBatch(ILogger log, BandLeaderboardPersistence persistence, string bandType,
-                                        List<(string SongId, IReadOnlyList<BandLeaderboardEntry> Entries)> batch)
+                                        List<(string SongId, IReadOnlyList<BandLeaderboardEntry> Entries)> batch,
+                                        BandRetentionFloorFilter? retentionFloor)
     {
         // Flatten all entries across all songs into one list for bulk COPY.
         // This does 1 staging cycle per table instead of N (one per song).
@@ -143,8 +149,20 @@ public static class BandSpoolWriterFactory
                 deleted = cmd.ExecuteNonQuery();
             }
             int stagingAfter = stagingBefore - deleted;
-            log.LogInformation("Spool [band/{BandType}] pre-filter: {Before:N0} → {After:N0} entries ({Pct:F1}% removed).",
-                bandType, stagingBefore, stagingAfter, deleted * 100.0 / Math.Max(stagingBefore, 1));
+            if (retentionFloor is { IsActive: true })
+            {
+                var belowFloor = retentionFloor.Apply(conn, tx);
+                if (retentionFloor.Mode == BandRetentionFloorMode.Enforce)
+                    stagingAfter -= belowFloor;
+                log.LogInformation("Spool [band/{BandType}] pre-filter: {Before:N0} → {After:N0} entries ({Pct:F1}% removed); retention floor {FloorMode}: {BelowFloor:N0} below floor.",
+                    bandType, stagingBefore, stagingAfter, (stagingBefore - stagingAfter) * 100.0 / Math.Max(stagingBefore, 1),
+                    retentionFloor.Mode, belowFloor);
+            }
+            else
+            {
+                log.LogInformation("Spool [band/{BandType}] pre-filter: {Before:N0} → {After:N0} entries ({Pct:F1}% removed).",
+                    bandType, stagingBefore, stagingAfter, deleted * 100.0 / Math.Max(stagingBefore, 1));
+            }
 
             if (stagingAfter > 0)
             {

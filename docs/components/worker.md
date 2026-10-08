@@ -863,6 +863,45 @@ reductions are diagnostic only; no production improvement is accepted. A
 matched full-scrape A/B remains blocked until the FST capacity guard again has
 at least one `60.4 GB` scrape window, preferably two (`120.8 GB`).
 
+### Band retention floor
+
+Band prune keeps, per song and band type, the over-threshold entries ranked
+above the first valid entry plus the next 10,000 entries, plus any team with a
+registered member, and deletes the rest. Every scrape the flush re-inserted
+rows that prune then deleted: in scrape `1497` the flush inserted or updated
+about 732,000 rows, prune deleted 770,167 entries, 2.03 million member stats
+and 2.03 million member lookups and rebuilt 640,125 team memberships, and only
+1,368 flushed rows survived. The search projection then refreshed 652,114
+teams, mostly from that churn.
+
+`Scraper:BandRetentionFloorMode` (default `Off`) breaks the cycle:
+
+- With `Report` or `Enforce`, prune records each scope's floor in
+  `band_retention_floor` from the same ranking it deletes with: the score and
+  end time at rank `first_valid_rn + 10,000 - 1`, plus the key of the first
+  valid entry. The flush then looks for staged rows that rank strictly below
+  their scope's floor, are not already stored, and have no registered member.
+  Prune would delete these.
+- `Enforce` removes those rows from the chunk before the upsert, so they never
+  write entries, member stats or lookups.
+- `Report` writes them as before and records their keys in the unlogged
+  `band_retention_floor_shadow`. The next prune logs how many of them it kept
+  ("survived") and warns if any did. A survivor means enforcing would have
+  skipped a row that prune keeps.
+
+Between a prune and the next flush, rows only move up: scores are maxima and
+only prune deletes band entries. A stored floor therefore stays conservative,
+with one exception: when the first valid entry becomes over-threshold, prune
+keeps rows further down. Before the first chunk, the flush drops the floor of
+every scope whose recorded first valid entry is staged as over-threshold. An
+over-threshold recompute after a max-score change (`BandRankingRepairService`)
+drops the floors of the songs it changed. Staged rows in a scope without a
+floor are flushed as before. If preparation fails, the flush continues without
+the floor for that scrape.
+
+The worker creates the two small tables on first use, so no deploy hook is
+needed. Rollback is `Off`.
+
 ## Durable phase progress
 
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing

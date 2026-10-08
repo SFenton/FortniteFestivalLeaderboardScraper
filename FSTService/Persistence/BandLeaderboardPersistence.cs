@@ -657,12 +657,24 @@ public sealed class BandLeaderboardPersistence
     /// <c>band_member_stats</c> and <c>band_members</c>.
     /// </summary>
     /// <returns>Total band_entries rows deleted.</returns>
-    public int PruneBandEntries(IReadOnlySet<string> registeredIds, int maxValidEntries = 10000)
+    public int PruneBandEntries(IReadOnlySet<string> registeredIds, int maxValidEntries = DefaultMaxValidBandEntries)
         => PruneBandEntriesDetailed(registeredIds, maxValidEntries).DeletedEntries;
 
-    public BandPruneResult PruneBandEntriesDetailed(IReadOnlySet<string> registeredIds, int maxValidEntries = 10000)
+    /// <summary>Valid entries band prune keeps per song and band type below the over-threshold block.</summary>
+    public const int DefaultMaxValidBandEntries = 10000;
+
+    /// <param name="captureRetentionFloor">When true, records each scope's
+    /// <see cref="BandRetentionFloorSchema">retention floor</see> from the same
+    /// ranking, and reports how many shadow-recorded flush rows survived.</param>
+    public BandPruneResult PruneBandEntriesDetailed(
+        IReadOnlySet<string> registeredIds,
+        int maxValidEntries = DefaultMaxValidBandEntries,
+        bool captureRetentionFloor = false)
     {
         if (maxValidEntries <= 0) return BandPruneResult.Empty;
+        if (captureRetentionFloor)
+            BandRetentionFloorSchema.Ensure(_dataSource);
+        BandRetentionFloorPruneSummary? floorSummary = null;
 
         var affectedTeamsByBandType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var affectedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
@@ -706,6 +718,24 @@ public sealed class BandLeaderboardPersistence
                 cmd.ExecuteNonQuery();
             }
 
+            if (captureRetentionFloor)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    CREATE TEMP TABLE _band_prune_floor_rows (
+                        song_id TEXT NOT NULL,
+                        band_type TEXT NOT NULL,
+                        floor_rank BIGINT NOT NULL,
+                        floor_score INT NOT NULL,
+                        floor_end_time TEXT NOT NULL,
+                        first_valid_team_key TEXT NOT NULL,
+                        first_valid_instrument_combo TEXT NOT NULL
+                    ) ON COMMIT DROP
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
             // Identify entries to DELETE across all songs and band types in one pass.
             // The CTE computes a rank within each (song_id, band_type) partition,
             // finds the first valid entry (is_over_threshold = false), then marks
@@ -716,15 +746,7 @@ public sealed class BandLeaderboardPersistence
             {
                 deleteCmd.Transaction = tx;
                 deleteCmd.CommandTimeout = 0;
-                deleteCmd.CommandText = """
-                    WITH ranked AS (
-                        SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY song_id, band_type
-                                   ORDER BY score DESC, COALESCE(end_time, '') ASC
-                               ) AS rn
-                        FROM band_entries
-                    ),
+                deleteCmd.CommandText = (captureRetentionFloor ? PruneWithFloorCaptureRankedSql : PruneRankedSql) + """
                     boundaries AS (
                         SELECT song_id, band_type,
                                COALESCE(MIN(rn) FILTER (WHERE is_over_threshold = false), 2147483647) AS first_valid_rn
@@ -743,6 +765,7 @@ public sealed class BandLeaderboardPersistence
                                 AND bm.team_key = r.team_key AND bm.instrument_combo = r.instrument_combo
                           )
                     ),
+                    """ + (captureRetentionFloor ? PruneFloorCaptureSql : string.Empty) + """
                     deleted AS (
                         DELETE FROM band_entries be
                         USING to_delete td
@@ -822,7 +845,25 @@ public sealed class BandLeaderboardPersistence
                 DeleteBandTeamMembershipStateForAccounts(conn, tx, affectedAccounts);
             }
 
+            if (captureRetentionFloor)
+                floorSummary = ReplaceRetentionFloors(conn, tx, maxValidEntries);
+
             tx.Commit();
+        }
+
+        if (floorSummary is not null)
+        {
+            _log.LogInformation(
+                "Band retention floor: recorded {Scopes:N0} scope floor(s); {ShadowRows:N0} flush row(s) were recorded below a floor and {Survivors:N0} survived this prune.",
+                floorSummary.Scopes,
+                floorSummary.ShadowRows,
+                floorSummary.ShadowSurvivors);
+            if (floorSummary.ShadowSurvivors > 0)
+            {
+                _log.LogWarning(
+                    "Band retention floor: {Survivors:N0} row(s) recorded below a floor were kept by prune; enforcing the floor would have skipped rows that prune keeps.",
+                    floorSummary.ShadowSurvivors);
+            }
         }
 
         if (deleted > 0)
@@ -852,7 +893,110 @@ public sealed class BandLeaderboardPersistence
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
                 StringComparer.OrdinalIgnoreCase),
-            BandCurrentProjectionScopeTracker.OrderedDistinct(affectedCurrentProjectionScopes));
+            BandCurrentProjectionScopeTracker.OrderedDistinct(affectedCurrentProjectionScopes),
+            floorSummary);
+    }
+
+    private const string PruneRankedSql = """
+        WITH ranked AS (
+            SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY song_id, band_type
+                       ORDER BY score DESC, COALESCE(end_time, '') ASC
+                   ) AS rn
+            FROM band_entries
+        ),
+
+        """;
+
+    private const string PruneWithFloorCaptureRankedSql = """
+        WITH ranked AS (
+            SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
+                   score, COALESCE(end_time, '') AS end_time_key,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY song_id, band_type
+                       ORDER BY score DESC, COALESCE(end_time, '') ASC
+                   ) AS rn
+            FROM band_entries
+        ),
+
+        """;
+
+    // The floor is the last row prune keeps unconditionally (rank first_valid_rn +
+    // maxValid - 1), captured from the same ranking as the delete.
+    private const string PruneFloorCaptureSql = """
+        floor_points AS (
+            SELECT r.song_id, r.band_type, b.first_valid_rn, r.rn, r.score, r.end_time_key,
+                   r.team_key, r.instrument_combo
+            FROM ranked r
+            JOIN boundaries b ON r.song_id = b.song_id AND r.band_type = b.band_type
+            WHERE r.rn = b.first_valid_rn OR r.rn = b.first_valid_rn + @maxValid - 1
+        ),
+        floor_capture AS (
+            INSERT INTO _band_prune_floor_rows (
+                song_id, band_type, floor_rank, floor_score, floor_end_time,
+                first_valid_team_key, first_valid_instrument_combo)
+            SELECT fl.song_id, fl.band_type, fl.rn, fl.score, fl.end_time_key,
+                   fv.team_key, fv.instrument_combo
+            FROM floor_points fl
+            JOIN floor_points fv
+              ON fv.song_id = fl.song_id AND fv.band_type = fl.band_type
+             AND fv.rn = fv.first_valid_rn
+            WHERE fl.rn = fl.first_valid_rn + @maxValid - 1
+            RETURNING 1
+        ),
+
+        """;
+
+    private BandRetentionFloorPruneSummary ReplaceRetentionFloors(NpgsqlConnection conn, NpgsqlTransaction tx, int maxValidEntries)
+    {
+        long shadowRows;
+        long shadowSurvivors;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                SELECT count(*),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM band_entries e
+                           WHERE e.song_id = s.song_id AND e.band_type = s.band_type
+                             AND e.team_key = s.team_key AND e.instrument_combo = s.instrument_combo))
+                FROM band_retention_floor_shadow s
+                """;
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            shadowRows = reader.GetInt64(0);
+            shadowSurvivors = reader.GetInt64(1);
+        }
+
+        int scopes;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                DELETE FROM band_retention_floor_shadow;
+                DELETE FROM band_retention_floor;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO band_retention_floor (
+                    song_id, band_type, max_valid_entries, floor_rank, floor_score, floor_end_time,
+                    first_valid_team_key, first_valid_instrument_combo, computed_at)
+                SELECT song_id, band_type, @maxValid, floor_rank::INT, floor_score, floor_end_time,
+                       first_valid_team_key, first_valid_instrument_combo, now()
+                FROM _band_prune_floor_rows
+                """;
+            cmd.Parameters.AddWithValue("maxValid", maxValidEntries);
+            scopes = cmd.ExecuteNonQuery();
+        }
+
+        return new BandRetentionFloorPruneSummary(scopes, shadowRows, shadowSurvivors);
     }
 
     private void MarkBandTeamMembershipStateForAccounts(IReadOnlyCollection<string> accountIds)
@@ -1459,12 +1603,16 @@ public sealed class BandLeaderboardPersistence
     private sealed record BandTeamMembershipComboKey(string BandType, string TeamKey, string InstrumentCombo);
 }
 
+/// <summary>Floors recorded by a prune and the shadow check of the preceding flush.</summary>
+public sealed record BandRetentionFloorPruneSummary(int Scopes, long ShadowRows, long ShadowSurvivors);
+
 public sealed record BandPruneResult(
     int DeletedEntries,
     int DeletedMemberStats,
     int DeletedMemberLookups,
     IReadOnlyDictionary<string, IReadOnlyCollection<string>> AffectedTeamsByBandType,
-    IReadOnlyCollection<BandCurrentProjectionScopeKey> AffectedCurrentProjectionScopes)
+    IReadOnlyCollection<BandCurrentProjectionScopeKey> AffectedCurrentProjectionScopes,
+    BandRetentionFloorPruneSummary? RetentionFloor = null)
 {
     public static BandPruneResult Empty { get; } = new(
         0,

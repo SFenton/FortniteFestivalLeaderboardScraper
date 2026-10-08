@@ -495,7 +495,9 @@ public static class DatabaseInitializer
                     $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
                     $"{BandRankingStorageNames.GetCurrentSchemaSql()}" +
                     $"{Environment.NewLine}{Environment.NewLine}" +
-                    PublicationGenerationSchema.Sql,
+                    $"{PublicationGenerationSchema.Sql}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    BandRetentionFloorSchema.Sql,
                 CommandTimeoutSeconds: 0,
                 UseShortTransaction: false,
                 LockTimeout: null,

@@ -9,6 +9,13 @@ public enum LeaderboardWriteMode
     OnlineBounded,
 }
 
+public enum BandRetentionFloorMode
+{
+    Off,
+    Report,
+    Enforce,
+}
+
 public enum RegistrationBackfillMode
 {
     BackgroundLowPriority,
@@ -1024,6 +1031,17 @@ public sealed class ScraperOptions
     /// <c>Scraper__BandSpoolFlushMaxParallelBandTypes</c>.
     /// </summary>
     public int BandSpoolFlushMaxParallelBandTypes { get; set; } = 1;
+
+    /// <summary>
+    /// Band retention floor for the post-fetch band spool flush. Band prune
+    /// keeps a bounded number of entries per song and band type and records,
+    /// per scope, the lowest kept position. <c>Enforce</c> skips staged new
+    /// rows that rank strictly below that floor, because the next prune would
+    /// delete them; <c>Report</c> writes them as before and records them so
+    /// prune can confirm that none survive; <c>Off</c> (default) does neither.
+    /// Set via <c>Scraper__BandRetentionFloorMode</c>.
+    /// </summary>
+    public BandRetentionFloorMode BandRetentionFloorMode { get; set; } = BandRetentionFloorMode.Off;
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).

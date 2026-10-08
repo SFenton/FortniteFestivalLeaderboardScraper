@@ -178,6 +178,7 @@ public sealed class DurablePhaseProgressSink
         "Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes",
         "Scraper:BandSearchProjectionParallelBandTypes",
         "Scraper:BandSpoolFlushMaxParallelBandTypes",
+        "Scraper:BandRetentionFloorMode",
         "BandRankHistory:Mode",
         "BandRankHistory:WriteMode",
         "BandTeamRankings:WriteMode",
