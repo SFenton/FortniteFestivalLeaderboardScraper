@@ -1492,6 +1492,14 @@ suite. The same pass also
 drives a fully filtered session to the 1,000-category ceiling and verifies the
 explicit fresh-mix reset.
 
+Because reaching that ceiling is benchmark-only, fresh-mix accessibility runs
+on every PR elsewhere. `__test__/pages/suggestions/SuggestionsFreshMixAccessibility.test.tsx`
+asserts the **Start a new mix** button's role, name, description, reading and
+tab order after the list, keyboard activation, focus moving to the labelled
+Suggestions `main`, and the top reset. `component-tests/suggestions-mix-limit.spec.ts`
+renders the control in real browsers and checks visible keyboard focus, a
+24 px minimum target, 320 px reflow, and 200% zoom with WCAG text spacing.
+
 The accepted PR 4 unvirtualized baseline produced 540 generated/rendered
 categories, about 22.7k DOM nodes, 1,471 frosted markers, about 50.6 MB of
 post-GC heap growth, a 1.28 s worst observed long task, and 1,471 frosted-card
