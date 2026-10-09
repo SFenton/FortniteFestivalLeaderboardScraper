@@ -371,6 +371,7 @@ configuration rollback is independently setting each enable flag to `false`.
 | `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
 | `Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` | `false` | boolean | After that early refresh leaves no stale or orphaned scope, legacy rivals, leaderboard-rivals, and player-stats readers match ready projection scopes against the active snapshot during the freeze |
 | `Scraper:UseValidatedSoloProjectionForLegacyPrecompute` | `false` | boolean | After publication cleanup's projection refresh leaves no stale or orphaned scope, legacy precompute readers match ready projection scopes against the active snapshot until precompute ends |
+| `Scraper:SoloCurrentProjectionApplyDiff` | `false` | boolean | A solo current-projection scope refresh writes only the rows that differ from the stored projection, keeping the scope's generation, instead of deleting and re-inserting every row |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
@@ -420,6 +421,13 @@ scope, so any scope that changes later falls back as before. Read-only
 production parity on 25 rivals accounts found identical rows (all columns)
 from both paths: Solo Guitar `8,055`, Solo Bass `4,764`, Pro Drums `141`.
 It is part of the durable phase configuration identity; set it to `false` for
+rollback.
+
+`Scraper__SoloCurrentProjectionApplyDiff` changes how every solo
+current-projection scope refresh writes (early refresh, cleanup, and
+notification recovery). See
+[worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
+It is part of the durable phase configuration identity; `false` is the
 rollback.
 
 ## Leaderboard rivals

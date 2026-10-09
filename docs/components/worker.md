@@ -863,6 +863,34 @@ reductions are diagnostic only; no production improvement is accepted. A
 matched full-scrape A/B remains blocked until the FST capacity guard again has
 at least one `60.4 GB` scrape window, preferably two (`120.8 GB`).
 
+### Solo current projection writes
+
+Snapshot activation gives nearly every solo scope a new source, so each scrape
+refreshes nearly all of them. Scrape `1509` refreshed 1,288 scopes before
+Rivals (133 seconds) and all 6,240 in `Cleanup.SoloCurrentProjection`
+(42,527,106 rows, 378 seconds). Each refresh compares the desired rows with the
+stored ones and records the result in `solo_current_projection_scope`. A full
+scope typically has about 10,000 rows, of which 3–7 differ. The refresh
+nevertheless deletes and re-inserts every row under a new generation,
+maintaining four indexes per row.
+
+`Scraper:SoloCurrentProjectionApplyDiff` (default `false`) writes only the
+differences when the scope is ready and every stored row carries the scope's
+generation:
+
+- rows that left the source are deleted;
+- changed rows are updated in place;
+- new rows are inserted under the scope's existing generation.
+
+Otherwise, for example for a new, failed, or mixed-generation scope, it
+rewrites the scope under the new generation as before. Either way the stored
+rows equal the desired rows. Readers join rows to their scope by generation, so
+an unchanged generation keeps every row visible. `projection_generation` and
+`computed_at` of unchanged rows stay at their last write. The per-scope log
+line reports `diff_applied`. PostgreSQL tests compare the content against a
+full rewrite after inserts, updates, rank shifts, and removals, and cover the
+reader join and the fallback.
+
 ### Band retention floor
 
 Band prune keeps, per song and band type, the over-threshold entries ranked

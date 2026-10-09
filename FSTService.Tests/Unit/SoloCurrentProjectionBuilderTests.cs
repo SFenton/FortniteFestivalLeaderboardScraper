@@ -256,6 +256,83 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyDiff_writes_only_differences_and_matches_full_rewrite_content()
+    {
+        var log = Substitute.For<ILogger<SoloCurrentProjectionBuilder>>();
+        var fullBuilder = new SoloCurrentProjectionBuilder(_fixture.DataSource, log);
+        var diffBuilder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            log,
+            scraperOptions: Options.Create(new ScraperOptions { SoloCurrentProjectionApplyDiff = true }));
+        await fullBuilder.EnsureSchemaAsync();
+        var scope = new SoloCurrentProjectionScopeKey("song_diff", _fixture.Db.Instrument);
+        SeedLiveLeaderboard("song_diff", ("acct-a", 1000), ("acct-b", 900), ("acct-c", 800), ("acct-d", 700), ("acct-f", 600));
+
+        // No stored scope yet: the diff path rewrites under the new generation.
+        var first = await diffBuilder.RebuildScopeAsync(scope);
+        Assert.False(first.DiffApplied);
+        Assert.Equal(5, first.InsertedRows);
+        var generation = ReadScopeGeneration("song_diff");
+        Assert.Equal(first.Generation, generation);
+
+        var unchanged = await diffBuilder.RebuildScopeAsync(scope);
+        Assert.True(unchanged.DiffApplied);
+        Assert.Equal((0L, 0L, 0L), (unchanged.InsertedRows, unchanged.DeletedRows, unchanged.UpdatedRows));
+        Assert.Equal(generation, ReadScopeGeneration("song_diff"));
+
+        // acct-b overtakes acct-a, acct-e is new, acct-c leaves the source.
+        SeedLiveLeaderboard("song_diff", ("acct-b", 1100), ("acct-e", 750));
+        DeleteLiveRow("song_diff", "acct-c");
+        var applied = await diffBuilder.RebuildScopeAsync(scope);
+
+        Assert.True(applied.DiffApplied);
+        Assert.Equal(1, applied.InsertedRows);
+        Assert.Equal(1, applied.DeletedRows);
+        Assert.Equal(applied.UpdatedRows, ReadProjectionScopeMetrics("song_diff").WouldUpdateRows);
+        Assert.True(applied.UpdatedRows >= 2);
+        Assert.Equal(generation, ReadScopeGeneration("song_diff"));
+        Assert.Equal(5, ReadJoinedRowCount("song_diff"));
+        Assert.Equal(5, ReadScopeRowCount("song_diff"));
+        var diffContent = ReadProjectionContent("song_diff");
+        Assert.Equal(["acct-b", "acct-a", "acct-e", "acct-d", "acct-f"], diffContent.Select(static row => row.Split('|')[0]));
+
+        var rewritten = await fullBuilder.RebuildScopeAsync(scope);
+        Assert.False(rewritten.DiffApplied);
+        Assert.Equal(diffContent, ReadProjectionContent("song_diff"));
+        Assert.NotEqual(generation, ReadScopeGeneration("song_diff"));
+        Assert.Equal(5, ReadJoinedRowCount("song_diff"));
+    }
+
+    [Fact]
+    public async Task ApplyDiff_rewrites_scopes_that_are_not_ready_or_mixed_generation()
+    {
+        var log = Substitute.For<ILogger<SoloCurrentProjectionBuilder>>();
+        var diffBuilder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            log,
+            scraperOptions: Options.Create(new ScraperOptions { SoloCurrentProjectionApplyDiff = true }));
+        await diffBuilder.EnsureSchemaAsync();
+        var scope = new SoloCurrentProjectionScopeKey("song_fallback", _fixture.Db.Instrument);
+        SeedLiveLeaderboard("song_fallback", ("acct-a", 1000), ("acct-b", 900));
+        await diffBuilder.RebuildScopeAsync(scope);
+
+        ExecuteSql("UPDATE solo_current_projection_scope SET status = 'failed' WHERE song_id = 'song_fallback'");
+        var afterFailure = await diffBuilder.RebuildScopeAsync(scope);
+        Assert.False(afterFailure.DiffApplied);
+        Assert.Equal(2, afterFailure.InsertedRows);
+        Assert.Equal(2, afterFailure.DeletedRows);
+
+        ExecuteSql("UPDATE current_leaderboard_entries SET projection_generation = projection_generation - 1 WHERE song_id = 'song_fallback' AND account_id = 'acct-b'");
+        var mixed = await diffBuilder.RebuildScopeAsync(scope);
+        Assert.False(mixed.DiffApplied);
+        Assert.Equal(2, ReadJoinedRowCount("song_fallback"));
+
+        var explicitFull = await diffBuilder.RebuildScopeAsync(scope, new SoloCurrentProjectionRebuildOptions { ApplyDiff = false });
+        Assert.False(explicitFull.DiffApplied);
+        Assert.Equal(2, explicitFull.InsertedRows);
+    }
+
+    [Fact]
     public async Task RebuildScopeAsync_orders_exact_score_and_timestamp_ties_by_account_id()
     {
         var builder = new SoloCurrentProjectionBuilder(
@@ -366,6 +443,70 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
             EndTime = "2025-01-15T12:00:00Z",
         }).ToList());
         _fixture.Db.RecomputeRanksForSongs([songId]);
+    }
+
+    private void DeleteLiveRow(string songId, string accountId) =>
+        ExecuteSql($"DELETE FROM leaderboard_entries WHERE song_id = '{songId}' AND account_id = '{accountId}'");
+
+    private void ExecuteSql(string sql)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
+    private long ReadScopeGeneration(string songId) => ReadScalar(
+        "SELECT projection_generation FROM solo_current_projection_scope WHERE song_id = @songId AND instrument = @instrument",
+        songId);
+
+    private long ReadScopeRowCount(string songId) => ReadScalar(
+        "SELECT row_count FROM solo_current_projection_scope WHERE song_id = @songId AND instrument = @instrument",
+        songId);
+
+    private long ReadJoinedRowCount(string songId) => ReadScalar(
+        """
+        SELECT COUNT(*)
+        FROM current_leaderboard_entries projection
+        JOIN solo_current_projection_scope scope
+          ON scope.song_id = projection.song_id
+         AND scope.instrument = projection.instrument
+         AND scope.projection_generation = projection.projection_generation
+        WHERE projection.song_id = @songId
+          AND projection.instrument = @instrument
+          AND scope.status = 'ready'
+        """,
+        songId);
+
+    private long ReadScalar(string sql, string songId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    private List<string> ReadProjectionContent(string songId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT concat_ws('|', account_id, score, accuracy, is_full_combo, stars, season, difficulty,
+                             percentile, end_time, rank, api_rank, source, first_seen_at, last_updated_at)
+            FROM current_leaderboard_entries
+            WHERE song_id = @songId
+              AND instrument = @instrument
+            ORDER BY rank, account_id
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<string>();
+        while (reader.Read())
+            rows.Add(reader.GetString(0));
+        return rows;
     }
 
     private ProjectionScopeMetrics ReadProjectionScopeMetrics(string songId)
