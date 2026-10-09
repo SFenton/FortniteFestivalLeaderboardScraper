@@ -303,10 +303,16 @@ During any required-cache freeze, covered routes perform L1/L2 reads only. A
 hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
 builds or writes. Cache hits retain each covered endpoint family's
 `Cache-Control`, content type, ETag, publication header, and exact response
-bytes. Unfrozen overview sizes `25` and `50` are the only lazy
+bytes. Unfrozen overview sizes `25` and `50` and the band best/worst songs and
+band song-rows routes are the only lazy
 write-through variants. They use process single-flight, store only successful
 JSON responses whose measured build is below one second, and reject slow,
 oversized, failed, or transition-raced builds without poisoning L2.
+The band song routes are profile-invariant, so web reads with selected-profile
+headers warm the same row that header-less native reads use. Because the band
+song projection gate closes mid-scrape before the publication commits, these
+rows keep last-published best/worst songs and song rows visible during a
+scrape; a team without a row keeps the endpoint's distinct `503`.
 Every post-wait lookup passes the authoritative publication/source readiness
 gate before `TryServeHitAsync`; a waiter cannot serve an invalid row populated by
 another request.
