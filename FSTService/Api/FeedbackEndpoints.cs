@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using FSTService.Feedback;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -14,6 +15,14 @@ public static partial class ApiEndpoints
     private const int MaxFeedbackFieldBytes = 64 * 1024;
     private const int MaxFeedbackFieldCount = 32;
     private const int MaxFeedbackFileNameLength = 120;
+
+    /// <summary>Per-client-IP fixed window for <c>POST /api/feedback</c>.</summary>
+    public static FixedWindowRateLimiterOptions CreateFeedbackLimiterOptions(FeedbackOptions feedback) => new()
+    {
+        PermitLimit = Math.Max(1, feedback.SubmissionsPerWindow),
+        Window = TimeSpan.FromMinutes(Math.Max(1, feedback.SubmissionWindowMinutes)),
+        QueueLimit = 0,
+    };
 
     public static void MapFeedbackEndpoints(this WebApplication app)
     {

@@ -44,10 +44,14 @@ public sealed class FeedbackOptions
     /// <summary>Largest file GitHub accepts as an issue attachment.</summary>
     public long GitHubAttachmentMaxBytes { get; set; } = 10L * 1024 * 1024;
 
-    /// <summary>Submissions accepted per client IP within <see cref="SubmissionWindowMinutes"/>.</summary>
-    public int SubmissionsPerWindow { get; set; } = 5;
+    /// <summary>
+    /// Submissions accepted per client IP within <see cref="SubmissionWindowMinutes"/>.
+    /// Set well above heavy owner use; it still bounds scripted floods on this
+    /// unauthenticated endpoint that opens GitHub issues.
+    /// </summary>
+    public int SubmissionsPerWindow { get; set; } = 60;
 
-    public int SubmissionWindowMinutes { get; set; } = 10;
+    public int SubmissionWindowMinutes { get; set; } = 60;
 
     /// <summary>Accepted submissions waiting for processing before new ones are refused.</summary>
     public int MaxQueuedSubmissions { get; set; } = 10;
