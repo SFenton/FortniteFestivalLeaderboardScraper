@@ -386,6 +386,16 @@ public sealed class ScraperOptions
     public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;
 
     /// <summary>
+    /// When true, a solo current projection scope refresh writes only the rows
+    /// that differ from the stored projection, under the scope's existing
+    /// generation, instead of deleting and re-inserting every row. Scopes that
+    /// are not ready or have rows from another generation are still rewritten.
+    /// Default false.
+    /// Set via <c>Scraper__SoloCurrentProjectionApplyDiff</c>.
+    /// </summary>
+    public bool SoloCurrentProjectionApplyDiff { get; set; }
+
+    /// <summary>
     /// Maximum number of rank-history snapshot writers to run concurrently after rankings publish.
     /// Keep this low on shared API/worker deployments to avoid WAL and data-file pressure.
     /// </summary>
