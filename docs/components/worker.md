@@ -924,11 +924,16 @@ scrape because the next floor is recorded below them.
 Between a prune and the next flush, rows only move up: scores are maxima and
 only prune deletes band entries. The window can still move down when entries
 at the top become over-threshold, each flip by one row. The band page fetch
-stages every row with `is_over_threshold = false` (it has no max scores), and
-band extraction applies CHOpt validation later in the same scrape, before
-prune. That is why the floor sits a margin below the window: production
-re-fetches the rows just under the window every scrape, and the margin keeps
-them, so up to `margin` flips per scope cannot reach a skipped row.
+flags over-threshold rows with the scrape's CHOpt max scores and
+`Scraper:OverThresholdMultiplier`, the same check band extraction applies later
+in the same scrape, before prune. The registered-band lookups and the
+max-score recompute use the same max scores and multiplier. Until then the
+fetch and the registered lookups staged every row as valid. The flush cleared every stored over-threshold flag (about 735 rows per
+scrape, each with a new `last_updated_at`), and extraction set them again. New
+over-threshold entries above the window still move it down. That is why the
+floor sits a margin below the window: production re-fetches the rows just
+under the window every scrape, and the margin keeps them, so up to `margin`
+flips per scope cannot reach a skipped row.
 
 The flush also drops the floor of every scope whose recorded first valid entry
 is staged as over-threshold. An over-threshold recompute after a max-score

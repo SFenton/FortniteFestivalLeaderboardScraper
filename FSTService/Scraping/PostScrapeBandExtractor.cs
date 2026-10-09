@@ -347,7 +347,7 @@ public sealed class PostScrapeBandExtractor
             };
 
             // Apply CHOpt validation
-            BandScrapePhase.ApplyChOptValidation(bandEntry, maxScores);
+            BandScrapePhase.ApplyChOptValidation(bandEntry, maxScores, _options.OverThresholdMultiplier);
 
             bandEntries[key] = bandEntry;
         }

@@ -281,6 +281,18 @@ public sealed class BandScrapePhase
     /// Check each member's individual score against the CHOpt max for their instrument.
     /// Sets <see cref="BandLeaderboardEntry.IsOverThreshold"/> if any member exceeds the over-threshold multiplier.
     /// </summary>
+    /// <summary>
+    /// Effective CHOpt max scores of one song, or <c>null</c> without a path
+    /// data store or max scores for the song.
+    /// </summary>
+    internal static SongMaxScores? ResolveMaxScores(
+        IPathDataStore? pathDataStore,
+        string songId) =>
+        pathDataStore is not null
+        && pathDataStore.GetAllMaxScores().TryGetValue(songId, out var maxScores)
+            ? maxScores
+            : null;
+
     internal static void ApplyChOptValidation(
         BandLeaderboardEntry entry,
         SongMaxScores? maxScores,
