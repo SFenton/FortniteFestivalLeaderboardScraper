@@ -385,7 +385,41 @@ public sealed class BandCurrentProjectionBuilder
             onScopeCompleted?.Invoke(scope);
         }
 
-        if (maxParallelScopes > 0)
+        async ValueTask RefreshPairAsync(BandCurrentProjectionScopeKey[] pairScopes, CancellationToken innerCt)
+        {
+            innerCt.ThrowIfCancellationRequested();
+            IReadOnlyList<BandCurrentProjectionScopeResult> pairResults;
+            try
+            {
+                pairResults = await RebuildPairAsync(pairScopes, options, generation, innerCt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Interlocked.Add(ref failedScopes, pairScopes.Length);
+                return;
+            }
+
+            foreach (var pairResult in pairResults)
+            {
+                results.Add(pairResult);
+                onScopeCompleted?.Invoke(
+                    new BandCurrentProjectionScopeKey(
+                        pairResult.SongId,
+                        pairResult.BandType,
+                        pairResult.RankingScope,
+                        pairResult.ScopeComboId));
+            }
+        }
+
+        if (maxParallelScopes > 0 && options.BatchScopesBySourcePair)
+        {
+            // Pair transactions write disjoint projection and scope-state keys.
+            await Parallel.ForEachAsync(
+                GroupBySourcePair(scopesToRefresh),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelScopes, CancellationToken = ct },
+                RefreshPairAsync);
+        }
+        else if (maxParallelScopes > 0)
         {
             // Scope transactions write disjoint projection and scope-state keys,
             // so any band type can run beside any other.
@@ -437,18 +471,21 @@ public sealed class BandCurrentProjectionBuilder
 
         sw.Stop();
 
+        var batchedBySourcePair = maxParallelScopes > 0 && options.BatchScopesBySourcePair;
         var operationMetrics =
             CreateOperationMetrics(
                 orderedResults,
-                options);
+                options,
+                batchedBySourcePair);
         _log.LogInformation(
-            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, maxParallelScopes={MaxParallelScopes}, publishParallelism={PublishParallelism}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}, maxParallelScopes={MaxParallelScopes}, publishParallelism={PublishParallelism}, batchedMemberStatsAggregation={BatchedMemberStatsAggregation}, batchedBySourcePair={BatchedBySourcePair}, scopeTransactions={ScopeTransactions:N0}, derivedScopeCommands={DerivedScopeCommands:N0}, derivedScopeRoundTrips={DerivedScopeRoundTrips:N0}, derivedMemberStatsAggregationPasses={DerivedMemberStatsAggregationPasses:N0}.",
             scopesToRefresh.Length,
             normalizedScopes.Length,
             maxParallelBandTypes,
             maxParallelScopes,
             publishParallelism,
             options.UseBatchedMemberStatsAggregation,
+            batchedBySourcePair,
             operationMetrics.SuccessfulScopeTransactions,
             operationMetrics.DerivedSuccessfulScopeCommandExecutions,
             operationMetrics.DerivedSuccessfulScopeRoundTrips,
@@ -917,6 +954,183 @@ public sealed class BandCurrentProjectionBuilder
         }
     }
 
+    private async Task<IReadOnlyList<BandCurrentProjectionScopeResult>> RebuildPairAsync(
+        BandCurrentProjectionScopeKey[] pairScopes,
+        BandCurrentProjectionRebuildOptions options,
+        long generation,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await _dataSource.OpenConnectionAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+            var results = await RebuildPairInTransactionAsync(
+                pairScopes,
+                options,
+                generation,
+                conn,
+                tx,
+                ct);
+            await tx.CommitAsync(ct);
+            return results;
+        }
+        catch (Exception ex)
+        {
+            foreach (var scope in pairScopes)
+                await MarkScopeFailedAsync(scope, generation, ex.Message, ct);
+            _log.LogError(
+                ex,
+                "Failed to rebuild {ScopeCount} band current projection scope(s) of {SongId}/{BandType}",
+                pairScopes.Length,
+                pairScopes[0].SongId,
+                pairScopes[0].BandType);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds every given scope of one (song, band type) in the caller's
+    /// transaction. The song's non-over-threshold entries, their combo ids and
+    /// their member stats are read once into a temporary table; each scope then
+    /// selects, chooses and ranks its rows from it exactly as
+    /// <see cref="RebuildScopeInTransactionAsync"/> does from the source tables.
+    /// </summary>
+    internal static async Task<IReadOnlyList<BandCurrentProjectionScopeResult>>
+        RebuildPairInTransactionAsync(
+            IReadOnlyList<BandCurrentProjectionScopeKey> pairScopes,
+            BandCurrentProjectionRebuildOptions options,
+            long generation,
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            CancellationToken ct)
+    {
+        var scopes = pairScopes.Select(NormalizeScope).Distinct().ToArray();
+        if (scopes.Length == 0)
+            return [];
+        if (scopes.Any(scope =>
+                !string.Equals(scope.SongId, scopes[0].SongId, StringComparison.Ordinal)
+                || !string.Equals(scope.BandType, scopes[0].BandType, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("All scopes of a pair rebuild must share one song and band type.", nameof(pairScopes));
+        }
+
+        if (options.DisableSynchronousCommit)
+        {
+            await using var syncCmd = conn.CreateCommand();
+            syncCmd.Transaction = tx;
+            syncCmd.CommandText = "SET LOCAL synchronous_commit = off";
+            await syncCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        // Captured before the source read, as the per-scope path does, so a
+        // source row committed after the read is newer than last_rebuilt_at.
+        var now = DateTime.UtcNow;
+        long sourceRows;
+        await using (var sourceCmd = conn.CreateCommand())
+        {
+            sourceCmd.Transaction = tx;
+            ApplyCommandOptions(sourceCmd, options);
+            sourceCmd.CommandText = PairSourceSql;
+            sourceCmd.Parameters.AddWithValue("songId", scopes[0].SongId);
+            sourceCmd.Parameters.AddWithValue("bandType", scopes[0].BandType);
+            sourceRows = Convert.ToInt64(await sourceCmd.ExecuteScalarAsync(ct));
+        }
+
+        var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(scopes[0].BandType);
+        var results = new List<BandCurrentProjectionScopeResult>(scopes.Length);
+        foreach (var scope in scopes)
+        {
+            var scopeSw = Stopwatch.StartNew();
+            await using var deleteCmd = conn.CreateCommand();
+            deleteCmd.Transaction = tx;
+            ApplyCommandOptions(deleteCmd, options);
+            deleteCmd.CommandText = $"""
+                DELETE FROM {ProjectionTable}
+                WHERE song_id = @songId
+                  AND band_type = @bandType
+                  AND ranking_scope = @rankingScope
+                  AND scope_combo_id = @scopeComboId
+                  AND projection_generation = @generation
+                """;
+            AddScopeParameters(deleteCmd, scope);
+            deleteCmd.Parameters.AddWithValue("generation", generation);
+            var deletedRows = await deleteCmd.ExecuteNonQueryAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            ApplyCommandOptions(cmd, options);
+            cmd.CommandText = RebuildScopeFromPairSourceSql;
+            AddScopeParameters(cmd, scope);
+            cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+            cmd.Parameters.AddWithValue("generation", generation);
+            cmd.Parameters.AddWithValue("now", now);
+
+            long insertedRows = 0;
+            var sourceScopeExists = false;
+            await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            {
+                if (await reader.ReadAsync(ct))
+                {
+                    insertedRows = reader.GetInt64(0);
+                    sourceScopeExists = reader.GetBoolean(1);
+                }
+            }
+
+            scopeSw.Stop();
+            results.Add(new BandCurrentProjectionScopeResult(
+                scope.SongId,
+                scope.BandType,
+                scope.RankingScope,
+                scope.ScopeComboId,
+                generation,
+                insertedRows,
+                deletedRows,
+                sourceScopeExists,
+                results.Count == 0 ? sourceRows : 0,
+                Math.Round(scopeSw.Elapsed.TotalMilliseconds, 3)));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Groups scopes by (song, band type), overall scope first within a pair,
+    /// and orders the pairs so band types alternate, largest pairs first.
+    /// </summary>
+    internal static BandCurrentProjectionScopeKey[][] GroupBySourcePair(
+        IReadOnlyList<BandCurrentProjectionScopeKey> scopes)
+    {
+        var queues = scopes
+            .GroupBy(static scope => (scope.SongId, scope.BandType))
+            .Select(static group => group
+                .OrderBy(static scope =>
+                    string.Equals(scope.RankingScope, "overall", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(static scope => scope.ScopeComboId, StringComparer.Ordinal)
+                .ToArray())
+            .GroupBy(static pair => pair[0].BandType, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => new Queue<BandCurrentProjectionScopeKey[]>(
+                group
+                    .OrderByDescending(static pair => pair.Length)
+                    .ThenBy(static pair => pair[0].SongId, StringComparer.Ordinal)))
+            .ToList();
+        var ordered = new List<BandCurrentProjectionScopeKey[]>();
+        while (queues.Count > 0)
+        {
+            for (var i = 0; i < queues.Count; i++)
+            {
+                ordered.Add(queues[i].Dequeue());
+                if (queues[i].Count == 0)
+                {
+                    queues.RemoveAt(i);
+                    i--;
+                }
+            }
+        }
+
+        return ordered.ToArray();
+    }
+
     private static async Task<BandCurrentProjectionScopeResult>
         RebuildScopeInTransactionAsync(
             BandCurrentProjectionScopeKey scope,
@@ -996,9 +1210,27 @@ public sealed class BandCurrentProjectionBuilder
     private static BandCurrentProjectionOperationMetrics
         CreateOperationMetrics(
             IReadOnlyCollection<BandCurrentProjectionScopeResult> results,
-            BandCurrentProjectionRebuildOptions options)
+            BandCurrentProjectionRebuildOptions options,
+            bool batchedBySourcePair = false)
     {
         var successfulScopes = results.Count;
+        if (batchedBySourcePair)
+        {
+            var pairs = results
+                .Select(static result => (result.SongId, result.BandType))
+                .Distinct()
+                .LongCount();
+            var commands = pairs * (1 + (options.DisableSynchronousCommit ? 1 : 0))
+                + successfulScopes * 2L;
+            return new BandCurrentProjectionOperationMetrics(
+                SuccessfulScopeTransactions: pairs,
+                DerivedSuccessfulScopeCommandExecutions: commands,
+                DerivedSuccessfulScopeRoundTrips: commands + pairs * 2,
+                DerivedMemberStatsAggregationPasses:
+                    results.Sum(static result =>
+                        result.DerivedMemberStatsAggregationPasses));
+        }
+
         var commandsPerScope =
             2 + (options.DisableSynchronousCommit ? 1 : 0);
         return new BandCurrentProjectionOperationMetrics(
@@ -2397,6 +2629,73 @@ public sealed class BandCurrentProjectionBuilder
         ) member_stats ON TRUE
         """;
 
+    // The pair source materializes NormalizedEntries plus each entry's member
+    // stats (the same lateral aggregate the batched scope path uses) once per
+    // (song, band type).
+    private static readonly string PairSourceSql = $"""
+        CREATE TEMP TABLE _band_pair_source ON COMMIT DROP AS
+        SELECT
+            be.song_id,
+            be.band_type,
+            be.team_key,
+            be.instrument_combo,
+            be.team_members,
+            be.score,
+            be.accuracy,
+            be.is_full_combo,
+            be.stars,
+            be.difficulty,
+            be.season,
+            COALESCE(be.end_time, '') AS end_time_sort,
+            be.first_seen_at,
+            be.last_updated_at,
+            {BandSongComboIdExpression} AS combo_id,
+            member_stats.member_account_ids,
+            member_stats.member_instrument_ids,
+            member_stats.member_scores,
+            member_stats.member_accuracies,
+            member_stats.member_full_combos,
+            member_stats.member_stars,
+            member_stats.member_difficulties
+        FROM band_entries be
+        {BatchedMemberStatsJoinSql.Replace("ChosenEntries.", "be.", StringComparison.Ordinal)}
+        WHERE be.song_id = @songId
+          AND be.band_type = @bandType
+          AND NOT be.is_over_threshold;
+        SELECT COUNT(*)::BIGINT FROM _band_pair_source;
+        """;
+
+    private const string PairSourceMemberStatsProjectionSql = """
+        member_account_ids,
+        member_instrument_ids,
+        member_scores,
+        member_accuracies,
+        member_full_combos,
+        member_stars,
+        member_difficulties,
+        """;
+
+    private static readonly string RebuildScopeFromPairSourceSql =
+        BuildRebuildScopeFromPairSourceSql();
+
+    internal static string GetRebuildScopeFromPairSourceSqlForTesting() =>
+        RebuildScopeFromPairSourceSql;
+
+    internal static string GetPairSourceSqlForTesting() =>
+        PairSourceSql;
+
+    private static string BuildRebuildScopeFromPairSourceSql()
+    {
+        const string scopedEntriesMarker = "), ScopedEntries AS (";
+        var template = BuildRebuildScopeSql(
+            PairSourceMemberStatsProjectionSql,
+            string.Empty);
+        var markerIndex = template.IndexOf(scopedEntriesMarker, StringComparison.Ordinal);
+        if (!template.StartsWith("WITH NormalizedEntries AS (", StringComparison.Ordinal) || markerIndex < 0)
+            throw new InvalidOperationException("The band projection rebuild template no longer starts with NormalizedEntries.");
+        return "WITH NormalizedEntries AS (\n    SELECT * FROM _band_pair_source\n" + template[markerIndex..];
+    }
+
     private static readonly string RebuildScopeSql =
         BuildRebuildScopeSql(
             LegacyMemberStatsProjectionSql,
@@ -2586,6 +2885,14 @@ public sealed record BandCurrentProjectionRebuildOptions
     /// above 16 are clamped) and probes only unsettled scopes for candidates.
     /// </summary>
     public int PublishParallelism { get; init; }
+
+    /// <summary>
+    /// When true (and <see cref="MaxParallelScopes"/> is positive), the refresh
+    /// rebuilds all selected scopes of one (song, band type) in one transaction
+    /// that reads and normalizes the song's band entries and member stats once,
+    /// instead of once per scope.
+    /// </summary>
+    public bool BatchScopesBySourcePair { get; init; }
     public int CandidateCleanupBatchSize { get; init; } = 100_000;
     public int CandidateCleanupMaxBatches { get; init; } = 100;
     public bool ClearExisting { get; init; }

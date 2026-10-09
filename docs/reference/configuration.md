@@ -285,6 +285,7 @@ invalid/non-positive values prevent startup.
 |---|---:|---|
 | `Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation` | `false` | Use one lateral `band_member_stats` aggregate per projected row instead of seven correlated aggregates |
 | `Scraper:BandCurrentProjectionMaxParallelScopes` | `0` | Concurrent scope transactions across all band types; `0` keeps one sequential worker per band type with at most two band types at once; values above `16` are clamped |
+| `Scraper:BandCurrentProjectionBatchScopesBySourcePair` | `false` | With `MaxParallelScopes` above `0`, rebuild all selected scopes of one song and band type in one transaction that reads the song's band entries and member stats once |
 | `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
 | `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
@@ -308,6 +309,16 @@ scopes rebuild concurrently. Each scope keeps its own transaction and writes
 disjoint projection and scope-state keys; filtering, query shape, publication,
 cleanup, and failure accounting are unchanged. Both switches are part of the
 durable phase configuration identity. Set it back to `0` for rollback.
+
+`Scraper__BandCurrentProjectionBatchScopesBySourcePair` (template variable
+`BAND_CURRENT_PROJECTION_BATCH_SCOPES_BY_SOURCE_PAIR`) applies only when
+`MaxParallelScopes` is positive. The parallel slots then run one transaction
+per (song, band type) instead of per scope. Each transaction reads the
+song's non-over-threshold band entries, combo ids, and member-stat arrays
+into a temporary table once, then rebuilds each selected scope from it. A
+failure marks every scope of that pair failed. Projection rows, scope state,
+and publication match the per-scope path. The switch is part of the durable
+phase configuration identity; `false` is the rollback.
 
 `Scraper__BandCurrentProjectionPublishParallelism` (template variable
 `BAND_CURRENT_PROJECTION_PUBLISH_PARALLELISM`) changes only the incremental

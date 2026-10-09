@@ -172,6 +172,7 @@ public sealed class DurablePhaseProgressSink
         "Features:SkipUnchangedPhysicalLeaderboardSnapshots",
         "Scraper:BandCurrentProjectionUseBatchedMemberStatsAggregation",
         "Scraper:BandCurrentProjectionMaxParallelScopes",
+        "Scraper:BandCurrentProjectionBatchScopesBySourcePair",
         "Scraper:BandCurrentProjectionPublishParallelism",
         "Scraper:PrepareSoloCurrentProjectionBeforeRivals",
         "Scraper:UseValidatedSoloProjectionForLegacyPrecompute",

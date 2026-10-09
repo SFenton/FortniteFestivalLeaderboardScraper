@@ -780,7 +780,9 @@ it was computed for. Each prune that runs with the floor enabled replaces the
 whole table in its own transaction. `band_retention_floor_shadow` is a
 scratch list of the flush rows found below a floor (key, score, end
 time), cleared by the next prune after it counts how many of them it would
-keep. Both tables are derived and safe to truncate. Behaviour is
+keep. `band_retention_floor_margin_keys` holds, per scope, the keys at smaller
+candidate margins for the next prune's margin check, and is replaced with the
+floors. Both tables are derived and safe to truncate. Behaviour is
 described in [worker: band retention floor](../components/worker.md#band-retention-floor).
 
 ### Rank-history latest rows
@@ -975,6 +977,12 @@ PostgreSQL remains authoritative; scope selection, candidate-generation
 deletion, per-scope transaction boundaries, scope/global state, generation
 publication, cleanup, and row ordering are unchanged. Production enablement
 still requires a capacity-safe matched full-scrape A/B.
+
+`Scraper:BandCurrentProjectionBatchScopesBySourcePair` (default off) changes
+the transaction boundary only. One transaction rebuilds every selected scope of
+a song and band type from a per-transaction temporary copy of that pair's
+normalized band entries and member-stat arrays. Rows, generations, scope
+state, and publication are identical to the per-scope path.
 
 Live scrape `1293` validated the compatibility shape and bounded write cost:
 the two prior comparable scrapes contained `69` timing rows each, while `1293`
