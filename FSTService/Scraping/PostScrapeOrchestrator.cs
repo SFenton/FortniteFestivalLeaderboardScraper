@@ -1910,6 +1910,8 @@ public sealed class PostScrapeOrchestrator
                     .BandCurrentProjectionUseBatchedMemberStatsAggregation,
             MaxParallelScopes =
                 options.BandCurrentProjectionMaxParallelScopes,
+            BatchScopesBySourcePair =
+                options.BandCurrentProjectionBatchScopesBySourcePair,
             PublishParallelism =
                 options.BandCurrentProjectionPublishParallelism,
         };

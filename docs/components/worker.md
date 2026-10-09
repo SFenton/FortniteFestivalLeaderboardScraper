@@ -792,6 +792,26 @@ and isolated PostgreSQL tests keep sequential and parallel projection and
 state hashes identical for both member-stat query shapes. Promotion needs a
 one-variable full-scrape A/B.
 
+A refresh selects about three to four scopes per song and band type: the
+`overall` scope plus the changed combo scopes. Each scope rereads and
+renormalizes all of the song's band entries and member stats, so a small combo
+scope still pays most of the song-wide read. Scrape `1507` refreshed 1,564
+scopes across 463 song/band-type pairs.
+`Scraper:BandCurrentProjectionBatchScopesBySourcePair` (default `false`;
+requires `MaxParallelScopes` above `0`) runs one transaction per pair instead.
+The transaction materializes the song's non-over-threshold entries, combo ids,
+and member-stat arrays once in an `ON COMMIT DROP` temporary table, then runs
+the unchanged choose/rank/insert/scope-state statement for each scope against
+it. Pairs run in parallel, band types alternate, larger pairs start first, and
+a pair runs its `overall` scope first. The rebuild time is taken before the
+source read, as in the per-scope path, so a concurrent source change remains
+newer than `last_rebuilt_at`. A failure rolls back the whole pair and marks
+each of its scopes failed. The refresh log reports `batchedBySourcePair`, the
+pair transaction count, and the source rows read as member-stat passes.
+Isolated PostgreSQL tests keep projection and state hashes identical to the
+per-scope path for fresh, primed-and-changed, and unfiltered refreshes,
+including combo choice, ties, over-threshold rows, and empty scopes.
+
 After the rebuilds, the default publish runs one transaction that flips every
 ready scope's `published_generation` and deletes the older generations, then
 a candidate cleanup scans the whole projection for rows that are neither

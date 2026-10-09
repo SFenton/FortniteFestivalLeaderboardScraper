@@ -976,6 +976,12 @@ deletion, per-scope transaction boundaries, scope/global state, generation
 publication, cleanup, and row ordering are unchanged. Production enablement
 still requires a capacity-safe matched full-scrape A/B.
 
+`Scraper:BandCurrentProjectionBatchScopesBySourcePair` (default off) changes
+the transaction boundary only. One transaction rebuilds every selected scope of
+a song and band type from a per-transaction temporary copy of that pair's
+normalized band entries and member-stat arrays. Rows, generations, scope
+state, and publication are identical to the per-scope path.
+
 Live scrape `1293` validated the compatibility shape and bounded write cost:
 the two prior comparable scrapes contained `69` timing rows each, while `1293`
 contained `72`, exactly the three new BandMaintenance rows. Their stored tuple
