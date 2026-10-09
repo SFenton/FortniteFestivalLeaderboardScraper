@@ -2498,10 +2498,13 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Theory]
-    [InlineData(10)]
-    [InlineData(0)]
+    [InlineData(10, false)]
+    [InlineData(10, true)]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
     public async Task BandMaintenance_stale_sweep_rebuilds_drifted_non_impacted_scopes_only_when_enabled(
-        int sweepMaxScopes)
+        int sweepMaxScopes,
+        bool singlePass)
     {
         var bandPersistence = new BandLeaderboardPersistence(
             _metaFixture.DataSource,
@@ -2539,6 +2542,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             options: new ScraperOptions
             {
                 BandCurrentProjectionStaleScopeSweepMaxScopes = sweepMaxScopes,
+                BandCurrentProjectionSinglePassStaleSweep = singlePass,
             },
             bandCurrentProjectionBuilder: builder);
 

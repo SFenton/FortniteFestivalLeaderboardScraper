@@ -1036,6 +1036,14 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
 
     /// <summary>
+    /// When true, the stale sweep derives its candidates and the unchanged-scope
+    /// selection from one scan of the band entries instead of two. The
+    /// selection is identical. Default false.
+    /// Set via <c>Scraper__BandCurrentProjectionSinglePassStaleSweep</c>.
+    /// </summary>
+    public bool BandCurrentProjectionSinglePassStaleSweep { get; set; }
+
+    /// <summary>
     /// When true, BandMaintenance refreshes the band search projection one
     /// band type per concurrent transaction instead of one transaction for all
     /// band types. Default false. Set via

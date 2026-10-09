@@ -89,6 +89,52 @@ public sealed class BandCurrentProjectionStaleSweepTests
         Assert.Empty((await builder.SelectImpactedAndStaleScopesAsync(impacted, candidates, maxStaleScopes: 0)).StaleScopes);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(1_000)]
+    public async Task SinglePassSweepMatchesLoadedCandidateSweep(int maxStaleScopes)
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        foreach (var song in new[] { "song-a", "song-b", "song-c", "song-d", "song-e", "song-f" })
+            Seed(fixture, song, teams: 3);
+        var builder = CreateBuilder(fixture);
+        await builder.RefreshScopesAsync(await builder.LoadCurrentScopesAsync(), Options());
+
+        await Task.Delay(20);
+        Seed(fixture, "song-b", teams: 5);
+        Seed(fixture, "song-c", teams: 6);
+        Seed(fixture, "song-d", teams: 7);
+        // song-e loses its source rows (projection keys without a source scope);
+        // song-f gains an over-threshold row that the projection excludes.
+        await ExecuteAsync(fixture, """
+            DELETE FROM band_member_stats WHERE song_id = 'song-e';
+            DELETE FROM band_entries WHERE song_id = 'song-e';
+            UPDATE band_entries SET is_over_threshold = TRUE, last_updated_at = now() + interval '1 minute'
+            WHERE song_id = 'song-f' AND team_key LIKE '%-000-%';
+            """);
+        Seed(fixture, "song-g", teams: 2);
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impacted =
+            [Overall("song-a"), Overall("song-b"), new("song-z", BandType, "overall", string.Empty)];
+        var candidates = (await builder.LoadCurrentScopesAsync())
+            .Concat(await builder.LoadProjectionScopeKeysAsync())
+            .ToArray();
+
+        var loaded = await builder.SelectImpactedAndStaleScopesAsync(impacted, candidates, maxStaleScopes);
+        var singlePass = await builder.SelectImpactedAndSweptStaleScopesAsync(impacted, maxStaleScopes);
+
+        Assert.Equal(loaded.ImpactedScopes, singlePass.ImpactedScopes);
+        Assert.Equal(loaded.StaleScopes, singlePass.StaleScopes);
+        Assert.Equal(loaded.SweepCandidateCount, singlePass.SweepCandidateCount);
+        Assert.Contains(Overall("song-b"), singlePass.ImpactedScopes);
+        if (maxStaleScopes >= 1_000)
+        {
+            Assert.Contains(Overall("song-e"), singlePass.StaleScopes);
+            Assert.Contains(Overall("song-g"), singlePass.StaleScopes);
+        }
+    }
+
     [Fact]
     public async Task ScopeKeyAndSourceLoadersCoverProjectionAndSourceScopes()
     {

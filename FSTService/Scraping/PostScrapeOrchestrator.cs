@@ -1650,16 +1650,26 @@ public sealed class PostScrapeOrchestrator
         BandCurrentProjectionSweepSelection selection;
         try
         {
-            var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
-                .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
-                .ToArray();
-            // One filter pass selects both the impacted scopes that changed and
-            // the capped stale sweep, so the refresh below skips its own filter.
-            selection = await _bandCurrentProjectionBuilder.SelectImpactedAndStaleScopesAsync(
-                impactedScopes,
-                candidates,
-                sweepMax,
-                ct);
+            if (_options.Value.BandCurrentProjectionSinglePassStaleSweep)
+            {
+                selection = await _bandCurrentProjectionBuilder.SelectImpactedAndSweptStaleScopesAsync(
+                    impactedScopes,
+                    sweepMax,
+                    ct);
+            }
+            else
+            {
+                var candidates = (await _bandCurrentProjectionBuilder.LoadCurrentScopesAsync(ct: ct))
+                    .Concat(await _bandCurrentProjectionBuilder.LoadProjectionScopeKeysAsync(ct))
+                    .ToArray();
+                // One filter pass selects both the impacted scopes that changed and
+                // the capped stale sweep, so the refresh below skips its own filter.
+                selection = await _bandCurrentProjectionBuilder.SelectImpactedAndStaleScopesAsync(
+                    impactedScopes,
+                    candidates,
+                    sweepMax,
+                    ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
