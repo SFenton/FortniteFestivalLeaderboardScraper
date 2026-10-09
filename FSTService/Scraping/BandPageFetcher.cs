@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
+using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
@@ -25,6 +26,8 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
     private readonly SpoolWriter<BandLeaderboardEntry> _spool;
+    private readonly IReadOnlyDictionary<string, SongMaxScores>? _maxScoresBySong;
+    private readonly double _overThresholdMultiplier;
     private readonly ConcurrentDictionary<(string SongId, string BandType), ScopeState> _scopeStates = new();
 
     private sealed class ScopeState
@@ -43,10 +46,14 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
         SpoolWriter<BandLeaderboardEntry> spool,
         ScrapeProgressTracker progress,
         ILogger log,
-        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        ScrapeAccessTokenProvider? accessTokenProvider = null,
+        IReadOnlyDictionary<string, SongMaxScores>? maxScoresBySong = null,
+        double overThresholdMultiplier = 1.05)
         : base(executor, pool, progress, log, accessTokenProvider)
     {
         _spool = spool;
+        _maxScoresBySong = maxScoresBySong;
+        _overThresholdMultiplier = overThresholdMultiplier;
     }
 
     protected override string BuildUrl(string songId, string type, int page, string accountId) =>
@@ -66,8 +73,14 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
 
     protected override void ProcessEntries(string songId, string type, IParsedPage<BandLeaderboardEntry> page)
     {
+        // Flag over-threshold entries exactly as band extraction does, so the
+        // flush does not clear flags that extraction sets again later.
+        var maxScores = _maxScoresBySong is not null
+            && _maxScoresBySong.TryGetValue(songId, out var songMaxScores)
+                ? songMaxScores
+                : null;
         foreach (var entry in page.Entries)
-            BandScrapePhase.ApplyChOptValidation(entry, null);
+            BandScrapePhase.ApplyChOptValidation(entry, maxScores, _overThresholdMultiplier);
 
         _spool.Enqueue(songId, type, (IReadOnlyList<BandLeaderboardEntry>)page.Entries);
     }

@@ -665,6 +665,9 @@ public sealed class ScraperOptions
     /// fetches additional pages beyond <see cref="MaxPagesPerLeaderboard"/>.
     /// This multiplier only controls the <b>trigger condition</b>; the valid-entry
     /// cutoff used for counting and pruning is <c>CHOptMax × <see cref="ValidCutoffMultiplier"/></c>.
+    /// The band page fetch and band extraction also flag a band entry as over
+    /// threshold when any member score exceeds its instrument's
+    /// <c>CHOptMax × OverThresholdMultiplier</c>.
     /// Default 1.05 = 5% above CHOpt's theoretical maximum.
     /// </summary>
     public double OverThresholdMultiplier { get; set; } = 1.05;
