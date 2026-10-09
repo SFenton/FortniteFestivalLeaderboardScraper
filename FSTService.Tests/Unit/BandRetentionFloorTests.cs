@@ -211,6 +211,44 @@ public sealed class BandRetentionFloorTests : IDisposable
     }
 
     [Fact]
+    public async Task Margin_check_reports_which_smaller_margins_would_have_been_safe()
+    {
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var persistence = Persistence(_enforced);
+        Upsert(persistence, "song-a", Enumerable.Range(0, 12).Select(i => Entry($"team-{i}", 800 - (i * 10))).ToList());
+        var first = persistence.PruneBandEntriesDetailed(
+            registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 3, retentionFloorMarginCandidates: [0, 1, 2]);
+        Assert.Empty(first.RetentionFloor!.MarginCheck);
+
+        // The fetch re-stages the rows just below the window plus one far below.
+        BandLeaderboardEntry[] staged = [Entry("team-5", 750), Entry("team-6", 740), Entry("team-7", 730), Entry("late", 100)];
+        foreach (var entry in staged)
+            entry.Source = null;
+        var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        await using (var spool = BandSpoolWriterFactory.Create(Logger(), persistence, retentionFloor: filter))
+        {
+            spool.Enqueue("song-a", BandType, staged);
+            spool.Complete();
+            filter.PrepareForFlush(_enforced.DataSource);
+            spool.FlushAll();
+        }
+
+        Assert.Equal(1, filter.BelowFloorRows);
+
+        // The first valid entry turns over-threshold, so prune keeps one more row.
+        Upsert(persistence, "song-a", [Entry("team-0", 800, isOverThreshold: true)]);
+
+        var second = persistence.PruneBandEntriesDetailed(
+            registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 3, retentionFloorMarginCandidates: [0, 1, 2]);
+
+        Assert.Equal(0L, second.RetentionFloor!.ShadowRowsKept);
+        Assert.Equal(
+            new Dictionary<int, long> { [0] = 1, [1] = 0, [2] = 0 },
+            second.RetentionFloor.MarginCheck);
+        Assert.Contains(TeamKey("team-5"), ReadKeys(_enforced, "song-a"));
+    }
+
+    [Fact]
     public async Task Staged_over_threshold_first_valid_entry_drops_the_scope_floor()
     {
         var persistence = Persistence(_enforced);

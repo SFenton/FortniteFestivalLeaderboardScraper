@@ -954,7 +954,23 @@ Production rollout:
 - Prune recorded 1,682 scope floors at ranks 10,100 to 10,103.
 - `Enforce` has been on since the scrape `1500` boundary (2026-10-08 23:36Z).
 - About 218,000 rows a scrape still churn. Most of them are the margin rows
-  between the window and the floor.
+  between the window and the floor: prune deletes them, and the next fetch
+  re-stages and re-inserts them.
+
+To size the margin from evidence, each prune also records the keys at smaller
+candidate margins (0, 5, 10, 25 and 50 rows below the window's last row, when
+below the configured margin) in `band_retention_floor_margin_keys`. The next
+prune counts, for each candidate:
+
+- rows the band flush inserted since the previous prune (`source = 'scrape'`,
+  not registered);
+- that rank strictly below that candidate's key;
+- and that this prune kept.
+
+The floor would have skipped those rows with that margin. The prune logs
+`Band retention floor margin check (current margin N): ... 0=a, 5=b, ...`. A
+candidate that stays at zero across scrapes is a safe smaller
+`Scraper:BandRetentionFloorMarginRows`.
 - The current projection refresh did not shrink. Its scope count varies by
   scrape (1,679 to 6,990 across scrapes `1488` to `1501`) and was 3,616 in
   `1501`.

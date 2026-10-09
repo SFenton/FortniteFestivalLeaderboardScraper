@@ -666,6 +666,12 @@ public sealed class BandLeaderboardPersistence
     /// <summary>Default rows between the prune window's last row and the recorded retention floor.</summary>
     public const int DefaultRetentionFloorMarginRows = 100;
 
+    /// <summary>
+    /// Smaller margins the prune evaluates against the configured one: for each it
+    /// reports how many rows the floor would have skipped that this prune keeps.
+    /// </summary>
+    public static readonly IReadOnlyList<int> DefaultRetentionFloorMarginCandidates = [0, 5, 10, 25, 50];
+
     /// <param name="captureRetentionFloor">When true, records each scope's
     /// <see cref="BandRetentionFloorSchema">retention floor</see> from the same
     /// ranking, and reports how many shadow-recorded flush rows survived.</param>
@@ -675,9 +681,16 @@ public sealed class BandLeaderboardPersistence
         IReadOnlySet<string> registeredIds,
         int maxValidEntries = DefaultMaxValidBandEntries,
         bool captureRetentionFloor = false,
-        int retentionFloorMarginRows = DefaultRetentionFloorMarginRows)
+        int retentionFloorMarginRows = DefaultRetentionFloorMarginRows,
+        IReadOnlyList<int>? retentionFloorMarginCandidates = null)
     {
         if (maxValidEntries <= 0) return BandPruneResult.Empty;
+        var floorMargin = Math.Max(0, retentionFloorMarginRows);
+        var marginCandidates = (retentionFloorMarginCandidates ?? DefaultRetentionFloorMarginCandidates)
+            .Where(candidate => candidate >= 0 && candidate < floorMargin)
+            .Distinct()
+            .Order()
+            .ToArray();
         if (captureRetentionFloor)
             BandRetentionFloorSchema.Ensure(_dataSource);
         BandRetentionFloorPruneSummary? floorSummary = null;
@@ -741,6 +754,14 @@ public sealed class BandLeaderboardPersistence
                         floor_rank BIGINT,
                         floor_score INT,
                         floor_end_time TEXT
+                    ) ON COMMIT DROP;
+
+                    CREATE TEMP TABLE _band_prune_margin_keys (
+                        song_id TEXT NOT NULL,
+                        band_type TEXT NOT NULL,
+                        margin_rows INT NOT NULL,
+                        score INT NOT NULL,
+                        end_time_key TEXT NOT NULL
                     ) ON COMMIT DROP
                     """;
                 cmd.ExecuteNonQuery();
@@ -789,7 +810,10 @@ public sealed class BandLeaderboardPersistence
                     """;
                 deleteCmd.Parameters.AddWithValue("maxValid", maxValidEntries);
                 if (captureRetentionFloor)
-                    deleteCmd.Parameters.AddWithValue("floorMargin", Math.Max(0, retentionFloorMarginRows));
+                {
+                    deleteCmd.Parameters.AddWithValue("floorMargin", floorMargin);
+                    deleteCmd.Parameters.Add("marginCandidates", NpgsqlDbType.Array | NpgsqlDbType.Integer).Value = marginCandidates;
+                }
                 deleted = deleteCmd.ExecuteNonQuery();
             }
 
@@ -858,7 +882,7 @@ public sealed class BandLeaderboardPersistence
             }
 
             if (captureRetentionFloor)
-                floorSummary = ReplaceRetentionFloors(conn, tx, maxValidEntries, registeredIds);
+                floorSummary = ReplaceRetentionFloors(conn, tx, maxValidEntries, registeredIds, floorMargin);
 
             tx.Commit();
         }
@@ -875,6 +899,14 @@ public sealed class BandLeaderboardPersistence
                 _log.LogWarning(
                     "Band retention floor: prune would keep {Kept:N0} row(s) that were below a floor at flush time; in Enforce mode those rows are missing until the next scrape re-fetches them.",
                     floorSummary.ShadowRowsKept);
+            }
+
+            if (floorSummary.MarginCheck.Count > 0)
+            {
+                _log.LogInformation(
+                    "Band retention floor margin check (current margin {Margin:N0}): rows a smaller margin would have skipped that this prune keeps: {MarginCheck}.",
+                    floorMargin,
+                    string.Join(", ", floorSummary.MarginCheck.Select(static item => $"{item.Key}={item.Value:N0}")));
             }
         }
 
@@ -943,10 +975,17 @@ public sealed class BandLeaderboardPersistence
                    r.team_key, r.instrument_combo
             FROM ranked r
             JOIN boundaries b ON r.song_id = b.song_id AND r.band_type = b.band_type
-            WHERE r.rn IN (
-                b.first_valid_rn,
-                b.first_valid_rn + @maxValid - 1,
-                b.first_valid_rn + @maxValid - 1 + @floorMargin)
+            WHERE r.rn = b.first_valid_rn
+               OR r.rn - (b.first_valid_rn + @maxValid - 1) = @floorMargin
+               OR r.rn - (b.first_valid_rn + @maxValid - 1) = 0
+               OR r.rn - (b.first_valid_rn + @maxValid - 1) = ANY(@marginCandidates)
+        ),
+        margin_key_capture AS (
+            INSERT INTO _band_prune_margin_keys (song_id, band_type, margin_rows, score, end_time_key)
+            SELECT song_id, band_type, (rn - (first_valid_rn + @maxValid - 1))::INT, score, end_time_key
+            FROM floor_points
+            WHERE rn - (first_valid_rn + @maxValid - 1) = ANY(@marginCandidates)
+            RETURNING 1
         ),
         scope_sizes AS (
             SELECT song_id, band_type, MAX(rn) AS scope_rows
@@ -980,8 +1019,51 @@ public sealed class BandLeaderboardPersistence
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         int maxValidEntries,
-        IReadOnlySet<string> registeredIds)
+        IReadOnlySet<string> registeredIds,
+        int floorMargin)
     {
+        // Margin check, after this prune's delete. A row the band flush inserted
+        // since the previous prune that is not registered and ranks below the key
+        // recorded at a smaller margin would have been skipped with that margin;
+        // if it is still stored, this prune keeps it, so that margin was unsafe.
+        // Rows below the current floor were skipped and do not exist, so the count
+        // covers exactly the band between the two floors.
+        var marginCheck = new SortedDictionary<int, long>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                WITH active AS (
+                    SELECT c.song_id, c.band_type, c.margin_rows, c.score, c.end_time_key, f.computed_at
+                    FROM band_retention_floor_margin_keys c
+                    JOIN band_retention_floor f
+                      ON f.song_id = c.song_id AND f.band_type = c.band_type
+                    WHERE c.margin_rows < @floorMargin
+                ),
+                recent AS MATERIALIZED (
+                    SELECT e.song_id, e.band_type, e.score, COALESCE(e.end_time, '') AS end_time_key, e.first_seen_at
+                    FROM band_entries e
+                    WHERE e.last_updated_at > (SELECT min(computed_at) FROM active)
+                      AND e.first_seen_at > (SELECT min(computed_at) FROM active)
+                      AND e.source = 'scrape'
+                      AND NOT (e.team_members && @registeredIds)
+                )
+                SELECT a.margin_rows, count(r.song_id)
+                FROM active a
+                LEFT JOIN recent r
+                  ON r.song_id = a.song_id AND r.band_type = a.band_type
+                 AND r.first_seen_at > a.computed_at
+                 AND (r.score < a.score OR (r.score = a.score AND r.end_time_key > a.end_time_key))
+                GROUP BY a.margin_rows
+                """;
+            cmd.Parameters.AddWithValue("floorMargin", floorMargin);
+            cmd.Parameters.Add("registeredIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = registeredIds.ToArray();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                marginCheck[reader.GetInt32(0)] = reader.GetInt64(1);
+        }
+
         // A shadow row would be kept by this prune if it is stored now (another
         // writer added it), if its team has a registered member, if it ranks at or
         // above the window's last row, or, when the scope no longer fills its
@@ -1029,6 +1111,7 @@ public sealed class BandLeaderboardPersistence
             cmd.CommandText = """
                 DELETE FROM band_retention_floor_shadow;
                 DELETE FROM band_retention_floor;
+                DELETE FROM band_retention_floor_margin_keys;
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -1049,7 +1132,19 @@ public sealed class BandLeaderboardPersistence
             scopes = cmd.ExecuteNonQuery();
         }
 
-        return new BandRetentionFloorPruneSummary(scopes, shadowRows, shadowRowsKept);
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO band_retention_floor_margin_keys (song_id, band_type, margin_rows, score, end_time_key)
+                SELECT k.song_id, k.band_type, k.margin_rows, k.score, k.end_time_key
+                FROM _band_prune_margin_keys k
+                JOIN band_retention_floor f ON f.song_id = k.song_id AND f.band_type = k.band_type
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        return new BandRetentionFloorPruneSummary(scopes, shadowRows, shadowRowsKept, marginCheck);
     }
 
     private void MarkBandTeamMembershipStateForAccounts(IReadOnlyCollection<string> accountIds)
@@ -1658,9 +1753,19 @@ public sealed class BandLeaderboardPersistence
 
 /// <summary>
 /// Floors recorded by a prune, and the check of the rows the preceding flush found
-/// below a floor: how many there were and how many this prune would keep.
+/// below a floor: how many there were and how many this prune would keep. The
+/// margin check maps each smaller candidate margin to the number of rows this
+/// prune keeps that the floor would have skipped with that margin; zero means the
+/// smaller margin would also have been safe for this scrape.
 /// </summary>
-public sealed record BandRetentionFloorPruneSummary(int Scopes, long ShadowRows, long ShadowRowsKept);
+public sealed record BandRetentionFloorPruneSummary(
+    int Scopes,
+    long ShadowRows,
+    long ShadowRowsKept,
+    IReadOnlyDictionary<int, long>? MarginCheckByMargin = null)
+{
+    public IReadOnlyDictionary<int, long> MarginCheck { get; } = MarginCheckByMargin ?? new Dictionary<int, long>();
+}
 
 public sealed record BandPruneResult(
     int DeletedEntries,
