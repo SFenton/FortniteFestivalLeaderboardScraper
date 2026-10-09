@@ -495,7 +495,11 @@ public static class DatabaseInitializer
                     $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
                     $"{BandRankingStorageNames.GetCurrentSchemaSql()}" +
                     $"{Environment.NewLine}{Environment.NewLine}" +
-                    PublicationGenerationSchema.Sql,
+                    $"{PublicationGenerationSchema.Sql}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    $"{BandRetentionFloorSchema.Sql}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    RankHistoryLatestStateSchema.Sql,
                 CommandTimeoutSeconds: 0,
                 UseShortTransaction: false,
                 LockTimeout: null,
@@ -3377,6 +3381,20 @@ public static class DatabaseInitializer
         ALTER TABLE band_entries_duets SET (fillfactor=80);
         ALTER TABLE band_entries_trios SET (fillfactor=80);
         ALTER TABLE band_entries_quad  SET (fillfactor=80);
+
+        -- Covering indexes for the band spool flush pre-filter
+        -- (BandSpoolWriterFactory.PrefilterUnchangedSql): every staged row is
+        -- compared with its stored row, and these let that comparison use
+        -- index-only scans instead of heap fetches.
+        CREATE INDEX IF NOT EXISTS ix_be_duets_prefilter ON band_entries_duets
+            (song_id, band_type, team_key, instrument_combo)
+            INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold);
+        CREATE INDEX IF NOT EXISTS ix_be_trios_prefilter ON band_entries_trios
+            (song_id, band_type, team_key, instrument_combo)
+            INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold);
+        CREATE INDEX IF NOT EXISTS ix_be_quad_prefilter ON band_entries_quad
+            (song_id, band_type, team_key, instrument_combo)
+            INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold);
 
         -- ix_be_song_score + ix_be_song_rank removed 2026-04-23 (Phase 2):
         -- idx_scan=0 across all three band partitions forever. The per-song

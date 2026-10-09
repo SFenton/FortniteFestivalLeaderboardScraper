@@ -220,6 +220,19 @@ public sealed class BandRankingRepairService
         cmd.Parameters.AddWithValue("overThresholdMultiplier", overThresholdMultiplier);
 
         var updated = cmd.ExecuteNonQuery();
+        if (updated > 0)
+        {
+            // Flipped flags can move a scope's first valid entry and lower the
+            // retention floor, so drop the affected floors until the next prune.
+            var invalidatedFloors = BandRetentionFloorSchema.InvalidateForSongs(
+                connection,
+                transaction,
+                resolved,
+                songIds);
+            if (invalidatedFloors > 0)
+                _log.LogInformation("Dropped {Floors:N0} band retention floor(s) after over-threshold recompute.", invalidatedFloors);
+        }
+
         _log.LogInformation(
             "Recomputed band over-threshold flags for {BandTypes} and {SongScope} at multiplier {Multiplier:F3}: {Updated:N0} rows changed.",
             string.Join(", ", resolved),

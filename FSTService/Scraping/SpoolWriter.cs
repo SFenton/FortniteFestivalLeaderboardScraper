@@ -59,6 +59,7 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     private readonly SerializePage _serialize;
     private readonly DeserializePage _deserialize;
     private readonly FlushBatch _flush;
+    private readonly Action<string, string, IReadOnlyList<T>>? _onEnqueue;
     private readonly Dictionary<string, InstrumentSpool> _spools = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _spoolsLock = new();
     private long _recordCount;
@@ -119,17 +120,20 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     /// <param name="deserialize">Reads one page record from the stream.</param>
     /// <param name="flush">Persists a batch of pages for one instrument.</param>
     /// <param name="baseDirectory">Base directory for spool files. Defaults to system temp.</param>
+    /// <param name="onEnqueue">Optional observer of each enqueued page (song, instrument, entries).</param>
     public SpoolWriter(ILogger log, string label,
                        SerializePage serialize,
                        DeserializePage deserialize,
                        FlushBatch flush,
-                       string? baseDirectory = null)
+                       string? baseDirectory = null,
+                       Action<string, string, IReadOnlyList<T>>? onEnqueue = null)
     {
         _log = log;
         _label = label;
         _serialize = serialize;
         _deserialize = deserialize;
         _flush = flush;
+        _onEnqueue = onEnqueue;
         _spoolDir = Path.Combine(baseDirectory ?? System.IO.Path.GetTempPath(), $"fst_scrape_{label}_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_spoolDir);
         _log.LogInformation("Spool [{Label}] directory created: {Path}", _label, _spoolDir);
@@ -158,6 +162,7 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     {
         if (entries.Count == 0) return;
 
+        _onEnqueue?.Invoke(songId, instrument, entries);
         var spool = GetOrCreateSpool(instrument);
 
         var buf = new MemoryStream(entries.Count * 200);

@@ -1,3 +1,4 @@
+using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
@@ -7,6 +8,13 @@ public enum LeaderboardWriteMode
 {
     DiskSpool,
     OnlineBounded,
+}
+
+public enum BandRetentionFloorMode
+{
+    Off,
+    Report,
+    Enforce,
 }
 
 public enum RegistrationBackfillMode
@@ -382,6 +390,16 @@ public sealed class ScraperOptions
     /// Keep this low on shared API/worker deployments to avoid WAL and data-file pressure.
     /// </summary>
     public int RankHistorySnapshotMaxDegreeOfParallelism { get; set; } = 1;
+
+    /// <summary>
+    /// When true, rank-history snapshots compare current rankings against the
+    /// maintained <c>rank_history_latest</c> / <c>composite_rank_history_latest</c>
+    /// rows instead of scanning each instrument's and the composite's whole history.
+    /// The first enabled snapshot of each scope rebuilds its latest rows with the
+    /// original scan. Snapshots taken with the option off drop that readiness.
+    /// Default false. Set via <c>Scraper__UseRankHistoryLatestState</c>.
+    /// </summary>
+    public bool UseRankHistoryLatestState { get; set; }
 
     /// <summary>
     /// Command timeout in seconds for cleanup-time solo projection refreshes. 0 means unlimited.
@@ -1024,6 +1042,25 @@ public sealed class ScraperOptions
     /// <c>Scraper__BandSpoolFlushMaxParallelBandTypes</c>.
     /// </summary>
     public int BandSpoolFlushMaxParallelBandTypes { get; set; } = 1;
+
+    /// <summary>
+    /// Band retention floor for the post-fetch band spool flush. Band prune
+    /// keeps a bounded number of entries per song and band type and records,
+    /// per scope, the lowest kept position. <c>Enforce</c> skips staged new
+    /// rows that rank strictly below that floor, because the next prune would
+    /// delete them; <c>Report</c> writes them as before and records them so
+    /// prune can confirm that none survive; <c>Off</c> (default) does neither.
+    /// Set via <c>Scraper__BandRetentionFloorMode</c>.
+    /// </summary>
+    public BandRetentionFloorMode BandRetentionFloorMode { get; set; } = BandRetentionFloorMode.Off;
+
+    /// <summary>
+    /// Rows between band prune's last kept window row and the recorded retention
+    /// floor. The margin absorbs over-threshold flips at the top of a leaderboard
+    /// between the flush and prune (each moves the window down one row). Default
+    /// 100. Set via <c>Scraper__BandRetentionFloorMarginRows</c>.
+    /// </summary>
+    public int BandRetentionFloorMarginRows { get; set; } = BandLeaderboardPersistence.DefaultRetentionFloorMarginRows;
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).

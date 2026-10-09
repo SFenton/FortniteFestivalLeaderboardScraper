@@ -732,6 +732,77 @@ and leaves guarded mutations fail-closed. A new validated lease may replace
 the stale owner token and either resume the incomplete workflow or complete
 the post-commit release.
 
+### Band entry indexes
+
+`band_entries` is list-partitioned by band type. Each partition has its primary
+key, `(song_id, band_type, team_key, instrument_combo)`, and a repo-owned
+covering index `ix_be_<duets|trios|quad>_prefilter` on the same columns with
+`INCLUDE (score, base_score, instrument_bonus, overdrive_bonus,
+is_over_threshold)`.
+
+The covering index serves the band spool flush pre-filter
+(`BandSpoolWriterFactory.PrefilterUnchangedSql`). Every staged row is compared
+with its stored row, and about 96% are dropped as unchanged before the upsert.
+The comparison is a materialized `SELECT` followed by a `ctid` delete of the
+temporary staging table. Do not rewrite it as `DELETE ... USING band_entries`:
+a joined relation of a `DELETE` carries a row mark, which rules out index-only
+scans. The planner then uses `ix_be_<type>_type_team_combo`, which has no
+`song_id`, and fetches every heap row of the team on every song (4 to 16 per
+probe). On production data on 2026-10-08, one 6,400-row chunk took 2.33 s that
+way and 50 ms with the index-only plan; the old form made the post-fetch band
+flush about 32 minutes.
+
+Production also carries two operator-installed index families that the schema
+initializer does not create: `ix_be_<type>_type_team_combo (band_type,
+team_key, instrument_combo)` and `ix_be_<type>_updated_type_team
+(last_updated_at, band_type, team_key)`. The prefilter indexes were built in
+production on 2026-10-08 with `CREATE INDEX CONCURRENTLY` (about 30 seconds
+and 1.2 to 1.6 GB each). On any other existing database, build them the same
+way before deploying the flush change, because the initializer's plain
+`CREATE INDEX IF NOT EXISTS` would block band writes while it runs:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_be_duets_prefilter ON band_entries_duets
+    (song_id, band_type, team_key, instrument_combo)
+    INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold);
+-- repeat for band_entries_trios / ix_be_trios_prefilter and band_entries_quad / ix_be_quad_prefilter
+```
+
+`CREATE INDEX CONCURRENTLY` waits for older transactions, so give it a lock
+timeout of a few minutes. If it fails, it leaves an invalid index: drop it with
+`DROP INDEX CONCURRENTLY` and rebuild. Without the indexes the flush keeps
+working on the old, slower plan.
+
+`band_retention_floor` holds one row per song and band type: the floor
+position a margin below band prune's window (`floor_rank`, `floor_score`,
+`floor_end_time`), the first valid entry's key, and the `max_valid_entries`
+it was computed for. Each prune that runs with the floor enabled replaces the
+whole table in its own transaction. `band_retention_floor_shadow` is a
+scratch list of the flush rows found below a floor (key, score, end
+time), cleared by the next prune after it counts how many of them it would
+keep. Both tables are derived and safe to truncate. Behaviour is
+described in [worker: band retention floor](../components/worker.md#band-retention-floor).
+
+### Rank-history latest rows
+
+`rank_history_latest` (primary key `(instrument, account_id)`) and
+`composite_rank_history_latest` (primary key `account_id`) hold each
+account's newest history row, with the same columns. They are not partitioned:
+production already had empty tables of exactly this shape from an earlier
+experiment, and the first deploy of this change failed every scrape `1499`
+snapshot because its schema expected a partitioned table. Rank-history snapshots read and update them when
+`Scraper:UseRankHistoryLatestState` is on, so the snapshots no longer rescan
+the full history. `rank_history_latest_state` marks each scope (instrument or
+`composite`) ready only after an enabled snapshot rebuilt it from history.
+
+Invariant: for a ready scope, each latest row equals the account's history row
+with the greatest `snapshot_date`. Snapshots keep it in the same transaction as
+the history write. Retention cleanup keeps every account's newest row. A
+snapshot taken without the option clears the scope's readiness. The tables are
+derived, so truncating them and clearing `rank_history_latest_state` is a safe
+reset; the next enabled snapshot rebuilds them. See
+[configuration](../reference/configuration.md).
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a

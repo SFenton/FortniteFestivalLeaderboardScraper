@@ -2670,6 +2670,38 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_covering_band_prefilter_indexes_idempotently()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var indexes = conn.CreateCommand();
+        indexes.CommandText = """
+            SELECT tablename, indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname LIKE 'ix_be_%_prefilter'
+            ORDER BY indexname
+            """;
+        using var reader = indexes.ExecuteReader();
+        var definitions = new Dictionary<string, (string Table, string Definition)>(StringComparer.Ordinal);
+        while (reader.Read())
+            definitions[reader.GetString(1)] = (reader.GetString(0), reader.GetString(2));
+
+        Assert.Equal(
+            ["ix_be_duets_prefilter", "ix_be_quad_prefilter", "ix_be_trios_prefilter"],
+            definitions.Keys.ToArray());
+        foreach (var (table, definition) in definitions.Values)
+        {
+            Assert.StartsWith("band_entries_", table, StringComparison.Ordinal);
+            Assert.Contains(
+                "(song_id, band_type, team_key, instrument_combo) INCLUDE (score, base_score, instrument_bonus, overdrive_bonus, is_over_threshold)",
+                definition,
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_exact_scrape_phase_timings_shape_idempotently()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

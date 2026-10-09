@@ -2887,11 +2887,25 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return rows;
     }
 
-    public int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true)
+    public int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // The latest-state path relies on ON CONFLICT, so legacy schemas without the
+        // rank_history primary key always take the original path.
+        useLatestState &= _rankHistoryHasPrimaryKey.Value;
+        if (useLatestState)
+            RankHistoryLatestStateSchema.Ensure(_ds);
+
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        if (useLatestState)
+        {
+            var latestRows = SnapshotRankHistoryFromLatestState(conn, tx, today);
+            tx.Commit();
+            if (cleanupRetention)
+                CleanupRankHistoryRetention(retentionDays);
+            return latestRows;
+        }
 
         // Legacy databases created before rank_history gained its PK cannot rely on
         // ON CONFLICT for same-day reruns, so keep the delete-and-reinsert path only
@@ -3030,12 +3044,152 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.Parameters.AddWithValue("today", today);
             rows = Convert.ToInt32(c.ExecuteScalar());
         }
+
+        RankHistoryLatestStateSchema.Invalidate(conn, tx, Instrument);
         tx.Commit();
 
         if (cleanupRetention)
             CleanupRankHistoryRetention(retentionDays);
 
         return rows;
+    }
+
+    private const string RankHistoryChangeConditionsSql = """
+              (
+                lr.account_id IS NULL
+                OR lr.adjusted_skill_rank IS DISTINCT FROM ar.adjusted_skill_rank
+                OR lr.weighted_rank IS DISTINCT FROM ar.weighted_rank
+                OR lr.fc_rate_rank IS DISTINCT FROM ar.fc_rate_rank
+                OR lr.total_score_rank IS DISTINCT FROM ar.total_score_rank
+                OR lr.max_score_percent_rank IS DISTINCT FROM ar.max_score_percent_rank
+                OR lr.adjusted_skill_rating IS DISTINCT FROM ar.adjusted_skill_rating
+                OR lr.weighted_rating IS DISTINCT FROM ar.weighted_rating
+                OR lr.fc_rate IS DISTINCT FROM ar.fc_rate
+                OR lr.total_score IS DISTINCT FROM ar.total_score
+                OR lr.max_score_percent IS DISTINCT FROM ar.max_score_percent
+                OR lr.songs_played IS DISTINCT FROM ar.songs_played
+                OR lr.coverage IS DISTINCT FROM ar.coverage
+                OR lr.full_combo_count IS DISTINCT FROM ar.full_combo_count
+                OR lr.raw_max_score_percent IS DISTINCT FROM ar.raw_max_score_percent
+              )
+        """;
+
+    private const string RankHistoryColumnsSql = """
+        account_id, instrument, snapshot_date, snapshot_taken_at,
+        adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank, max_score_percent_rank,
+        adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent,
+        songs_played, coverage, full_combo_count, raw_max_score_percent,
+        raw_weighted_rating, raw_skill_rating, schema_version
+        """;
+
+    /// <summary>
+    /// Snapshot path that compares against <c>rank_history_latest</c> instead of
+    /// scanning the instrument's whole history. The first run for a scope that is
+    /// not ready rebuilds the latest rows from history with the original scan.
+    /// </summary>
+    private int SnapshotRankHistoryFromLatestState(NpgsqlConnection conn, NpgsqlTransaction tx, DateOnly today)
+    {
+        var ready = RankHistoryLatestStateSchema.LockAndReadReady(conn, tx, Instrument);
+        if (!ready)
+        {
+            using var rebuild = conn.CreateCommand();
+            rebuild.Transaction = tx;
+            rebuild.CommandTimeout = 0;
+            rebuild.CommandText = $"""
+                DELETE FROM rank_history_latest WHERE instrument = @instrument;
+
+                INSERT INTO rank_history_latest ({RankHistoryColumnsSql})
+                SELECT {RankHistoryColumnsSql}
+                FROM rank_history history
+                WHERE history.instrument = @instrument
+                  AND (history.account_id, history.snapshot_date) IN (
+                      SELECT account_id, MAX(snapshot_date)
+                      FROM rank_history
+                      WHERE instrument = @instrument
+                      GROUP BY account_id);
+                """;
+            rebuild.Parameters.AddWithValue("instrument", Instrument);
+            rebuild.ExecuteNonQuery();
+        }
+
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandTimeout = 0;
+            c.CommandText = $"""
+                CREATE TEMP TABLE _rank_history_changes ON COMMIT DROP AS
+                SELECT ar.account_id, @instrument::TEXT AS instrument, @today::DATE AS snapshot_date,
+                    ar.computed_at AS snapshot_taken_at,
+                    ar.adjusted_skill_rank, ar.weighted_rank, ar.fc_rate_rank, ar.total_score_rank, ar.max_score_percent_rank,
+                    ar.adjusted_skill_rating, ar.weighted_rating, ar.fc_rate, ar.total_score, ar.max_score_percent,
+                    ar.songs_played, ar.coverage, ar.full_combo_count, ar.raw_max_score_percent,
+                    ar.raw_weighted_rating, ar.raw_skill_rating, 2::SMALLINT AS schema_version
+                FROM account_rankings ar
+                LEFT JOIN rank_history_latest lr
+                  ON lr.instrument = @instrument AND lr.account_id = ar.account_id
+                WHERE ar.instrument = @instrument
+                  AND {RankHistoryChangeConditionsSql};
+
+                INSERT INTO rank_history ({RankHistoryColumnsSql})
+                SELECT {RankHistoryColumnsSql} FROM _rank_history_changes
+                ON CONFLICT (account_id, instrument, snapshot_date) DO UPDATE SET
+                    snapshot_taken_at = EXCLUDED.snapshot_taken_at,
+                    adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
+                    weighted_rank = EXCLUDED.weighted_rank,
+                    fc_rate_rank = EXCLUDED.fc_rate_rank,
+                    total_score_rank = EXCLUDED.total_score_rank,
+                    max_score_percent_rank = EXCLUDED.max_score_percent_rank,
+                    adjusted_skill_rating = EXCLUDED.adjusted_skill_rating,
+                    weighted_rating = EXCLUDED.weighted_rating,
+                    fc_rate = EXCLUDED.fc_rate,
+                    total_score = EXCLUDED.total_score,
+                    max_score_percent = EXCLUDED.max_score_percent,
+                    songs_played = EXCLUDED.songs_played,
+                    coverage = EXCLUDED.coverage,
+                    full_combo_count = EXCLUDED.full_combo_count,
+                    raw_max_score_percent = EXCLUDED.raw_max_score_percent,
+                    raw_weighted_rating = EXCLUDED.raw_weighted_rating,
+                    raw_skill_rating = EXCLUDED.raw_skill_rating,
+                    schema_version = EXCLUDED.schema_version;
+
+                INSERT INTO rank_history_latest ({RankHistoryColumnsSql})
+                SELECT {RankHistoryColumnsSql} FROM _rank_history_changes
+                ON CONFLICT (instrument, account_id) DO UPDATE SET
+                    snapshot_date = EXCLUDED.snapshot_date,
+                    snapshot_taken_at = EXCLUDED.snapshot_taken_at,
+                    adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
+                    weighted_rank = EXCLUDED.weighted_rank,
+                    fc_rate_rank = EXCLUDED.fc_rate_rank,
+                    total_score_rank = EXCLUDED.total_score_rank,
+                    max_score_percent_rank = EXCLUDED.max_score_percent_rank,
+                    adjusted_skill_rating = EXCLUDED.adjusted_skill_rating,
+                    weighted_rating = EXCLUDED.weighted_rating,
+                    fc_rate = EXCLUDED.fc_rate,
+                    total_score = EXCLUDED.total_score,
+                    max_score_percent = EXCLUDED.max_score_percent,
+                    songs_played = EXCLUDED.songs_played,
+                    coverage = EXCLUDED.coverage,
+                    full_combo_count = EXCLUDED.full_combo_count,
+                    raw_max_score_percent = EXCLUDED.raw_max_score_percent,
+                    raw_weighted_rating = EXCLUDED.raw_weighted_rating,
+                    raw_skill_rating = EXCLUDED.raw_skill_rating,
+                    schema_version = EXCLUDED.schema_version
+                WHERE EXCLUDED.snapshot_date >= rank_history_latest.snapshot_date;
+                """;
+            c.Parameters.AddWithValue("instrument", Instrument);
+            c.Parameters.AddWithValue("today", today);
+            c.ExecuteNonQuery();
+        }
+
+        RankHistoryLatestStateSchema.MarkReady(conn, tx, Instrument, rebuilt: !ready);
+        UpsertRankHistorySnapshotStats(conn, tx, today);
+
+        using var count = conn.CreateCommand();
+        count.Transaction = tx;
+        count.CommandText = "SELECT COUNT(*) FROM rank_history_latest WHERE instrument = @instrument AND snapshot_date = @today";
+        count.Parameters.AddWithValue("instrument", Instrument);
+        count.Parameters.AddWithValue("today", today);
+        return Convert.ToInt32(count.ExecuteScalar());
     }
 
     public int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = RankHistoryCleanupBatchSize, int maxBatches = RankHistoryCleanupMaxBatches)
