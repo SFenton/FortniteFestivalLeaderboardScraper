@@ -303,12 +303,22 @@ Aggregate player scopes intentionally use different formulas:
   preserve the endpoint family's `Cache-Control` and content type. Direct,
   precomputed, and projected JSON use the same explicit relaxed Unicode
   encoder so non-ASCII strings preserve exact UTF-8 bytes and ETags.
-- Only overview `pageSize=25|50` for the five canonical ranking metrics may
-  lazily compute and write through while unfrozen. One process-local
+- Only overview `pageSize=25|50` for the five canonical ranking metrics, plus
+  the band best/worst songs (`/api/rankings/bands/{bandType}/{teamKey}/songs`
+  with optional `combo` and `limit` 1-20) and band song rows (`.../song-rows`
+  with optional `combo`), may lazily compute and write through while
+  unfrozen. One process-local
   single-flight owns each publication/key build. Case, query order, and
   equivalent integer spellings normalize to one semantic key. Responses at or above one
   second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
   if otherwise valid but are not cached.
+- The two band song routes return the same bytes for every selected profile,
+  so their route key ignores `X-FST-Selected-*` headers: a web read (with
+  headers) and a native read (without) share one row. During any freeze, and
+  while the band song projection gate is closed mid-scrape (unpublished
+  generation), a team read since the current publication is served from that
+  row. A team never read since the publication still gets the endpoint's
+  distinct `503` "Published band song data unavailable", never an empty list.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
   covered publication-bound route may serve only an existing L1/L2 published
   cache hit; the cache never builds or writes while frozen.
