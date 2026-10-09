@@ -58,6 +58,18 @@ public static class BandRetentionFloorSchema
         -- Logged, so the evidence an Enforce flush recorded survives a crash until a
         -- prune has checked it.
         ALTER TABLE band_retention_floor_shadow SET LOGGED;
+
+        -- Keys of the rows at smaller candidate margins below the window's last row,
+        -- recorded with each floor so the next prune can report which smaller margin
+        -- would also have been safe.
+        CREATE TABLE IF NOT EXISTS band_retention_floor_margin_keys (
+            song_id      TEXT NOT NULL,
+            band_type    TEXT NOT NULL,
+            margin_rows  INT  NOT NULL,
+            score        INT  NOT NULL,
+            end_time_key TEXT NOT NULL,
+            PRIMARY KEY (song_id, band_type, margin_rows)
+        );
         """;
 
     private static readonly ConcurrentDictionary<string, bool> Ensured = new(StringComparer.Ordinal);

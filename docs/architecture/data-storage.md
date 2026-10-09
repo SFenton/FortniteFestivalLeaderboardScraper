@@ -780,7 +780,9 @@ it was computed for. Each prune that runs with the floor enabled replaces the
 whole table in its own transaction. `band_retention_floor_shadow` is a
 scratch list of the flush rows found below a floor (key, score, end
 time), cleared by the next prune after it counts how many of them it would
-keep. Both tables are derived and safe to truncate. Behaviour is
+keep. `band_retention_floor_margin_keys` holds, per scope, the keys at smaller
+candidate margins for the next prune's margin check, and is replaced with the
+floors. Both tables are derived and safe to truncate. Behaviour is
 described in [worker: band retention floor](../components/worker.md#band-retention-floor).
 
 ### Rank-history latest rows
