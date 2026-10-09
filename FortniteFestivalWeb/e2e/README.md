@@ -15,6 +15,11 @@ the same surface in the nightly matrix.
 row and modal: name/role/state, reading and focus order, target size, 320 px
 reflow, reduced motion, and dialog axe findings.
 
+`specs/accessibility/item-shop-sort.spec.ts` covers the Item Shop sort pill,
+phone FAB action and dialog: name/role/pressed state, reading and Tab order,
+keyboard apply/Escape with focus return, target size, 200% zoom, 320 px reflow,
+and dialog axe findings.
+
 `specs/accessibility/focus-appearance.spec.ts` separately verifies rendered
 focus decoration in touch Chromium, iPhone-class WebKit, and real desktop
 keyboard flows. Its attachments include event order, active element,

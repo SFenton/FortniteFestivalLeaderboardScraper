@@ -1278,6 +1278,22 @@ Licenses, a 44 px row target (the shared modal Close button is held to WCAG
 2.2 AA 24 px), heading order, keyboard open/trap/Escape with focus returned to
 the row, axe on the dialog, 320 px reflow, and reduced motion.
 
+`specs/accessibility/item-shop-sort.spec.ts` covers the Item Shop sort.
+It checks:
+
+- the header **Sort** pill and the phone FAB **Sort Item Shop** action;
+- the labelled dialog, with its reading and Tab order and pressed mode and
+  direction states;
+- keyboard-only apply and Escape, with focus returning to the pill;
+- the reordered grid;
+- a 44 px target floor for the changed controls (the shared Close button is
+  held to 24 px);
+- axe;
+- no clipped text and reachable actions at 200% zoom and 320 px reflow.
+
+The phone case runs on both mobile projects. `DirectionSelector` and
+`ShopSortModal` unit tests pin the same names and pressed states.
+
 Focus appearance has a separate computed-style regression matrix:
 
 ```bash

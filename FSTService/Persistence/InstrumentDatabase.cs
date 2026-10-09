@@ -3086,6 +3086,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// Snapshot path that compares against <c>rank_history_latest</c> instead of
     /// scanning the instrument's whole history. The first run for a scope that is
     /// not ready rebuilds the latest rows from history with the original scan.
+    /// Writes go in account order: the day's first snapshot then lays its rows out
+    /// in primary-key order, and that day's later snapshots update them in the same
+    /// order instead of at random heap and index pages.
     /// </summary>
     private int SnapshotRankHistoryFromLatestState(NpgsqlConnection conn, NpgsqlTransaction tx, DateOnly today)
     {
@@ -3132,6 +3135,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
                 INSERT INTO rank_history ({RankHistoryColumnsSql})
                 SELECT {RankHistoryColumnsSql} FROM _rank_history_changes
+                ORDER BY account_id
                 ON CONFLICT (account_id, instrument, snapshot_date) DO UPDATE SET
                     snapshot_taken_at = EXCLUDED.snapshot_taken_at,
                     adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
@@ -3154,6 +3158,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
                 INSERT INTO rank_history_latest ({RankHistoryColumnsSql})
                 SELECT {RankHistoryColumnsSql} FROM _rank_history_changes
+                ORDER BY account_id
                 ON CONFLICT (instrument, account_id) DO UPDATE SET
                     snapshot_date = EXCLUDED.snapshot_date,
                     snapshot_taken_at = EXCLUDED.snapshot_taken_at,
