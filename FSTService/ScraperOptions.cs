@@ -1008,6 +1008,15 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionMaxParallelScopes { get; set; }
 
     /// <summary>
+    /// When true and <see cref="BandCurrentProjectionMaxParallelScopes"/> is
+    /// positive, the incremental refresh rebuilds all selected scopes of one
+    /// (song, band type) in one transaction that reads the song's band entries
+    /// and member stats once. Default false.
+    /// Set via <c>Scraper__BandCurrentProjectionBatchScopesBySourcePair</c>.
+    /// </summary>
+    public bool BandCurrentProjectionBatchScopesBySourcePair { get; set; }
+
+    /// <summary>
     /// Zero (default) publishes a band current-projection refresh in one
     /// transaction and then scans the whole projection for unpublished
     /// candidates. A positive value publishes one song per transaction with up
