@@ -32,6 +32,7 @@ export const changelog: ChangelogEntry[] = [
         title: 'ITEM SHOP',
         items: [
           'Sort the Item Shop by Title, Artist, Year, or Duration, ascending or descending. Your choice is remembered for both grid and list views.',
+          'Screen readers now announce which sort direction is selected in the sort window, and its Reset and Apply buttons are easier to tap.',
         ],
       },
       {

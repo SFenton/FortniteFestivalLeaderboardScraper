@@ -56,4 +56,14 @@ describe('DirectionSelector', () => {
     const circles = container.querySelectorAll('button > div');
     expect(circles.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('exposes the selected direction as the pressed button', () => {
+    const { rerender } = render(<DirectionSelector ascending={true} onChange={vi.fn()} ascendingLabel="Ascending" descendingLabel="Descending" />);
+    expect(screen.getByRole('button', { name: 'Ascending', pressed: true })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Descending', pressed: false })).toBeDefined();
+
+    rerender(<DirectionSelector ascending={false} onChange={vi.fn()} ascendingLabel="Ascending" descendingLabel="Descending" />);
+    expect(screen.getByRole('button', { name: 'Ascending', pressed: false })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Descending', pressed: true })).toBeDefined();
+  });
 });

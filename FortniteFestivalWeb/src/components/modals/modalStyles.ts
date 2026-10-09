@@ -34,8 +34,8 @@ export const modalStyles = {
   resetWrap: { marginTop: Gap.section } as CSSProperties,
   resetTitle: { fontSize: Font.lg, fontWeight: Weight.bold, marginBottom: Gap.sm, color: Colors.textPrimary } as CSSProperties,
   resetDesc: { fontSize: Font.sm, color: Colors.textSecondary, marginBottom: Gap.md, lineHeight: LineHeight.snug } as CSSProperties,
-  resetBtn: { ...btnDanger, width: CssValue.full, fontSize: Font.md, padding: Gap.xl } as CSSProperties,
-  applyBtn: { ...btnPrimary, width: CssValue.full, fontSize: Font.lg, fontWeight: Weight.bold, padding: Gap.xl, transition: modalTransition } as CSSProperties,
+  resetBtn: { ...btnDanger, width: CssValue.full, minHeight: GeneralSize.thumb, fontSize: Font.md, padding: Gap.xl } as CSSProperties,
+  applyBtn: { ...btnPrimary, width: CssValue.full, minHeight: GeneralSize.thumb, fontSize: Font.lg, fontWeight: Weight.bold, padding: Gap.xl, transition: modalTransition } as CSSProperties,
   applyBtnDisabled: { opacity: Opacity.faded, cursor: Cursor.default } as CSSProperties,
 
   /* ── ModalSection ── */
