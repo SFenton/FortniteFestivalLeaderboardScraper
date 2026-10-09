@@ -181,12 +181,13 @@ public sealed class BandCurrentProjectionBuilder
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 0;
         cmd.CommandText = $"""
-            WITH NormalizedEntries AS (
+            WITH {BandComboMapCtes}, NormalizedEntries AS (
                 SELECT
                     be.song_id,
                     be.band_type,
-                    {BandSongComboIdExpression} AS combo_id
+                    {BandSongComboIdFromMapSql} AS combo_id
                 FROM band_entries be
+                {BandComboMapJoinSql}
                 WHERE NOT be.is_over_threshold
                   {bandTypeFilter}
             )
@@ -801,21 +802,20 @@ public sealed class BandCurrentProjectionBuilder
         cmd.Transaction = tx;
         cmd.CommandTimeout = 0;
         cmd.CommandText = $"""
-            WITH requested_sources AS (
+            WITH {BandComboMapCtes}, requested_sources AS (
                 SELECT DISTINCT song_id, band_type
                 FROM _band_current_refresh_scopes
             ), entry_combos AS (
-                -- Evaluate the combo expression once per source entry instead
-                -- of once per requested combo scope that joins the entry.
                 SELECT be.song_id,
                        be.band_type,
                        be.team_key,
                        be.last_updated_at,
-                       ({BandSongComboIdExpression}) AS combo_id
+                       {BandSongComboIdFromMapSql} AS combo_id
                 FROM band_entries be
                 JOIN requested_sources rs
                   ON rs.song_id = be.song_id
                  AND rs.band_type = be.band_type
+                {BandComboMapJoinSql}
                 WHERE NOT be.is_over_threshold
             ), overall_scope AS (
                 SELECT song_id,
@@ -2405,6 +2405,55 @@ public sealed class BandCurrentProjectionBuilder
             ) mapped
             WHERE mapped.instrument IS NOT NULL
         ), '')";
+
+    // A combo id depends only on instrument_combo, so statements that scan many
+    // band entries look it up in a map evaluated once per statement over every
+    // combo of one to four instrument ids from 0 to ComboMapMaxInstrumentId (plus
+    // the empty combo) instead of evaluating the expression for every entry.
+    // Values outside that domain fall back to the expression.
+    internal const int ComboMapMaxInstrumentId = 10;
+
+    private static readonly string BandComboMapCtes = $"""
+        band_combo_parts AS (
+            SELECT part::TEXT AS part
+            FROM generate_series(0, {ComboMapMaxInstrumentId}) AS part
+        ), band_combo_domain AS (
+            SELECT ''::TEXT AS instrument_combo
+            UNION ALL
+            SELECT a.part FROM band_combo_parts a
+            UNION ALL
+            SELECT a.part || ':' || b.part
+            FROM band_combo_parts a CROSS JOIN band_combo_parts b
+            UNION ALL
+            SELECT a.part || ':' || b.part || ':' || c.part
+            FROM band_combo_parts a CROSS JOIN band_combo_parts b CROSS JOIN band_combo_parts c
+            UNION ALL
+            SELECT a.part || ':' || b.part || ':' || c.part || ':' || d.part
+            FROM band_combo_parts a CROSS JOIN band_combo_parts b CROSS JOIN band_combo_parts c CROSS JOIN band_combo_parts d
+        ), band_combo_map AS MATERIALIZED (
+            SELECT be.instrument_combo, {BandSongComboIdExpression} AS combo_id
+            FROM band_combo_domain be
+        )
+        """;
+
+    private const string BandComboMapJoinSql =
+        "LEFT JOIN band_combo_map ON band_combo_map.instrument_combo = be.instrument_combo";
+
+    private const string BandSongComboIdFromMapSql =
+        "CASE WHEN band_combo_map.instrument_combo IS NOT NULL THEN band_combo_map.combo_id ELSE "
+        + BandSongComboIdExpression + " END";
+
+    internal static string GetComboIdComparisonSqlForTesting() => $"""
+        WITH {BandComboMapCtes}, be AS (
+            SELECT unnest(@combos::TEXT[]) AS instrument_combo
+        )
+        SELECT be.instrument_combo,
+               {BandSongComboIdExpression} AS expression_combo_id,
+               {BandSongComboIdFromMapSql} AS mapped_combo_id,
+               band_combo_map.instrument_combo IS NOT NULL AS in_map
+        FROM be
+        {BandComboMapJoinSql}
+        """;
 
     private const string RebuildScopeSqlTemplate = $"""
         WITH NormalizedEntries AS (
