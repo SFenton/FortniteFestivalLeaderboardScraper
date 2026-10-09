@@ -870,6 +870,28 @@ rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
 serving stale published rows, for example 71 published versus 30 current
 rows. The stale sweep converges them within its cap.
 
+The sweep still reads the band entries twice: once to load every source scope
+and once in the filter. In scrape `1509` the two passes took 3.2 minutes for
+110,042 candidates and 49,176 impacted scopes, about as long as the pair
+rebuild and publish that followed. `Scraper:BandCurrentProjectionSinglePassStaleSweep`
+(default `false`) makes it one pass:
+
+1. One scan records each source scope's projected row count (distinct teams)
+   and latest source update in a temporary table.
+2. The candidate keys come from that table plus the projection scope keys and
+   are normalized and de-duplicated as before.
+3. The unchanged-scope selection joins the table instead of scanning the
+   entries again.
+
+The selected impacted and stale scopes and the candidate count match the
+two-pass sweep.
+
+Both the sweep's source-scope load and the filter look combo ids up in a map
+built once per statement. The map covers every combo of one to four instrument
+ids from 0 to 10, plus the empty combo. That replaces about 20 million
+evaluations of the combo-id expression. Any other value falls back to the
+expression, and a PostgreSQL test checks that the map and the expression agree.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and

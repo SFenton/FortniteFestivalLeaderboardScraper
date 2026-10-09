@@ -288,6 +288,7 @@ invalid/non-positive values prevent startup.
 | `Scraper:BandCurrentProjectionBatchScopesBySourcePair` | `false` | With `MaxParallelScopes` above `0`, rebuild all selected scopes of one song and band type in one transaction that reads the song's band entries and member stats once |
 | `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
+| `Scraper:BandCurrentProjectionSinglePassStaleSweep` | `false` | Derive the stale sweep's candidates and its unchanged-scope selection from one scan of the band entries instead of two; same selection |
 | `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
 | `Scraper:BandSpoolFlushMaxParallelBandTypes` | `1` | How many band types the post-fetch band spool flush writes at once; clamped to the number of band types |
 | `Scraper:BandRetentionFloorMode` | `Off` | Band retention floor for the post-fetch band flush. `Report` records staged new rows that rank below the floor band prune last recorded for their scope, and the next prune counts how many of them it would keep; `Enforce` also skips those rows; `Off` does neither. See [worker: band retention floor](../components/worker.md#band-retention-floor) |
@@ -338,6 +339,14 @@ scope that needs it plus up to the cap of the others (in the filter's
 deterministic order) without filtering again. A sweep failure is logged and
 the refresh continues with the impacted scopes. The switch is part of the durable
 phase configuration identity; `0` disables it.
+
+`Scraper__BandCurrentProjectionSinglePassStaleSweep` (template variable
+`BAND_CURRENT_PROJECTION_SINGLE_PASS_STALE_SWEEP`) applies only when the sweep
+is enabled. It reads the band entries once: the per-scope projected row
+counts and latest source updates go into a temporary table, and both the
+candidate keys and the unchanged-scope selection come from it. The selected
+scopes and candidate count match the two-pass sweep. It is part of the durable
+phase configuration identity; `false` is the rollback.
 
 `Scraper__BandSearchProjectionParallelBandTypes` (template variable
 `BAND_SEARCH_PROJECTION_PARALLEL_BAND_TYPES`) makes BandMaintenance's

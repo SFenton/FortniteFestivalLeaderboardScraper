@@ -977,6 +977,39 @@ public sealed class BandCurrentProjectionOptimizationTests(
     }
 
     [Fact]
+    public async Task ComboMapMatchesComboExpressionInsideAndOutsideItsDomain()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        string[] inDomain =
+        [
+            "", "0", "10", "0:1", "1:0", "0:3", "3:0", "2:2", "0:10", "10:10", "0:2:2:9",
+            "4:5:6", "8:7:6:5", "0:1:2:3", "3:3:3:3", "10:9:8:7", "0:0:0:10",
+        ];
+        string[] outsideDomain = ["11", "0:12", "0:1:2:3:4", "01:1", "7:7:7:7:7:7"];
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = BandCurrentProjectionBuilder.GetComboIdComparisonSqlForTesting();
+        command.Parameters.AddWithValue("combos", inDomain.Concat(outsideDomain).ToArray());
+
+        var rows = new Dictionary<string, (string Expression, string Mapped, bool InMap)>(StringComparer.Ordinal);
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+                rows[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2), reader.GetBoolean(3));
+        }
+
+        Assert.Equal(inDomain.Length + outsideDomain.Length, rows.Count);
+        foreach (var (combo, row) in rows)
+            Assert.True(row.Expression == row.Mapped, $"combo '{combo}': expression '{row.Expression}' != mapped '{row.Mapped}'");
+        Assert.All(inDomain, combo => Assert.True(rows[combo].InMap, combo));
+        Assert.All(outsideDomain, combo => Assert.False(rows[combo].InMap, combo));
+        Assert.Equal("Solo_Guitar+Solo_Bass", rows["1:0"].Mapped);
+        Assert.Equal("Solo_Guitar+Solo_Drums", rows["3:0"].Mapped);
+        Assert.Equal("Solo_Guitar", rows["0:10"].Mapped);
+        Assert.Equal(string.Empty, rows[string.Empty].Mapped);
+    }
+
+    [Fact]
     public void PairSourceReadsSourceTablesOnceAndScopeSqlReadsOnlyThePairSource()
     {
         var pairSource = BandCurrentProjectionBuilder.GetPairSourceSqlForTesting();
