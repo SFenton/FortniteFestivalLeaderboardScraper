@@ -7279,6 +7279,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     composite_rating, instruments_played, total_songs_played)
                 SELECT account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played
                 FROM _composite_rank_history_changes
+                ORDER BY account_id
                 ON CONFLICT (account_id, snapshot_date) DO UPDATE SET
                     composite_rank = EXCLUDED.composite_rank,
                     composite_rating = EXCLUDED.composite_rating,
@@ -7289,6 +7290,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     composite_rating, instruments_played, total_songs_played)
                 SELECT account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played
                 FROM _composite_rank_history_changes
+                ORDER BY account_id
                 ON CONFLICT (account_id) DO UPDATE SET
                     snapshot_date = EXCLUDED.snapshot_date,
                     composite_rank = EXCLUDED.composite_rank,
