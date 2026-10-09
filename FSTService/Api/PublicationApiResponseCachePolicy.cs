@@ -122,6 +122,16 @@ internal static class PublicApiResponseCachePolicy
             responseCacheControl =
                 "public, max-age=1800, stale-while-revalidate=3600";
         }
+        else if (IsPublishedBandSongRequest(
+                     request,
+                     segments))
+        {
+            // The band song projection gate closes mid-scrape, before the
+            // publication commits; keep the last published response.
+            freezeCritical = true;
+            allowWriteThrough = true;
+            responseCacheControl = "public, max-age=300";
+        }
         else if (TryPlanRankings(
                      request,
                      segments,
@@ -513,6 +523,56 @@ internal static class PublicApiResponseCachePolicy
         return false;
     }
 
+    /// <summary>
+    /// Band best/worst songs and band song rows read the published band song
+    /// projection. Responses depend only on the route and the combo/limit
+    /// query, never on selected-profile headers.
+    /// </summary>
+    internal static bool IsPublishedBandSongRoute(
+        string[] segments) =>
+        segments.Length == 6
+        && string.Equals(
+            segments[0],
+            "api",
+            StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            segments[1],
+            "rankings",
+            StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            segments[2],
+            "bands",
+            StringComparison.OrdinalIgnoreCase)
+        && BandComboIds.IsValidBandType(segments[3])
+        && (string.Equals(
+                segments[5],
+                "songs",
+                StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                segments[5],
+                "song-rows",
+                StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsPublishedBandSongRequest(
+        HttpRequest request,
+        string[] segments)
+    {
+        if (!IsPublishedBandSongRoute(segments))
+            return false;
+
+        if (string.Equals(
+                segments[5],
+                "song-rows",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlyQueryKeys(request, "combo");
+        }
+
+        return OnlyQueryKeys(request, "combo", "limit")
+            && TryQueryInt(request, "limit", 5, out var limit)
+            && limit is >= 1 and <= 20;
+    }
+
     private static bool TryPlanPlayer(
         HttpRequest request,
         string[] segments,
@@ -724,6 +784,9 @@ internal static class PublicApiResponseCachePolicy
         {
             return false;
         }
+
+        if (IsPublishedBandSongRoute(segments))
+            return true;
 
         if (string.Equals(
                 segments[1],
