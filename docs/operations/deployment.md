@@ -109,6 +109,20 @@ and run as the same Unix owner, or set one explicit shared absolute lock path.
 | `fstworker` | Full mutation worker | `worker` profile, bounded process-crash restart, worker-only Docker socket, guarded host startup; loads persisted Item Shop state only |
 | `festivalweb` | Nginx static SPA and reverse proxy | Can render maintenance UI independently of API readiness |
 
+Production PostgreSQL takes most settings from command-line arguments in the
+production-owned Compose project (for example `max_wal_size=32GB`,
+`wal_buffers=16MB`, `shared_buffers=4GB`). Since the scrape `1501` boundary
+(2026-10-09 01:58Z), two reloadable WAL settings are also set with
+`ALTER SYSTEM` (stored in the data directory's `postgresql.auto.conf`):
+`wal_compression = 'lz4'` and `checkpoint_timeout = '15min'`. The reason: since
+2026-09-11, `pg_stat_wal` had recorded about 41 TB of WAL with 6.2 billion
+full-page images and 1.19 billion `wal_buffers_full` events. Rank-history
+snapshot and band writes also waited on `WALWrite`. Command-line arguments
+take precedence over `ALTER SYSTEM`, so settings already given there (such as
+`max_wal_size` and `wal_buffers`) need a Compose change and a restart. Roll
+back with `ALTER SYSTEM RESET wal_compression; ALTER SYSTEM RESET
+checkpoint_timeout; SELECT pg_reload_conf();`.
+
 `fstservice` and `fstworker` use the same .NET image with different command and
 role configuration. `festivalweb` is a separate multi-stage image. FSTService
 also supports an embedded SPA fallback for single-container deployments.
@@ -184,7 +198,17 @@ plus #155). The worker env additionally sets
 `Scraper__BandSpoolFlushMaxParallelBandTypes=3`, and
 `Scraper__RankHistorySnapshotMaxDegreeOfParallelism=2`, and adds US East as an
 eighth egress-refresh region (see [VPN/proxy pool](vpn-proxy-pool.md)). These
-remain production canaries, not accepted defaults. Check the running image's
+remain production canaries, not accepted defaults.
+
+Since the scrape `1501` boundary (2026-10-09) production runs master
+`7e038f96`, which includes the performance bundle #186. The worker env adds:
+
+- `Scraper__BandRetentionFloorMode=Enforce`. `Report` ran in scrape `1500`
+  and `Enforce` started at the `1500` boundary; see
+  [worker: band retention floor](../components/worker.md#band-retention-floor).
+- `Scraper__UseRankHistoryLatestState=true`, since the scrape `1498`
+  boundary; see
+  [data storage: rank-history latest rows](../architecture/data-storage.md#rank-history-latest-rows). Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
 a newer master build can lack bundle changes that are not merged yet.
 

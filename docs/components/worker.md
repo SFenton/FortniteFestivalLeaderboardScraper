@@ -923,6 +923,22 @@ The worker creates the two small tables on first use, so no deploy hook is
 needed. Rollback is `Off`. Promote `Report` to `Enforce` only after scrapes
 report zero kept rows.
 
+Production rollout:
+
+| Scrape | Mode | Rows below a floor | Kept by prune | Band flush | Pruned entries | Prune | Search refresh |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `1499` | `Report`, no floors yet | 0 | 0 | 11.1 min | 771,828 | 10.0 min | 7.2 min |
+| `1500` | `Report` | 554,031 | 0 | 10.0 min | 771,843 | 14.0 min | 7.4 min |
+| `1501` | `Enforce` | 553,531 skipped | 0 | 4.6 min | 218,575 | 6.9 min | 2.6 min |
+
+- Prune recorded 1,682 scope floors at ranks 10,100 to 10,103.
+- `Enforce` has been on since the scrape `1500` boundary (2026-10-08 23:36Z).
+- About 218,000 rows a scrape still churn. Most of them are the margin rows
+  between the window and the floor.
+- The current projection refresh did not shrink. Its scope count varies by
+  scrape (1,679 to 6,990 across scrapes `1488` to `1501`) and was 3,616 in
+  `1501`.
+
 ## Durable phase progress
 
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
@@ -998,6 +1014,9 @@ across all songs, about 1.8 seconds per chunk (Quad about 1.0). The pre-filter
 now compares through the covering `ix_be_<type>_prefilter` indexes with an
 index-only scan (50 ms for the same chunk on production data). See
 [Data storage: Band entry indexes](../architecture/data-storage.md#band-entry-indexes).
+Production: the flush took 31.9 minutes in scrape `1497`, 11.1 in `1499` with
+the new pre-filter, and 4.6 in `1501` with the retention floor enforced. The
+leaderboard phase fell from 63 to 69 minutes to 37.7.
 
 `BandExtraction` intentionally has no exact parent percentage because song
 extraction and membership-summary rebuild use unrelated units. Its subphase

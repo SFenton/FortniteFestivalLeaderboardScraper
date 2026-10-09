@@ -803,6 +803,49 @@ derived, so truncating them and clearing `rank_history_latest_state` is a safe
 reset; the next enabled snapshot rebuilds them. See
 [configuration](../reference/configuration.md).
 
+Production rollout (`Scraper:UseRankHistoryLatestState=true` since the scrape
+`1498` boundary):
+
+- **Scrape `1500`** rebuilt all 10 scopes. `snapshots.total` took 49.7
+  minutes, with composite at 1,043 seconds, against about 25 normally.
+- **Invariant checks after `1500`**, read-only: zero mismatches across all
+  5,928 Pro Cymbals accounts, and zero in a 1,000-account composite sample.
+- **Scrape `1501`**, the first after the change on a new UTC day:
+  - The full-history scans are gone. In scrape `1498` they cost about 22
+    execution-minutes and roughly 400 GB of reads (`_latest_ranks` plus the
+    snapshot-date `COUNT`). The latest-row upserts add about 3.5
+    execution-minutes.
+  - `snapshots.total` was still 27.7 minutes. The cost is now the history
+    write itself: on the first scrape of a UTC day every ranked account gets a
+    new row. That `INSERT INTO rank_history` took 34 execution-minutes and
+    wrote 46.8 GB of WAL, and the composite insert wrote 28.9 GB.
+  - WAL tuning followed at the `1501` boundary; see
+    [deployment](../operations/deployment.md#core-services).
+- **Scrape `1502`**, mid-day: the snapshot path read 138 GB instead of
+  509 GB in `1498` and wrote 30 GB of WAL instead of 74 GB. Even so,
+  `snapshots.total` was 26.7 minutes, because the history upserts took
+  28.9 execution-minutes against 12.0 in `1498`. The change set followed
+  `rank_history_latest`'s physical order rather than the order the day's
+  rows were laid out in, so each `ON CONFLICT` update read and dirtied a
+  random page.
+- **Scrape `1503`**: since #188 the snapshots write history and latest rows
+  in `account_id` order. `snapshots.total` fell to 14.9 minutes (the
+  instruments took 83 to 270 seconds, composite 291 seconds against about
+  620), and `compute_rankings` to 31.6 minutes from about 41. That day's
+  rows were still laid out unordered, so later days should do at least as
+  well.
+
+History rows get almost no HOT updates: about 0% across the `rank_history`
+partitions and 0.4% for `composite_rank_history`, because pages are full. A
+same-day update therefore writes a new tuple and new primary-key index
+entries. As an experiment, `rank_history_pro_guitar` alone has had
+`fillfactor = 70` since 2026-10-09 02:05Z. The schema initializer does not set
+this. It affects only rows written after that time, and
+`ALTER TABLE rank_history_pro_guitar RESET (fillfactor)` reverts it. Compare
+its HOT ratio and snapshot time after 2026-10-10 00:00Z before deciding
+anything for the other partitions; a lower fillfactor trades history storage
+for fewer index writes.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a
