@@ -835,6 +835,17 @@ Production rollout (`Scraper:UseRankHistoryLatestState=true` since the scrape
   rows were still laid out unordered, so later days should do at least as
   well.
 
+History rows get almost no HOT updates: about 0% across the `rank_history`
+partitions and 0.4% for `composite_rank_history`, because pages are full. A
+same-day update therefore writes a new tuple and new primary-key index
+entries. As an experiment, `rank_history_pro_guitar` alone has had
+`fillfactor = 70` since 2026-10-09 02:05Z. The schema initializer does not set
+this. It affects only rows written after that time, and
+`ALTER TABLE rank_history_pro_guitar RESET (fillfactor)` reverts it. Compare
+its HOT ratio and snapshot time after 2026-10-10 00:00Z before deciding
+anything for the other partitions; a lower fillfactor trades history storage
+for fewer index writes.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a
