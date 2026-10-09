@@ -181,6 +181,41 @@ public sealed class BandPageFetcherTests
         Assert.False(staged["valid-a:valid-b"]);
     }
 
+    [Fact]
+    public async Task ScopeFingerprintReflectsOverThresholdFlagsOnly()
+    {
+        async Task<string> FingerprintAsync(int leadMemberScore, bool withMaxScores)
+        {
+            var handler = new MockHttpMessageHandler();
+            handler.EnqueueJsonOk($$"""
+                {"page":0,"totalPages":1,"entries":[{{BandEntryWithMembers("a", "b", 1, leadMemberScore, 100)}}]}
+                """);
+            await using var spool = CreateSpool();
+            using var pool = new SharedDopPool(1, 1, 1, 100, _log);
+            var fetcher = new BandPageFetcher(
+                new ResilientHttpExecutor(new HttpClient(handler), _log),
+                pool,
+                spool,
+                new ScrapeProgressTracker(),
+                _log,
+                maxScoresBySong: withMaxScores
+                    ? new Dictionary<string, FSTService.Persistence.SongMaxScores>
+                    {
+                        ["song_1"] = new() { MaxLeadScore = 1_000, MaxBassScore = 1_000 },
+                    }
+                    : null);
+            await fetcher.FetchAllAsync(["song_1"], ["Band_Duets"], "token", "acct", maxPages: 10, CancellationToken.None);
+            return Assert.Single(fetcher.ScopeManifests).Manifest.ContentFingerprint;
+        }
+
+        Assert.NotEqual(
+            await FingerprintAsync(1_200, withMaxScores: false),
+            await FingerprintAsync(1_200, withMaxScores: true));
+        Assert.Equal(
+            await FingerprintAsync(1_000, withMaxScores: false),
+            await FingerprintAsync(1_000, withMaxScores: true));
+    }
+
     private static string BandEntryWithMembers(
         string first,
         string second,

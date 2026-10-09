@@ -55,10 +55,17 @@ internal interface IRegisteredBandLookupStrategy
 internal sealed class DirectRegisteredBandLookupStrategy : IRegisteredBandLookupStrategy
 {
     private readonly ILeaderboardQuerier _scraper;
+    private readonly IPathDataStore? _pathDataStore;
+    private readonly double _overThresholdMultiplier;
 
-    public DirectRegisteredBandLookupStrategy(ILeaderboardQuerier scraper)
+    public DirectRegisteredBandLookupStrategy(
+        ILeaderboardQuerier scraper,
+        IPathDataStore? pathDataStore = null,
+        IOptions<ScraperOptions>? options = null)
     {
         _scraper = scraper;
+        _pathDataStore = pathDataStore;
+        _overThresholdMultiplier = (options?.Value ?? new ScraperOptions()).OverThresholdMultiplier;
     }
 
     public async Task<RegisteredBandLookupResult> FetchAsync(
@@ -83,7 +90,10 @@ internal sealed class DirectRegisteredBandLookupStrategy : IRegisteredBandLookup
             return RegisteredBandLookupResult.Empty;
 
         entry.Source = "findteams";
-        BandScrapePhase.ApplyChOptValidation(entry, null);
+        BandScrapePhase.ApplyChOptValidation(
+            entry,
+            BandScrapePhase.ResolveMaxScores(_pathDataStore, intent.SongId),
+            _overThresholdMultiplier);
         return new RegisteredBandLookupResult([entry]);
     }
 }

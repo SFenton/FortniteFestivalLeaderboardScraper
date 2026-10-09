@@ -906,8 +906,9 @@ only prune deletes band entries. The window can still move down when entries
 at the top become over-threshold, each flip by one row. The band page fetch
 flags over-threshold rows with the scrape's CHOpt max scores and
 `Scraper:OverThresholdMultiplier`, the same check band extraction applies later
-in the same scrape, before prune. Until then the fetch staged every row as
-valid. The flush cleared every stored over-threshold flag (about 735 rows per
+in the same scrape, before prune. The registered-band lookups and the
+max-score recompute use the same max scores and multiplier. Until then the
+fetch and the registered lookups staged every row as valid. The flush cleared every stored over-threshold flag (about 735 rows per
 scrape, each with a new `last_updated_at`), and extraction set them again. New
 over-threshold entries above the window still move it down. That is why the
 floor sits a margin below the window: production re-fetches the rows just
