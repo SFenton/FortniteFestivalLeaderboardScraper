@@ -821,6 +821,19 @@ Production rollout (`Scraper:UseRankHistoryLatestState=true` since the scrape
     wrote 46.8 GB of WAL, and the composite insert wrote 28.9 GB.
   - WAL tuning followed at the `1501` boundary; see
     [deployment](../operations/deployment.md#core-services).
+- **Scrape `1502`**, mid-day: the snapshot path read 138 GB instead of
+  509 GB in `1498` and wrote 30 GB of WAL instead of 74 GB. Even so,
+  `snapshots.total` was 26.7 minutes, because the history upserts took
+  28.9 execution-minutes against 12.0 in `1498`. The change set followed
+  `rank_history_latest`'s physical order rather than the order the day's
+  rows were laid out in, so each `ON CONFLICT` update read and dirtied a
+  random page.
+- **Scrape `1503`**: since #188 the snapshots write history and latest rows
+  in `account_id` order. `snapshots.total` fell to 14.9 minutes (the
+  instruments took 83 to 270 seconds, composite 291 seconds against about
+  620), and `compute_rankings` to 31.6 minutes from about 41. That day's
+  rows were still laid out unordered, so later days should do at least as
+  well.
 
 ## Publication ownership
 
