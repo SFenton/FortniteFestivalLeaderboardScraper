@@ -803,6 +803,25 @@ derived, so truncating them and clearing `rank_history_latest_state` is a safe
 reset; the next enabled snapshot rebuilds them. See
 [configuration](../reference/configuration.md).
 
+Production rollout (`Scraper:UseRankHistoryLatestState=true` since the scrape
+`1498` boundary):
+
+- **Scrape `1500`** rebuilt all 10 scopes. `snapshots.total` took 49.7
+  minutes, with composite at 1,043 seconds, against about 25 normally.
+- **Invariant checks after `1500`**, read-only: zero mismatches across all
+  5,928 Pro Cymbals accounts, and zero in a 1,000-account composite sample.
+- **Scrape `1501`**, the first after the change on a new UTC day:
+  - The full-history scans are gone. In scrape `1498` they cost about 22
+    execution-minutes and roughly 400 GB of reads (`_latest_ranks` plus the
+    snapshot-date `COUNT`). The latest-row upserts add about 3.5
+    execution-minutes.
+  - `snapshots.total` was still 27.7 minutes. The cost is now the history
+    write itself: on the first scrape of a UTC day every ranked account gets a
+    new row. That `INSERT INTO rank_history` took 34 execution-minutes and
+    wrote 46.8 GB of WAL, and the composite insert wrote 28.9 GB.
+  - WAL tuning followed at the `1501` boundary; see
+    [deployment](../operations/deployment.md#core-services).
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a
