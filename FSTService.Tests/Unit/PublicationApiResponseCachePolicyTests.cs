@@ -253,6 +253,118 @@ public sealed class PublicationApiResponseCachePolicyTests
                 selected.Request));
     }
 
+    [Theory]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/acct-a:acct-b/songs?limit=5")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/acct-a:acct-b/songs")]
+    [InlineData(
+        "/api/rankings/bands/band_quad/a:b:c:d/songs?combo=x&limit=20")]
+    [InlineData(
+        "/api/rankings/bands/Band_Trios/a:b:c/song-rows")]
+    [InlineData(
+        "/api/rankings/bands/Band_Trios/a:b:c/song-rows?combo=x&publicationId=42")]
+    public void Band_song_routes_keep_last_published_response_during_scrape(
+        string target)
+    {
+        var context = Context(target);
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan));
+        Assert.True(plan.FreezeCritical);
+        Assert.True(plan.AllowWriteThrough);
+        Assert.Equal(
+            "public, max-age=300",
+            plan.ResponseCacheControl);
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                context.Request),
+            plan.RequestCacheKey);
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/songs?limit=abc")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/songs?limit=0")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/songs?limit=21")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/songs?accountId=a")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/song-rows?limit=5")]
+    [InlineData(
+        "/api/rankings/bands/Band_Nope/a:b/songs?limit=5")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/a:b/history")]
+    public void Band_song_variants_outside_the_contract_are_not_freeze_critical(
+        string target)
+    {
+        var context = Context(target);
+
+        var cacheable =
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan);
+        Assert.True(!cacheable || !plan.FreezeCritical);
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/acct-a:acct-b/songs?limit=5")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/acct-a:acct-b/song-rows")]
+    public void Band_song_key_ignores_selected_profile_headers(
+        string target)
+    {
+        var native = Context(target);
+        var web = Context(target);
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedProfileTypeHeader] = "player";
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedProfileIdHeader] = "account-secret";
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedBandTeamKeyHeader] = "acct-a:acct-b";
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                native,
+                out var nativePlan));
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                web,
+                out var webPlan));
+        Assert.Equal(
+            nativePlan.RequestCacheKey,
+            webPlan.RequestCacheKey);
+        Assert.DoesNotContain(
+            "account-secret",
+            webPlan.RequestCacheKey);
+    }
+
+    [Fact]
+    public void Band_history_key_still_varies_by_selected_profile()
+    {
+        var plain = Context(
+            "/api/rankings/bands/Band_Duets/a:b/history");
+        var selected = Context(
+            "/api/rankings/bands/Band_Duets/a:b/history");
+        selected.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedProfileIdHeader] = "account-1";
+
+        Assert.NotEqual(
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                plain.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                selected.Request));
+    }
+
     private static DefaultHttpContext Context(
         string target,
         object[]? endpointMetadata = null)
