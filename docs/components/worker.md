@@ -978,7 +978,12 @@ flags over-threshold rows with the scrape's CHOpt max scores and
 `Scraper:OverThresholdMultiplier`, the same check band extraction applies later
 in the same scrape, before prune. The registered-band lookups and the
 max-score recompute use the same max scores and multiplier. Until then the
-fetch and the registered lookups staged every row as valid. The flush cleared every stored over-threshold flag (about 735 rows per
+fetch and the registered lookups staged every row as valid. Band extraction
+only covers solo rows with band context (about 86,000 per scrape), so most
+over-threshold band entries were never flagged. In scrape `1510`, the first
+fetch with the check flagged about 3,556 more entries, across about 70 songs per
+band type, and left the existing flags unchanged. Those entries no longer count
+toward valid band rankings or current projections. The flush cleared every stored over-threshold flag (about 735 rows per
 scrape, each with a new `last_updated_at`), and extraction set them again. New
 over-threshold entries above the window still move it down. That is why the
 floor sits a margin below the window: production re-fetches the rows just
