@@ -222,10 +222,13 @@ public sealed class ScrapeOrchestrator
 
         // Band spool — separate files for band_entries tables
         SpoolWriter<BandLeaderboardEntry>? bandSpool = null;
+        BandRetentionFloorFilter? bandRetentionFloor = null;
         bool hasBandTypes = doBandScrape;
         if (hasBandTypes)
         {
-            bandSpool = BandSpoolWriterFactory.Create(_log, _bandPersistence, spoolDir);
+            if (_options.Value.BandRetentionFloorMode != BandRetentionFloorMode.Off)
+                bandRetentionFloor = new BandRetentionFloorFilter(_options.Value.BandRetentionFloorMode, registeredIds);
+            bandSpool = BandSpoolWriterFactory.Create(_log, _bandPersistence, spoolDir, bandRetentionFloor);
             SetActiveBandSpool(bandSpool);
         }
 
@@ -557,6 +560,7 @@ public sealed class ScrapeOrchestrator
                     {
                         _progress.SetSubOperation("flushing_band");
                         bandSpool.Complete();
+                        PrepareBandRetentionFloor(bandRetentionFloor);
                         _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
                             bandSpool.RecordCount, bandSpool.EntryCount);
                         var bandFlushParallelism = Math.Clamp(
@@ -572,6 +576,14 @@ public sealed class ScrapeOrchestrator
                     {
                         _progress.SetSubOperation("creating_band_indexes");
                         _persistence.CreateBandIndexes(_progress);
+                    }
+
+                    if (bandRetentionFloor is { IsActive: true })
+                    {
+                        _log.LogInformation(
+                            "Band retention floor {Mode}: {Rows:N0} staged row(s) below a scope floor.",
+                            bandRetentionFloor.Mode,
+                            bandRetentionFloor.BelowFloorRows);
                     }
 
                     _log.LogInformation("Band flush complete.");
@@ -982,6 +994,34 @@ public sealed class ScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Best-effort cleanup failed while disposing active band spool writer.");
+        }
+    }
+
+    private void PrepareBandRetentionFloor(BandRetentionFloorFilter? filter)
+    {
+        if (filter is not { IsActive: true })
+            return;
+
+        try
+        {
+            var invalidated = filter.PrepareForFlush(_bandPersistence.DataSource);
+            if (filter.PendingEvidence)
+            {
+                _log.LogWarning(
+                    "Band retention floor {Mode}: rows recorded by an earlier flush were never checked by a prune; flushing this scrape without the floor so the next prune can check them.",
+                    filter.Mode);
+                return;
+            }
+
+            _log.LogInformation(
+                "Band retention floor {Mode}: dropped {Invalidated:N0} scope floor(s) whose first valid entry is staged over-threshold.",
+                filter.Mode,
+                invalidated);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            filter.Disable();
+            _log.LogWarning(ex, "Band retention floor preparation failed; flushing this scrape without the floor.");
         }
     }
 

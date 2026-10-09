@@ -362,6 +362,91 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task BandSpoolWriterFactory_FlushAll_PrefilterSkipsUnchangedRowsAndAppliesChanges()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        var logger = Substitute.For<ILogger<BandLeaderboardPersistence>>();
+
+        var unchanged = MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000);
+        var lower = MakeBandEntry(["acct-c", "acct-d"], "0:1", 2_000);
+        var improved = MakeBandEntry(["acct-e", "acct-f"], "0:1", 3_000);
+        var bonusChanged = MakeBandEntry(["acct-g", "acct-h"], "0:1", 4_000);
+        foreach (var entry in new[] { unchanged, lower, improved, bonusChanged })
+            UpsertDirect(persistence, "song-a", entry, rebuildTeamMembership: true);
+        SetAllBandEntriesLastUpdated(new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var stagedLower = MakeBandEntry(["acct-c", "acct-d"], "0:1", 1_500);
+        var stagedImproved = MakeBandEntry(["acct-e", "acct-f"], "0:1", 3_500);
+        var stagedBonus = MakeBandEntry(["acct-g", "acct-h"], "0:1", 4_000);
+        stagedBonus.BaseScore = (bonusChanged.BaseScore ?? 0) + 7;
+        var stagedNew = MakeBandEntry(["acct-i", "acct-j"], "0:1", 500);
+
+        await using var spool = BandSpoolWriterFactory.Create(logger, persistence);
+        spool.Enqueue(
+            "song-a",
+            "Band_Duets",
+            [MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000), stagedLower, stagedImproved, stagedBonus, stagedNew]);
+        spool.Complete();
+        spool.FlushAll();
+
+        var rows = ReadBandEntries("song-a");
+        Assert.Equal(5, rows.Count);
+        Assert.Equal((1_000, false), (rows["acct-a:acct-b"].Score, rows["acct-a:acct-b"].Touched));
+        Assert.Equal((2_000, false), (rows["acct-c:acct-d"].Score, rows["acct-c:acct-d"].Touched));
+        Assert.Equal((3_500, true), (rows["acct-e:acct-f"].Score, rows["acct-e:acct-f"].Touched));
+        Assert.Equal(4_000, rows["acct-g:acct-h"].Score);
+        Assert.Equal(stagedBonus.BaseScore, rows["acct-g:acct-h"].BaseScore);
+        Assert.Equal((500, true), (rows["acct-i:acct-j"].Score, rows["acct-i:acct-j"].Touched));
+    }
+
+    [Fact]
+    public void BandSpoolPrefilter_ComparesWithCoveringIndexOnlyScan()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        for (var i = 0; i < 50; i++)
+            UpsertDirect(persistence, "song-a", MakeBandEntry([$"acct-{i:D2}-a", $"acct-{i:D2}-b"], "0:1", 1_000 + i), rebuildTeamMembership: false);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using (var vacuum = conn.CreateCommand())
+        {
+            vacuum.CommandText = "VACUUM ANALYZE band_entries_duets";
+            vacuum.ExecuteNonQuery();
+        }
+
+        using var tx = conn.BeginTransaction();
+        using (var setup = conn.CreateCommand())
+        {
+            setup.Transaction = tx;
+            setup.CommandText = """
+                SET LOCAL enable_seqscan = off;
+                SET LOCAL enable_bitmapscan = off;
+                CREATE TEMP TABLE _be_staging ON COMMIT DROP AS
+                SELECT song_id, band_type, team_key, instrument_combo, team_members, score, base_score,
+                       instrument_bonus, overdrive_bonus, accuracy, is_full_combo, stars, difficulty,
+                       season, rank, percentile, end_time, source, is_over_threshold, last_updated_at AS ts
+                FROM band_entries;
+                """;
+            setup.ExecuteNonQuery();
+        }
+
+        using var explain = conn.CreateCommand();
+        explain.Transaction = tx;
+        explain.CommandText = "EXPLAIN " + BandSpoolWriterFactory.PrefilterUnchangedSql;
+        var plan = new List<string>();
+        using (var reader = explain.ExecuteReader())
+        {
+            while (reader.Read())
+                plan.Add(reader.GetString(0));
+        }
+
+        Assert.Contains(plan, line => line.Contains("Index Only Scan using ix_be_duets_prefilter", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Memberless_band_write_after_shared_backend_loss_is_fenced_by_exclusive_maintenance()
     {
         var persistence = new BandLeaderboardPersistence(
@@ -505,6 +590,39 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
         return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
+    private void SetAllBandEntriesLastUpdated(DateTime timestampUtc)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE band_entries SET last_updated_at = @ts";
+        cmd.Parameters.AddWithValue("ts", timestampUtc);
+        cmd.ExecuteNonQuery();
+    }
+
+    private Dictionary<string, (int Score, int? BaseScore, bool Touched)> ReadBandEntries(string songId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT team_key, score, base_score, last_updated_at > TIMESTAMPTZ '2020-01-02'
+            FROM band_entries
+            WHERE song_id = @songId
+              AND band_type = 'Band_Duets'
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        var rows = new Dictionary<string, (int, int?, bool)>(StringComparer.Ordinal);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows[reader.GetString(0)] = (
+                reader.GetInt32(1),
+                reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                reader.GetBoolean(3));
+        }
+
+        return rows;
     }
 
     private bool GetBandEntryIsOverThreshold(string songId, string teamKey)

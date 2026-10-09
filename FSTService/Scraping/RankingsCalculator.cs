@@ -1420,14 +1420,18 @@ public sealed class RankingsCalculator
             {
                 if (snapshotItem.IsComposite)
                 {
-                    _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
+                    _metaDb.SnapshotCompositeRankHistory(
+                        cleanupRetention: false,
+                        useLatestState: _scraperOptions.UseRankHistoryLatestState);
                     snapshotItemSw.Stop();
                     LogPhase("snapshots.composite", instrument: null, snapshotItemSw.Elapsed);
                 }
                 else
                 {
                     var db = _persistence.GetOrCreateInstrumentDb(snapshotItem.Instrument!);
-                    db.SnapshotRankHistory(cleanupRetention: false);
+                    db.SnapshotRankHistory(
+                        cleanupRetention: false,
+                        useLatestState: _scraperOptions.UseRankHistoryLatestState);
                     snapshotItemSw.Stop();
                     LogPhase("snapshots.per_instrument", snapshotItem.Instrument, snapshotItemSw.Elapsed);
                 }
