@@ -729,6 +729,15 @@ public sealed class SoloCurrentProjectionBuilder
         ? SnapshotOverlayCurrentScopeSql
         : LegacyCompatibleCurrentScopeSql;
 
+    // leaderboard_entries is list-partitioned by instrument with exactly these values.
+    private static readonly string LegacyInstrumentArraySql =
+        "ARRAY["
+        + string.Join(
+            ", ",
+            FSTService.Scraping.GlobalLeaderboardScraper.AllInstruments.Select(
+                static instrument => "'" + instrument.Replace("'", "''", StringComparison.Ordinal) + "'"))
+        + "]::text[]";
+
     private const string SnapshotOverlayCurrentScopeSql = """
         SELECT song_id, instrument
         FROM (
@@ -743,7 +752,10 @@ public sealed class SoloCurrentProjectionBuilder
         ORDER BY instrument, song_id
         """;
 
-    private const string LegacyCompatibleCurrentScopeSql = """
+    // Legacy pairs come from a loose index scan (one index probe per distinct song
+    // and instrument) instead of reading every legacy row; scrape 1523 spent about
+    // 29 s per call scanning about 41 million legacy rows to find no missing pair.
+    private static readonly string LegacyCompatibleCurrentScopeSql = $$"""
         SELECT song_id, instrument
         FROM (
             SELECT state.song_id, state.instrument
@@ -752,7 +764,30 @@ public sealed class SoloCurrentProjectionBuilder
               AND state.active_snapshot_id IS NOT NULL
             UNION
             SELECT live.song_id, live.instrument
-            FROM leaderboard_entries live
+            FROM (
+                WITH RECURSIVE live_pairs AS (
+                    SELECT instruments.instrument,
+                           (
+                               SELECT min(le.song_id)
+                               FROM leaderboard_entries le
+                               WHERE le.instrument = instruments.instrument
+                           ) AS song_id
+                    FROM unnest({{LegacyInstrumentArraySql}}) AS instruments(instrument)
+                    UNION ALL
+                    SELECT live_pairs.instrument,
+                           (
+                               SELECT min(le.song_id)
+                               FROM leaderboard_entries le
+                               WHERE le.instrument = live_pairs.instrument
+                                 AND le.song_id > live_pairs.song_id
+                           )
+                    FROM live_pairs
+                    WHERE live_pairs.song_id IS NOT NULL
+                )
+                SELECT live_pairs.song_id, live_pairs.instrument
+                FROM live_pairs
+                WHERE live_pairs.song_id IS NOT NULL
+            ) live
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM leaderboard_snapshot_state state

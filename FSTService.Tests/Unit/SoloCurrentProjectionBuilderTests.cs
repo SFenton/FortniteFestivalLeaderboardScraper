@@ -36,6 +36,57 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyCompatibleScopes_match_a_full_scan_of_legacy_pairs()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+
+        SeedLiveLeaderboard("song_a", ("acct1", 900), ("acct2", 800));
+        SeedLiveLeaderboard("song_b", ("acct1", 700));
+        SeedLiveLeaderboard("song_c", ("acct3", 600), ("acct4", 500), ("acct5", 400));
+        SeedLiveLeaderboard("song_d", ("acct1", 300));
+        InsertSnapshotState("song_b", 42);
+        InsertSnapshotState("song_e", 43);
+
+        var scopes = await builder.LoadCurrentScopesAsync();
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, instrument
+            FROM (
+                SELECT state.song_id, state.instrument
+                FROM leaderboard_snapshot_state state
+                WHERE state.is_finalized AND state.active_snapshot_id IS NOT NULL
+                UNION
+                SELECT live.song_id, live.instrument
+                FROM leaderboard_entries live
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM leaderboard_snapshot_state state
+                    WHERE state.song_id = live.song_id
+                      AND state.instrument = live.instrument
+                      AND state.is_finalized
+                      AND state.active_snapshot_id IS NOT NULL)
+                UNION
+                SELECT overlay.song_id, overlay.instrument
+                FROM leaderboard_entries_overlay overlay
+            ) pairs
+            ORDER BY instrument, song_id
+            """;
+        var expected = new List<SoloCurrentProjectionScopeKey>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+                expected.Add(new SoloCurrentProjectionScopeKey(reader.GetString(0), reader.GetString(1)));
+        }
+
+        Assert.Equal(["song_a", "song_b", "song_c", "song_d", "song_e"], expected.Select(static scope => scope.SongId));
+        Assert.Equal(expected, scopes);
+    }
+
+    [Fact]
     public async Task AreActiveScopesFreshForInstruments_requires_ready_matching_active_snapshots()
     {
         var builder = new SoloCurrentProjectionBuilder(
