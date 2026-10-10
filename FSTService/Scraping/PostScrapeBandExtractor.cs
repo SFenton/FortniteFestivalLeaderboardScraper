@@ -63,10 +63,21 @@ public sealed class PostScrapeBandExtractor
             ? EnsureBandContextSeededAsync(ct)
             : Task.CompletedTask;
 
-    public async Task<BandExtractionResult> RunAsync(long? snapshotId, CancellationToken ct)
+    /// <param name="retentionFloor">
+    /// The scrape's band retention floor. When active, rows that rank below a
+    /// scope's floor and are not already stored are skipped (Enforce) or recorded
+    /// (Report), exactly as in the band flush.
+    /// </param>
+    public async Task<BandExtractionResult> RunAsync(
+        long? snapshotId,
+        CancellationToken ct,
+        BandRetentionFloorFilter? retentionFloor = null)
     {
         var sw = Stopwatch.StartNew();
         _log.LogInformation("Post-scrape band extraction starting...");
+        if (retentionFloor is not { IsActive: true, IsPrepared: true })
+            retentionFloor = null;
+        var floorRowsBefore = retentionFloor?.BelowFloorRows ?? 0;
 
         int totalBandRows = 0;
         int totalMemberStats = 0;
@@ -150,7 +161,7 @@ public sealed class PostScrapeBandExtractor
                 {
                     try
                     {
-                        var (bands, members, lookups, impactedTeams, impactedScopes) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
+                        var (bands, members, lookups, impactedTeams, impactedScopes) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, retentionFloor, innerCt);
                         Interlocked.Add(ref totalBandRows, bands);
                         Interlocked.Add(ref totalMemberStats, members);
                         Interlocked.Add(ref totalMemberLookups, lookups);
@@ -225,6 +236,13 @@ public sealed class PostScrapeBandExtractor
             "Post-scrape band extraction complete in {Elapsed}. " +
             "Band entries: {BandRows:N0}, member stats: {MemberStats:N0}, member lookups: {MemberLookups:N0}.",
             sw.Elapsed, totalBandRows, totalMemberStats, totalMemberLookups);
+        if (retentionFloor is not null)
+        {
+            _log.LogInformation(
+                "Band retention floor {Mode} in extraction: {BelowFloor:N0} row(s) below a scope floor.",
+                retentionFloor.Mode,
+                retentionFloor.BelowFloorRows - floorRowsBefore);
+        }
 
         return BuildResult();
     }
@@ -233,6 +251,7 @@ public sealed class PostScrapeBandExtractor
         string songId,
         IReadOnlyDictionary<string, SongMaxScores> allMaxScores,
         BandLeaderboardPersistence persistence,
+        BandRetentionFloorFilter? retentionFloor,
         CancellationToken ct)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
@@ -373,7 +392,7 @@ public sealed class PostScrapeBandExtractor
             try
             {
                 var (bands, members, lookups) = persistence.UpsertBandEntriesDirect(
-                    songId, bandType, batchEntries, conn, tx, rebuildTeamMembership: false);
+                    songId, bandType, batchEntries, conn, tx, rebuildTeamMembership: false, retentionFloor: retentionFloor);
                 await tx.CommitAsync(ct);
 
                 totalBands += bands;

@@ -242,7 +242,10 @@ public sealed class PostScrapeOrchestrator
             bandExtractionResult = await RunPhaseAsync(
                 ctx,
                 "BandExtraction",
-                () => _bandExtractor.RunAsync(ctx.ScrapeId > 0 ? ctx.ScrapeId : null, ct),
+                () => _bandExtractor.RunAsync(
+                    ctx.ScrapeId > 0 ? ctx.ScrapeId : null,
+                    ct,
+                    _options.Value.BandRetentionFloorApplyToExtraction ? ctx.BandRetentionFloor : null),
                 BandExtractionResult.Empty);
         }
 

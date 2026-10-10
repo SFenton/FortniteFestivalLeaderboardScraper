@@ -236,6 +236,13 @@ public sealed class BandRetentionFloorFilter
 
     public bool IsActive => Mode != BandRetentionFloorMode.Off && !_disabled;
 
+    /// <summary>
+    /// Whether <see cref="PrepareForFlush"/> ran for this scrape. Writers after
+    /// the flush (band extraction) use the filter only when it is active and
+    /// prepared, so a skipped flush also skips the floor.
+    /// </summary>
+    public bool IsPrepared => Volatile.Read(ref _prepared) == 1;
+
     /// <summary>Turns the filter off for the rest of this scrape (for example when preparation failed).</summary>
     public void Disable() => _disabled = true;
 

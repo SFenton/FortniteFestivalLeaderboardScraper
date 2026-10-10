@@ -1042,6 +1042,26 @@ candidate that stays at zero across scrapes is a safe smaller
   scrape (1,679 to 6,990 across scrapes `1488` to `1501`) and was 3,616 in
   `1501`.
 
+The margin checks stayed at zero, so the margin went to 10 at the scrape `1510`
+boundary and to 0 at the `1511` boundary. From scrape `1513`, prune deleted about
+40,000 entries a scrape, against about 220,000 before. Band prune took about
+3.5 minutes instead of 7.3, and the search refresh about 0.5 instead of 2.6.
+
+Those remaining 40,000 rows came from band extraction, not the flush. Each scrape
+extraction re-derives every band entry from the 86,111 solo rows with band
+context. It re-inserts about 39,000 entries, 107,000 member stats and 107,000
+member lookups that the previous prune deleted (scrape `1520`: 39,410 extracted;
+then prune deleted 40,047, 108,752 and 108,742).
+`Scraper:BandRetentionFloorApplyToExtraction` (default `false`) passes the
+scrape's floor filter to extraction. Extraction then removes the rows that rank
+below their scope's floor and are not stored before its upsert, and drops their
+member stats and lookups. It records them in the shadow table like the flush,
+and only with the mode and filter state the flush used. A pass without a floor,
+a pass whose band flush was skipped (for example after a band fetch timeout),
+or a resumed pass extracts everything. An isolated PostgreSQL test keeps the
+stored entries, member stats and lookups identical to writing everything, across
+several extract-and-prune rounds.
+
 ## Durable phase progress
 
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
