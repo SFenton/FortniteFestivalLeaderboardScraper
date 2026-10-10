@@ -392,7 +392,11 @@ exists) resolve one instrument's current rows from three sources:
 Legacy and snapshot rows cover disjoint songs, and each source is unique per
 song and account by its primary key. Overlay rows are unique per song,
 instrument, and account. So resolution is overlay rows plus the base rows of
-accounts without an overlay row; no `DISTINCT ON` sort is needed. Legacy songs
+accounts without an overlay row; no `DISTINCT ON` sort is needed. The
+exclusion is a `NOT IN` over the non-null key columns, which PostgreSQL runs as
+a hashed filter over the small overlay set; with `NOT EXISTS` it chose a merge
+anti-join that sorted every base row (Solo_Guitar over-threshold detection: 20
+to 22 seconds, against 10 to 12 with `NOT IN`). Legacy songs
 are found with a loose index scan (one primary-key probe per distinct song)
 rather than by reading the legacy partition (about 2.4 GB for Solo_Guitar, 1.7
 seconds, to find no such song). Until 2026-10-10 each full-instrument

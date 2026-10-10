@@ -4354,8 +4354,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // are disjoint and each unique per (song_id, account_id); overlay rows are
         // unique per (song_id, instrument, account_id) and take precedence. So
         // resolving needs only an anti-join against the small overlay set, not a
-        // DISTINCT ON sort of every row. Legacy songs come from a loose index scan
-        // so a legacy partition is read only for songs that still need it.
+        // DISTINCT ON sort of every row. NOT IN over the NOT NULL key columns keeps
+        // that a hashed subplan filter; NOT EXISTS let the planner pick a merge
+        // anti-join that sorted every base row. Every selected source here is a
+        // snapshot, so the snapshot join does not filter on source_kind (that
+        // filter made the planner underestimate snapshot rows about 20-fold).
+        // Legacy songs come from a loose index scan so a legacy partition is read
+        // only for songs that still need it.
         var allowLegacyRows = UseSnapshotOverlayWorkerReaders ? "FALSE" : "TRUE";
         return
         $"""
@@ -4400,7 +4405,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesSnapshotTable} snapshot
                 JOIN selected_sources selected
                   ON selected.song_id = snapshot.song_id
-                 AND selected.source_kind = 'snapshot'
                  AND selected.source_snapshot_id = snapshot.snapshot_id
                 WHERE snapshot.instrument = @instrument
             ),
@@ -4417,11 +4421,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 SELECT base.song_id, base.account_id, base.score, base.accuracy, base.is_full_combo, base.stars,
                        base.rank, base.api_rank, base.first_seen_at, base.end_time
                 FROM base_rows base
-                WHERE NOT EXISTS (
-                    SELECT 1
+                WHERE (base.song_id, base.account_id) NOT IN (
+                    SELECT overlay.song_id, overlay.account_id
                     FROM overlay_rows overlay
-                    WHERE overlay.song_id = base.song_id
-                      AND overlay.account_id = base.account_id
                 )
             )
             SELECT song_id, account_id, score, accuracy, is_full_combo, stars, rank, api_rank, first_seen_at, end_time
