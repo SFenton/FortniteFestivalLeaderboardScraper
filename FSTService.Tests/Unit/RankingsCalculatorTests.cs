@@ -75,7 +75,8 @@ public sealed class RankingsCalculatorTests : IDisposable
         BandRankHistoryOptions? bandHistoryOptions = null,
         BandTeamRankingRebuildOptions? bandRankingOptions = null,
         ScrapeProgressTracker? progress = null,
-        WorkerStatusPublisher? workerStatus = null)
+        WorkerStatusPublisher? workerStatus = null,
+        ScraperOptions? scraperOptions = null)
     {
         return new RankingsCalculator(
             _persistence,
@@ -85,7 +86,7 @@ public sealed class RankingsCalculatorTests : IDisposable
             Substitute.For<ILogger<RankingsCalculator>>(),
             Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()),
             Options.Create(bandRankingOptions ?? BandTeamRankingRebuildOptions.Default),
-            scraperOptions: null,
+            scraperOptions: scraperOptions is null ? null : Options.Create(scraperOptions),
             workerStatus: workerStatus);
     }
 
@@ -928,6 +929,124 @@ public sealed class RankingsCalculatorTests : IDisposable
             && branch.Status == "complete"
             && branch.Completed == 3
             && branch.Total == 3);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_EarlySnapshots_CompleteBothBranchesAndSnapshotComposite()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        guitarDb.RecomputeAllRanks();
+
+        var progress = new ScrapeProgressTracker();
+        progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        var sut = CreateSut(
+            bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled },
+            bandRankingOptions: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Monolithic,
+                AnalyzeStagingTable = false,
+                OverlapRankHistorySnapshotsWithBandRankings = true,
+            },
+            progress: progress,
+            scraperOptions: new ScraperOptions
+            {
+                StartRankHistorySnapshotsAfterInstrumentRankings = true,
+                RankHistorySnapshotMaxDegreeOfParallelism = 2,
+            });
+
+        await sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);
+
+        var current = progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal(current.WorkItems?.Total, current.WorkItems?.Completed);
+        var branches = Assert.IsAssignableFrom<List<BranchProgress>>(current.Branches);
+        Assert.Contains(branches, branch =>
+            branch.Id == "rank_history_snapshots"
+            && branch.Status == "complete"
+            && branch.Completed == 10
+            && branch.Total == 10);
+        Assert.Contains(branches, branch =>
+            branch.Id == "band_rankings"
+            && branch.Status == "complete"
+            && branch.Completed == 3
+            && branch.Total == 3);
+        Assert.Single(guitarDb.GetRankHistory("p1", 10));
+        Assert.NotNull(_metaFixture.Db.GetCompositeRanking("p1"));
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM composite_rank_history WHERE account_id = 'p1'";
+        Assert.Equal(1L, Convert.ToInt64(cmd.ExecuteScalar()));
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_EarlySnapshots_CompositeFailureSkipsCompositeSnapshotAndRethrows()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        guitarDb.RecomputeAllRanks();
+
+        var failingMetaDb = CreateBandFailingMetaDatabase(
+            _metaFixture.Db,
+            [],
+            failCompositeRankings: true);
+        var sut = CreateSut(
+            failingMetaDb,
+            bandRankingOptions: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Monolithic,
+                AnalyzeStagingTable = false,
+                OverlapRankHistorySnapshotsWithBandRankings = true,
+            },
+            scraperOptions: new ScraperOptions
+            {
+                StartRankHistorySnapshotsAfterInstrumentRankings = true,
+                RankHistorySnapshotMaxDegreeOfParallelism = 2,
+            });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None));
+
+        Assert.Contains("synthetic composite replacement failure", exception.Message, StringComparison.Ordinal);
+        failingMetaDb.DidNotReceive().SnapshotCompositeRankHistory(
+            Arg.Any<int>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>());
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_EarlySnapshots_SoloFamilyFailureRethrowsAfterBranchesStop()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1, fc: true)]);
+
+        var progress = new ScrapeProgressTracker();
+        progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        var failingMetaDb = CreateBandFailingMetaDatabase(
+            _metaFixture.Db,
+            [],
+            failSoloFamilyRankings: true);
+        var sut = CreateSut(
+            failingMetaDb,
+            bandRankingOptions: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Monolithic,
+                AnalyzeStagingTable = false,
+                OverlapRankHistorySnapshotsWithBandRankings = true,
+            },
+            progress: progress,
+            scraperOptions: new ScraperOptions
+            {
+                StartRankHistorySnapshotsAfterInstrumentRankings = true,
+            });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None));
+
+        Assert.Contains("synthetic solo-family replacement failure", exception.Message, StringComparison.Ordinal);
+        var branches = progress.GetProgressResponse().Current?.Branches;
+        Assert.NotNull(branches);
+        Assert.DoesNotContain(branches!, branch => branch.Status == "running");
     }
 
     [Fact]
@@ -1821,7 +1940,8 @@ public sealed class RankingsCalculatorTests : IDisposable
         IMetaDatabase inner,
         IReadOnlyList<string> failingBandTypes,
         List<string>? attemptedBandTypes = null,
-        bool failSoloFamilyRankings = false)
+        bool failSoloFamilyRankings = false,
+        bool failCompositeRankings = false)
     {
         var failingSet = new HashSet<string>(failingBandTypes, StringComparer.OrdinalIgnoreCase);
         var proxy = Substitute.For<IMetaDatabase>();
@@ -1832,7 +1952,16 @@ public sealed class RankingsCalculatorTests : IDisposable
                 call.Arg<string>(),
                 call.Arg<Dictionary<(string AccountId, string SongId), int>>()));
         proxy.When(x => x.ReplaceCompositeRankings(Arg.Any<IReadOnlyList<CompositeRankingDto>>()))
-            .Do(call => inner.ReplaceCompositeRankings(call.Arg<IReadOnlyList<CompositeRankingDto>>()));
+            .Do(call =>
+            {
+                if (failCompositeRankings)
+                {
+                    throw new InvalidOperationException(
+                        "synthetic composite replacement failure");
+                }
+
+                inner.ReplaceCompositeRankings(call.Arg<IReadOnlyList<CompositeRankingDto>>());
+            });
         proxy.When(x => x.ReplaceSoloFamilyRankings(
                 Arg.Any<IReadOnlyList<SoloFamilyRankingDto>>(),
                 Arg.Any<int>()))

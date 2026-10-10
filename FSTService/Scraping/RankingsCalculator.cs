@@ -609,109 +609,183 @@ public sealed class RankingsCalculator
             instruments.Count, rankingDataFull.Values.Sum(d => d.Count));
         LogPhase("load_ranking_data", instrument: null, loadSw.Elapsed, totalLoadedRows);
 
-        // ── Phase 3: Composite rankings ──
-        _progress.SetSubOperation("composite_rankings");
-        _workerStatus?.BeginOperation("rankings.composite", "Computing composite rankings", phase: "ComputingRankings", subOperation: "composite_rankings");
-        var compositeSw = System.Diagnostics.Stopwatch.StartNew();
-        var compositeRankings = ComputeCompositeRankings(
-            instruments,
-            rankingDataFull,
-            rankingDataRanks,
-            persist: maintenanceLease is null);
-        if (maintenanceLease is not null)
+        TaskCompletionSource<bool>? compositeRankingsReady = null;
+        CancellationTokenSource? earlyBranchCts = null;
+        Task? earlyRankHistoryTask = null;
+        if (includeRankHistory
+            && maintenanceLease is null
+            && _bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings
+            && _scraperOptions.StartRankHistorySnapshotsAfterInstrumentRankings)
         {
-            await maintenanceLease.ExecuteTransactionAsync(
-                "derived-composite-rankings",
-                requireSourceLocks: true,
-                (connection, transaction, _) =>
-                {
-                    _metaDb.ReplaceCompositeRankings(
-                        compositeRankings,
-                        connection,
-                        transaction);
-                    return Task.CompletedTask;
-                },
-                ct: ct);
+            // Rank-history snapshots and band rankings only need the per-instrument
+            // rankings (and, for the composite snapshot, composite rankings), so
+            // they overlap the remaining derived rankings.
+            compositeRankingsReady = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var compositeReadyTask = compositeRankingsReady.Task;
+            earlyBranchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var earlyBranchToken = earlyBranchCts.Token;
+            _log.LogInformation(
+                "Starting rank-history snapshots and band rankings before composite, solo family, and combo rankings.");
+            earlyRankHistoryTask = Task.Run(
+                () => RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
+                    instruments,
+                    bandTypes,
+                    festivalService.Songs.Count,
+                    scrapeId,
+                    earlyBranchToken,
+                    compositeReadyTask),
+                CancellationToken.None);
         }
-        compositeSw.Stop();
-        _progress.ReportPhaseItemComplete();
-        _workerStatus?.CompleteOperation("rankings.composite");
-        _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
-        LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
 
-        // ── Phase 3.5: Fixed solo family rankings for Statistics global cards ──
-        _progress.SetSubOperation("solo_family_rankings");
-        _workerStatus?.BeginOperation("rankings.solo_family", "Computing solo family rankings", phase: "ComputingRankings", subOperation: "solo_family_rankings");
-        var familySw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var familyRankings = ComputeSoloFamilyRankings(
+            // ── Phase 3: Composite rankings ──
+            _progress.SetSubOperation("composite_rankings");
+            _workerStatus?.BeginOperation("rankings.composite", "Computing composite rankings", phase: "ComputingRankings", subOperation: "composite_rankings");
+            var compositeSw = System.Diagnostics.Stopwatch.StartNew();
+            var compositeRankings = ComputeCompositeRankings(
+                instruments,
                 rankingDataFull,
-                totalChartedByInstrument,
+                rankingDataRanks,
                 persist: maintenanceLease is null);
             if (maintenanceLease is not null)
             {
                 await maintenanceLease.ExecuteTransactionAsync(
-                    "derived-solo-family-rankings",
+                    "derived-composite-rankings",
                     requireSourceLocks: true,
                     (connection, transaction, _) =>
                     {
-                        _metaDb.ReplaceSoloFamilyRankings(
-                            familyRankings.Rankings,
+                        _metaDb.ReplaceCompositeRankings(
+                            compositeRankings,
                             connection,
                             transaction);
                         return Task.CompletedTask;
                     },
                     ct: ct);
             }
-            familySw.Stop();
+            compositeSw.Stop();
             _progress.ReportPhaseItemComplete();
-            _workerStatus?.CompleteOperation("rankings.solo_family");
-            _log.LogInformation(
-                "Solo family rankings complete in {Elapsed}.",
-                familySw.Elapsed);
-            LogPhase(
-                "solo_family_rankings",
-                instrument: null,
-                familySw.Elapsed);
-        }
-        catch (OperationCanceledException)
-        {
-            familySw.Stop();
-            _workerStatus?.CompleteOperation(
-                "rankings.solo_family",
-                "cancelled");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            familySw.Stop();
-            _workerStatus?.FailOperation(
-                "rankings.solo_family",
-                ex);
-            throw;
-        }
+            _workerStatus?.CompleteOperation("rankings.composite");
+            _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
+            LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
+            compositeRankingsReady?.TrySetResult(true);
 
-        // ── Phase 4: All-combo rankings ──
-        _progress.SetSubOperation("combo_rankings");
-        _workerStatus?.BeginOperation("rankings.combo", "Computing combo rankings", phase: "ComputingRankings", subOperation: "combo_rankings");
-        var comboSw = System.Diagnostics.Stopwatch.StartNew();
-        if (maintenanceLease is null)
-            ComputeAllCombos(instruments, rankingDataFull);
-        else
-            await ComputeAllCombosForMaintenanceAsync(
-                instruments,
-                rankingDataFull,
-                maintenanceLease,
-                ct);
-        comboSw.Stop();
-        _progress.ReportPhaseItemComplete();
-        _workerStatus?.CompleteOperation("rankings.combo");
-        _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
-        LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
+            // ── Phase 3.5: Fixed solo family rankings for Statistics global cards ──
+            _progress.SetSubOperation("solo_family_rankings");
+            _workerStatus?.BeginOperation("rankings.solo_family", "Computing solo family rankings", phase: "ComputingRankings", subOperation: "solo_family_rankings");
+            var familySw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var familyRankings = ComputeSoloFamilyRankings(
+                    rankingDataFull,
+                    totalChartedByInstrument,
+                    persist: maintenanceLease is null);
+                if (maintenanceLease is not null)
+                {
+                    await maintenanceLease.ExecuteTransactionAsync(
+                        "derived-solo-family-rankings",
+                        requireSourceLocks: true,
+                        (connection, transaction, _) =>
+                        {
+                            _metaDb.ReplaceSoloFamilyRankings(
+                                familyRankings.Rankings,
+                                connection,
+                                transaction);
+                            return Task.CompletedTask;
+                        },
+                        ct: ct);
+                }
+                familySw.Stop();
+                _progress.ReportPhaseItemComplete();
+                _workerStatus?.CompleteOperation("rankings.solo_family");
+                _log.LogInformation(
+                    "Solo family rankings complete in {Elapsed}.",
+                    familySw.Elapsed);
+                LogPhase(
+                    "solo_family_rankings",
+                    instrument: null,
+                    familySw.Elapsed);
+            }
+            catch (OperationCanceledException)
+            {
+                familySw.Stop();
+                _workerStatus?.CompleteOperation(
+                    "rankings.solo_family",
+                    "cancelled");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                familySw.Stop();
+                _workerStatus?.FailOperation(
+                    "rankings.solo_family",
+                    ex);
+                throw;
+            }
+
+            // ── Phase 4: All-combo rankings ──
+            _progress.SetSubOperation("combo_rankings");
+            _workerStatus?.BeginOperation("rankings.combo", "Computing combo rankings", phase: "ComputingRankings", subOperation: "combo_rankings");
+            var comboSw = System.Diagnostics.Stopwatch.StartNew();
+            if (maintenanceLease is null)
+                ComputeAllCombos(instruments, rankingDataFull);
+            else
+                await ComputeAllCombosForMaintenanceAsync(
+                    instruments,
+                    rankingDataFull,
+                    maintenanceLease,
+                    ct);
+            comboSw.Stop();
+            _progress.ReportPhaseItemComplete();
+            _workerStatus?.CompleteOperation("rankings.combo");
+            _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
+            LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
+
+        }
+        catch
+        {
+            compositeRankingsReady?.TrySetResult(false);
+            if (earlyRankHistoryTask is not null)
+            {
+                // The pass is failing; stop the branches and let their
+                // transactions roll back before propagating the failure.
+                earlyBranchCts!.Cancel();
+                try
+                {
+                    await earlyRankHistoryTask;
+                }
+                catch (Exception branchEx) when (branchEx is not OperationCanceledException)
+                {
+                    _log.LogWarning(
+                        branchEx,
+                        "Rank-history snapshot or band ranking branch failed while derived rankings were failing.");
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                finally
+                {
+                    earlyBranchCts.Dispose();
+                }
+            }
+
+            throw;
+        }
 
         // ── Phase 5+6: History snapshots and band team rankings ──
-        if (!includeRankHistory && rebuildBandRankings)
+        if (earlyRankHistoryTask is not null)
+        {
+            try
+            {
+                await earlyRankHistoryTask;
+            }
+            finally
+            {
+                earlyBranchCts!.Dispose();
+            }
+        }
+        else if (!includeRankHistory && rebuildBandRankings)
         {
             if (maintenanceLease is null)
             {
@@ -1109,7 +1183,8 @@ public sealed class RankingsCalculator
         IReadOnlyList<string> bandTypes,
         int totalChartedSongs,
         long scrapeId,
-        CancellationToken ct)
+        CancellationToken ct,
+        Task<bool>? compositeRankingsReady = null)
     {
         _progress.SetSubOperation("rank_history_and_band_rankings");
         _progress.RegisterBranches([RankHistorySnapshotsBranch, BandRankingsBranch]);
@@ -1120,7 +1195,7 @@ public sealed class RankingsCalculator
             "Running rank-history snapshots and band rankings concurrently; rankings pass completion still waits for both branches.");
 
         _progress.StartBranch(RankHistorySnapshotsBranch);
-        var snapshotsTask = SnapshotRankHistoryBestEffortAsync(instruments, ct, RankHistorySnapshotsBranch)
+        var snapshotsTask = SnapshotRankHistoryBestEffortAsync(instruments, ct, RankHistorySnapshotsBranch, compositeRankingsReady)
             .ContinueWith(task =>
             {
                 if (task.IsCanceled)
@@ -1428,7 +1503,11 @@ public sealed class RankingsCalculator
         }
     }
 
-    private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct, string? progressBranchId = null)
+    private async Task SnapshotRankHistoryBestEffortAsync(
+        IReadOnlyList<string> instruments,
+        CancellationToken ct,
+        string? progressBranchId = null,
+        Task<bool>? compositeRankingsReady = null)
     {
         _progress.SetSubOperation("rank_history_snapshots");
         var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
@@ -1447,13 +1526,22 @@ public sealed class RankingsCalculator
 
         await Parallel.ForEachAsync(snapshotItems,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
-            (snapshotItem, token) =>
+            async (snapshotItem, token) =>
         {
             token.ThrowIfCancellationRequested();
             var snapshotItemSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                if (snapshotItem.IsComposite)
+                if (snapshotItem.IsComposite
+                    && compositeRankingsReady is not null
+                    && !await compositeRankingsReady.WaitAsync(token))
+                {
+                    snapshotItemSw.Stop();
+                    _log.LogWarning(
+                        "Skipping the composite rank history snapshot because composite rankings did not complete.");
+                    LogPhase("snapshots.composite.skipped", instrument: null, snapshotItemSw.Elapsed);
+                }
+                else if (snapshotItem.IsComposite)
                 {
                     _metaDb.SnapshotCompositeRankHistory(
                         cleanupRetention: false,
@@ -1494,8 +1582,6 @@ public sealed class RankingsCalculator
                     _progress.IncrementBranchProgress(progressBranchId);
                 _progress.ReportPhaseItemComplete();
             }
-
-            return ValueTask.CompletedTask;
         });
 
         snapshotsSw.Stop();
