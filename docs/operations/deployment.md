@@ -204,7 +204,7 @@ From the scrape `1501` boundary (2026-10-09) production ran master
 `7e038f96`, which includes the performance bundle #186. From the scrape `1508`
 boundary it ran local bundles of reviewed PRs on master: #190 and #191, then
 #192 (band over-threshold flags) from the `1509` boundary, then #194 and #195
-from the `1510` boundary (`159dbe28`). The worker env adds:
+from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
 
 - `Scraper__BandRetentionFloorMode=Enforce`. `Report` ran in scrape `1500`
   and `Enforce` started at the `1500` boundary; see
@@ -219,6 +219,13 @@ from the `1510` boundary (`159dbe28`). The worker env adds:
   - `Scraper__SoloCurrentProjectionApplyDiff=true`;
   - `Scraper__BandRetentionFloorMarginRows=10`, after the scrape `1510` margin
     check reported no row any margin from 0 to 50 would have skipped.
+- `Scraper__BandRetentionFloorMarginRows=0` since the scrape `1511` boundary,
+  after scrape `1511` reported no row a margin of 0 or 5 would have skipped. With the
+  margin-10 floors, scrape `1512` pruned 59,258 band entries instead of about
+  222,000, and band prune and search projection took 4.2 and 1.0 minutes
+  instead of 7.3 and 2.6.
+- Since the scrape `1512` boundary the local bundle `b26778a2` adds #198 (solo
+  projection schema ensured once per process).
 
   See [worker: band current projection](../components/worker.md) and
   [worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
