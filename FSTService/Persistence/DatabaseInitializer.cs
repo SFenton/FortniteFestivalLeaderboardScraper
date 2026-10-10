@@ -1642,15 +1642,37 @@ public static class DatabaseInitializer
             PRIMARY KEY (account_id, instrument, snapshot_date)
         ) PARTITION BY LIST (instrument);
 
-        CREATE TABLE IF NOT EXISTS rank_history_solo_guitar    PARTITION OF rank_history FOR VALUES IN ('Solo_Guitar');
-        CREATE TABLE IF NOT EXISTS rank_history_solo_bass      PARTITION OF rank_history FOR VALUES IN ('Solo_Bass');
-        CREATE TABLE IF NOT EXISTS rank_history_solo_drums     PARTITION OF rank_history FOR VALUES IN ('Solo_Drums');
-        CREATE TABLE IF NOT EXISTS rank_history_solo_vocals    PARTITION OF rank_history FOR VALUES IN ('Solo_Vocals');
-        CREATE TABLE IF NOT EXISTS rank_history_pro_guitar     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralGuitar');
-        CREATE TABLE IF NOT EXISTS rank_history_pro_bass       PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralBass');
-        CREATE TABLE IF NOT EXISTS rank_history_pro_vocals     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralVocals');
-        CREATE TABLE IF NOT EXISTS rank_history_pro_cymbals    PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralCymbals');
-        CREATE TABLE IF NOT EXISTS rank_history_pro_drums      PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralDrums');
+        CREATE TABLE IF NOT EXISTS rank_history_solo_guitar    PARTITION OF rank_history FOR VALUES IN ('Solo_Guitar') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_solo_bass      PARTITION OF rank_history FOR VALUES IN ('Solo_Bass') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_solo_drums     PARTITION OF rank_history FOR VALUES IN ('Solo_Drums') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_solo_vocals    PARTITION OF rank_history FOR VALUES IN ('Solo_Vocals') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_pro_guitar     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralGuitar') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_pro_bass       PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralBass') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_pro_vocals     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralVocals') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_pro_cymbals    PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralCymbals') WITH (fillfactor=70);
+        CREATE TABLE IF NOT EXISTS rank_history_pro_drums      PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralDrums') WITH (fillfactor=70);
+
+        -- Same-day rank-history updates are HOT only when the row's page has free
+        -- space; 30% free space lets most of a day's updates stay on-page
+        -- instead of writing new primary-key entries. Only new pages are
+        -- affected. Guarded so startup takes no lock when already set.
+        DO $$
+        DECLARE target regclass;
+        BEGIN
+            FOREACH target IN ARRAY ARRAY[
+                'rank_history_solo_guitar', 'rank_history_solo_bass', 'rank_history_solo_drums',
+                'rank_history_solo_vocals', 'rank_history_pro_guitar', 'rank_history_pro_bass',
+                'rank_history_pro_vocals', 'rank_history_pro_cymbals', 'rank_history_pro_drums'
+            ]::regclass[]
+            LOOP
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_class
+                    WHERE oid = target AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+                THEN
+                    EXECUTE format('ALTER TABLE %s SET (fillfactor=70)', target);
+                END IF;
+            END LOOP;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
             instrument              TEXT        NOT NULL,
@@ -3083,7 +3105,19 @@ public static class DatabaseInitializer
             instruments_played INTEGER,
             total_songs_played INTEGER,
             PRIMARY KEY (account_id, snapshot_date)
-        );
+        ) WITH (fillfactor=70);
+
+        -- See the rank_history partitions above.
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_class
+                WHERE oid = 'composite_rank_history'::regclass
+                  AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+            THEN
+                ALTER TABLE composite_rank_history SET (fillfactor=70);
+            END IF;
+        END $$;
 
         -- =====================================================================
         -- COMBO LEADERBOARD (from fst-meta.db)
