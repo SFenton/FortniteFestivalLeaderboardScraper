@@ -14,6 +14,25 @@ namespace FSTService.Tests.Unit;
 
 public sealed class RankingsCalculatorTests : IDisposable
 {
+    [Theory]
+    [InlineData(1, new[] { "A", "composite", "B", "C" })]
+    [InlineData(2, new[] { "A", "B", "composite", "C" })]
+    [InlineData(5, new[] { "A", "B", "C", "composite" })]
+    public void DeferGatedCompositeSnapshot_starts_composite_after_first_writers(int dop, string[] expected)
+    {
+        IReadOnlyList<(string? Instrument, bool IsComposite)> ordered =
+        [
+            (null, true),
+            ("A", false),
+            ("B", false),
+            ("C", false),
+        ];
+
+        var deferred = RankingsCalculator.DeferGatedCompositeSnapshot(ordered, dop);
+
+        Assert.Equal(expected, deferred.Select(static item => item.IsComposite ? "composite" : item.Instrument!));
+    }
+
     [Fact]
     public void OrderSnapshotItems_puts_composite_first_then_instruments_by_ranked_accounts()
     {
@@ -931,8 +950,10 @@ public sealed class RankingsCalculatorTests : IDisposable
             && branch.Total == 3);
     }
 
-    [Fact]
-    public async Task ComputeAllAsync_EarlySnapshots_CompleteBothBranchesAndSnapshotComposite()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task ComputeAllAsync_EarlySnapshots_CompleteBothBranchesAndSnapshotComposite(int snapshotDop)
     {
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
@@ -952,7 +973,7 @@ public sealed class RankingsCalculatorTests : IDisposable
             scraperOptions: new ScraperOptions
             {
                 StartRankHistorySnapshotsAfterInstrumentRankings = true,
-                RankHistorySnapshotMaxDegreeOfParallelism = 2,
+                RankHistorySnapshotMaxDegreeOfParallelism = snapshotDop,
             });
 
         await sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);

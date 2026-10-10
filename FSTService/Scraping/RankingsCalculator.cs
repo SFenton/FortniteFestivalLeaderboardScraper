@@ -748,8 +748,12 @@ public sealed class RankingsCalculator
             compositeRankingsReady?.TrySetResult(false);
             if (earlyRankHistoryTask is not null)
             {
-                // The pass is failing; stop the branches and let their
-                // transactions roll back before propagating the failure.
+                // The pass is failing: stop starting new snapshot items and band
+                // types, and wait for in-flight ones before propagating. Those
+                // commit, as they would if a later post-scrape phase failed; they
+                // derive only from committed per-instrument rankings and band
+                // entries, a retry rewrites them, and band rankings reach public
+                // reads only through publication.
                 earlyBranchCts!.Cancel();
                 try
                 {
@@ -1490,6 +1494,26 @@ public sealed class RankingsCalculator
             .Prepend((Instrument: (string?)null, IsComposite: true))
             .ToArray();
 
+    /// <summary>
+    /// When the composite snapshot must wait for composite rankings, start it only
+    /// after the first <paramref name="maxDegreeOfParallelism"/> instrument snapshots
+    /// so no writer sits idle on the gate (with one writer it would block them all).
+    /// </summary>
+    internal static IReadOnlyList<(string? Instrument, bool IsComposite)> DeferGatedCompositeSnapshot(
+        IReadOnlyList<(string? Instrument, bool IsComposite)> orderedItems,
+        int maxDegreeOfParallelism)
+    {
+        var items = orderedItems.ToList();
+        var compositeIndex = items.FindIndex(static item => item.IsComposite);
+        if (compositeIndex < 0)
+            return items;
+
+        var composite = items[compositeIndex];
+        items.RemoveAt(compositeIndex);
+        items.Insert(Math.Clamp(maxDegreeOfParallelism, 0, items.Count), composite);
+        return items;
+    }
+
     private long RankedAccountCountOrZero(string instrument)
     {
         try
@@ -1523,6 +1547,8 @@ public sealed class RankingsCalculator
                 ct.ThrowIfCancellationRequested();
                 return RankedAccountCountOrZero(instrument);
             });
+        if (compositeRankingsReady is not null)
+            snapshotItems = DeferGatedCompositeSnapshot(snapshotItems, maxDegreeOfParallelism);
 
         await Parallel.ForEachAsync(snapshotItems,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
